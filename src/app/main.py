@@ -1,4 +1,5 @@
 from PySide6 import QtWidgets, QtCore
+from modules.vehicle_hub.controller import VehicleHubWidget  # přidán import
 
 # ... (ostatní kód zůstává stejný)
 
