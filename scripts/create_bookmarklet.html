@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <title>Vytvoření Bookmarkletu pro Webnode</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .bookmarklet {
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            word-break: break-all;
+        }
+        .instructions {
+            background: #e7f3ff;
+            padding: 15px;
+            border-left: 4px solid #2196F3;
+            margin: 20px 0;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔖 Vytvoření Bookmarkletu pro Webnode</h1>
+    
+    <div class="instructions">
+        <h2>Jak vytvořit bookmarklet:</h2>
+        <ol>
+            <li>Zkopírujte kód z pole níže</li>
+            <li>Vytvořte nový záložku v prohlížeči</li>
+            <li>Jméno: "Vložit TooZ Hub HTML"</li>
+            <li>URL: Vložte zkopírovaný kód</li>
+            <li>Uložte záložku</li>
+        </ol>
+    </div>
+    
+    <h2>Kód bookmarkletu:</h2>
+    <div class="bookmarklet" id="bookmarkletCode">
+        Načítám...
+    </div>
+    <button onclick="copyBookmarklet()">📋 Zkopírovat kód</button>
+    <button onclick="createBookmark()">➕ Vytvořit záložku</button>
+    
+    <div class="instructions" style="margin-top: 30px;">
+        <h2>Použití:</h2>
+        <ol>
+            <li>Otevřete Webnode editor (Remix správce)</li>
+            <li>Najděte HTML blok nebo vytvořte nový</li>
+            <li>Klikněte na záložku "Vložit TooZ Hub HTML"</li>
+            <li>HTML se automaticky vloží do editoru</li>
+        </ol>
+    </div>
+
+    <script>
+        // Načíst kód bookmarkletu
+        fetch('webnode_bookmarklet.js')
+            .then(r => r.text())
+            .then(code => {
+                // Minifikovat (odstranit komentáře a zbytečné mezery)
+                const minified = code
+                    .replace(/\/\/.*/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                document.getElementById('bookmarkletCode').textContent = 'javascript:' + minified;
+            })
+            .catch(() => {
+                document.getElementById('bookmarkletCode').textContent = 'Chyba při načítání kódu';
+            });
+
+        function copyBookmarklet() {
+            const code = document.getElementById('bookmarkletCode').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                alert('✓ Kód zkopírován! Nyní vytvořte novou záložku a vložte tento kód jako URL.');
+            });
+        }
+
+        function createBookmark() {
+            const code = document.getElementById('bookmarkletCode').textContent;
+            const title = 'Vložit TooZ Hub HTML';
+            
+            if (window.sidebar && window.sidebar.addPanel) {
+                // Firefox
+                window.sidebar.addPanel(title, code, '');
+            } else if (window.external && ('AddFavorite' in window.external)) {
+                // IE
+                window.external.AddFavorite(code, title);
+            } else {
+                // Ostatní prohlížeče - zobrazit instrukce
+                alert('Pro vytvoření záložky:\n1. Zkopírujte kód z pole výše\n2. Vytvořte novou záložku\n3. Jméno: "' + title + '"\n4. URL: Vložte zkopírovaný kód');
+            }
+        }
+    </script>
+</body>
+</html>
+
+
+
+

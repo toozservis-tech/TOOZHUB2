@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Float, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, Float, ForeignKey, Boolean, Date
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -12,11 +12,14 @@ class Customer(Base):
 
     # identita / login
     email = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=True)  # Hash hesla
 
     # fakturační / kontaktní údaje
     name = Column(String, nullable=True)          # jméno / název
     ico = Column(String, nullable=True)           # IČO (pro ARES)
-    street = Column(String, nullable=True)
+    dic = Column(String, nullable=True)           # DIČ (daňové identifikační číslo)
+    street = Column(String, nullable=True)        # název ulice
+    street_number = Column(String, nullable=True) # číslo popisné
     city = Column(String, nullable=True)
     zip = Column(String, nullable=True)
     phone = Column(String, nullable=True)
@@ -45,6 +48,8 @@ class Vehicle(Base):
     engine = Column(String, nullable=True)
     vin = Column(String, nullable=True)
     plate = Column(String, nullable=True)
+    notes = Column(String, nullable=True)
+    stk_valid_until = Column(Date, nullable=True)  # Datum konce platnosti STK
     created_at = Column(DateTime, default=datetime.utcnow)
 
     records = relationship(
@@ -64,6 +69,8 @@ class ServiceRecord(Base):
     description = Column(String, nullable=False)
     price = Column(Float, nullable=True)
     note = Column(String, nullable=True)
+    category = Column(String, nullable=True)  # Kategorie servisu (např. "Pravidelná údržba", "Oprava", "Výměna oleje")
+    next_service_due_date = Column(Date, nullable=True)  # Datum dalšího plánovaného servisu
 
     vehicle = relationship("Vehicle", back_populates="records")
 

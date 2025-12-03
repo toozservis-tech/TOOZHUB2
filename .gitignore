@@ -4,3 +4,10 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.aider*
+
+# Konfigurační soubory s citlivými údaji
+.toozhub_webnode_config.json
+*_config.json
+*.env
+.env

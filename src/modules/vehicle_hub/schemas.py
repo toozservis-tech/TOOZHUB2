@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
 
 
 # ==========================
@@ -61,6 +61,7 @@ class VehicleCreate(BaseModel):
     engine: Optional[str] = None
     vin: Optional[str] = None
     plate: Optional[str] = None
+    stk_valid_until: Optional[date] = None  # Datum konce platnosti STK
 
 
 class VehicleOut(BaseModel):
@@ -73,6 +74,7 @@ class VehicleOut(BaseModel):
     engine: Optional[str]
     vin: Optional[str]
     plate: Optional[str]
+    stk_valid_until: Optional[date] = None  # Datum konce platnosti STK
 
     class Config:
         from_attributes = True
@@ -87,6 +89,8 @@ class ServiceRecordCreate(BaseModel):
     description: str
     price: Optional[float] = None
     note: Optional[str] = None
+    category: Optional[str] = None  # Kategorie servisu (např. "Pravidelná údržba", "Oprava", "Výměna oleje")
+    next_service_due_date: Optional[date] = None  # Datum dalšího plánovaného servisu
 
 
 class ServiceRecordOut(BaseModel):
@@ -97,6 +101,8 @@ class ServiceRecordOut(BaseModel):
     description: str
     price: Optional[float]
     note: Optional[str]
+    category: Optional[str] = None  # Kategorie servisu
+    next_service_due_date: Optional[date] = None  # Datum dalšího plánovaného servisu
 
     class Config:
         from_attributes = True

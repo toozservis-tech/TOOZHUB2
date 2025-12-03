@@ -1,5 +1,13 @@
-from dataclasses import dataclass
-from typing import Dict, List
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Dict, List, Optional
+
+from sqlalchemy.orm import Session
+from .api_vin import decode_vin_api
+from .database import SessionLocal, engine, Base
+from .models import Vehicle as VehicleModel, ServiceRecord as ServiceRecordModel
 
 
 @dataclass
@@ -7,48 +15,235 @@ class Vehicle:
     vin: str
     plate: str
     name: str
-    brand: str | None = None
-    model: str | None = None
-    year: int | None = None
-    engine: str | None = None
-    notes: str | None = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    year: Optional[int] = None
+    engine: Optional[str] = None
+    notes: Optional[str] = None
 
 
 @dataclass
 class ServiceRecord:
     vehicle_vin: str
-    date: str  # ISO string "YYYY-MM-DD" for now
-    odometer_km: int
-    price: float
+    date: date
+    odometer_km: Optional[int]
+    price: Optional[float]
     description: str
     category: str
 
 
 class VehicleHubService:
-    def __init__(self):
-        self.vehicles: Dict[str, Vehicle] = {}
-        self.records: List[ServiceRecord] = []
+    """
+    Služba pro správu vozidel a servisních záznamů.
+    Používá databázi pro trvalé ukládání dat.
+    """
+
+    def __init__(self, user_email: Optional[str] = None) -> None:
+        self.user_email = user_email
+        # Vytvoření tabulek pokud neexistují
+        Base.metadata.create_all(bind=engine)
+
+    def _get_db(self) -> Session:
+        """Vrací databázovou session"""
+        return SessionLocal()
+
+    # ---------- VOZIDLA ----------
 
     def add_vehicle(self, vehicle: Vehicle) -> None:
-        """Přidat vozidlo do seznamu vozidel."""
-        self.vehicles[vehicle.vin] = vehicle
+        """
+        Přidá nebo aktualizuje vozidlo v databázi.
+        """
+        if not self.user_email:
+            raise ValueError("Uživatel není přihlášen")
+        
+        db = self._get_db()
+        try:
+            vin = vehicle.vin.strip().upper() if vehicle.vin else None
+            
+            # Zkusíme najít existující vozidlo podle VIN nebo SPZ
+            existing = None
+            if vin:
+                existing = db.query(VehicleModel).filter(
+                    VehicleModel.user_email == self.user_email,
+                    VehicleModel.vin == vin
+                ).first()
+            
+            if not existing and vehicle.plate:
+                existing = db.query(VehicleModel).filter(
+                    VehicleModel.user_email == self.user_email,
+                    VehicleModel.plate == vehicle.plate
+                ).first()
+            
+            if existing:
+                # Aktualizace existujícího vozidla
+                existing.nickname = vehicle.name
+                existing.brand = vehicle.brand
+                existing.model = vehicle.model
+                existing.year = vehicle.year
+                existing.engine = vehicle.engine
+                existing.vin = vin
+                existing.plate = vehicle.plate
+                existing.notes = vehicle.notes
+            else:
+                # Vytvoření nového vozidla
+                db_vehicle = VehicleModel(
+                    user_email=self.user_email,
+                    nickname=vehicle.name,
+                    brand=vehicle.brand,
+                    model=vehicle.model,
+                    year=vehicle.year,
+                    engine=vehicle.engine,
+                    vin=vin,
+                    plate=vehicle.plate,
+                    notes=vehicle.notes
+                )
+                db.add(db_vehicle)
+            
+            db.commit()
+        finally:
+            db.close()
 
-    def get_all_vehicles(self) -> list[Vehicle]:
-        """Vrátit všechny vozidla."""
-        return list(self.vehicles.values())
+    def get_all_vehicles(self) -> List[Vehicle]:
+        """Vrací všechna vozidla aktuálního uživatele"""
+        if not self.user_email:
+            return []
+        
+        db = self._get_db()
+        try:
+            db_vehicles = db.query(VehicleModel).filter(
+                VehicleModel.user_email == self.user_email
+            ).all()
+            
+            vehicles = []
+            for v in db_vehicles:
+                vehicles.append(Vehicle(
+                    vin=v.vin or "",
+                    plate=v.plate or "",
+                    name=v.nickname or "",
+                    brand=v.brand,
+                    model=v.model,
+                    year=v.year,
+                    engine=v.engine,
+                    notes=v.notes
+                ))
+            return vehicles
+        finally:
+            db.close()
 
-    def get_vehicle(self, vin: str) -> Vehicle | None:
-        """Vrátit vozidlo podle VIN."""
-        return self.vehicles.get(vin)
+    def get_vehicle(self, vin: str) -> Optional[Vehicle]:
+        """Vrací vozidlo podle VIN"""
+        if not self.user_email:
+            return None
+        
+        db = self._get_db()
+        try:
+            db_vehicle = db.query(VehicleModel).filter(
+                VehicleModel.user_email == self.user_email,
+                VehicleModel.vin == vin.strip().upper()
+            ).first()
+            
+            if db_vehicle:
+                return Vehicle(
+                    vin=db_vehicle.vin or "",
+                    plate=db_vehicle.plate or "",
+                    name=db_vehicle.nickname or "",
+                    brand=db_vehicle.brand,
+                    model=db_vehicle.model,
+                    year=db_vehicle.year,
+                    engine=db_vehicle.engine,
+                    notes=db_vehicle.notes
+                )
+            return None
+        finally:
+            db.close()
+
+    # ---------- SERVISNÍ ZÁZNAMY ----------
 
     def add_service_record(self, record: ServiceRecord) -> None:
-        """Přidat záznam o službě."""
-        self.records.append(record)
+        """Přidá servisní záznam k vozidlu"""
+        if not self.user_email:
+            raise ValueError("Uživatel není přihlášen")
+        
+        db = self._get_db()
+        try:
+            vin = record.vehicle_vin.strip().upper()
+            vehicle = db.query(VehicleModel).filter(
+                VehicleModel.user_email == self.user_email,
+                VehicleModel.vin == vin
+            ).first()
+            
+            if not vehicle:
+                raise ValueError(f"Unknown vehicle VIN: {vin}")
+            
+            db_record = ServiceRecordModel(
+                vehicle_id=vehicle.id,
+                performed_at=record.date,
+                mileage=record.odometer_km,
+                price=record.price,
+                description=record.description,
+                note=record.category
+            )
+            db.add(db_record)
+            db.commit()
+        finally:
+            db.close()
 
-    def get_records_for_vehicle(self, vin: str) -> list[ServiceRecord]:
-        """Vrátit záznamy o službách pro vozidlo podle VIN."""
-        return [record for record in self.records if record.vehicle_vin == vin]
+    def get_records_for_vehicle(self, vin: str) -> List[ServiceRecord]:
+        """Vrací servisní záznamy pro vozidlo"""
+        if not self.user_email:
+            return []
+        
+        db = self._get_db()
+        try:
+            vehicle = db.query(VehicleModel).filter(
+                VehicleModel.user_email == self.user_email,
+                VehicleModel.vin == vin.strip().upper()
+            ).first()
+            
+            if not vehicle:
+                return []
+            
+            db_records = db.query(ServiceRecordModel).filter(
+                ServiceRecordModel.vehicle_id == vehicle.id
+            ).all()
+            
+            records = []
+            for r in db_records:
+                records.append(ServiceRecord(
+                    vehicle_vin=vin,
+                    date=r.performed_at.date() if r.performed_at else date.today(),
+                    odometer_km=r.mileage,
+                    price=r.price,
+                    description=r.description,
+                    category=r.note or ""
+                ))
+            return records
+        finally:
+            db.close()
 
-    def decode_vin(self, vin: str) -> dict[str, str]:  # TODO: connect real VIN API later
-        """Decodovat VIN (prozatimni implementace)."""
-        return {}
+    # ---------- VIN DECODE ----------
+
+    def decode_vin(self, vin: str) -> dict:
+        """
+        Dekóduje VIN pomocí API a vrací informace o vozidle.
+        
+        Args:
+            vin: VIN kód vozidla
+            
+        Returns:
+            dict s klíči: brand, model, year, engine, tyres (seznam)
+            
+        Raises:
+            ValueError: Pokud je VIN neplatný
+            Exception: Pokud API selže
+        """
+        vin = vin.strip().upper()
+        try:
+            return decode_vin_api(vin)
+        except ValueError as e:
+            # Přeposíláme ValueError beze změny
+            raise
+        except Exception as e:
+            # Ostatní chyby zabalíme do obecné výjimky
+            raise Exception(f"Chyba při dekódování VIN: {str(e)}") from e
+

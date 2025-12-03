@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TooZ Hub 2 - Webnode Helper</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+        }
+        h1 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .section h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin: 5px;
+            transition: transform 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        .btn-secondary {
+            background: #6c757d;
+        }
+        .btn-success {
+            background: #28a745;
+        }
+        textarea {
+            width: 100%;
+            min-height: 200px;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        .instructions {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .instructions ol {
+            margin-left: 20px;
+            margin-top: 10px;
+        }
+        .instructions li {
+            margin: 8px 0;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+            display: none;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚗 TooZ Hub 2 - Webnode Helper</h1>
+        
+        <div class="section">
+            <h2>1. Načíst HTML z projektu</h2>
+            <p>Načte aktuální HTML kód z projektu TooZ Hub 2</p>
+            <button class="btn" onclick="loadHTML()">📥 Načíst HTML z projektu</button>
+            <button class="btn btn-secondary" onclick="loadFromFile()">📁 Načíst ze souboru</button>
+            <div id="loadStatus" class="status"></div>
+        </div>
+
+        <div class="section">
+            <h2>2. HTML kód pro Webnode</h2>
+            <p>Zde je HTML kód, který můžete vložit do Webnode editoru:</p>
+            <button class="btn btn-success" onclick="copyToClipboard()">📋 Zkopírovat do clipboardu</button>
+            <button class="btn btn-secondary" onclick="openWebnode()">🌐 Otevřít Webnode</button>
+            <textarea id="htmlContent" placeholder="HTML kód se zobrazí zde po načtení..."></textarea>
+            <div id="copyStatus" class="status"></div>
+        </div>
+
+        <div class="section">
+            <h2>3. Návod pro vložení do Webnode</h2>
+            <div class="instructions">
+                <ol>
+                    <li>Klikněte na tlačítko "📋 Zkopírovat do clipboardu" výše</li>
+                    <li>Otevřete Webnode editor (Remix správce) na <a href="https://www.webnode.cz/" target="_blank">webnode.cz</a></li>
+                    <li>Přihlaste se do svého účtu</li>
+                    <li>Přejděte na stránku, kde chcete vložit aplikaci (např. /toozhub-aplikace/)</li>
+                    <li>Klikněte na "Upravit stránku" nebo "Remix správce"</li>
+                    <li>Najděte HTML blok nebo přidejte nový blok "Vlastní HTML" / "HTML kód"</li>
+                    <li>Vložte kód z clipboardu (Ctrl+V nebo Cmd+V)</li>
+                    <li>Uložte změny a publikujte stránku</li>
+                </ol>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>4. Automatické aktualizace</h2>
+            <p>Pokud máte přístup k serveru, můžete použít automatický skript:</p>
+            <div class="instructions">
+                <code style="background: #f4f4f4; padding: 10px; display: block; border-radius: 4px; margin-top: 10px;">
+                    cd /home/toozservis/TOOZHUB2<br>
+                    python3 scripts/update_webnode.py
+                </code>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let htmlContent = '';
+
+        async function loadHTML() {
+            const statusEl = document.getElementById('loadStatus');
+            statusEl.className = 'status';
+            statusEl.textContent = 'Načítám HTML...';
+            statusEl.classList.add('success');
+            
+            try {
+                // Zkusit načíst z API (pokud běží server)
+                const response = await fetch('/web/index.html');
+                if (response.ok) {
+                    htmlContent = await response.text();
+                    document.getElementById('htmlContent').value = htmlContent;
+                    statusEl.textContent = '✓ HTML úspěšně načteno z serveru!';
+                    statusEl.classList.add('success');
+                } else {
+                    throw new Error('Server neodpovídá');
+                }
+            } catch (error) {
+                // Fallback - zkusit načíst lokálně
+                try {
+                    const response = await fetch('../web/index.html');
+                    if (response.ok) {
+                        htmlContent = await response.text();
+                        document.getElementById('htmlContent').value = htmlContent;
+                        statusEl.textContent = '✓ HTML úspěšně načteno lokálně!';
+                        statusEl.classList.add('success');
+                    } else {
+                        throw new Error('Soubor nenalezen');
+                    }
+                } catch (e) {
+                    statusEl.textContent = '✗ Nepodařilo se načíst HTML. Použijte tlačítko "Načíst ze souboru" nebo zkopírujte ručně.';
+                    statusEl.classList.add('error');
+                }
+            }
+        }
+
+        function loadFromFile() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.html';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        htmlContent = event.target.result;
+                        document.getElementById('htmlContent').value = htmlContent;
+                        document.getElementById('loadStatus').textContent = '✓ HTML načteno ze souboru!';
+                        document.getElementById('loadStatus').className = 'status success';
+                    };
+                    reader.readAsText(file);
+                }
+            };
+            input.click();
+        }
+
+        async function copyToClipboard() {
+            const content = document.getElementById('htmlContent').value;
+            const statusEl = document.getElementById('copyStatus');
+            
+            if (!content) {
+                statusEl.textContent = '✗ Nejprve načtěte HTML kód!';
+                statusEl.className = 'status error';
+                return;
+            }
+
+            try {
+                await navigator.clipboard.writeText(content);
+                statusEl.textContent = '✓ HTML kód zkopírován do clipboardu! Nyní můžete vložit do Webnode editoru (Ctrl+V).';
+                statusEl.className = 'status success';
+            } catch (error) {
+                // Fallback pro starší prohlížeče
+                const textarea = document.createElement('textarea');
+                textarea.value = content;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                    document.execCommand('copy');
+                    statusEl.textContent = '✓ HTML kód zkopírován do clipboardu!';
+                    statusEl.className = 'status success';
+                } catch (e) {
+                    statusEl.textContent = '✗ Nepodařilo se zkopírovat. Zkopírujte ručně z textového pole.';
+                    statusEl.className = 'status error';
+                }
+                document.body.removeChild(textarea);
+            }
+        }
+
+        function openWebnode() {
+            window.open('https://www.webnode.cz/', '_blank');
+        }
+
+        // Automaticky načíst HTML při načtení stránky
+        window.addEventListener('DOMContentLoaded', () => {
+            loadHTML();
+        });
+    </script>
+</body>
+</html>
+
+
+
+
