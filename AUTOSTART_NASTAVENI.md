@@ -165,11 +165,11 @@ Invoke-WebRequest -Uri "https://hub.toozservis.cz/health"
 
 2. **Zkontrolovat závislosti:**
    ```powershell
-   pip list | Select-String "pystray|pillow|requests"
+   pip list | Select-String "requests"
    ```
    Pokud chybí:
    ```powershell
-   pip install pystray pillow requests
+   pip install requests
    ```
 
 3. **Zkontrolovat Task Scheduler:**

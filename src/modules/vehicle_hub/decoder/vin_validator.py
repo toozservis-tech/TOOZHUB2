@@ -140,3 +140,14 @@ def normalize_vin(vin: str) -> str:
 
 
 
+
+
+
+
+
+
+
+
+
+
+

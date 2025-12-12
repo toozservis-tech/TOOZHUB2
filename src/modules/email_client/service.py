@@ -40,8 +40,12 @@ class EmailService:
     ):
         self.host = host
         self.port = port
-        self.username = username
-        self.password = password
+        self.username = username.strip() if username else None
+        # Vyčistit heslo - odstranit jen bílé znaky a uvozovky (středník je součástí hesla)
+        if password:
+            self.password = password.strip().strip('"').strip("'")
+        else:
+            self.password = None
         self.from_email = from_email
     
     def is_configured(self) -> bool:
@@ -95,10 +99,18 @@ class EmailService:
         
         # Odeslat email
         try:
-            with smtplib.SMTP(self.host, self.port) as server:
-                server.starttls()
-                server.login(self.username, self.password)
-                server.sendmail(self.from_email, all_recipients, msg.as_string())
+            # Port 465 vyžaduje SSL (SMTP_SSL), port 587 vyžaduje STARTTLS
+            if self.port == 465:
+                # SSL připojení pro port 465
+                with smtplib.SMTP_SSL(self.host, self.port, timeout=10) as server:
+                    server.login(self.username, self.password)
+                    server.sendmail(self.from_email, all_recipients, msg.as_string())
+            else:
+                # STARTTLS pro port 587 a ostatní
+                with smtplib.SMTP(self.host, self.port, timeout=10) as server:
+                    server.starttls()
+                    server.login(self.username, self.password)
+                    server.sendmail(self.from_email, all_recipients, msg.as_string())
             return True
         except smtplib.SMTPException as e:
             print(f"[EMAIL] Chyba při odesílání emailu: {e}")
@@ -223,9 +235,3 @@ TooZ Hub 2
 """
         
         return self.send_simple_email(to, subject, body, html_body)
-
-
-
-
-
-

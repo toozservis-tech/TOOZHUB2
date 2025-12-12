@@ -82,7 +82,7 @@ def _fetch_mdcr_data(vin: str) -> Optional[dict]:
         
         # Zkontrolovat, zda máme API klíč
         if not DATAOVOZIDLECH_API_KEY:
-            print("[MDČR] ⚠️ API klíč není nastaven. Nastavte DATAOVOZIDLECH_API_KEY v .env souboru.")
+            print("[MDCR] WARNING: API klic neni nastaven. Nastavte DATAOVOZIDLECH_API_KEY v .env souboru.")
             return None
         
         # Volání API
@@ -91,19 +91,19 @@ def _fetch_mdcr_data(vin: str) -> Optional[dict]:
             "api_key": DATAOVOZIDLECH_API_KEY
         }
         
-        print(f"[MDČR] Volám API: {url}")
+        print(f"[MDCR] Volám API: {url}")
         response = requests.get(url, headers=headers, timeout=30)
         
         if response.status_code != 200:
-            print(f"[MDČR] ❌ API vrátilo status {response.status_code}: {response.text[:200]}")
+            print(f"[MDCR] ERROR: API vratilo status {response.status_code}: {response.text[:200]}")
             return None
         
         api_response = response.json()
-        print(f"[MDČR] ✅ API odpověď přijata, zpracovávám data...")
+        print(f"[MDCR] OK: API odpoved prijata, zpracovavam data...")
         
         # API vrací strukturu: {"Status": 1, "Data": {...}}
         if api_response.get("Status") != 1 or "Data" not in api_response:
-            print(f"[MDČR] ❌ API vrátilo chybu: Status={api_response.get('Status', 'Unknown')}")
+            print(f"[MDCR] ERROR: API vratilo chybu: Status={api_response.get('Status', 'Unknown')}")
             return None
         
         data = api_response["Data"]
@@ -114,17 +114,17 @@ def _fetch_mdcr_data(vin: str) -> Optional[dict]:
         # Tovární značka
         if data.get("TovarniZnacka"):
             result['brand'] = data["TovarniZnacka"]
-            print(f"[MDČR] ✅ Značka: {result['brand']}")
+            print(f"[MDCR] OK: Značka: {result['brand']}")
         
         # Typ vozidla
         if data.get("Typ"):
             result['vehicle_type'] = data["Typ"]
-            print(f"[MDČR] ✅ Typ: {result['vehicle_type']}")
+            print(f"[MDCR] OK: Typ: {result['vehicle_type']}")
         
         # Obchodní označení (model)
         if data.get("ObchodniOznaceni"):
             result['model'] = data["ObchodniOznaceni"]
-            print(f"[MDČR] ✅ Model: {result['model']}")
+            print(f"[MDCR] OK: Model: {result['model']}")
         
         # Rok výroby
         if data.get("DatumPrvniRegistrace"):
@@ -135,19 +135,19 @@ def _fetch_mdcr_data(vin: str) -> Optional[dict]:
                     year = int(date_str[:4])
                     if 1900 <= year <= 2100:
                         result['year'] = year
-                        print(f"[MDČR] ✅ Rok: {result['year']}")
+                        print(f"[MDCR] OK: Rok: {result['year']}")
             except (ValueError, TypeError):
                 pass
         
         # Typ motoru (MotorTyp)
         if data.get("MotorTyp"):
             result['engine_code'] = data["MotorTyp"]
-            print(f"[MDČR] ✅ Typ motoru: {result['engine_code']}")
+            print(f"[MDCR] OK: Typ motoru: {result['engine_code']}")
         
         # Max. výkon [kW] (MotorMaxVykon)
         if data.get("MotorMaxVykon"):
             result['max_power'] = str(data["MotorMaxVykon"])
-            print(f"[MDČR] ✅ Max. výkon: {result['max_power']}")
+            print(f"[MDCR] OK: Max. výkon: {result['max_power']}")
         
         # Motor (sestavený z více údajů)
         engine_parts = []
@@ -159,7 +159,7 @@ def _fetch_mdcr_data(vin: str) -> Optional[dict]:
             engine_parts.append(data["Palivo"])
         if engine_parts:
             result['engine'] = ' / '.join(engine_parts)
-            print(f"[MDČR] ✅ Motor: {result['engine']}")
+            print(f"[MDCR] OK: Motor: {result['engine']}")
         
         # Kola a pneumatiky (NapravyPneuRafky)
         tyres = []
@@ -169,7 +169,7 @@ def _fetch_mdcr_data(vin: str) -> Optional[dict]:
         if data.get("NapravyPneuRafky"):
             tyres_raw = str(data["NapravyPneuRafky"])
             result['tyres_raw'] = tyres_raw
-            print(f"[MDČR] ✅ Pneumatiky (surový text): {tyres_raw[:100]}")
+            print(f"[MDCR] OK: Pneumatiky (surový text): {tyres_raw[:100]}")
         
         # Extrahovat rozměry pneumatik z textu
         import re
@@ -192,7 +192,7 @@ def _fetch_mdcr_data(vin: str) -> Optional[dict]:
                     if tyre and len(tyre) >= 7 and re.search(r'\d{3}/\d{2}', tyre):
                         if tyre not in tyres:
                             tyres.append(tyre)
-                            print(f"[MDČR] ✅ Nalezena pneumatika: {tyre}")
+                            print(f"[MDCR] OK: Nalezena pneumatika: {tyre}")
         
         if tyres:
             result['tyres'] = sorted(list(set(tyres)))
@@ -208,34 +208,34 @@ def _fetch_mdcr_data(vin: str) -> Optional[dict]:
             additional_info.append(f"Emisní norma: {data['EmisniUroven']}")
         if additional_info:
             result['additional_notes'] = "\n".join(additional_info)
-            print(f"[MDČR] ✅ Další záznamy: {result['additional_notes'][:100]}")
+            print(f"[MDCR] OK: Další záznamy: {result['additional_notes'][:100]}")
         
         # Technická prohlídka do (pokud je v API)
         # Toto pole nemusí být v API, ale zkusit najít
         if data.get("PravidelnaTechnickaProhlidkaDo"):
             result['inspection_date'] = str(data["PravidelnaTechnickaProhlidkaDo"])
-            print(f"[MDČR] ✅ Technická prohlídka do: {result['inspection_date']}")
+            print(f"[MDCR] OK: Technická prohlídka do: {result['inspection_date']}")
         
         # SPZ (pokud je dostupná)
         if data.get("RegistracniZnacka"):
             result['plate'] = data["RegistracniZnacka"]
-            print(f"[MDČR] ✅ SPZ: {result['plate']}")
+            print(f"[MDCR] OK: SPZ: {result['plate']}")
         
         # Název vozidla (značka + model)
         if result.get('brand') and result.get('model'):
             result['name'] = f"{result['brand']} {result['model']}"
         
-        print(f"[MDČR] ✅ Úspěšně načteno {len(result)} polí z API")
+        print(f"[MDCR] OK: Uspesne nacteno {len(result)} poli z API")
         return result if result else None
         
     except requests.exceptions.RequestException as e:
-        print(f"[MDČR] ❌ Chyba při volání API: {e}")
+        print(f"[MDCR] ERROR: Chyba při volání API: {e}")
         return None
     except json.JSONDecodeError as e:
-        print(f"[MDČR] ❌ Chyba při parsování JSON: {e}")
+        print(f"[MDCR] ERROR: Chyba při parsování JSON: {e}")
         return None
     except Exception as e:
-        print(f"[MDČR] ❌ Neočekávaná chyba: {e}")
+        print(f"[MDCR] ERROR: Neočekávaná chyba: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -291,7 +291,7 @@ def decode_vin_api(vin: str) -> dict:
         mdcr_data = None
     
     if mdcr_data:
-        print(f"[API] ✅ MDČR data úspěšně získána: brand={mdcr_data.get('brand')}, model={mdcr_data.get('model')}, year={mdcr_data.get('year')}, engine_code={mdcr_data.get('engine_code')}, tyres={len(mdcr_data.get('tyres', []))}")
+        print(f"[API] OK: MDCR data uspesne ziskana: brand={mdcr_data.get('brand')}, model={mdcr_data.get('model')}, year={mdcr_data.get('year')}, engine_code={mdcr_data.get('engine_code')}, tyres={len(mdcr_data.get('tyres', []))}")
         # Mapování dat z MDČR (data jsou už ve správném formátu z _fetch_mdcr_data)
         # Zkopírovat všechna pole z mdcr_data do result
         for key in ['brand', 'model', 'year', 'engine', 'engine_code', 'plate', 'name', 'tyres', 

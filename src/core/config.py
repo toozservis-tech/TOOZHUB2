@@ -7,12 +7,59 @@ from pathlib import Path
 
 # Pokusit se načíst .env soubor
 try:
-    from dotenv import load_dotenv
+    from dotenv import load_dotenv, dotenv_values
+    from io import StringIO
     env_path = Path(__file__).parent.parent.parent / ".env"
     if env_path.exists():
-        load_dotenv(env_path)
+        # Zkusit načíst s různými kódováními (UTF-8, Windows-1250, latin-1)
+        env_loaded = False
+        for encoding in ['utf-8', 'windows-1250', 'cp1250', 'latin-1']:
+            try:
+                with open(env_path, 'r', encoding=encoding, errors='replace') as f:
+                    env_content = f.read()
+                # Pokud obsah vypadá rozumně (nejsou tam jen náhodné znaky), použij ho
+                if env_content and len(env_content) > 10:
+                    try:
+                        # Načíst proměnné pomocí dotenv_values
+                        env_vars = dotenv_values(stream=StringIO(env_content))
+                        # Nastavit do os.environ
+                        for key, value in env_vars.items():
+                            if key and value is not None:
+                                os.environ.setdefault(key, value)
+                        env_loaded = True
+                        break
+                    except Exception:
+                        # Pokud dotenv_values selže, zkusit načíst řádek po řádku
+                        try:
+                            for line in env_content.split('\n'):
+                                line = line.strip()
+                                if line and not line.startswith('#') and '=' in line:
+                                    key, value = line.split('=', 1)
+                                    key = key.strip()
+                                    value = value.strip().strip('"').strip("'")
+                                    if key:
+                                        os.environ.setdefault(key, value)
+                            env_loaded = True
+                            break
+                        except Exception:
+                            continue
+            except (UnicodeDecodeError, Exception):
+                continue
+        
+        # Pokud se nepodařilo načíst žádné kódování, zkusit standardní load_dotenv
+        if not env_loaded:
+            try:
+                load_dotenv(env_path)
+            except Exception:
+                # Pokud všechno selže, pokračovat bez .env souboru
+                import warnings
+                warnings.warn(f"Nepodařilo se načíst .env soubor z {env_path}. Používají se výchozí hodnoty.")
 except ImportError:
     pass  # python-dotenv není nainstalován
+except Exception as e:
+    # Při jakékoliv chybě pokračovat bez .env souboru
+    import warnings
+    warnings.warn(f"Chyba při načítání .env souboru: {e}. Používají se výchozí hodnoty.")
 
 # =============================================================================
 # SERVER CONFIGURATION
@@ -20,13 +67,15 @@ except ImportError:
 
 HOST = os.getenv("HOST", "0.0.0.0")  # 0.0.0.0 pro Cloudflare Tunnel, 127.0.0.1 pro lokální vývoj
 PORT = int(os.getenv("PORT", "8000"))
-ENVIRONMENT = os.getenv("ENVIRONMENT", "development")  # development | production
+ENVIRONMENT = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development"))  # development | production
 
 # =============================================================================
 # DATABASE
 # =============================================================================
 
-VEHICLE_DB_URL = os.getenv("VEHICLE_DB_URL", "sqlite:///./vehicles.db")
+# Databázová URL - podpora DATABASE_URL i VEHICLE_DB_URL (zpětná kompatibilita)
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("VEHICLE_DB_URL", "sqlite:///./vehicles.db")
+VEHICLE_DB_URL = DATABASE_URL  # Alias pro zpětnou kompatibilitu
 
 # =============================================================================
 # JWT CONFIGURATION
@@ -75,11 +124,28 @@ else:
 # EMAIL CONFIGURATION
 # =============================================================================
 
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+# SMTP konfigurace - podpora zpětné kompatibility (SMTP_SERVER -> SMTP_HOST)
+SMTP_HOST = os.getenv("SMTP_HOST") or os.getenv("SMTP_SERVER", "smtp.mail.webnode.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))  # Webnode používá SSL na 465, ne STARTTLS na 587
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM = os.getenv("SMTP_FROM", "noreply@toozservis.cz")
+SMTP_FROM = os.getenv("SMTP_FROM", "info@toozservis.cz")
+
+# =============================================================================
+# API CONFIGURATION V1.0
+# =============================================================================
+
+# API Base URL (pokud je používán na frontendu)
+API_BASE_URL = os.getenv("API_BASE_URL", PUBLIC_API_BASE_URL)
+
+# Frontend Base URL (pro redirecty)
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", PUBLIC_API_BASE_URL)
+
+# Feature flags
+ENABLE_SERVICE_MODULE = os.getenv("ENABLE_SERVICE_MODULE", "true").lower() == "true"
+
+# AI / Autopilot Configuration
+AUTOPILOT_SHARED_SECRET = os.getenv("AUTOPILOT_SHARED_SECRET", "")
 
 # =============================================================================
 # DATAOVOZIDLECH.CZ API CONFIGURATION (MDČR / Datová kostka)

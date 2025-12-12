@@ -1,8 +1,10 @@
-# 📝 Postup - Vložení TooZ Hub 2 aplikace do Webnode
+# 📝 Postup - Napojení TooZ Hub 2 aplikace na Webnode
 
 ## 🎯 Cíl
 
-Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhub-aplikace/**
+Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhub-aplikace/** pomocí přesměrování na:
+
+**https://hub.toozservis.cz/web/index.html**
 
 ---
 
@@ -15,45 +17,40 @@ Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhu
 
 ---
 
-## 🚀 Krok za krokem
+## 🚀 Hlavní postup (PŘESMĚROVÁNÍ - PRODUKČNÍ VARIANTA)
 
 ### Krok 1: Otevření Webnode editoru
 
 1. Přihlaste se do **Webnode** administrace
-2. Přejděte na stránku **"toozhub-aplikace"**
-   - Pokud stránka neexistuje, vytvořte ji:
-     - **Název stránky:** `toozhub-aplikace`
-     - **URL:** `/toozhub-aplikace/`
-     - **Typ:** běžná stránka
+2. Otevřete projekt **toozservis.cz**
+3. V horním menu klikněte na **Stránky**
 
-### Krok 2: Přidání HTML bloku
+### Krok 2: Vytvoření / otevření stránky
 
-1. V editoru klikněte na **"Přidat prvek"** nebo **"+"** (plus)
-2. Vyberte **"HTML / Code"** nebo **"Vlastní HTML"**
-3. Klikněte na prvek pro úpravu
+1. Přidejte novou stránku nebo upravte existující stránku:
+   - **Název stránky:** `TooZ Hub aplikace` (doporučeno)
+   - **URL / adresa:** `/toozhub-aplikace/`
+   - **Typ:** běžná stránka
 
-### Krok 3: Vložení iframe kódu
+### Krok 3: Nastavení přesměrování
 
-**Zkopírujte a vložte tento HTML kód:**
+1. V nastavení této stránky najděte sekci:
+   - **„Přesměrovat na jinou webovou stránku"**  
+     (nebo podobný text podle UI Webnode - může být v "Nastavení stránky" → "Přesměrování")
 
-```html
-<div style="width: 100%; height: 90vh; min-height: 800px; margin: 0; padding: 0;">
-    <iframe 
-        id="toozhub-app-frame"
-        src="https://hub.toozservis.cz/web/index.html" 
-        style="width: 100%; height: 100%; min-height: 800px; border: none; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block;"
-        allow="camera; microphone; geolocation"
-        scrolling="auto"
-        title="TooZ Hub 2 - Vozový park">
-    </iframe>
-</div>
-```
+2. Do pole „URL adresa" nebo „Adresa pro přesměrování" vložte:
 
-### Krok 4: Uložení a publikování
+   ```
+   https://hub.toozservis.cz/web/index.html
+   ```
 
-1. Klikněte na **"Uložit"** nebo **"OK"** v HTML editoru
-2. Uložte stránku v Webnode editoru
-3. Publikujte změny (pokud je potřeba)
+3. Uložte změny v nastavení stránky
+
+### Krok 4: Publikace
+
+1. Uložte změny v editoru Webnode
+2. Klikněte na **Publikovat**
+3. Počkejte na dokončení publikace
 
 ### Krok 5: Testování
 
@@ -61,75 +58,17 @@ Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhu
    ```
    https://www.toozservis.cz/toozhub-aplikace/
    ```
-2. ✅ Aplikace by se měla načíst a zobrazit
-3. ✅ Měla by být dostupná přihlašovací obrazovka
-4. ✅ API volání by měla fungovat automaticky (API URL se detekuje automaticky)
 
----
+2. ✅ Stránka se musí automaticky přesměrovat na:
+   ```
+   https://hub.toozservis.cz/web/index.html
+   ```
 
-## 🎨 Upravená verze s lepším vzhledem (volitelné)
+3. ✅ Aplikace TooZ Hub 2 se načte přes celou stránku
 
-Pokud chcete lepší vzhled s loading indikátorem, použijte tuto verzi:
+4. ✅ Měla by být dostupná přihlašovací obrazovka
 
-```html
-<div id="toozhub-container" style="width: 100%; height: 90vh; min-height: 800px; margin: 20px auto; padding: 0; position: relative;">
-    <div id="loading-indicator" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #667eea; font-size: 18px; z-index: 1;">
-        Načítání aplikace TooZ Hub 2...
-    </div>
-    <iframe 
-        id="toozhub-app-frame"
-        src="https://hub.toozservis.cz/web/index.html" 
-        style="width: 100%; height: 100%; min-height: 800px; border: none; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: block; opacity: 0; transition: opacity 0.3s ease-in-out;"
-        allow="camera; microphone; geolocation"
-        scrolling="auto"
-        title="TooZ Hub 2 - Vozový park"
-        onload="document.getElementById('loading-indicator').style.display='none'; document.getElementById('toozhub-app-frame').style.opacity='1';">
-    </iframe>
-</div>
-
-<script>
-    // Timeout pro skrytí loading indikátoru (pokud se iframe nenačte do 10 sekund)
-    setTimeout(function() {
-        var loading = document.getElementById('loading-indicator');
-        var iframe = document.getElementById('toozhub-app-frame');
-        if (loading && loading.style.display !== 'none') {
-            loading.innerHTML = 'Chyba při načítání aplikace. Zkuste obnovit stránku.';
-            loading.style.color = '#e53e3e';
-        }
-        if (iframe && iframe.style.opacity === '0') {
-            iframe.style.opacity = '1';
-        }
-    }, 10000);
-</script>
-```
-
----
-
-## 📱 Responzivní verze (pro mobilní zařízení)
-
-Pokud chcete lepší zobrazení na mobilních zařízeních:
-
-```html
-<div style="width: 100%; height: 90vh; min-height: 600px; margin: 0; padding: 10px; box-sizing: border-box;">
-    <iframe 
-        id="toozhub-app-frame"
-        src="https://hub.toozservis.cz/web/index.html" 
-        style="width: 100%; height: 100%; min-height: 600px; border: none; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block;"
-        allow="camera; microphone; geolocation"
-        scrolling="auto"
-        title="TooZ Hub 2 - Vozový park">
-    </iframe>
-</div>
-
-<style>
-    @media (max-width: 768px) {
-        #toozhub-app-frame {
-            min-height: 500px !important;
-            border-radius: 0 !important;
-        }
-    }
-</style>
-```
+5. ✅ API volání by měla fungovat automaticky (API URL se detekuje automaticky)
 
 ---
 
@@ -142,29 +81,17 @@ Pokud chcete lepší zobrazení na mobilních zařízeních:
    # V prohlížeči otevřít:
    https://hub.toozservis.cz/health
    ```
-   Mělo by vrátit: `{"status":"online",...}`
+   Mělo by vrátit: `{"status":"online","version":"2.1.0",...}`
 
-2. **Zkontrolujte konzoli prohlížeče:**
+2. **Zkontrolujte, že přesměrování funguje:**
+   - Otevřete Developer Tools (F12) → Network tab
+   - Obnovte stránku `https://www.toozservis.cz/toozhub-aplikace/`
+   - Mělo by dojít k přesměrování (HTTP 301/302) na `https://hub.toozservis.cz/web/index.html`
+
+3. **Zkontrolujte konzoli prohlížeče:**
    - Otevřít Developer Tools (F12)
    - Karta "Console"
    - Hledat chyby (červené texty)
-
-3. **Zkontrolujte CORS:**
-   - V konzoli hledat chyby typu "CORS policy"
-   - Zkontrolujte, že `.env` obsahuje:
-     ```
-     ALLOWED_ORIGINS=https://www.toozservis.cz,https://toozservis.cz
-     ```
-
-### Černý prázdný prostor místo aplikace
-
-1. **Zkontrolujte výšku iframe:**
-   - Zkuste změnit `height: 90vh` na `height: 1200px`
-   - Nebo použít `min-height: 1200px`
-
-2. **Zkontrolujte, že URL je správná:**
-   - Měla by být: `https://hub.toozservis.cz/web/index.html`
-   - Otevřete URL přímo v prohlížeči a zkontrolujte, že funguje
 
 ### Aplikace se načítá, ale API nefunguje
 
@@ -178,16 +105,56 @@ Pokud chcete lepší zobrazení na mobilních zařízeních:
    - Zkuste přihlásit se
    - Zkontrolujte, kam jdou API požadavky (měly by jít na `https://hub.toozservis.cz`)
 
+### Přesměrování nefunguje
+
+1. **Zkontrolujte nastavení stránky v Webnode:**
+   - Otevřete stránku `/toozhub-aplikace/` v editoru
+   - Zkontrolujte, že je zapnuté přesměrování
+   - Zkontrolujte, že URL je správná: `https://hub.toozservis.cz/web/index.html`
+
+2. **Zkuste alternativní způsob:**
+   - Pokud Webnode nepodporuje přesměrování v nastavení stránky, použijte alternativní postup (viz níže)
+
+---
+
+## 🔄 Alternativní postup (iframe – nedoporučeno pro produkci)
+
+> **⚠️ POZNÁMKA:** Tato varianta se v produkci nepoužívá. Slouží pouze jako alternativní / vývojářská možnost.
+
+Pokud z nějakého důvodu nemůžete použít přesměrování, můžete použít iframe variantu:
+
+1. Otevřete stránku `/toozhub-aplikace/` v Webnode editoru
+2. Klikněte na **"Přidat prvek"** → **"HTML / Code"**
+3. Vložte tento kód:
+
+```html
+<div style="width: 100%; height: 90vh; min-height: 800px; margin: 0; padding: 0;">
+    <iframe 
+        src="https://hub.toozservis.cz/web/index.html" 
+        style="width: 100%; height: 100%; min-height: 800px; border: none; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"
+        allow="camera; microphone; geolocation"
+        title="TooZ Hub 2 - Vozový park">
+    </iframe>
+</div>
+```
+
+**Nebo použijte podrobný návod v souboru:** `WEBNODE_IFRAME_VARIANTA_DEV.md`
+
+> **Důležité:** Tato varianta má omezení a není doporučena pro produkci. Preferujte přesměrování.
+
 ---
 
 ## 📋 Kontrolní seznam
 
 - [ ] ✅ Backend běží na `https://hub.toozservis.cz`
 - [ ] ✅ Aplikace je dostupná na `https://hub.toozservis.cz/web/index.html`
+- [ ] ✅ Health check vrací: `{"status":"online"}`
 - [ ] ✅ Stránka `toozhub-aplikace` existuje v Webnode
-- [ ] ✅ HTML kód byl vložen do Webnode editoru
-- [ ] ✅ Stránka byla uložena a publikována
-- [ ] ✅ Aplikace se načítá na `https://www.toozservis.cz/toozhub-aplikace/`
+- [ ] ✅ Přesměrování je nastaveno v nastavení stránky
+- [ ] ✅ URL přesměrování: `https://hub.toozservis.cz/web/index.html`
+- [ ] ✅ Stránka byla publikována
+- [ ] ✅ Přesměrování funguje na `https://www.toozservis.cz/toozhub-aplikace/`
+- [ ] ✅ Aplikace se načítá správně
 - [ ] ✅ Přihlášení funguje
 - [ ] ✅ API volání fungují
 
@@ -199,11 +166,16 @@ Po dokončení všech kroků bude aplikace dostupná na:
 
 **https://www.toozservis.cz/toozhub-aplikace/**
 
+Stránka automaticky přesměruje na:
+
+**https://hub.toozservis.cz/web/index.html**
+
 Aplikace bude:
 - ✅ Automaticky používat produkční API (`https://hub.toozservis.cz`)
 - ✅ Fungovat bez jakýchkoliv manuálních nastavení
 - ✅ Být responzivní pro mobilní zařízení
 - ✅ Podporovat přihlášení, registraci a správu vozidel
+- ✅ Zobrazena přes celou stránku (ne v iframe)
 
 ---
 
@@ -218,10 +190,6 @@ Aplikace bude:
    - Můžete stránku nastavit jako "Pouze pro přihlášené" v Webnode nastavení
    - Nebo použít Webnode ochranu stránky heslem
 
-3. **Optimalizace výkonu:**
-   - Iframe se načítá až při zobrazení stránky
-   - Pokud je stránka dlouhá, iframe můžete umístit až dolů (lazy loading)
-
 ---
 
 ## 📞 Podpora
@@ -231,10 +199,8 @@ Pokud narazíte na problémy:
 1. Zkontrolujte sekci "Řešení problémů" výše
 2. Otevřete Developer Tools (F12) a zkontrolujte chyby v Console
 3. Otestujte, že backend běží: `https://hub.toozservis.cz/health`
+4. Zkuste otevřít aplikaci přímo: `https://hub.toozservis.cz/web/index.html`
 
 ---
 
 **Hotovo! Aplikace je nyní dostupná na vašem webu!** 🎉
-
-
-

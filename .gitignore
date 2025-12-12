@@ -1,13 +1,27 @@
-venv/
-__pycache__/
-*/__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.aider*
+# QA artifacts
+artifacts/qa/
+test_vehicles.db
 
-# Konfigurační soubory s citlivými údaji
-.toozhub_webnode_config.json
-*_config.json
-*.env
-.env
+# Playwright
+tests/e2e/node_modules/
+tests/e2e/.playwright/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

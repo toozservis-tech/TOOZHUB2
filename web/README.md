@@ -7,20 +7,13 @@
    - Najděte řádek: `const API_URL = ...`
    - Nastavte URL vašeho API serveru (např. `http://127.0.0.1:8001` nebo `https://hub.toozservis.cz`)
 
-2. **Vložení do Webnode:**
-   - Zkopírujte obsah `index.html`
-   - V Webnode editoru přidejte HTML blok
-   - Vložte zkopírovaný kód
+2. **Napojení na Webnode (produkční metoda):**
+   - V nastavení stránky `/toozhub-aplikace/` v Webnode nastavte přesměrování na:
+   - `https://hub.toozservis.cz/web/index.html`
+   - Viz podrobnější návod: `RYCHLY_POSTUP_WEBNODE.md` nebo `POSTUP_VLOZENI_DO_WEBNODE.md`
 
-3. **Nebo použijte iframe:**
-   ```html
-   <iframe 
-       src="https://hub.toozservis.cz/web/index.html" 
-       width="100%" 
-       height="800px" 
-       frameborder="0">
-   </iframe>
-   ```
+3. **Alternativní iframe varianta (nedoporučeno pro produkci):**
+   - Viz `WEBNODE_IFRAME_VARIANTA_DEV.md` pro vývojářskou iframe variantu
 
 ## Funkce
 

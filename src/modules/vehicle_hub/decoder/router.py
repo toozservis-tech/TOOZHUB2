@@ -222,3 +222,4 @@ async def decode_plate(req: PlateDecodeRequest) -> VehicleDecodeResponse:
         errors=[]
     )
 
+

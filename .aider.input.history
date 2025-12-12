@@ -1,0 +1,208 @@
+
+# 2025-11-23 14:31:58.607668
++y
+
+# 2025-11-23 14:32:50.022915
++Create a clean project skeleton for the TooZ Hub 2 desktop application inside this folder. Use Python and PySide6. Do not implement any logic yet. I will provide the full module structure next. For now, create only:
++
++- a main application entry point in src/app/main.py
++- a minimal PySide6 main window with a central placeholder
++- create the folder structure: src/app, src/core, src/modules
++- create a minimal README.md describing how to run the app
++- create requirements.txt including PySide6
++
++Only create the files and folders. Do not add any extra content.
++
+
+# 2025-11-23 14:35:18.628880
++Create the module folder structure for the application. For each module, create an empty controller.py and service.py file with only a TODO comment inside. Do not implement any logic. The modules to create inside src/modules/ are: ai_assistant, email_client, calendar, pdf_manager, image_tools, voice, vehicle_hub. Each module gets a controller.py and service.py. Do not modify existing files.
++
+
+# 2025-11-23 14:40:38.175830
++Add a left sidebar to the main window in src/app/main.py using PySide6. The sidebar should contain buttons for modules: AI Assistant, Email, Calendar, PDF, Images, Voice, Vehicle Hub, Settings. When a button is clicked, switch the central QStackedWidget to the correct module placeholder. Each module should have a simple QWidget placeholder with a label showing the module name. Do not add any logic inside modules, only UI switching.
++
+
+# 2025-11-23 14:51:15.213186
++Implement the first functional version of the Vehicle Hub module.
++
++1) Update src/modules/vehicle_hub/service.py
++
++Replace its contents with:
++
++- A dataclass Vehicle with fields:
++  - vin: str
++  - plate: str
++  - name: str
++  - brand: str | None = None
++  - model: str | None = None
++  - year: int | None = None
++  - engine: str | None = None
++  - notes: str | None = None
++
++- A dataclass ServiceRecord with fields:
++  - vehicle_vin: str
++  - date: str  (store as ISO string "YYYY-MM-DD" for now)
++  - odometer_km: int
++  - price: float
++  - description: str
++  - category: str
++
++- A class VehicleHubService with:
++  - an in-memory store: a dict[str, Vehicle] for vehicles and a list[ServiceRecord] for records
++  - methods:
++    - add_vehicle(self, vehicle: Vehicle) -> None
++      - if VIN already exists, overwrite the existing vehicle
++    - get_all_vehicles(self) -> list[Vehicle]
++    - get_vehicle(self, vin: str) -> Vehicle | None
++    - add_service_record(self, record: ServiceRecord) -> None
++    - get_records_for_vehicle(self, vin: str) -> list[ServiceRecord]
++    - stub method decode_vin(self, vin: str) -> dict[str, str]:
++        - for now just return an empty dict (TODO: connect real VIN API later)
++
++Do not call any external APIs, just keep everything in memory with clear TODOs.
++
++2) Update src/modules/vehicle_hub/controller.py
++
++Replace its contents with:
++
++- from PySide6 import imports
++- from modules.vehicle_hub.service import VehicleHubService, Vehicle
++
++- A QWidget subclass called VehicleHubWidget that:
++  - creates its own instance of VehicleHubService
++  - layout:
++    - vertical QVBoxLayout
++    - on top: a horizontal bar with a QPushButton "Přidat vozidlo"
++    - below: a QTableWidget that lists all vehicles (columns: VIN, SPZ, Název, Rok, Motor)
++    - at the bottom: a read-only QTextEdit showing details of the selected vehicle (VIN, SPZ, name, notes, and a simple count of service records)
++
++  - when the "Přidat vozidlo" button is clicked:
++    - open a simple QDialog with QFormLayout and QLineEdit fields:
++      - VIN
++      - SPZ
++      - Název vozidla
++    - after OK, create a Vehicle instance with provided data and add it via VehicleHubService.add_vehicle
++    - refresh the table
++
++  - when the user selects a row in the table:
++    - load the corresponding Vehicle by VIN from the service
++    - show its details in the QTextEdit
++    - (records listing can be added later, just show how many service records exist for now)
++
++Keep the code simple and readable, no extra logic beyond this.
++
++3) Wire the VehicleHubWidget into the main window:
++
++In src/app/main.py:
++- import VehicleHubWidget at the top:
++  - from modules.vehicle_hub.controller import VehicleHubWidget
++
++- instead of using _make_placeholder_page("Vehicle Hub") for the Vehicle Hub page, create:
++  - self.page_vehicle = VehicleHubWidget()
++
++Leave the other pages as simple placeholders for now.
++
++At the end, run flake8 if configured, and print a short summary:
++- which files were changed
++- how to start the app: "python -m src.app.main" inside the venv
++
+
+# 2025-11-23 14:53:52.193521
++y
+
+# 2025-11-23 15:26:15.259917
++Update src/modules/vehicle_hub/service.py and src/modules/vehicle_hub/controller.py to add full VIN decoding support using api_vin.py. Implement BOTH automatic decoding after typing 17 characters AND a manual button "Načíst VIN".
++
++===========================
++1) SERVICE.PY
++===========================
++
++In src/modules/vehicle_hub/service.py:
++
++- Import decode_vin_api from .api_vin
++- Replace the current decode_vin() implementation with:
++
++    def decode_vin(self, vin: str) -> dict:
++        """
++        Decodes VIN using decode_vin_api() from api_vin.py (MDČR logic).
++        Returns full dict including brand, model, year, engine and tyre sizes.
++        """
++        vin = vin.strip().upper()
++        if not vin:
++            return {}
++        try:
++            data = decode_vin_api(vin)
++            return data or {}
++        except Exception as e:
++            print("VIN decode error:", e)
++            return {}
++
++===========================
++2) CONTROLLER.PY – AddVehicleDialog
++===========================
++
++Update AddVehicleDialog in src/modules/vehicle_hub/controller.py:
++
++- Add new input fields:
++    self.brand_input = QLineEdit()
++    self.model_input = QLineEdit()
++    self.year_input = QLineEdit()
++    self.engine_input = QLineEdit()
++    self.notes_input = QLineEdit()
++
++- Extend the dialog UI:
++    Add rows:
++        "Značka", "Model", "Rok", "Motor", "Poznámka"
++
++- Add a QPushButton "Načíst VIN"
++- When pressed:
++      1) get VIN
++      2) call self.parent().service.decode_vin(vin)
++      3) fill brand/model/year/engine/notes
++
++- Add automatic VIN decoding:
++      Connect VIN field textChanged event:
++      If len(VIN) == 17:
++            same as above (auto decode)
++
++- Tyre sizes:
++      If VIN data contains tyre list or alternative tyres:
++           merge them into a single text block
++           put them into notes_input
++
++- Modify get_data() so that returned Vehicle includes:
++      brand, model, year, engine, notes
++
++===========================
++3) VehicleHubWidget updates
++===========================
++
++- When saving a new vehicle, accept the new fields from the dialog.
++- Show these extended fields in the vehicle detail panel:
++      brand
++      model
++      year
++      engine
++      notes
++- Do NOT change table columns yet.
++
++===========================
++END
++===========================
++
++The final result:
++- VIN decoding works automatically AND via button
++- Vehicle fields get filled from MDČR VIN data
++- All tyre sizes automatically appear in the notes field
++
+
+# 2025-11-23 17:30:04.933395
++cd ~/TOOZHUB2
++git status
++
+
+# 2025-11-23 17:31:58.835638
++n
+
+# 2025-11-23 17:32:06.323957
++/exit
