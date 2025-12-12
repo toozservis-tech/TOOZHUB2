@@ -454,6 +454,35 @@ Pro spuštění production smoke testů musíš nastavit v GitHub Settings → S
 
 **⚠️ Důležité:** Workflow **NEOpravuje problémy automaticky** - pouze je detekuje. Když selže, musíš problém opravit ručně a pushnout opravu.
 
+### 🤖 Automatická oprava workflow chyb
+
+Projekt obsahuje **automatický systém pro detekci a opravu workflow chyb**:
+
+**Workflow:** `.github/workflows/auto-fix.yml`
+
+**Co dělá:**
+- ✅ Automaticky analyzuje failed workflow runy
+- ✅ Identifikuje typ chyby
+- ✅ Pokusí se automaticky opravit (pokud je to možné)
+- ✅ Vytvoří Pull Request s opravami
+- ✅ Nebo vytvoří Issue, pokud oprava vyžaduje manuální zásah
+
+**Spuštění:**
+- Automaticky po každém failed workflow runu
+- Automaticky každých 30 minut (scheduled check)
+- Ručně přes GitHub Actions UI (workflow_dispatch)
+
+**Lokální monitoring:**
+```powershell
+# Jednorázová kontrola
+.\scripts\auto_fix_workflows.ps1 -RunOnce
+
+# Kontinuální monitoring (kontrola každých 5 minut)
+.\scripts\auto_fix_workflows.ps1 -CheckInterval 300
+```
+
+Více informací v [docs/AUTO_FIX_GUIDE.md](docs/AUTO_FIX_GUIDE.md).
+
 Více informací v [CI_IMPLEMENTATION.md](CI_IMPLEMENTATION.md) a [docs/WORKFLOW_TROUBLESHOOTING.md](docs/WORKFLOW_TROUBLESHOOTING.md).
 
 ## 📄 Licence
