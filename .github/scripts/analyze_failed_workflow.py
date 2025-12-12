@@ -130,8 +130,14 @@ def main():
     # Get workflow run ID from environment or find latest failed run
     run_id = None
     if WORKFLOW_RUN_ID:
-        run_id = int(WORKFLOW_RUN_ID)
-    else:
+        try:
+            run_id = int(WORKFLOW_RUN_ID)
+        except ValueError:
+            print(f"WARNING: Invalid WORKFLOW_RUN_ID: {WORKFLOW_RUN_ID}")
+            run_id = None
+    
+    # If no run_id from env, find latest failed run
+    if not run_id:
         failed_runs = get_failed_workflow_runs()
         if not failed_runs:
             print("No failed workflow runs found")
