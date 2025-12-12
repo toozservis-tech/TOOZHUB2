@@ -67,6 +67,9 @@ desktop.ini
 secrets/
 *.secret
 
+# Pre-commit
+.secrets.baseline
+
 # Data directories (může obsahovat citlivá data)
 data/uploads/
 data/pdfs/
