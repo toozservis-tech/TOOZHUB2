@@ -40,9 +40,10 @@ jobs:
         id: analyze
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          python .github/scripts/analyze_failed_workflow.py
+          python3 .github/scripts/analyze_failed_workflow.py
       
       - name: Create fix branch
         if: steps.analyze.outputs.has_errors == 'true'
