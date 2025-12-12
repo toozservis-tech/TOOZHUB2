@@ -40,6 +40,21 @@ except ImportError as e:
     print(f"[SERVER] Warning: Vehicle Decoder Engine není dostupný: {e}")
     DECODER_AVAILABLE = False
 
+# Import AI Features modely, aby se tabulky vytvořily
+try:
+    from src.modules.ai_features.models import (
+        UsageAnalytics,
+        FeatureSuggestion,
+        FeatureVote,
+        FeatureFeedback,
+        FeatureDependency,
+        AutoImplementationLog
+    )
+    AI_FEATURES_AVAILABLE = True
+except ImportError as e:
+    print(f"[SERVER] Warning: AI Features modely nejsou dostupné: {e}")
+    AI_FEATURES_AVAILABLE = False
+
 # Vytvoření tabulek
 Base.metadata.create_all(bind=engine)
 
@@ -189,6 +204,16 @@ try:
     print("[SERVER] Instances API router zaregistrován: /api/instances/")
 except ImportError as e:
     print(f"[SERVER] Warning: Instances API router není dostupný: {e}")
+    import traceback
+    traceback.print_exc()
+
+# Include AI Features router (automatické navrhování funkcí)
+try:
+    from src.modules.ai_features.routers import router as ai_features_router
+    app.include_router(ai_features_router)
+    print("[SERVER] AI Features router zaregistrován: /api/v1/ai-features/")
+except ImportError as e:
+    print(f"[SERVER] Warning: AI Features router není dostupný: {e}")
     import traceback
     traceback.print_exc()
 
@@ -1166,6 +1191,7 @@ def init_version_history():
     """Inicializuje historii verzí - zapíše aktuální verzi, pokud tam není"""
     try:
         from src.server.version import read_version, log_version_update
+        from src.modules.vehicle_hub.models import VersionHistory
         
         db = SessionLocal()
         try:
@@ -1181,9 +1207,9 @@ def init_version_history():
                     version=current_version,
                     description="Kompletní redesign UI + zavedení verzování"
                 )
-                print(f"[SERVER] ✅ Verze {current_version} zapsána do historie verzí")
+                print(f"[SERVER] OK: Verze {current_version} zapisana do historie verzi")
             else:
-                print(f"[SERVER] ℹ️  Verze {current_version} už je v historii verzí")
+                print(f"[SERVER] INFO: Verze {current_version} uz je v historii verzi")
         finally:
             db.close()
     except Exception as e:

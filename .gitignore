@@ -1,3 +1,27 @@
+# Environment variables - KRITICKÉ: NIKDY necommitujte .env!
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# Logs
+*.log
+logs/
+tunnel.log
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+vehicles.db
+test_vehicles.db
+
+# Cache
+.aider.tags.cache.v4/
+*.cache
+__pycache__/
+
 # QA artifacts
 artifacts/qa/
 test_vehicles.db
@@ -7,7 +31,6 @@ tests/e2e/node_modules/
 tests/e2e/.playwright/
 
 # Python
-__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -15,13 +38,36 @@ __pycache__/
 venv/
 env/
 ENV/
+.venv/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+
+# Secrets and keys
+*.pem
+*.key
+*.crt
+secrets/
+*.secret
+
+# Data directories (může obsahovat citlivá data)
+data/uploads/
+data/pdfs/
+data/images/
