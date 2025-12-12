@@ -447,7 +447,14 @@ Pro spuštění production smoke testů musíš nastavit v GitHub Settings → S
 - Najdete v GitHub Actions UI → "Production Smoke Tests" workflow → "Artifacts"
 - Retention: 30 dní
 
-Více informací v [CI_IMPLEMENTATION.md](CI_IMPLEMENTATION.md).
+**Jak poznat problém:**
+- ❌ **Červený křížek** v GitHub Actions = workflow selhal
+- 📧 **Email notifikace** (pokud máš zapnuté v GitHub Settings → Notifications)
+- 📊 **Artefakty** obsahují screenshoty a logy z failed testů
+
+**⚠️ Důležité:** Workflow **NEOpravuje problémy automaticky** - pouze je detekuje. Když selže, musíš problém opravit ručně a pushnout opravu.
+
+Více informací v [CI_IMPLEMENTATION.md](CI_IMPLEMENTATION.md) a [docs/WORKFLOW_TROUBLESHOOTING.md](docs/WORKFLOW_TROUBLESHOOTING.md).
 
 ## 📄 Licence
 
