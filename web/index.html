@@ -7,6 +7,7 @@
     <title>TooZ Hub 2</title>
     <link rel="stylesheet" href="theme.css" />
     <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="inline-styles.css" />
     <style>
         * {
             margin: 0;
@@ -2380,19 +2381,19 @@
         <nav class="navbar hidden" id="mainNavbar">
             <div class="navbar-brand">
                 <span class="logo">🚗</span>
-                <span class="brand-text">TooZ Hub 2 <span id="navbarVersion" style="font-size: 0.75em; opacity: 0.8; font-weight: normal;">v2.2.0</span></span>
+                <span class="brand-text">TooZ Hub 2 <span id="navbarVersion">v2.2.0</span></span>
             </div>
             <div class="navbar-stats">
                 <span id="userBadge" class="stat-badge hidden">
                     <strong>Přihlášen jako:</strong> <span id="userEmail"></span>
                 </span>
                 <span id="serverStatus" class="stat-badge">
-                    <div id="statusIndicator" style="width: 10px; height: 10px; border-radius: 50%; background: #ff6b6b; display: inline-block; margin-right: 6px;"></div>
+                    <div id="statusIndicator"></div>
                     <span id="statusText">Kontroluji server...</span>
                 </span>
             </div>
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <button id="configButton" class="config-button hidden" onclick="showApiUrlConfig()" title="Nastavit API URL (pouze pro admina)" style="background: transparent; border: none; font-size: 20px; cursor: pointer; padding: 5px;">⚙️</button>
+            <div class="navbar-actions">
+                <button id="configButton" class="config-button hidden" onclick="showApiUrlConfig()" title="Nastavit API URL (pouze pro admina)">⚙️</button>
                 <button id="logout-btn" class="btn-logout hidden" onclick="handleLogout()" data-testid="btn-logout">Odhlásit se</button>
             </div>
         </nav>
@@ -2401,7 +2402,7 @@
             <!-- Konfigurace API URL (pouze pro DEV) -->
             <div id="dev-api-url-panel" class="api-url-config hidden">
                 <h3>🔧 Nastavení API URL (DEV)</h3>
-                <p style="margin: 10px 0; color: #856404;">
+                <p>
                     Pro lokální vývoj můžete nastavit vlastní API URL.
                     <br><strong>Postup:</strong>
                     <br>1. Zadejte URL vašeho API serveru (např. http://127.0.0.1:8001)
@@ -2410,9 +2411,9 @@
                 <div class="api-url-input-group">
                     <input type="text" id="apiUrlInput" placeholder="http://127.0.0.1:8001" value="">
                     <button onclick="saveApiUrl()">Uložit</button>
-                    <button onclick="hideApiUrlConfig()" style="background: #6c757d; color: white;">Zavřít</button>
+                    <button onclick="hideApiUrlConfig()" class="close-button-secondary">Zavřít</button>
                 </div>
-                <p id="currentApiUrl" style="margin-top: 10px; font-size: 12px; color: #856404;"></p>
+                <p id="currentApiUrl"></p>
             </div>
 
             <!-- Přihlašovací sekce -->
@@ -2420,7 +2421,7 @@
                 <div id="alertContainer" data-testid="alert-container"></div>
                 
                 <div id="loginForm" data-testid="login-form">
-                    <h2 style="margin-bottom: 20px; text-align: center;">Přihlášení</h2>
+                    <h2>Přihlášení</h2>
                     <div class="form-group">
                         <label for="loginEmail">Email:</label>
                         <input type="email" id="loginEmail" data-testid="input-email" placeholder="email@example.com" required>
@@ -2429,48 +2430,48 @@
                         <label for="loginPassword">Heslo:</label>
                         <input type="password" id="loginPassword" data-testid="input-password" placeholder="Heslo" required>
                     </div>
-                    <div style="display: flex; gap: 10px; margin-top: 20px;">
-                        <button class="btn" onclick="handleLogin()" data-testid="btn-login" style="flex: 1;">Přihlásit se</button>
-                        <button class="btn btn-secondary" onclick="showRegister()" data-testid="btn-show-register" style="flex: 1;">Registrace</button>
+                    <div class="form-button-group">
+                        <button class="btn" onclick="handleLogin()" data-testid="btn-login">Přihlásit se</button>
+                        <button class="btn btn-secondary" onclick="showRegister()" data-testid="btn-show-register">Registrace</button>
                     </div>
-                    <div style="text-align: center; margin-top: 15px;">
-                        <a href="#" onclick="handleForgotPassword(); return false;" style="color: #6366f1; text-decoration: none; font-size: 0.9em;">Zapomenuté heslo?</a>
+                    <div class="forgot-password-link">
+                        <a href="#" onclick="handleForgotPassword(); return false;">Zapomenuté heslo?</a>
                     </div>
-                    <div id="resetPasswordContainer" style="margin-top: 15px; min-height: 20px;"></div>
-                    <div id="loginErrorContainer" style="margin-top: 15px; min-height: 20px;"></div>
+                    <div id="resetPasswordContainer"></div>
+                    <div id="loginErrorContainer"></div>
                 </div>
 
                 <div id="registerForm" class="hidden" data-testid="register-form">
-                    <h2 style="margin-bottom: 20px; text-align: center;">Registrace</h2>
+                    <h2>Registrace</h2>
                     <div class="form-group">
                         <label for="regIco">IČO (pro automatické vyplnění údajů):</label>
-                        <input type="text" id="regIco" data-testid="input-reg-ico" placeholder="12345678" maxlength="8" style="width: 100%;">
-                        <small style="color: #999; font-size: 0.85em; display: block; margin-top: 5px;">Po zadání 8 číslic se automaticky načtou údaje z ARES</small>
+                        <input type="text" id="regIco" data-testid="input-reg-ico" placeholder="12345678" maxlength="8">
+                        <small class="ares-info-text">Po zadání 8 číslic se automaticky načtou údaje z ARES</small>
                     </div>
-                    <div id="aresDataFields" style="display: none; margin-top: 20px; padding: 15px; background: rgba(99, 102, 241, 0.1); border-radius: 8px; border-left: 3px solid #6366f1;">
+                    <div id="aresDataFields">
                         <div class="form-group">
                             <label for="regName">Název firmy:</label>
-                            <input type="text" id="regName" placeholder="Načte se z ARES" readonly style="background: rgba(255,255,255,0.3);">
+                            <input type="text" id="regName" placeholder="Načte se z ARES" readonly>
                         </div>
                         <div class="form-group">
                             <label for="regDic">DIČ:</label>
-                            <input type="text" id="regDic" placeholder="Načte se z ARES" readonly style="background: rgba(255,255,255,0.3);">
+                            <input type="text" id="regDic" placeholder="Načte se z ARES" readonly>
                         </div>
                         <div class="form-group">
                             <label for="regStreet">Ulice:</label>
-                            <input type="text" id="regStreet" placeholder="Načte se z ARES" readonly style="background: rgba(255,255,255,0.3);">
+                            <input type="text" id="regStreet" placeholder="Načte se z ARES" readonly>
                         </div>
                         <div class="form-group">
                             <label for="regStreetNumber">Číslo popisné:</label>
-                            <input type="text" id="regStreetNumber" placeholder="Načte se z ARES" readonly style="background: rgba(255,255,255,0.3);">
+                            <input type="text" id="regStreetNumber" placeholder="Načte se z ARES" readonly>
                         </div>
                         <div class="form-group">
                             <label for="regCity">Město:</label>
-                            <input type="text" id="regCity" placeholder="Načte se z ARES" readonly style="background: rgba(255,255,255,0.3);">
+                            <input type="text" id="regCity" placeholder="Načte se z ARES" readonly>
                         </div>
                         <div class="form-group">
                             <label for="regZip">PSČ:</label>
-                            <input type="text" id="regZip" placeholder="Načte se z ARES" readonly style="background: rgba(255,255,255,0.3);">
+                            <input type="text" id="regZip" placeholder="Načte se z ARES" readonly>
                         </div>
                     </div>
                     <div class="form-group">
@@ -2489,11 +2490,11 @@
                         <label for="regPasswordConfirm">Potvrzení hesla *:</label>
                         <input type="password" id="regPasswordConfirm" data-testid="input-reg-password-confirm" placeholder="Potvrzení hesla" required>
                     </div>
-                    <div style="display: flex; gap: 10px; margin-top: 20px;">
-                        <button class="btn" onclick="handleRegister()" data-testid="btn-register" style="flex: 1;">Registrovat</button>
-                        <button class="btn btn-secondary" onclick="showLogin()" data-testid="btn-back-to-login" style="flex: 1;">Zpět na přihlášení</button>
+                    <div class="form-button-group">
+                        <button class="btn" onclick="handleRegister()" data-testid="btn-register">Registrovat</button>
+                        <button class="btn btn-secondary" onclick="showLogin()" data-testid="btn-back-to-login">Zpět na přihlášení</button>
                     </div>
-                    <div id="registerErrorContainer" style="margin-top: 15px; min-height: 20px;"></div>
+                    <div id="registerErrorContainer"></div>
                 </div>
             </div>
 
@@ -2515,7 +2516,7 @@
                     </div>
                     
                     <!-- Modal okno pro detail vozidla -->
-                    <div id="vehicleDetailModal" class="vehicle-modal" style="display: none;" data-testid="vehicle-detail-modal">
+                    <div id="vehicleDetailModal" class="vehicle-modal" data-testid="vehicle-detail-modal">
                         <div class="vehicle-modal-overlay" onclick="closeVehicleModal()"></div>
                         <div class="vehicle-modal-content">
                             <div class="vehicle-modal-header">
@@ -2529,9 +2530,9 @@
                     </div>
                     
                     <!-- Modal okno pro přidání servisního záznamu (menší - 1/3 šířky) -->
-                    <div id="addServiceRecordModal" class="vehicle-modal" style="display: none;">
+                    <div id="addServiceRecordModal" class="vehicle-modal">
                         <div class="vehicle-modal-overlay" onclick="closeAddServiceRecordModal()"></div>
-                        <div class="vehicle-modal-content service-record-add-modal" style="max-width: 400px; width: 33%;">
+                        <div class="vehicle-modal-content service-record-add-modal">
                             <div class="vehicle-modal-header">
                                 <h2>Přidat servisní záznam</h2>
                                 <button class="vehicle-modal-close" onclick="closeAddServiceRecordModal()" title="Zavřít">×</button>
@@ -2543,9 +2544,9 @@
                     </div>
                     
                     <!-- Modal okno pro detail servisního záznamu (menší - 1/3 šířky) -->
-                    <div id="serviceRecordDetailModal" class="vehicle-modal" style="display: none;">
+                    <div id="serviceRecordDetailModal" class="vehicle-modal">
                         <div class="vehicle-modal-overlay" onclick="closeServiceRecordDetailModal()"></div>
-                        <div class="vehicle-modal-content service-record-detail-modal" style="max-width: 400px; width: 33%;">
+                        <div class="vehicle-modal-content service-record-detail-modal">
                             <div class="vehicle-modal-header">
                                 <h2>Detail servisního záznamu</h2>
                                 <button class="vehicle-modal-close" onclick="closeServiceRecordDetailModal()" title="Zavřít">×</button>
