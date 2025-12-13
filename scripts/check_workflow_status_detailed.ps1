@@ -6,9 +6,9 @@ param(
     [int]$PerPage = 20
 )
 
-Write-Host "=" * 70 -ForegroundColor Cyan
+Write-Host ("=" * 70) -ForegroundColor Cyan
 Write-Host "KONTROLA STAVU GITHUB ACTIONS WORKFLOWS" -ForegroundColor Green
-Write-Host "=" * 70 -ForegroundColor Cyan
+Write-Host ("=" * 70) -ForegroundColor Cyan
 Write-Host "Repository: $Repository" -ForegroundColor Yellow
 Write-Host ""
 
@@ -53,9 +53,9 @@ try {
         $grouped = $runs | Group-Object -Property name
         
         foreach ($group in $grouped) {
-            Write-Host "=" * 70 -ForegroundColor Cyan
+            Write-Host ("=" * 70) -ForegroundColor Cyan
             Write-Host "WORKFLOW: $($group.Name)" -ForegroundColor Yellow
-            Write-Host "=" * 70 -ForegroundColor Cyan
+            Write-Host ("=" * 70) -ForegroundColor Cyan
             
             $latest = $group.Group | Sort-Object -Property created_at -Descending | Select-Object -First 1
             
@@ -99,9 +99,9 @@ try {
         }
         
         # Shrnutí
-        Write-Host "=" * 70 -ForegroundColor Cyan
+        Write-Host ("=" * 70) -ForegroundColor Cyan
         Write-Host "SHRNUTÍ" -ForegroundColor Green
-        Write-Host "=" * 70 -ForegroundColor Cyan
+        Write-Host ("=" * 70) -ForegroundColor Cyan
         
         $successCount = ($runs | Where-Object { $_.conclusion -eq "success" }).Count
         $failureCount = ($runs | Where-Object { $_.conclusion -eq "failure" }).Count
@@ -139,5 +139,5 @@ try {
 }
 
 Write-Host ""
-Write-Host "=" * 70 -ForegroundColor Cyan
+Write-Host ("=" * 70) -ForegroundColor Cyan
 
