@@ -14,11 +14,11 @@ Jsme rádi, že můžeme oznámit spuštění naší nové aplikace pro správu 
 • 📄 PDF nástroje (sloučení, rozdělení, rotace)
 • 🖼️ Úprava obrázků (změna velikosti, ořez, filtry)
 
-🌐 **Více informací a přístup k aplikaci najdete na:** https://toozservis.cz
+🌐 **Více informací a přístup k aplikaci najdete na:** <https://toozservis.cz>
 
 Navštivte náš web a začněte spravovat svá vozidla jednoduše a efektivně!
 
-#TooZHub #SprávaVozidel #Autoservis #VINdekoder #TooZServis
+# TooZHub #SprávaVozidel #Autoservis #VINdekoder #TooZServis
 
 ---
 
@@ -36,11 +36,11 @@ Proč by vás to mělo zajímat? 🤔
 ✅ **Připomínky emailem** - aplikace vám sama připomene, kdy je čas na servis
 ✅ **Praktické nástroje** - práce s PDF, úprava obrázků a další
 
-Více informací a přístup k aplikaci najdete na našich webových stránkách: **https://toozservis.cz**
+Více informací a přístup k aplikaci najdete na našich webových stránkách: **<https://toozservis.cz>**
 
 Vyzkoušejte ji a dejte nám vědět, co si o ní myslíte! 💬
 
-#TooZHub #SprávaVozidel #Autoservis #TooZServis
+# TooZHub #SprávaVozidel #Autoservis #TooZServis
 
 ---
 
@@ -48,7 +48,7 @@ Vyzkoušejte ji a dejte nám vědět, co si o ní myslíte! 💬
 
 🎯 **Už vás nebaví hledat dokumenty k autu po celém bytě?**
 
-**TooZ Hub 2** to řeší za vás! 
+**TooZ Hub 2** to řeší za vás!
 
 📱 **Jednoduchá správa vozidel:**
 → Všechny informace o vašich autech na jednom místě
@@ -61,9 +61,9 @@ Vyzkoušejte ji a dejte nám vědět, co si o ní myslíte! 💬
 → Úprava obrázků
 → Odesílání emailů s připomínkami
 
-🌐 **Začněte ještě dnes:** Navštivte https://toozservis.cz a zjistěte více!
+🌐 **Začněte ještě dnes:** Navštivte <https://toozservis.cz> a zjistěte více!
 
-#TooZHub #SprávaVozidel #Autoservis #TooZServis
+# TooZHub #SprávaVozidel #Autoservis #TooZServis
 
 ---
 
@@ -85,7 +85,7 @@ Spustili jsme **TooZ Hub 2** - profesionální nástroj pro správu vozidel a do
 • Webová aplikace
 • Desktop aplikace
 
-🌐 Více informací a přístup k aplikaci: https://toozservis.cz
+🌐 Více informací a přístup k aplikaci: <https://toozservis.cz>
 
 Začněte používat ještě dnes a zjednodušte si správu vozidel!
 
@@ -99,7 +99,7 @@ Začněte používat ještě dnes a zjednodušte si správu vozidel!
 
 Správa vozidel nikdy nebyla jednodušší ✨
 
-🌐 Více na: https://toozservis.cz
+🌐 Více na: <https://toozservis.cz>
 
 #TooZHub #SprávaVozidel #TooZServis
 
@@ -109,7 +109,7 @@ Správa vozidel nikdy nebyla jednodušší ✨
 
 1. **Obrázek:** Přidejte screenshot aplikace nebo logo TooZ Hub
 2. **Hashtagy:** Můžete přidat další relevantní hashtagy podle vaší cílové skupiny
-3. **Odkaz:** Ujistěte se, že odkaz https://toozservis.cz funguje a že na webu je odkaz na aplikaci
+3. **Odkaz:** Ujistěte se, že odkaz <https://toozservis.cz> funguje a že na webu je odkaz na aplikaci
 4. **Call-to-action:** Zvažte přidání tlačítka "Zjistit více" nebo "Navštívit web"
 5. **Čas publikování:** Nejlepší čas pro publikování je obvykle mezi 9-11 hodinou nebo 19-21 hodinou
 

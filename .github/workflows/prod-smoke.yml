@@ -18,8 +18,6 @@ jobs:
     env:
       BASE_URL: https://hub.toozservis.cz
       E2E_READONLY: "1"
-      E2E_EMAIL: ${{ secrets.PROD_E2E_EMAIL }}
-      E2E_PASSWORD: ${{ secrets.PROD_E2E_PASSWORD }}
     
     steps:
       - name: Checkout repository
@@ -47,8 +45,8 @@ jobs:
         env:
           BASE_URL: ${{ env.BASE_URL }}
           E2E_READONLY: ${{ env.E2E_READONLY }}
-          E2E_EMAIL: ${{ env.E2E_EMAIL }}
-          E2E_PASSWORD: ${{ env.E2E_PASSWORD }}
+          E2E_EMAIL: ${{ secrets.PROD_E2E_EMAIL || '' }}
+          E2E_PASSWORD: ${{ secrets.PROD_E2E_PASSWORD || '' }}
         run: |
           npx playwright test prod-smoke.spec.ts --reporter=list,html --project=chromium
         continue-on-error: true

@@ -20,6 +20,7 @@ Tento dokument popisuje QA infrastrukturu vytvořenou pro TooZ Hub 2, včetně t
 - Reporty: `artifacts/qa/playwright-report/`
 
 **Testovací soubory:**
+
 - `auth.spec.ts` - Autentizace (login, registrace, logout)
 - `vehicles.spec.ts` - Správa vozidel (CRUD operace)
 - `navigation.spec.ts` - Navigace mezi sekcemi
