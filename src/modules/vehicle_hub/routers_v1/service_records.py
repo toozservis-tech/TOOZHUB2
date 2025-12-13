@@ -75,7 +75,7 @@ def generate_service_records_pdf(
     try:
         from fastapi.responses import FileResponse
         from pathlib import Path
-        from datetime import datetime
+        from datetime import datetime, date
         
         # Kontrola přístupu k vozidlu
         if not can_access_vehicle(vehicle_id, current_user, db):
@@ -118,108 +118,226 @@ def generate_service_records_pdf(
         filename = f"servisni_zaznamy_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         pdf_path = PDF_DIR / filename
         
-        # Vytvořit PDF dokument
-        doc = SimpleDocTemplate(str(pdf_path), pagesize=A4)
+        # Vytvořit PDF dokument s footerem
+        def add_footer(canvas_obj, doc):
+            """Přidá footer s datem a číslem stránky"""
+            canvas_obj.saveState()
+            canvas_obj.setFont('Helvetica', 8)
+            canvas_obj.setFillColor(colors.HexColor('#64748b'))
+            
+            # Datum generování
+            gen_date = datetime.now().strftime('%d.%m.%Y %H:%M')
+            canvas_obj.drawString(20*mm, 15*mm, f"Vygenerováno: {gen_date}")
+            
+            # Číslo stránky
+            page_num = canvas_obj.getPageNumber()
+            canvas_obj.drawRightString(190*mm, 15*mm, f"Stránka {page_num}")
+            
+            canvas_obj.restoreState()
+        
+        doc = SimpleDocTemplate(
+            str(pdf_path), 
+            pagesize=A4,
+            rightMargin=20*mm,
+            leftMargin=20*mm,
+            topMargin=30*mm,
+            bottomMargin=25*mm
+        )
         story = []
         styles = getSampleStyleSheet()
+        
+        # Profesionální barvy
+        primary_color = colors.HexColor('#0f172a')  # Tmavě modrá
+        secondary_color = colors.HexColor('#1e40af')  # Modrá
+        accent_color = colors.HexColor('#3b82f6')  # Světle modrá
+        text_color = colors.HexColor('#1e293b')  # Tmavě šedá
+        light_gray = colors.HexColor('#f8fafc')  # Velmi světle šedá
+        border_color = colors.HexColor('#e2e8f0')  # Světle šedá
+        muted_text = colors.HexColor('#64748b')  # Šedá
         
         # Vlastní styly
         title_style = ParagraphStyle(
             'CustomTitle',
             parent=styles['Heading1'],
-            fontSize=20,
-            textColor=colors.HexColor('#1e293b'),
+            fontSize=24,
+            textColor=primary_color,
+            spaceAfter=8,
+            spaceBefore=0,
+            alignment=TA_CENTER,
+            fontName='Helvetica-Bold'
+        )
+        
+        subtitle_style = ParagraphStyle(
+            'CustomSubtitle',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=muted_text,
             spaceAfter=20,
-            alignment=TA_CENTER
+            alignment=TA_CENTER,
+            fontName='Helvetica'
         )
         
         heading_style = ParagraphStyle(
             'CustomHeading',
             parent=styles['Heading2'],
-            fontSize=14,
-            textColor=colors.HexColor('#1e293b'),
+            fontSize=16,
+            textColor=primary_color,
             spaceAfter=12,
-            spaceBefore=12
+            spaceBefore=20,
+            fontName='Helvetica-Bold',
+            borderWidth=0,
+            borderPadding=0
         )
         
         normal_style = ParagraphStyle(
             'CustomNormal',
             parent=styles['Normal'],
-            fontSize=11,
-            textColor=colors.HexColor('#334155'),
-            spaceAfter=6
+            fontSize=10,
+            textColor=text_color,
+            spaceAfter=8,
+            leading=14,
+            fontName='Helvetica'
         )
         
         note_style = ParagraphStyle(
             'CustomNote',
             parent=styles['Normal'],
             fontSize=9,
-            textColor=colors.HexColor('#64748b'),
-            spaceAfter=12,
-            leftIndent=20
+            textColor=muted_text,
+            spaceAfter=10,
+            leftIndent=15,
+            leading=12,
+            fontName='Helvetica-Oblique'
         )
         
-        # Hlavička - informace o vozidle
-        story.append(Paragraph("Historie servisních záznamů", title_style))
-        story.append(Spacer(1, 12))
+        record_title_style = ParagraphStyle(
+            'RecordTitle',
+            parent=styles['Normal'],
+            fontSize=11,
+            textColor=primary_color,
+            spaceAfter=4,
+            fontName='Helvetica-Bold',
+            leading=14
+        )
         
-        # Tabulka s informacemi o vozidle
+        # Hlavička s dekorativním pruhem
+        header_table_data = [
+            [Paragraph("<b>HISTORIE SERVISNÍCH ZÁZNAMŮ</b>", title_style)]
+        ]
+        header_table = Table(header_table_data, colWidths=[170*mm])
+        header_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), secondary_color),
+            ('TEXTCOLOR', (0, 0), (-1, -1), colors.white),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('FONTSIZE', (0, 0), (-1, -1), 24),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 15),
+            ('TOPPADDING', (0, 0), (-1, -1), 15),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ]))
+        story.append(header_table)
+        story.append(Spacer(1, 15))
+        
+        # Tabulka s informacemi o vozidle - profesionální design
         vehicle_data = []
         if vehicle.nickname:
-            vehicle_data.append(["Název:", vehicle.nickname])
+            vehicle_data.append(["Název vozidla", vehicle.nickname])
         if vehicle.brand:
-            vehicle_data.append(["Značka:", vehicle.brand])
+            vehicle_data.append(["Značka", vehicle.brand])
         if vehicle.model:
-            vehicle_data.append(["Model:", vehicle.model])
+            vehicle_data.append(["Model", vehicle.model])
         if vehicle.year:
-            vehicle_data.append(["Rok výroby:", str(vehicle.year)])
+            vehicle_data.append(["Rok výroby", str(vehicle.year)])
         if vehicle.vin:
-            vehicle_data.append(["VIN:", vehicle.vin])
+            vehicle_data.append(["VIN", vehicle.vin])
         if vehicle.plate:
-            vehicle_data.append(["SPZ:", vehicle.plate])
+            vehicle_data.append(["SPZ", vehicle.plate])
         if vehicle.engine:
-            vehicle_data.append(["Motor:", vehicle.engine])
+            vehicle_data.append(["Motor", vehicle.engine])
         
         if vehicle_data:
-            vehicle_table = Table(vehicle_data, colWidths=[80*mm, 110*mm])
+            # Přidat prázdný řádek pro lepší vzhled
+            vehicle_table = Table(vehicle_data, colWidths=[60*mm, 110*mm])
             vehicle_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f1f5f9')),
-                ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#1e293b')),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                # Hlavička (první řádek)
+                ('BACKGROUND', (0, 0), (0, -1), light_gray),
+                ('TEXTCOLOR', (0, 0), (0, -1), primary_color),
+                ('TEXTCOLOR', (1, 0), (1, -1), text_color),
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                 ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
                 ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
                 ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-                ('TOPPADDING', (0, 0), (-1, -1), 8),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+                ('TOPPADDING', (0, 0), (-1, -1), 10),
+                ('LEFTPADDING', (0, 0), (-1, -1), 12),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+                ('GRID', (0, 0), (-1, -1), 1, border_color),
+                ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, light_gray]),
             ]))
             story.append(vehicle_table)
+            story.append(Spacer(1, 25))
+        
+        # Souhrn (pokud jsou záznamy)
+        if records:
+            total_price = sum(r.price or 0 for r in records)
+            total_records = len(records)
+            summary_data = [
+                ["Celkový počet záznamů", str(total_records)],
+                ["Celková cena servisů", f"{total_price:,.0f} Kč" if total_price > 0 else "Nezadáno"]
+            ]
+            summary_table = Table(summary_data, colWidths=[100*mm, 70*mm])
+            summary_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), accent_color),
+                ('TEXTCOLOR', (0, 0), (-1, -1), colors.white),
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 11),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+                ('TOPPADDING', (0, 0), (-1, -1), 10),
+                ('LEFTPADDING', (0, 0), (-1, -1), 12),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+            ]))
+            story.append(summary_table)
             story.append(Spacer(1, 20))
         
         # Seznam záznamů
-        story.append(Paragraph("Servisní záznamy", heading_style))
+        story.append(Paragraph("SERVISNÍ ZÁZNAMY", heading_style))
         
         if not records:
-            story.append(Paragraph("Zatím nebyly přidány žádné servisní záznamy.", normal_style))
+            empty_style = ParagraphStyle(
+                'EmptyStyle',
+                parent=styles['Normal'],
+                fontSize=11,
+                textColor=muted_text,
+                spaceAfter=20,
+                alignment=TA_CENTER,
+                fontName='Helvetica-Oblique'
+            )
+            story.append(Paragraph("Zatím nebyly přidány žádné servisní záznamy.", empty_style))
         else:
-            # Kategorie mapování
+            # Kategorie mapování (bez emoji pro lepší kompatibilitu)
             category_map = {
-                'OLEJ': '🛢️ Olej',
-                'BRZDY': '🛑 Brzdy',
-                'PNEU': '⭕ Pneumatiky',
-                'STK': '✅ STK',
-                'DIAGNOSTIKA': '🔧 Diagnostika',
-                'FILTRY': '🔍 Filtry',
-                'CHLADICI': '❄️ Chladicí systém',
-                'VYFUK': '💨 Výfuk',
-                'OSVETLENI': '💡 Osvětlení',
-                'KAROSERIE': '🚗 Karoserie',
-                'INTERIER': '🪑 Interiér',
-                'ELEKTRIKA': '⚡ Elektrika',
-                'KLIMATIZACE': '🌡️ Klimatizace',
-                'PREVENTIVNI': '🛡️ Preventivní',
-                'OPRAVA': '🔨 Oprava',
-                'JINE': '📋 Jiné'
+                'OLEJ': 'Olej',
+                'BRZDY': 'Brzdy',
+                'PNEU': 'Pneumatiky',
+                'STK': 'STK',
+                'DIAGNOSTIKA': 'Diagnostika',
+                'FILTRY': 'Filtry',
+                'CHLADICI': 'Chladicí systém',
+                'VYFUK': 'Výfuk',
+                'OSVETLENI': 'Osvětlení',
+                'KAROSERIE': 'Karoserie',
+                'INTERIER': 'Interiér',
+                'ELEKTRIKA': 'Elektrika',
+                'KLIMATIZACE': 'Klimatizace',
+                'PREVENTIVNI': 'Preventivní',
+                'OPRAVA': 'Oprava',
+                'JINE': 'Jiné'
             }
             
             for i, record in enumerate(records, 1):
@@ -243,28 +361,59 @@ def generate_service_records_pdf(
                 # Popis
                 description = record.description or 'Bez popisu'
                 
-                # Informace o záznamu
-                record_info = f"<b>{i}. {category_display}</b> - {description}"
+                # Vytvořit záznam v tabulce pro lepší vzhled
+                record_details = []
+                record_details.append(f"<b>{category_display}</b>")
                 if record.mileage:
-                    record_info += f" | Nájezd: {record.mileage:,} km"
+                    record_details.append(f"Nájezd: <b>{record.mileage:,} km</b>")
                 if record.price:
-                    record_info += f" | Cena: {record.price:,.0f} Kč"
-                record_info += f"<br/><i>Datum: {date_str}</i>"
+                    record_details.append(f"Cena: <b>{record.price:,.0f} Kč</b>")
+                record_details.append(f"Datum: {date_str}")
                 
-                story.append(Paragraph(record_info, normal_style))
+                # Hlavní řádek záznamu
+                record_title = f"<b>{i}. {category_display}</b>"
+                story.append(Paragraph(record_title, record_title_style))
                 
-                # Poznámka (menším písmem)
+                # Popis
+                story.append(Paragraph(description, normal_style))
+                
+                # Detaily v tabulce
+                details_data = []
+                if record.mileage:
+                    details_data.append(["Nájezd", f"{record.mileage:,} km"])
+                if record.price:
+                    details_data.append(["Cena", f"{record.price:,.0f} Kč"])
+                details_data.append(["Datum", date_str])
+                
+                if details_data:
+                    details_table = Table(details_data, colWidths=[40*mm, 130*mm])
+                    details_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (0, -1), light_gray),
+                        ('TEXTCOLOR', (0, 0), (0, -1), muted_text),
+                        ('TEXTCOLOR', (1, 0), (1, -1), text_color),
+                        ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                        ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+                        ('FONTNAME', (0, 0), (0, -1), 'Helvetica'),
+                        ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                        ('TOPPADDING', (0, 0), (-1, -1), 6),
+                        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                        ('GRID', (0, 0), (-1, -1), 0.5, border_color),
+                    ]))
+                    story.append(details_table)
+                
+                # Poznámka (pokud existuje)
                 if record.note:
-                    story.append(Paragraph(f"<i>Poznámka: {record.note}</i>", note_style))
-                else:
-                    story.append(Spacer(1, 6))
+                    story.append(Paragraph(f"Poznámka: {record.note}", note_style))
                 
                 # Oddělovač (kromě posledního)
                 if i < len(records):
-                    story.append(Spacer(1, 8))
+                    story.append(Spacer(1, 12))
         
-        # Vytvořit PDF
-        doc.build(story)
+        # Vytvořit PDF s footerem
+        doc.build(story, onFirstPage=add_footer, onLaterPages=add_footer)
         
         # Vrátit soubor s Content-Disposition headerem
         from fastapi.responses import Response
