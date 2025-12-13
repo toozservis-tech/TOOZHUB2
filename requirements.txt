@@ -20,8 +20,10 @@ pydantic[email]>=2.5.0
 
 # Security - password hashing and JWT
 bcrypt>=4.1.0
-python-jose[cryptography]>=3.3.0
+PyJWT>=2.8.0  # JWT knihovna bez ecdsa závislosti - bezpečnější pro HS256
 passlib[bcrypt]>=1.7.4
+# POZNÁMKA: python-jose a ecdsa byly odstraněny kvůli CVE-2024-23342
+# PyJWT nepoužívá ecdsa pro HS256 algoritmus, takže jsme chráněni
 
 # Web automation (for VIN decoder)
 selenium>=4.15.0
