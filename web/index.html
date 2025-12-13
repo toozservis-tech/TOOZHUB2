@@ -2672,12 +2672,12 @@
                             <textarea id="vehicleNotes" placeholder="Další poznámky o vozidle" rows="3"></textarea>
                         </div>
                     </div>
-                    <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center;">
-                        <button class="btn" onclick="handleAddVehicle()" data-testid="btn-add-vehicle" style="flex: 1;">Přidat vozidlo</button>
+                    <div class="add-vehicle-button-group">
+                        <button class="btn" onclick="handleAddVehicle()" data-testid="btn-add-vehicle">Přidat vozidlo</button>
                     </div>
-                    <p style="margin-top: 6px; font-size: 10px; color: #666;">* Povinné pole</p>
+                    <p class="required-field-note">* Povinné pole</p>
                     <!-- Informační box o zdrojích dekódovaných dat -->
-                    <div id="vinSourceInfo" style="margin-top: 15px; padding: 12px; background: #e8f4f8; border-left: 4px solid #667eea; border-radius: 4px; font-size: 12px; color: #555; display: none;">
+                    <div id="vinSourceInfo">
                         <strong>ℹ️ Informace:</strong> <span id="vinSourceText"></span>
                     </div>
                 </div>
@@ -2697,24 +2697,24 @@
                 <!-- Profil tab -->
                 <div id="aiFeaturesTab" class="tab-content" data-testid="ai-features-tab">
                     <h2>🤖 AI Návrhy funkcí</h2>
-                    <p style="margin-bottom: 20px; color: #64748b;">
+                    <p class="ai-features-intro">
                         Systém automaticky analyzuje použití aplikace a navrhuje nové funkce, které by mohly zlepšit váš zážitek.
                         <br><strong>Zákazníci mohou:</strong> prohlížet návrhy, hlasovat o nich a poskytovat zpětnou vazbu.
                         <br><strong>Administrátoři mohou navíc:</strong> spouštět analýzu, schvalovat návrhy a zobrazovat statistiky.
                     </p>
                     
-                    <div style="margin-bottom: 24px;" id="aiFeaturesAdminActions">
-                        <button class="btn" onclick="analyzeAndSuggestFeatures()" style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); margin-right: 12px;">
+                    <div class="ai-features-admin-actions" id="aiFeaturesAdminActions">
+                        <button class="btn ai-features-analyze-btn" onclick="analyzeAndSuggestFeatures()">
                             🔍 Analyzovat a navrhnout
                         </button>
-                        <button class="btn" onclick="loadAIFeaturesStats()" style="background: #64748b;">
+                        <button class="btn ai-features-stats-btn" onclick="loadAIFeaturesStats()">
                             📊 Obnovit statistiky
                         </button>
                     </div>
                     
-                    <div id="aiFeaturesStats" style="margin-bottom: 32px;"></div>
+                    <div id="aiFeaturesStats"></div>
                     
-                    <h3 style="margin-bottom: 16px;">Navrhované funkce</h3>
+                    <h3 class="ai-features-heading">Navrhované funkce</h3>
                     <div id="aiFeaturesContainer" class="loading">Načítám návrhy...</div>
                 </div>
                 
@@ -2728,12 +2728,12 @@
 
     <!-- Plovoucí Command Bot bublina -->
     <div id="commandBotBubble" class="command-bot-bubble" onclick="toggleCommandBotChat()" title="Command Bot">
-        <span style="font-size: 24px;">💬</span>
-        <span id="commandBotBadge" class="command-bot-badge" style="display: none;">!</span>
+        <span class="command-bot-icon">💬</span>
+        <span id="commandBotBadge" class="command-bot-badge">!</span>
     </div>
 
     <!-- Command Bot chat okno -->
-    <div id="commandBotChat" class="command-bot-chat" style="display: none;">
+    <div id="commandBotChat" class="command-bot-chat">
         <div class="command-bot-chat-header">
             <h3>💬 Command Bot</h3>
             <button onclick="toggleCommandBotChat()" class="command-bot-close">×</button>
