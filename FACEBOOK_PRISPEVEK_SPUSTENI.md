@@ -117,4 +117,3 @@ Správa vozidel nikdy nebyla jednodušší ✨
 - Logo TooZ Hub
 - Ilustrace s autem a nástroji
 - Infografika s hlavními funkcemi
-
