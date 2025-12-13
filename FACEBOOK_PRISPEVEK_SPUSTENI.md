@@ -89,7 +89,7 @@ Spustili jsme **TooZ Hub 2** - profesionální nástroj pro správu vozidel a do
 
 Začněte používat ještě dnes a zjednodušte si správu vozidel!
 
-#TooZHub #Autoservis #SprávaVozidel #VINdekoder #TooZServis
+# TooZHub #Autoservis #SprávaVozidel #VINdekoder #TooZServis
 
 ---
 
@@ -101,11 +101,9 @@ Správa vozidel nikdy nebyla jednodušší ✨
 
 🌐 Více na: <https://toozservis.cz>
 
-#TooZHub #SprávaVozidel #TooZServis
+# TooZHub #SprávaVozidel #TooZServis
 
----
-
-## 📝 Poznámky pro publikování:
+## 📝 Poznámky pro publikování
 
 1. **Obrázek:** Přidejte screenshot aplikace nebo logo TooZ Hub
 2. **Hashtagy:** Můžete přidat další relevantní hashtagy podle vaší cílové skupiny
@@ -113,9 +111,7 @@ Správa vozidel nikdy nebyla jednodušší ✨
 4. **Call-to-action:** Zvažte přidání tlačítka "Zjistit více" nebo "Navštívit web"
 5. **Čas publikování:** Nejlepší čas pro publikování je obvykle mezi 9-11 hodinou nebo 19-21 hodinou
 
----
-
-## 🎨 Doporučení pro vizuál:
+## 🎨 Doporučení pro vizuál
 
 - Screenshot hlavní obrazovky aplikace
 - Logo TooZ Hub

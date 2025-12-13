@@ -10,6 +10,7 @@ pip install -r requirements.txt
 ```
 
 Nebo pouze testovací závislosti:
+
 ```powershell
 pip install pytest pytest-asyncio
 ```
@@ -34,24 +35,28 @@ npx playwright install chromium
 ### Manuální spuštění
 
 **API testy:**
+
 ```powershell
 # V root projektu
 python -m pytest tests/api -v
 ```
 
 **E2E testy:**
+
 ```powershell
 cd tests/e2e
 npx playwright test
 ```
 
 **E2E testy (headed mode - viditelné okno):**
+
 ```powershell
 cd tests/e2e
 npx playwright test --headed
 ```
 
 **E2E testy (UI mode - interaktivní):**
+
 ```powershell
 cd tests/e2e
 npx playwright test --ui
@@ -59,7 +64,7 @@ npx playwright test --ui
 
 ## Struktura testů
 
-```
+```text
 tests/
 ├── api/              # API testy (pytest)
 │   ├── conftest.py   # Pytest konfigurace a fixtures
@@ -84,8 +89,8 @@ tests/
 ## Výstupy
 
 Výstupy testů jsou uloženy v `artifacts/qa/`:
+
 - `pytest-report.txt` - Textový výstup API testů
 - `pytest-report.xml` - JUnit XML pro CI/CD
 - `playwright-report/` - HTML report E2E testů
 - `playwright-output.txt` - Textový výstup E2E testů
-

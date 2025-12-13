@@ -15,6 +15,7 @@ Tento dokument popisuje QA infrastrukturu vytvořenou pro TooZ Hub 2, včetně t
 **Lokace:** `tests/e2e/`
 
 **Konfigurace:**
+
 - Base URL: `http://127.0.0.1:8000`
 - Start page: `/web/index.html`
 - Reporty: `artifacts/qa/playwright-report/`
@@ -50,6 +51,7 @@ Tento dokument popisuje QA infrastrukturu vytvořenou pro TooZ Hub 2, včetně t
 **Lokace:** `tests/api/`
 
 **Testovací soubory:**
+
 - `test_health.py` - Health check endpointy
 - `test_auth.py` - Autentizace API
 - `test_vehicles.py` - Vehicles API (CRUD)
@@ -75,6 +77,7 @@ Tento dokument popisuje QA infrastrukturu vytvořenou pro TooZ Hub 2, včetně t
 Pro stabilní E2E testy byly přidány `data-testid` atributy do UI:
 
 **Přihlášení:**
+
 - `data-testid="login-form"`
 - `data-testid="input-email"`
 - `data-testid="input-password"`
@@ -82,12 +85,14 @@ Pro stabilní E2E testy byly přidány `data-testid` atributy do UI:
 - `data-testid="btn-show-register"`
 
 **Registrace:**
+
 - `data-testid="register-form"`
 - `data-testid="input-reg-email"`
 - `data-testid="input-reg-password"`
 - `data-testid="btn-register"`
 
 **Navigace:**
+
 - `data-testid="dashboard"`
 - `data-testid="tab-vehicles"`
 - `data-testid="tab-add-vehicle"`
@@ -96,6 +101,7 @@ Pro stabilní E2E testy byly přidány `data-testid` atributy do UI:
 - `data-testid="tab-profile"`
 
 **Vozidla:**
+
 - `data-testid="vehicles-container"`
 - `data-testid="vehicle-card"`
 - `data-testid="add-vehicle-form"`
@@ -105,6 +111,7 @@ Pro stabilní E2E testy byly přidány `data-testid` atributy do UI:
 - `data-testid="vehicle-detail-modal"`
 
 **Alerty:**
+
 - `data-testid="alert-success"`
 - `data-testid="alert-error"`
 - `data-testid="alert-info"`
@@ -134,6 +141,7 @@ cd ../..
 ```
 
 Tento skript:
+
 1. Spustí backend server na portu 8000
 2. Počká na připravenost serveru (`/health`)
 3. Zkontroluje a případně nainstaluje pytest
@@ -146,24 +154,28 @@ Tento skript:
 ### Manuální spuštění
 
 **API testy:**
+
 ```powershell
 # V root projektu (NE v tests/api!)
 python -m pytest tests/api -v
 ```
 
 **E2E testy:**
+
 ```powershell
 cd tests/e2e
 npx playwright test
 ```
 
 **E2E testy (headed mode):**
+
 ```powershell
 cd tests/e2e
 npx playwright test --headed
 ```
 
 **E2E testy (UI mode):**
+
 ```powershell
 cd tests/e2e
 npx playwright test --ui
@@ -180,10 +192,12 @@ npx playwright test --ui
 **Oprava:** Přidány `data-testid` atributy do všech klíčových UI prvků.
 
 **Soubory:**
+
 - `web/index.html` - Přidány data-testid atributy
 - `web/index.html` - Upravena funkce `showAlert()` pro přidání data-testid do alertů
 
 **Regresní testy:**
+
 - Všechny E2E testy používají data-testid selektory
 
 ### ✅ Opraveno: Playwright konfigurace
@@ -193,6 +207,7 @@ npx playwright test --ui
 **Oprava:** Opravena `testDir` v `playwright.config.ts`.
 
 **Soubory:**
+
 - `tests/e2e/playwright.config.ts`
 
 ## TODO / Neřešitelné bez dalších dat
@@ -206,6 +221,7 @@ npx playwright test --ui
 ## Závěr
 
 QA infrastruktura byla úspěšně vytvořena a pokrývá:
+
 - ✅ Autentizaci (login, registrace, logout)
 - ✅ Správu vozidel (CRUD)
 - ✅ Navigaci mezi sekcemi
@@ -222,4 +238,3 @@ Všechny testy jsou automatizované a lze je spustit jedním příkazem pomocí 
 3. Přidat testy pro servisní záznamy
 4. Přidat testy pro připomínky a rezervace (CRUD)
 5. Přidat testy pro profil (editace)
-
