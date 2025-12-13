@@ -58,7 +58,7 @@ jobs:
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
       
       - name: Apply fixes
-        if: steps.analyze.outputs.has_errors == 'true'
+        if: steps.analyze.outputs.has_errors == 'true' && steps.analyze.outputs.can_auto_fix == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
