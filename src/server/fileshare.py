@@ -115,8 +115,10 @@ def file_list(path: str = ""):
         <style>
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
             body {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                background: linear-gradient(135deg, {color_primary} 0%, {color_secondary} 100%);
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                    Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                background: linear-gradient(135deg, {color_primary} 0%,
+                    {color_secondary} 100%);
                 min-height: 100vh;
                 padding: 20px;
             }}
