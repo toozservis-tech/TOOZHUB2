@@ -4,18 +4,16 @@ Nezávislý modul pouze pro file sharing - bez celého TooZ Hub 2 projektu
 """
 
 import sys
-from pathlib import Path
-
-# Přidání kořenového adresáře projektu do Python path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
+
+# Přidání kořenového adresáře projektu do Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 # Vytvoření FastAPI aplikace
 app = FastAPI(title="TooZ FileShare", version="1.0.0")
@@ -52,7 +50,9 @@ def file_list(path: str = ""):
         target_path = target_path.resolve()
         if not str(target_path).startswith(str(public_path.resolve())):
             raise HTTPException(status_code=403, detail="Neplatná cesta")
-    except:
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=404, detail="Cesta nenalezena")
 
     if not target_path.exists():
