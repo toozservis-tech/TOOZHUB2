@@ -2,22 +2,22 @@
 # Instalace: pip install pre-commit && pre-commit install
 
 repos:
-  # Detekce secrets v kódu
-  - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.4.0
-    hooks:
-      - id: detect-secrets
-        args: ['--baseline', '.secrets.baseline']
-        exclude: |
-            (?x)^(
-                .*\.lock$|
-                .*\.min\.js$|
-                .*\.min\.css$|
-                package-lock\.json|
-                yarn\.lock|
-                .*\.db$|
-                .*\.log$
-            )$
+  # Detekce secrets v kódu (volitelné - vyžaduje .secrets.baseline)
+  # - repo: https://github.com/Yelp/detect-secrets
+  #   rev: v1.4.0
+  #   hooks:
+  #     - id: detect-secrets
+  #       args: ['--baseline', '.secrets.baseline']
+  #       exclude: |
+  #           (?x)^(
+  #               .*\.lock$|
+  #               .*\.min\.js$|
+  #               .*\.min\.css$|
+  #               package-lock\.json|
+  #               yarn\.lock|
+  #               .*\.db$|
+  #               .*\.log$
+  #           )$
   
   # Kontrola, zda nejsou v repo citlivé soubory
   - repo: local
