@@ -24,7 +24,8 @@ repos:
     hooks:
       - id: check-sensitive-files
         name: Check for sensitive files
-        entry: bash -c 'if git diff --cached --name-only | grep -E "\.env$|\.log$|\.db$|\.sqlite$"; then echo "ERROR: Citlivé soubory (.env, *.log, *.db) nesmí být commitnuty!"; exit 1; fi'
+        entry: bash
+        args: ['-c', 'if git diff --cached --name-only | grep -E "\.env$|\.log$|\.db$|\.sqlite$"; then echo "ERROR: Citlivé soubory (.env, *.log, *.db) nesmí být commitnuty!"; exit 1; fi']
         language: system
         pass_filenames: false
         stages: [commit]
