@@ -256,10 +256,32 @@ def on_open_app():
 
 def on_restart_server():
     """Restartuje server."""
+    global icon
     print("[INFO] Restartování serveru...")
     stop_server()
     time.sleep(2)
-    start_server()
+    if start_server():
+        print("[INFO] Server restartován, čekám na spuštění...")
+        # Počkat, až se server spustí (max 10 sekund)
+        for i in range(10):
+            time.sleep(1)
+            is_healthy, status_msg = check_server_health()
+            if is_healthy:
+                print(f"[OK] Server úspěšně restartován: {status_msg}")
+                # Aktualizovat menu
+                if icon:
+                    icon.menu = create_menu()
+                break
+        else:
+            print("[WARNING] Server se možná nespustil, zkontrolujte logy")
+            # Aktualizovat menu i když se server nespustil
+            if icon:
+                icon.menu = create_menu()
+    else:
+        print("[ERROR] Nepodařilo se restartovat server")
+        # Aktualizovat menu
+        if icon:
+            icon.menu = create_menu()
 
 def on_restart_tunnel():
     """Restartuje Cloudflare Tunnel."""
@@ -270,8 +292,30 @@ def on_restart_tunnel():
 
 def on_start_server():
     """Spustí server."""
+    global icon
     print("[INFO] Spouštění serveru...")
-    start_server()
+    if start_server():
+        print("[INFO] Server spuštěn, čekám na inicializaci...")
+        # Počkat, až se server spustí (max 10 sekund)
+        for i in range(10):
+            time.sleep(1)
+            is_healthy, status_msg = check_server_health()
+            if is_healthy:
+                print(f"[OK] Server úspěšně spuštěn: {status_msg}")
+                # Aktualizovat menu
+                if icon:
+                    icon.menu = create_menu()
+                break
+        else:
+            print("[WARNING] Server se možná nespustil, zkontrolujte logy")
+            # Aktualizovat menu i když se server nespustil
+            if icon:
+                icon.menu = create_menu()
+    else:
+        print("[ERROR] Nepodařilo se spustit server")
+        # Aktualizovat menu
+        if icon:
+            icon.menu = create_menu()
 
 def on_start_tunnel():
     """Spustí Cloudflare Tunnel."""
@@ -280,8 +324,18 @@ def on_start_tunnel():
 
 def on_stop_server():
     """Zastaví server."""
+    global icon
     print("[INFO] Zastavování serveru...")
-    stop_server()
+    if stop_server():
+        print("[OK] Server zastaven")
+        # Aktualizovat menu
+        if icon:
+            icon.menu = create_menu()
+    else:
+        print("[ERROR] Nepodařilo se zastavit server")
+        # Aktualizovat menu
+        if icon:
+            icon.menu = create_menu()
 
 def on_stop_tunnel():
     """Zastaví Cloudflare Tunnel."""
