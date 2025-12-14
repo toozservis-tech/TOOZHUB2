@@ -133,13 +133,27 @@ def generate_service_records_pdf(
             if text is None:
                 return ""
             text = str(text)
-            # Escape HTML znaků
+            # Escape HTML znaků - důležité pro ReportLab Paragraph
             text = text.replace('&', '&amp;')
             text = text.replace('<', '&lt;')
             text = text.replace('>', '&gt;')
             text = text.replace('"', '&quot;')
             text = text.replace("'", '&#39;')
+            # Odstranit LaTeX matematické symboly, které ReportLab může interpretovat špatně
+            text = text.replace('$', '')
+            text = text.replace('\\', '')
             return text
+        
+        # Pomocná funkce pro formátování čísel bez LaTeX
+        def format_number(num):
+            """Formátuje číslo bez LaTeX matematických symbolů"""
+            if num is None:
+                return ""
+            try:
+                # Použít jednoduché formátování s mezerou jako oddělovač tisíců
+                return f"{num:,.0f}".replace(',', ' ')
+            except (ValueError, TypeError):
+                return str(num)
         
         # Vytvořit PDF dokument s footerem
         def add_footer(canvas_obj, doc):
@@ -326,9 +340,15 @@ def generate_service_records_pdf(
         if records:
             total_price = sum(r.price or 0 for r in records)
             total_records = len(records)
+            # Formátovat cenu bez LaTeX matematických symbolů
+            if total_price > 0:
+                price_str = format_number(total_price)
+                price_display = f"{price_str} Kč"
+            else:
+                price_display = "Nezadáno"
             summary_data = [
                 ["Celkový počet záznamů", str(total_records)],
-                ["Celková cena servisů", f"{total_price:,.0f} Kč" if total_price > 0 else "Nezadáno"]
+                ["Celková cena servisů", price_display]
             ]
             summary_table = Table(summary_data, colWidths=[100*mm, 70*mm])
             summary_table.setStyle(TableStyle([
@@ -413,9 +433,11 @@ def generate_service_records_pdf(
                 # Detaily v tabulce
                 details_data = []
                 if record.mileage:
-                    details_data.append(["Nájezd", f"{record.mileage:,} km"])
+                    mileage_str = format_number(record.mileage)
+                    details_data.append(["Nájezd", f"{mileage_str} km"])
                 if record.price:
-                    details_data.append(["Cena", f"{record.price:,.0f} Kč"])
+                    price_str = format_number(record.price)
+                    details_data.append(["Cena", f"{price_str} Kč"])
                 details_data.append(["Datum", escape_html(date_str)])
                 
                 if details_data:
