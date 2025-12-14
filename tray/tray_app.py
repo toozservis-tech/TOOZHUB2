@@ -207,11 +207,17 @@ def start_tunnel():
         # Zkontrolovat název tunelu z config souboru
         tunnel_name = "tooz-hub2"  # default
         try:
-            import yaml
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-                if config and 'tunnel' in config:
-                    tunnel_name = config['tunnel']
+            try:
+                import yaml
+            except ImportError:
+                # Pokud yaml není nainstalován, použít default
+                yaml = None
+            
+            if yaml:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f)
+                    if config and 'tunnel' in config:
+                        tunnel_name = config['tunnel']
         except:
             pass  # použít default
         
