@@ -5278,6 +5278,20 @@
 
         // Zobrazení detailu servisního záznamu
         async function showServiceRecordDetail(recordId, vehicleId) {
+            const modal = document.getElementById('serviceRecordDetailModal');
+            const modalBody = document.getElementById('serviceRecordDetailModalBody');
+            
+            if (!modal || !modalBody) return;
+            
+            // Zobrazit modal s loading
+            modal.classList.add('active');
+            modal.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+            document.body.style.position = 'fixed';
+            document.body.style.width = '100%';
+            document.body.style.height = '100%';
+            modalBody.innerHTML = '<div class="loading">Načítám...</div>';
+            
             try {
                 const record = await apiCall(`/api/v1/vehicles/${vehicleId}/records/${recordId}`, 'GET');
                 const date = new Date(record.performed_at);
@@ -5334,17 +5348,10 @@
                 `;
                 
                 // Zobrazit v modalu pro detail záznamu
-                const modal = document.getElementById('serviceRecordDetailModal');
-                const modalBody = document.getElementById('serviceRecordDetailModalBody');
                 if (modal && modalBody) {
                     modal.setAttribute('data-vehicle-id', vehicleId);
                     modal.setAttribute('data-record-id', recordId);
-                    modal.style.display = 'flex';
-                    document.body.style.overflow = 'hidden';
-                    document.body.style.position = 'fixed';
-                    document.body.style.width = '100%';
-                    document.body.style.height = '100%';
-                    
+                    modal.classList.add('active');
                     modalBody.innerHTML = detailHtml;
                 }
             } catch (error) {
