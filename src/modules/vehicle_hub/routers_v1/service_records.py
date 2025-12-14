@@ -473,11 +473,23 @@ def generate_service_records_pdf(
         )
     except HTTPException:
         raise
+    except UnicodeEncodeError as e:
+        print(f"[SERVICE_RECORDS] Unicode encoding error generating PDF for vehicle {vehicle_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Chyba při generování PDF: Problém s kódováním znaků. Zkuste použít název vozidla bez diakritiky."
+        )
     except Exception as e:
         print(f"[SERVICE_RECORDS] Error generating PDF for vehicle {vehicle_id}: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při generování PDF: {str(e)}")
+        # Zkusit získat více informací o chybě
+        error_msg = str(e)
+        if 'latin-1' in error_msg or 'codec' in error_msg.lower():
+            error_msg = "Chyba kódování: Text obsahuje znaky, které nelze zakódovat. Zkuste použít název vozidla bez diakritiky."
+        raise HTTPException(status_code=500, detail=f"Chyba při generování PDF: {error_msg}")
 
 
 @router.get("/{vehicle_id}/records", response_model=List[ServiceRecordOutV1])
