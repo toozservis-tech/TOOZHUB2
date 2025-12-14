@@ -1,4 +1,5 @@
 @echo off
+if not "%1"=="min" start /min cmd /c "%~0" min & exit
 title TooZ Hub 2 - Tray Manager
 color 0A
 cls

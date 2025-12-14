@@ -37,14 +37,36 @@ if (-not (Test-Path $configFile)) {
     }
 }
 
-# Spuštění cloudflared tunnel s explicitním config souborem
-Start-Process $cloudflaredExe -ArgumentList @(
-    "tunnel",
-    "--config", $configFile,
-    "run", $tunnelName
-) -WindowStyle Minimized
+# Spuštění cloudflared tunnel na pozadí bez viditelného okna
+$processInfo = New-Object System.Diagnostics.ProcessStartInfo
+$processInfo.FileName = $cloudflaredExe
+$processInfo.Arguments = "tunnel --config `"$configFile`" run $tunnelName"
+$processInfo.WorkingDirectory = $projectRoot
+$processInfo.UseShellExecute = $false
+$processInfo.CreateNoWindow = $true
+$processInfo.RedirectStandardOutput = $true
+$processInfo.RedirectStandardError = $true
 
-Write-Host "Cloudflare Tunnel spuštěn: $tunnelName -> $hostname"
-Write-Host "Config soubor: $configFile"
-Write-Host "Pro zastavení použijte Task Manager nebo: Get-Process cloudflared | Stop-Process"
+$process = New-Object System.Diagnostics.Process
+$process.StartInfo = $processInfo
+$process.Start() | Out-Null
+
+# Uvolnit proces z terminálu (detach) - proces běží nezávisle
+$processId = $process.Id
+$process.Dispose()
+
+# Zkontrolovat, zda proces běží
+Start-Sleep -Milliseconds 1000
+try {
+    $tunnelProcess = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    if ($tunnelProcess) {
+        # Output pouze pokud je voláno z terminálu (ne z tray)
+        if ($Host.UI.RawUI.WindowSize.Width -gt 0) {
+            Write-Host "Cloudflare Tunnel spuštěn: $tunnelName -> $hostname (PID: $processId)" -ForegroundColor Green
+            Write-Host "Config soubor: $configFile"
+        }
+    }
+} catch {
+    # Tichý běh - žádný output
+}
 

@@ -157,17 +157,20 @@ def start_server():
             print(f"[ERROR] Server skript neexistuje: {SERVER_SCRIPT}")
             return False
         
+        # Spustit PowerShell skript bez okna a bez čekání
         server_process = subprocess.Popen(
             [
                 "powershell.exe",
                 "-ExecutionPolicy", "Bypass",
                 "-NoProfile",
+                "-WindowStyle", "Hidden",
                 "-File", str(SERVER_SCRIPT)
             ],
             cwd=str(project_root),
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL
         )
         print(f"[INFO] Server spuštěn (PID: {server_process.pid})")
         return True
@@ -184,17 +187,20 @@ def start_tunnel():
             print(f"[ERROR] Tunnel skript neexistuje: {TUNNEL_SCRIPT}")
             return False
         
+        # Spustit PowerShell skript bez okna a bez čekání
         tunnel_process = subprocess.Popen(
             [
                 "powershell.exe",
                 "-ExecutionPolicy", "Bypass",
                 "-NoProfile",
+                "-WindowStyle", "Hidden",
                 "-File", str(TUNNEL_SCRIPT)
             ],
             cwd=str(project_root),
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL
         )
         print(f"[INFO] Tunnel spuštěn (PID: {tunnel_process.pid})")
         return True
