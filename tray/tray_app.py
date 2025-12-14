@@ -149,22 +149,24 @@ def check_server_health():
 # =============================================================================
 
 def start_server():
-    """Spustí server pomocí PowerShell skriptu."""
+    """Spustí server přímo pomocí Pythonu."""
     global server_process
     
     try:
-        if not SERVER_SCRIPT.exists():
-            print(f"[ERROR] Server skript neexistuje: {SERVER_SCRIPT}")
-            return False
+        # Zkontrolovat, zda existuje venv
+        python_exe = "python"
+        venv_python = project_root / "venv" / "Scripts" / "python.exe"
+        if venv_python.exists():
+            python_exe = str(venv_python)
         
-        # Spustit PowerShell skript bez okna a bez čekání
+        # Spustit uvicorn přímo
         server_process = subprocess.Popen(
             [
-                "powershell.exe",
-                "-ExecutionPolicy", "Bypass",
-                "-NoProfile",
-                "-WindowStyle", "Hidden",
-                "-File", str(SERVER_SCRIPT)
+                python_exe,
+                "-m", "uvicorn",
+                "src.server.main:app",
+                "--host", "127.0.0.1",
+                "--port", "8000"
             ],
             cwd=str(project_root),
             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
@@ -173,9 +175,13 @@ def start_server():
             stdin=subprocess.DEVNULL
         )
         print(f"[INFO] Server spuštěn (PID: {server_process.pid})")
+        # Počkat chvíli, aby se server spustil
+        time.sleep(2)
         return True
     except Exception as e:
         print(f"[ERROR] Chyba při spouštění serveru: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def start_tunnel():

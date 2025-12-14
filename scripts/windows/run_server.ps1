@@ -22,25 +22,24 @@ $processInfo.Arguments = "-m uvicorn src.server.main:app --host 127.0.0.1 --port
 $processInfo.WorkingDirectory = $projectRoot
 $processInfo.UseShellExecute = $false
 $processInfo.CreateNoWindow = $true
-$processInfo.RedirectStandardOutput = $true
-$processInfo.RedirectStandardError = $true
+$processInfo.RedirectStandardOutput = $false
+$processInfo.RedirectStandardError = $false
 
 $process = New-Object System.Diagnostics.Process
 $process.StartInfo = $processInfo
 $process.Start() | Out-Null
 
-# Uvolnit proces z terminálu (detach) - proces běží nezávisle
-$processId = $process.Id
-$process.Dispose()
+# NEDISPOSOVAT proces - nechat ho běžet
+# $process.Dispose() - NESMAZAT - proces musí běžet!
 
 # Zkontrolovat, zda proces běží
-Start-Sleep -Milliseconds 1000
+Start-Sleep -Milliseconds 2000
 try {
-    $uvicornProcess = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    $uvicornProcess = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
     if ($uvicornProcess) {
         # Output pouze pokud je voláno z terminálu (ne z tray)
         if ($Host.UI.RawUI.WindowSize.Width -gt 0) {
-            Write-Host "Server spuštěn na portu $Port (PID: $processId)" -ForegroundColor Green
+            Write-Host "Server spuštěn na portu $Port (PID: $($process.Id))" -ForegroundColor Green
         }
     }
 } catch {
