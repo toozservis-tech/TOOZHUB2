@@ -390,6 +390,8 @@ def update_icon_loop():
                     last_status = is_healthy
                     if is_healthy:
                         print(f"[INFO] Server je nyní dostupný: {status_msg}")
+                    # Aktualizovat menu při změně stavu
+                    icon.menu = create_menu()
                 
                 # Aktualizovat tooltip
                 icon.title = f"{APP_NAME}\nStatus: {status_msg}"
