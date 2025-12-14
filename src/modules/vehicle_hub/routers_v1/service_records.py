@@ -118,8 +118,12 @@ def generate_service_records_pdf(
         import unicodedata
         safe_name = unicodedata.normalize('NFKD', str(vehicle_name))
         safe_name = ''.join(c for c in safe_name if not unicodedata.combining(c))
+        # Převést na ASCII - odstranit všechny ne-ASCII znaky
+        safe_name = safe_name.encode('ascii', 'ignore').decode('ascii')
         safe_name = "".join(c for c in safe_name if c.isalnum() or c in (' ', '-', '_')).strip()
         safe_name = safe_name.replace(' ', '_')[:50]  # Omezit délku
+        if not safe_name:  # Pokud by bylo prázdné, použít výchozí
+            safe_name = f"vozidlo_{vehicle_id}"
         filename = f"servisni_zaznamy_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         pdf_path = PDF_DIR / filename
         
@@ -155,14 +159,32 @@ def generate_service_records_pdf(
             
             canvas_obj.restoreState()
         
-        doc = SimpleDocTemplate(
-            str(pdf_path), 
-            pagesize=A4,
-            rightMargin=20*mm,
-            leftMargin=20*mm,
-            topMargin=30*mm,
-            bottomMargin=25*mm
-        )
+        # Zajistit, že cesta k PDF je ASCII-safe (pro Windows kompatibilitu)
+        pdf_path_str = str(pdf_path)
+        try:
+            # Zkusit vytvořit PDF s UTF-8 cestou
+            doc = SimpleDocTemplate(
+                pdf_path_str, 
+                pagesize=A4,
+                rightMargin=20*mm,
+                leftMargin=20*mm,
+                topMargin=30*mm,
+                bottomMargin=25*mm
+            )
+        except (UnicodeEncodeError, OSError) as e:
+            # Pokud selže, použít ASCII-safe cestu
+            import tempfile
+            temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf', dir=str(PDF_DIR))
+            temp_pdf.close()
+            pdf_path = Path(temp_pdf.name)
+            doc = SimpleDocTemplate(
+                str(pdf_path), 
+                pagesize=A4,
+                rightMargin=20*mm,
+                leftMargin=20*mm,
+                topMargin=30*mm,
+                bottomMargin=25*mm
+            )
         story = []
         styles = getSampleStyleSheet()
         
