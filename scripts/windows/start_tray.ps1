@@ -23,19 +23,31 @@ if (Test-Path "venv\Scripts\python.exe") {
 }
 
 # Zkontrolovat, zda existuje tray skript
-$trayScript = "$projectRoot\tray\tray_manager.py"
+$trayScript = "$projectRoot\tray\tray_app.py"
 if (-not (Test-Path $trayScript)) {
     Write-Host "[ERROR] Tray skript neexistuje: $trayScript" -ForegroundColor Red
-    Write-Host "[INFO] Zkontrolujte, zda je soubor tray\tray_manager.py přítomen" -ForegroundColor Yellow
+    Write-Host "[INFO] Zkontrolujte, zda je soubor tray\tray_app.py přítomen" -ForegroundColor Yellow
     pause
     exit 1
 }
 
-# Spustit tray aplikaci na pozadí (skrytě)
+# Spustit tray aplikaci na pozadí bez viditelného okna
 Write-Host "[INFO] Spouštím tray aplikaci na pozadí..."
-Start-Process $pythonExe -ArgumentList @(
-    $trayScript
-) -WindowStyle Hidden
+$processInfo = New-Object System.Diagnostics.ProcessStartInfo
+$processInfo.FileName = $pythonExe
+$processInfo.Arguments = "`"$trayScript`""
+$processInfo.WorkingDirectory = $projectRoot
+$processInfo.UseShellExecute = $false
+$processInfo.CreateNoWindow = $true
+$processInfo.RedirectStandardOutput = $true
+$processInfo.RedirectStandardError = $true
+
+$process = New-Object System.Diagnostics.Process
+$process.StartInfo = $processInfo
+$process.Start() | Out-Null
+
+# Uvolnit proces z terminálu (detach) - proces běží nezávisle
+$process.Dispose()
 
 Write-Host ""
 Write-Host "✅ Tray aplikace byla spuštěna!"
