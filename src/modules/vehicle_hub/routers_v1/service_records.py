@@ -112,11 +112,30 @@ def generate_service_records_pdf(
         from src.core.config import PDF_DIR
         PDF_DIR.mkdir(parents=True, exist_ok=True)
         
-        # Název souboru
+        # Název souboru - zajistit ASCII kompatibilitu
         vehicle_name = vehicle.nickname or vehicle.plate or f"vozidlo_{vehicle_id}"
-        safe_name = "".join(c for c in vehicle_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        # Odstranit diakritiku a speciální znaky pro název souboru
+        import unicodedata
+        safe_name = unicodedata.normalize('NFKD', str(vehicle_name))
+        safe_name = ''.join(c for c in safe_name if not unicodedata.combining(c))
+        safe_name = "".join(c for c in safe_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        safe_name = safe_name.replace(' ', '_')[:50]  # Omezit délku
         filename = f"servisni_zaznamy_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         pdf_path = PDF_DIR / filename
+        
+        # Pomocná funkce pro escape HTML a UTF-8
+        def escape_html(text):
+            """Escape HTML znaků a zajistí UTF-8 kompatibilitu"""
+            if text is None:
+                return ""
+            text = str(text)
+            # Escape HTML znaků
+            text = text.replace('&', '&amp;')
+            text = text.replace('<', '&lt;')
+            text = text.replace('>', '&gt;')
+            text = text.replace('"', '&quot;')
+            text = text.replace("'", '&#39;')
+            return text
         
         # Vytvořit PDF dokument s footerem
         def add_footer(canvas_obj, doc):
@@ -125,13 +144,14 @@ def generate_service_records_pdf(
             canvas_obj.setFont('Helvetica', 8)
             canvas_obj.setFillColor(colors.HexColor('#64748b'))
             
-            # Datum generování
+            # Datum generování - bez českých znaků pro drawString
             gen_date = datetime.now().strftime('%d.%m.%Y %H:%M')
-            canvas_obj.drawString(20*mm, 15*mm, f"Vygenerováno: {gen_date}")
+            footer_text = f"Vygenerovano: {gen_date}"
+            canvas_obj.drawString(20*mm, 15*mm, footer_text)
             
             # Číslo stránky
             page_num = canvas_obj.getPageNumber()
-            canvas_obj.drawRightString(190*mm, 15*mm, f"Stránka {page_num}")
+            canvas_obj.drawRightString(190*mm, 15*mm, f"Stranka {page_num}")
             
             canvas_obj.restoreState()
         
@@ -242,19 +262,19 @@ def generate_service_records_pdf(
         # Tabulka s informacemi o vozidle - profesionální design
         vehicle_data = []
         if vehicle.nickname:
-            vehicle_data.append(["Název vozidla", vehicle.nickname])
+            vehicle_data.append(["Název vozidla", escape_html(vehicle.nickname)])
         if vehicle.brand:
-            vehicle_data.append(["Značka", vehicle.brand])
+            vehicle_data.append(["Značka", escape_html(vehicle.brand)])
         if vehicle.model:
-            vehicle_data.append(["Model", vehicle.model])
+            vehicle_data.append(["Model", escape_html(vehicle.model)])
         if vehicle.year:
             vehicle_data.append(["Rok výroby", str(vehicle.year)])
         if vehicle.vin:
-            vehicle_data.append(["VIN", vehicle.vin])
+            vehicle_data.append(["VIN", escape_html(vehicle.vin)])
         if vehicle.plate:
-            vehicle_data.append(["SPZ", vehicle.plate])
+            vehicle_data.append(["SPZ", escape_html(vehicle.plate)])
         if vehicle.engine:
-            vehicle_data.append(["Motor", vehicle.engine])
+            vehicle_data.append(["Motor", escape_html(vehicle.engine)])
         
         if vehicle_data:
             # Přidat prázdný řádek pro lepší vzhled
@@ -358,20 +378,11 @@ def generate_service_records_pdf(
                 # Kategorie
                 category_display = category_map.get(record.category, record.category or 'Jiné')
                 
-                # Popis
-                description = record.description or 'Bez popisu'
-                
-                # Vytvořit záznam v tabulce pro lepší vzhled
-                record_details = []
-                record_details.append(f"<b>{category_display}</b>")
-                if record.mileage:
-                    record_details.append(f"Nájezd: <b>{record.mileage:,} km</b>")
-                if record.price:
-                    record_details.append(f"Cena: <b>{record.price:,.0f} Kč</b>")
-                record_details.append(f"Datum: {date_str}")
+                # Popis - escape HTML pro UTF-8
+                description = escape_html(record.description or 'Bez popisu')
                 
                 # Hlavní řádek záznamu
-                record_title = f"<b>{i}. {category_display}</b>"
+                record_title = f"<b>{i}. {escape_html(category_display)}</b>"
                 story.append(Paragraph(record_title, record_title_style))
                 
                 # Popis
@@ -383,7 +394,7 @@ def generate_service_records_pdf(
                     details_data.append(["Nájezd", f"{record.mileage:,} km"])
                 if record.price:
                     details_data.append(["Cena", f"{record.price:,.0f} Kč"])
-                details_data.append(["Datum", date_str])
+                details_data.append(["Datum", escape_html(date_str)])
                 
                 if details_data:
                     details_table = Table(details_data, colWidths=[40*mm, 130*mm])
@@ -404,9 +415,10 @@ def generate_service_records_pdf(
                     ]))
                     story.append(details_table)
                 
-                # Poznámka (pokud existuje)
+                # Poznámka (pokud existuje) - escape HTML
                 if record.note:
-                    story.append(Paragraph(f"Poznámka: {record.note}", note_style))
+                    note_text = escape_html(record.note)
+                    story.append(Paragraph(f"Poznámka: {note_text}", note_style))
                 
                 # Oddělovač (kromě posledního)
                 if i < len(records):
