@@ -185,22 +185,43 @@ def start_server():
         return False
 
 def start_tunnel():
-    """Spustí Cloudflare Tunnel pomocí PowerShell skriptu."""
+    """Spustí Cloudflare Tunnel přímo."""
     global tunnel_process
     
     try:
-        if not TUNNEL_SCRIPT.exists():
-            print(f"[ERROR] Tunnel skript neexistuje: {TUNNEL_SCRIPT}")
+        # Zkontrolovat, zda je cloudflared nainstalován
+        import shutil
+        cloudflared_exe = shutil.which("cloudflared")
+        if not cloudflared_exe:
+            print("[ERROR] cloudflared.exe nebyl nalezen v PATH!")
             return False
         
-        # Spustit PowerShell skript bez okna a bez čekání
+        # Zkontrolovat config soubor
+        config_file = project_root / "cloudflared" / "config.yml"
+        if not config_file.exists():
+            config_file = Path.home() / ".cloudflared" / "config.yml"
+            if not config_file.exists():
+                print(f"[ERROR] Config soubor neexistuje: {config_file}")
+                return False
+        
+        # Zkontrolovat název tunelu z config souboru
+        tunnel_name = "tooz-hub2"  # default
+        try:
+            import yaml
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+                if config and 'tunnel' in config:
+                    tunnel_name = config['tunnel']
+        except:
+            pass  # použít default
+        
+        # Spustit cloudflared tunnel přímo
         tunnel_process = subprocess.Popen(
             [
-                "powershell.exe",
-                "-ExecutionPolicy", "Bypass",
-                "-NoProfile",
-                "-WindowStyle", "Hidden",
-                "-File", str(TUNNEL_SCRIPT)
+                cloudflared_exe,
+                "tunnel",
+                "--config", str(config_file),
+                "run", tunnel_name
             ],
             cwd=str(project_root),
             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
@@ -209,9 +230,13 @@ def start_tunnel():
             stdin=subprocess.DEVNULL
         )
         print(f"[INFO] Tunnel spuštěn (PID: {tunnel_process.pid})")
+        # Počkat chvíli, aby se tunnel spustil
+        time.sleep(2)
         return True
     except Exception as e:
         print(f"[ERROR] Chyba při spouštění tunelu: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def stop_server():

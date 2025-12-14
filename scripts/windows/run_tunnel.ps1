@@ -44,25 +44,24 @@ $processInfo.Arguments = "tunnel --config `"$configFile`" run $tunnelName"
 $processInfo.WorkingDirectory = $projectRoot
 $processInfo.UseShellExecute = $false
 $processInfo.CreateNoWindow = $true
-$processInfo.RedirectStandardOutput = $true
-$processInfo.RedirectStandardError = $true
+$processInfo.RedirectStandardOutput = $false
+$processInfo.RedirectStandardError = $false
 
 $process = New-Object System.Diagnostics.Process
 $process.StartInfo = $processInfo
 $process.Start() | Out-Null
 
-# Uvolnit proces z terminálu (detach) - proces běží nezávisle
-$processId = $process.Id
-$process.Dispose()
+# NEDISPOSOVAT proces - nechat ho běžet
+# $process.Dispose() - NESMAZAT - proces musí běžet!
 
 # Zkontrolovat, zda proces běží
-Start-Sleep -Milliseconds 1000
+Start-Sleep -Milliseconds 2000
 try {
-    $tunnelProcess = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    $tunnelProcess = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
     if ($tunnelProcess) {
         # Output pouze pokud je voláno z terminálu (ne z tray)
         if ($Host.UI.RawUI.WindowSize.Width -gt 0) {
-            Write-Host "Cloudflare Tunnel spuštěn: $tunnelName -> $hostname (PID: $processId)" -ForegroundColor Green
+            Write-Host "Cloudflare Tunnel spuštěn: $tunnelName -> $hostname (PID: $($process.Id))" -ForegroundColor Green
             Write-Host "Config soubor: $configFile"
         }
     }
