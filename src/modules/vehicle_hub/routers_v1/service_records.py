@@ -429,15 +429,24 @@ def generate_service_records_pdf(
         
         # Vrátit soubor s Content-Disposition headerem
         from fastapi.responses import Response
+        from urllib.parse import quote
         
         with open(pdf_path, 'rb') as f:
             pdf_content = f.read()
+        
+        # Kódovat název souboru pro Content-Disposition header (RFC 5987)
+        # Použít ASCII-safe název a UTF-8 encoded verzi
+        safe_filename_ascii = filename.encode('ascii', 'ignore').decode('ascii')
+        safe_filename_utf8 = quote(filename, safe='')
+        
+        # Content-Disposition s podporou UTF-8 (RFC 5987)
+        content_disposition = f'attachment; filename="{safe_filename_ascii}"; filename*=UTF-8\'\'{safe_filename_utf8}'
         
         return Response(
             content=pdf_content,
             media_type='application/pdf',
             headers={
-                'Content-Disposition': f'attachment; filename="{filename}"'
+                'Content-Disposition': content_disposition
             }
         )
     except HTTPException:
