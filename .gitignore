@@ -21,10 +21,16 @@ test_vehicles.db
 .aider.tags.cache.v4/
 *.cache
 __pycache__/
+.pytest_cache/
 
 # QA artifacts
 artifacts/qa/
 test_vehicles.db
+
+# Node.js
+node_modules/
+dist/
+build/
 
 # Playwright
 tests/e2e/node_modules/
