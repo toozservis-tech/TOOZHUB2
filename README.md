@@ -496,3 +496,4 @@ MIT License
 3. Commit změn (`git commit -am 'Přidána nová funkce'`)
 4. Push do branch (`git push origin feature/nova-funkce`)
 5. Vytvořte Pull Request
+
