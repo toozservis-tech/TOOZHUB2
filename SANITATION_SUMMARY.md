@@ -20,7 +20,7 @@
 ## Co bylo jen stabilizováno
 
 - `vehicles.user_email` zůstává kvůli kompatibilitě web/iOS/admin, ale není nově zdrojem pravdy.
-- `main.py` byl zredukován o runtime schema bootstrap a legacy ARES logiku; zbytek monolitu je připraven na další rozdělení.
+- `main.py` už není endpoint monolit; zůstal jako tenký entrypoint a app wiring je přesunutý do `src/server/bootstrap.py` a `src/server/routers/*`.
 
 ## Co bylo dočasně disabled
 
@@ -29,6 +29,5 @@
 
 ## Co zůstává jako další krok
 
-- Dále rozdělit `src/server/main.py` do samostatných routerů pro auth, account a support.
 - Převést admin API na ownership source-of-truth místo přímé závislosti na `vehicles.user_email`.
 - Dopsat další contract/e2e testy na capability gating ve web/admin UI.
