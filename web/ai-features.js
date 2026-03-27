@@ -7,6 +7,14 @@
 let aiFeaturesSuggestions = [];
 let aiFeaturesStats = null;
 
+// Konfigurace: AI sekce zapnutá, admin akce jen pro admin uživatele
+const AI_FEATURES_DISABLED = false;
+const AI_IS_ADMIN = () => {
+    const urlAdmin = window.location.search.includes('admin=1');
+    const userRole = (window.currentUser && window.currentUser.role) ? window.currentUser.role.toLowerCase() : null;
+    return urlAdmin || userRole === 'admin';
+};
+
 /**
  * Načíst návrhy funkcí z API
  */
@@ -29,6 +37,10 @@ async function loadAIFeaturesSuggestions(status = null, category = null) {
  * Načíst statistiky použití
  */
 async function loadAIFeaturesStats() {
+    if (AI_FEATURES_DISABLED || !AI_IS_ADMIN()) {
+        // Statistika jen pro adminy, ostatní přeskočí
+        return;
+    }
     try {
         const stats = await apiCall('/api/v1/ai-features/analytics/stats?days=30', 'GET');
         aiFeaturesStats = stats;
@@ -42,6 +54,10 @@ async function loadAIFeaturesStats() {
  * Spustit analýzu a navrhnout nové funkce
  */
 async function analyzeAndSuggestFeatures() {
+    if (AI_FEATURES_DISABLED || !AI_IS_ADMIN()) {
+        showAlert('Analýzu mohou spustit jen administrátoři.', 'info');
+        return;
+    }
     try {
         showAlert('Spouštím analýzu použití aplikace...', 'info');
         
@@ -201,6 +217,9 @@ function renderAIFeaturesStats() {
  * Zobrazit detail návrhu
  */
 async function viewFeatureDetail(suggestionId) {
+    if (AI_FEATURES_DISABLED) {
+        return;
+    }
     try {
         const suggestion = await apiCall(`/api/v1/ai-features/suggestions/${suggestionId}`, 'GET');
         
@@ -228,6 +247,10 @@ function showFeatureDetailModal(suggestion, integrationPlan, dependencies) {
  * Schválit návrh
  */
 async function approveFeature(suggestionId) {
+    if (AI_FEATURES_DISABLED || !AI_IS_ADMIN()) {
+        showAlert('Schvalovat mohou jen administrátoři.', 'info');
+        return;
+    }
     if (!confirm('Opravdu chcete schválit tento návrh?')) return;
     
     try {
@@ -244,6 +267,10 @@ async function approveFeature(suggestionId) {
  * Odmítnout návrh
  */
 async function rejectFeature(suggestionId) {
+    if (AI_FEATURES_DISABLED || !AI_IS_ADMIN()) {
+        showAlert('Odmítat mohou jen administrátoři.', 'info');
+        return;
+    }
     if (!confirm('Opravdu chcete odmítnout tento návrh?')) return;
     
     try {
@@ -260,6 +287,9 @@ async function rejectFeature(suggestionId) {
  * Hlasovat o návrhu
  */
 async function voteOnFeature(suggestionId, vote) {
+    if (AI_FEATURES_DISABLED) {
+        return;
+    }
     try {
         await apiCall(`/api/v1/ai-features/suggestions/${suggestionId}/vote`, 'POST', {
             vote: vote,
@@ -302,36 +332,46 @@ function escapeHtml(text) {
  * Inicializace při načtení záložky
  */
 async function initAIFeaturesTab() {
-    // Načíst návrhy (všichni uživatelé)
-    await loadAIFeaturesSuggestions();
-    
-    // Načíst statistiky pouze pokud je uživatel admin
-    try {
-        await loadAIFeaturesStats();
-    } catch (error) {
-        // Pokud není admin, statistiky se nenačtou (403) - to je v pořádku
-        console.log('[AI-FEATURES] Statistiky nejsou dostupné (pouze pro adminy)');
-        const statsContainer = document.getElementById('aiFeaturesStats');
-        if (statsContainer) {
-            statsContainer.innerHTML = '<p style="color: #64748b; font-style: italic;">Statistiky jsou dostupné pouze pro administrátory.</p>';
-        }
+    const container = document.getElementById('aiFeaturesContainer');
+    const statsContainer = document.getElementById('aiFeaturesStats');
+    const adminActions = document.getElementById('aiFeaturesAdminActions');
+
+    if (AI_FEATURES_DISABLED) {
+        if (adminActions) adminActions.style.display = 'none';
+        if (container) container.innerHTML = '<div class="alert alert-info">AI návrhy jsou dočasně vypnuté.</div>';
+        if (statsContainer) statsContainer.innerHTML = '';
+        return;
     }
-    
-    // Upravit UI podle role uživatele
-    await updateUIForUserRole();
+
+    if (!isAuthenticated()) {
+        if (container) container.innerHTML = '<div class="alert alert-info">Pro zobrazení AI návrhů se přihlaste.</div>';
+        if (statsContainer) statsContainer.innerHTML = '';
+        if (adminActions) adminActions.style.display = 'none';
+        return;
+    }
+
+    // Nastavit viditelnost admin akcí
+    if (adminActions) {
+        adminActions.style.display = AI_IS_ADMIN() ? 'flex' : 'none';
+    }
+
+    // Načíst návrhy (dostupné všem přihlášeným)
+    await loadAIFeaturesSuggestions();
+
+    // Statistiky jen pro adminy
+    if (AI_IS_ADMIN()) {
+        await loadAIFeaturesStats();
+    } else if (statsContainer) {
+        statsContainer.innerHTML = '<p style="color: #64748b; font-style: italic;">Statistiky jsou dostupné pouze pro administrátory.</p>';
+    }
 }
 
 /**
  * Zkontrolovat, zda je uživatel admin
  */
 async function checkIfAdmin() {
-    try {
-        // Zkusit načíst statistiky - pokud to projde, je admin
-        await apiCall('/api/v1/ai-features/analytics/stats?days=1', 'GET');
-        return true;
-    } catch (error) {
-        return false;
-    }
+    // Použijeme jen klientský přepínač (query param)
+    return AI_IS_ADMIN;
 }
 
 /**
@@ -351,4 +391,3 @@ async function updateUIForUserRole() {
         btn.style.display = isAdmin ? 'inline-block' : 'none';
     });
 }
-

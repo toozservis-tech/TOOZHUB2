@@ -208,6 +208,7 @@ def execute_customer_command(command: CustomerCommand, db: Session) -> str:
                     else:
                         # Pokud nemáme pole note, vytvoříme servisní záznam jako poznámku
                         service_record = ServiceRecordModel(
+                            tenant_id=vehicle.tenant_id or command.tenant_id or 1,
                             vehicle_id=command.vehicle_id,
                             performed_at=datetime.utcnow(),
                             description=f"Poznámka: {command.raw_text[:500]}",
@@ -921,7 +922,6 @@ def get_customer_command(
         "error_message": command.error_message,
         "processed_at": command.processed_at.isoformat() if command.processed_at else None
     }
-
 
 
 

@@ -1,7 +1,7 @@
 """
 Pydantic schémata pro API v1.0
 """
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Dict
 from datetime import datetime, date
 
@@ -11,7 +11,7 @@ from datetime import datetime, date
 # ==========================
 
 class VehicleCreateV1(BaseModel):
-    nickname: Optional[str] = None
+    nickname: str = Field(..., min_length=2)
     brand: Optional[str] = None
     model: Optional[str] = None
     year: Optional[int] = None
@@ -19,7 +19,9 @@ class VehicleCreateV1(BaseModel):
     vin: Optional[str] = None
     plate: Optional[str] = None
     notes: Optional[str] = None
-    stk_valid_until: Optional[date] = None
+    stk_valid_until: date
+    current_mileage_km: Optional[int] = Field(default=None, ge=0)
+    last_stk_mileage_km: Optional[int] = Field(default=None, ge=0)
     tyres_info: Optional[str] = None
     insurance_provider: Optional[str] = None
     insurance_valid_until: Optional[date] = None
@@ -36,6 +38,8 @@ class VehicleUpdateV1(BaseModel):
     plate: Optional[str] = None
     notes: Optional[str] = None
     stk_valid_until: Optional[date] = None
+    current_mileage_km: Optional[int] = Field(default=None, ge=0)
+    last_stk_mileage_km: Optional[int] = Field(default=None, ge=0)
     tyres_info: Optional[str] = None
     insurance_provider: Optional[str] = None
     insurance_valid_until: Optional[date] = None
@@ -53,7 +57,11 @@ class VehicleOutV1(BaseModel):
     vin: Optional[str]
     plate: Optional[str]
     notes: Optional[str]
+    photo_path: Optional[str] = None
     stk_valid_until: Optional[date]
+    current_mileage_km: Optional[int] = None
+    last_stk_mileage_km: Optional[int] = None
+    mileage_checked_at: Optional[datetime] = None
     tyres_info: Optional[str] = None
     insurance_provider: Optional[str] = None
     insurance_valid_until: Optional[date] = None
@@ -70,23 +78,23 @@ class VehicleOutV1(BaseModel):
 # ==========================
 
 class ServiceRecordCreateV1(BaseModel):
-    performed_at: Optional[datetime] = None  # Může být None
-    mileage: Optional[int] = None
-    description: str
-    price: Optional[float] = None
+    performed_at: datetime
+    mileage: Optional[int] = Field(default=None, ge=0)
+    description: str = Field(..., min_length=3)
+    price: Optional[float] = Field(default=None, ge=0)
     note: Optional[str] = None
-    category: Optional[str] = None  # OLEJ, BRZDY, PNEU, STK, DIAGNOSTIKA, ...
+    category: str = Field(..., min_length=1)  # OLEJ, BRZDY, PNEU, STK, DIAGNOSTIKA, ...
     attachments: Optional[str] = None  # JSON string nebo text
     next_service_due_date: Optional[date] = None
 
 
 class ServiceRecordUpdateV1(BaseModel):
     performed_at: Optional[datetime] = None
-    mileage: Optional[int] = None
-    description: Optional[str] = None
-    price: Optional[float] = None
+    mileage: Optional[int] = Field(default=None, ge=0)
+    description: Optional[str] = Field(default=None, min_length=3)
+    price: Optional[float] = Field(default=None, ge=0)
     note: Optional[str] = None
-    category: Optional[str] = None
+    category: Optional[str] = Field(default=None, min_length=1)
     attachments: Optional[str] = None
     next_service_due_date: Optional[date] = None
 
@@ -104,6 +112,10 @@ class ServiceRecordOutV1(BaseModel):
     attachments: Optional[str]
     next_service_due_date: Optional[date]
     created_by_ai: bool = False  # True pokud byl záznam vytvořen AI asistentem
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
+    deletion_reason: Optional[str] = None
+    snapshot_hash: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -152,6 +164,7 @@ class ReservationCreateV1(BaseModel):
     note: Optional[str] = None
     start_datetime: datetime
     end_datetime: Optional[datetime] = None
+    created_via: Optional[str] = Field(default=None, max_length=64)
 
 
 class ReservationUpdateV1(BaseModel):
@@ -173,9 +186,25 @@ class ReservationOutV1(BaseModel):
     end_datetime: Optional[datetime]
     status: str
     created_at: datetime
+    service_name: Optional[str] = None
+    service_email: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_email: Optional[str] = None
+    vehicle_name: Optional[str] = None
+    vehicle_plate: Optional[str] = None
+    source_platform: Optional[str] = None
     
     class Config:
         from_attributes = True
+
+
+class ReservationVehicleOptionOutV1(BaseModel):
+    id: int
+    name: str
+    plate: Optional[str] = None
+    owner_email: Optional[str] = None
+    is_shared: bool = False
+    source: Optional[str] = None
 
 
 # ==========================
@@ -189,6 +218,8 @@ class ReminderOutV1(BaseModel):
     vehicle_name: Optional[str] = None
     text: str
     due_date: Optional[date] = None
+    notify_at: Optional[datetime] = None
+    notification_method: Optional[str] = None  # app, email, both; None = globální nastavení
     is_manual: bool = False  # True = ruční, False = automatická
     is_completed: Optional[bool] = False
 
@@ -199,6 +230,10 @@ class ReminderCreateV1(BaseModel):
     type: str  # STK, OLEJ, SERVIS, VLASTNI
     text: str
     due_date: Optional[date] = None
+    notify_at: Optional[datetime] = None
+    notification_method: Optional[str] = None
+    repeat_count: Optional[int] = Field(default=0, ge=0, le=24, description="Kolikrát zopakovat (0=bez opakování)")
+    repeat_interval_days: Optional[int] = Field(default=0, ge=0, le=3650, description="Interval opakování ve dnech (0=neopakovat)")
 
 
 class ReminderUpdateV1(BaseModel):
@@ -207,6 +242,8 @@ class ReminderUpdateV1(BaseModel):
     vehicle_id: Optional[int] = None  # ID vozidla (nebo None pro obecnou)
     text: Optional[str] = None
     due_date: Optional[date] = None
+    notify_at: Optional[datetime] = None
+    notification_method: Optional[str] = None
     is_completed: Optional[bool] = None
 
 
@@ -274,5 +311,58 @@ class AIRecordResponseV1(BaseModel):
     parsed: dict
 
 
+# ==========================
+#   ANALYTIKA
+# ==========================
+
+class AnalyticsSummaryOutV1(BaseModel):
+    scope: str  # "all" | "vehicle"
+    vehicle_id: Optional[int] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    total_records: int
+    priced_records: int
+    total_cost_czk: float
+    average_cost_czk: Optional[float] = None
+    min_cost_czk: Optional[float] = None
+    max_cost_czk: Optional[float] = None
+    mileage_min: Optional[int] = None
+    mileage_max: Optional[int] = None
+    latest_service_at: Optional[datetime] = None
 
 
+class AnalyticsCategoryItemV1(BaseModel):
+    category: str
+    records_count: int
+    priced_records_count: int
+    total_cost_czk: float
+    average_cost_czk: Optional[float] = None
+    latest_service_at: Optional[datetime] = None
+
+
+class AnalyticsCategoryBreakdownOutV1(BaseModel):
+    scope: str  # "all" | "vehicle"
+    vehicle_id: Optional[int] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    total_records: int
+    categories: List[AnalyticsCategoryItemV1]
+
+
+class AnalyticsMonthlyEntryV1(BaseModel):
+    month: str  # YYYY-MM
+    label: str  # MM/YYYY
+    records_count: int
+    priced_records_count: int
+    total_cost_czk: float
+
+
+class AnalyticsMonthlyCostsOutV1(BaseModel):
+    scope: str  # "all" | "vehicle"
+    vehicle_id: Optional[int] = None
+    months: int
+    generated_at: datetime
+    total_records: int
+    priced_records: int
+    total_cost_czk: float
+    entries: List[AnalyticsMonthlyEntryV1]

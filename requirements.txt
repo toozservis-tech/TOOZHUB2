@@ -7,10 +7,12 @@ PySide6>=6.6.0
 
 # Database
 sqlalchemy>=2.0.0
+alembic>=1.13.0
 
 # HTTP requests
 requests>=2.31.0
 httpx>=0.25.0  # Asynchronní HTTP klient pro Vehicle Decoder Engine
+pywebpush>=2.0.3  # Web Push notifikace (VAPID)
 
 # Desktop webview (pro admin launcher)
 pywebview>=4.4.1

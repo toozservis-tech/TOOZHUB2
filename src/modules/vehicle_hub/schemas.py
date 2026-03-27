@@ -62,6 +62,8 @@ class VehicleCreate(BaseModel):
     vin: Optional[str] = None
     plate: Optional[str] = None
     stk_valid_until: Optional[date] = None  # Datum konce platnosti STK
+    current_mileage_km: Optional[int] = None
+    last_stk_mileage_km: Optional[int] = None
 
 
 class VehicleOut(BaseModel):
@@ -75,6 +77,9 @@ class VehicleOut(BaseModel):
     vin: Optional[str]
     plate: Optional[str]
     stk_valid_until: Optional[date] = None  # Datum konce platnosti STK
+    current_mileage_km: Optional[int] = None
+    last_stk_mileage_km: Optional[int] = None
+    mileage_checked_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -106,4 +111,3 @@ class ServiceRecordOut(BaseModel):
 
     class Config:
         from_attributes = True
-

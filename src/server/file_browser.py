@@ -8,36 +8,81 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from typing import Optional
 import mimetypes
 from datetime import datetime
+from urllib.parse import unquote
 
 router = APIRouter(prefix="/files", tags=["files"])
 
 # Kořenový adresář projektu
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-# Složky, které se mají skrýt
-HIDDEN_PATHS = {
+# Citlivé segmenty/cesty, které nesmí být dostupné ani při zapnutém file browseru.
+BLOCKED_SEGMENTS = {
     ".git",
+    ".github",
+    ".ssh",
     "__pycache__",
+    "node_modules",
     "venv",
     ".venv",
-    "node_modules",
-    ".env",
-    "*.pyc",
-    "*.db",
-    "*.db.backup",
     ".pytest_cache",
     ".mypy_cache",
 }
+BLOCKED_SUFFIXES = (
+    ".pem",
+    ".key",
+    ".crt",
+    ".bak",
+    ".backup",
+    ".sql",
+    ".sqlite",
+    ".db",
+)
 
 def is_hidden(path: Path) -> bool:
     """Zkontroluje, zda je cesta skrytá"""
-    parts = path.parts
-    for hidden in HIDDEN_PATHS:
-        if hidden in parts or path.name.startswith('.') and path.name != '.env':
-            # Ale .env soubory skrýt vždy
-            if path.name == '.env' or '.env' in path.parts:
-                return True
+    try:
+        rel = path.resolve().relative_to(PROJECT_ROOT.resolve())
+        parts = rel.parts
+    except Exception:
+        parts = path.parts
+
+    for raw_part in parts:
+        part = str(raw_part or "").strip()
+        if not part:
+            continue
+        lowered = part.lower()
+
+        # Jakýkoliv segment začínající "." je citlivý (.git, .env, .ssh, atd.)
+        if lowered.startswith("."):
+            return True
+        if lowered in BLOCKED_SEGMENTS:
+            return True
+        if lowered == ".env" or lowered.startswith(".env."):
+            return True
+        if lowered.endswith(".pyc"):
+            return True
+        if any(lowered.endswith(suffix) for suffix in BLOCKED_SUFFIXES):
+            return True
+
     return False
+
+
+def resolve_project_path(raw_path: Optional[str]) -> Path:
+    """
+    Bezpečně normalizuje a vyřeší cestu pod PROJECT_ROOT.
+    Zahrnuje opakované URL dekódování kvůli encoded bypass pokusům.
+    """
+    decoded = str(raw_path or "")
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            break
+        decoded = next_decoded
+
+    resolved = (PROJECT_ROOT / decoded).resolve()
+    if not str(resolved).startswith(str(PROJECT_ROOT.resolve())):
+        raise HTTPException(status_code=403, detail="Neplatná cesta")
+    return resolved
 
 def get_file_size(path: Path) -> str:
     """Vrací velikost souboru v čitelném formátu"""
@@ -56,14 +101,15 @@ async def file_browser_index(path: Optional[str] = None):
     """HTML rozhraní pro prohlížení souborů"""
     target_path = PROJECT_ROOT
     if path:
-        # Bezpečnostní kontrola - zabránit directory traversal
         try:
-            resolved = (PROJECT_ROOT / path).resolve()
-            if not str(resolved).startswith(str(PROJECT_ROOT)):
-                raise HTTPException(status_code=403, detail="Neplatná cesta")
-            target_path = resolved
-        except:
+            target_path = resolve_project_path(path)
+        except HTTPException:
+            raise
+        except Exception:
             raise HTTPException(status_code=404, detail="Cesta nenalezena")
+
+    if is_hidden(target_path):
+        raise HTTPException(status_code=403, detail="Přístup zamítnut")
     
     if not target_path.exists():
         raise HTTPException(status_code=404, detail="Cesta neexistuje")
@@ -265,108 +311,101 @@ def generate_breadcrumb(path: str) -> str:
 @router.get("/view")
 async def view_file(path: str):
     """Zobrazí obsah souboru"""
+    file_path = resolve_project_path(path)
+
+    if is_hidden(file_path):
+        raise HTTPException(status_code=403, detail="Přístup zamítnut")
+
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Soubor nenalezen")
+
+    # Zkusit přečíst jako text
     try:
-        file_path = (PROJECT_ROOT / path).resolve()
-        
-        # Bezpečnostní kontrola
-        if not str(file_path).startswith(str(PROJECT_ROOT)):
-            raise HTTPException(status_code=403, detail="Neplatná cesta")
-        
-        if not file_path.exists() or not file_path.is_file():
-            raise HTTPException(status_code=404, detail="Soubor nenalezen")
-        
-        if is_hidden(file_path):
-            raise HTTPException(status_code=403, detail="Přístup zamítnut")
-        
-        # Zkusit přečíst jako text
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except UnicodeDecodeError:
-            # Binární soubor
-            return FileResponse(file_path, media_type='application/octet-stream')
-        
-        # HTML pro zobrazení obsahu
-        parent_dir = str(file_path.parent.relative_to(PROJECT_ROOT)).replace("\\", "/")
-        
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>{file_path.name} - File Browser</title>
-            <style>
-                body {{
-                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                    margin: 0;
-                    padding: 20px;
-                    background: #f5f5f5;
-                }}
-                .container {{
-                    max-width: 1400px;
-                    margin: 0 auto;
-                    background: white;
-                    padding: 20px;
-                    border-radius: 8px;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                }}
-                h1 {{
-                    color: #333;
-                    border-bottom: 3px solid #4CAF50;
-                    padding-bottom: 10px;
-                }}
-                .file-info {{
-                    background: #f0f0f0;
-                    padding: 10px;
-                    border-radius: 4px;
-                    margin-bottom: 20px;
-                    font-size: 14px;
-                }}
-                .file-content {{
-                    background: #1e1e1e;
-                    color: #d4d4d4;
-                    padding: 20px;
-                    border-radius: 4px;
-                    overflow-x: auto;
-                    font-family: 'Courier New', monospace;
-                    font-size: 13px;
-                    line-height: 1.6;
-                    white-space: pre;
-                }}
-                .back-btn {{
-                    display: inline-block;
-                    background: #4CAF50;
-                    color: white;
-                    padding: 10px 20px;
-                    border-radius: 4px;
-                    text-decoration: none;
-                    margin-bottom: 20px;
-                }}
-                .back-btn:hover {{
-                    background: #45a049;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <a href="/files/?path={parent_dir}" class="back-btn">← Zpět</a>
-                <h1>📄 {file_path.name}</h1>
-                <div class="file-info">
-                    <strong>Cesta:</strong> {path}<br>
-                    <strong>Velikost:</strong> {get_file_size(file_path)}
-                </div>
-                <div class="file-content">{escape_html(content[:100000])}</div>
-                <p style="margin-top: 20px;">
-                    <a href="/files/download?path={path}">⬇️ Stáhnout soubor</a>
-                </p>
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except UnicodeDecodeError:
+        # Binární soubor
+        return FileResponse(file_path, media_type='application/octet-stream')
+
+    # HTML pro zobrazení obsahu
+    parent_dir = str(file_path.parent.relative_to(PROJECT_ROOT)).replace("\\", "/")
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>{file_path.name} - File Browser</title>
+        <style>
+            body {{
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background: #f5f5f5;
+            }}
+            .container {{
+                max-width: 1400px;
+                margin: 0 auto;
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }}
+            h1 {{
+                color: #333;
+                border-bottom: 3px solid #4CAF50;
+                padding-bottom: 10px;
+            }}
+            .file-info {{
+                background: #f0f0f0;
+                padding: 10px;
+                border-radius: 4px;
+                margin-bottom: 20px;
+                font-size: 14px;
+            }}
+            .file-content {{
+                background: #1e1e1e;
+                color: #d4d4d4;
+                padding: 20px;
+                border-radius: 4px;
+                overflow-x: auto;
+                font-family: 'Courier New', monospace;
+                font-size: 13px;
+                line-height: 1.6;
+                white-space: pre;
+            }}
+            .back-btn {{
+                display: inline-block;
+                background: #4CAF50;
+                color: white;
+                padding: 10px 20px;
+                border-radius: 4px;
+                text-decoration: none;
+                margin-bottom: 20px;
+            }}
+            .back-btn:hover {{
+                background: #45a049;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <a href="/files/?path={parent_dir}" class="back-btn">← Zpět</a>
+            <h1>📄 {file_path.name}</h1>
+            <div class="file-info">
+                <strong>Cesta:</strong> {path}<br>
+                <strong>Velikost:</strong> {get_file_size(file_path)}
             </div>
-        </body>
-        </html>
-        """
-        
-        return HTMLResponse(content=html)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chyba: {str(e)}")
+            <div class="file-content">{escape_html(content[:100000])}</div>
+            <p style="margin-top: 20px;">
+                <a href="/files/download?path={path}">⬇️ Stáhnout soubor</a>
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(content=html)
 
 def escape_html(text: str) -> str:
     """Escape HTML znaky"""
@@ -380,27 +419,20 @@ def escape_html(text: str) -> str:
 @router.get("/download")
 async def download_file(path: str):
     """Stáhne soubor"""
-    try:
-        file_path = (PROJECT_ROOT / path).resolve()
-        
-        # Bezpečnostní kontrola
-        if not str(file_path).startswith(str(PROJECT_ROOT)):
-            raise HTTPException(status_code=403, detail="Neplatná cesta")
-        
-        if not file_path.exists() or not file_path.is_file():
-            raise HTTPException(status_code=404, detail="Soubor nenalezen")
-        
-        if is_hidden(file_path):
-            raise HTTPException(status_code=403, detail="Přístup zamítnut")
-        
-        media_type, _ = mimetypes.guess_type(str(file_path))
-        return FileResponse(
-            file_path,
-            media_type=media_type or "application/octet-stream",
-            filename=file_path.name
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chyba: {str(e)}")
+    file_path = resolve_project_path(path)
+
+    if is_hidden(file_path):
+        raise HTTPException(status_code=403, detail="Přístup zamítnut")
+
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Soubor nenalezen")
+
+    media_type, _ = mimetypes.guess_type(str(file_path))
+    return FileResponse(
+        file_path,
+        media_type=media_type or "application/octet-stream",
+        filename=file_path.name
+    )
 
 @router.get("/api/list")
 async def list_files_api(path: Optional[str] = None):
@@ -408,12 +440,14 @@ async def list_files_api(path: Optional[str] = None):
     target_path = PROJECT_ROOT
     if path:
         try:
-            resolved = (PROJECT_ROOT / path).resolve()
-            if not str(resolved).startswith(str(PROJECT_ROOT)):
-                raise HTTPException(status_code=403, detail="Neplatná cesta")
-            target_path = resolved
-        except:
+            target_path = resolve_project_path(path)
+        except HTTPException:
+            raise
+        except Exception:
             raise HTTPException(status_code=404, detail="Cesta nenalezena")
+
+    if is_hidden(target_path):
+        raise HTTPException(status_code=403, detail="Přístup zamítnut")
     
     if not target_path.exists():
         raise HTTPException(status_code=404, detail="Cesta neexistuje")
@@ -449,10 +483,6 @@ async def list_files_api(path: Optional[str] = None):
         "path": str(target_path.relative_to(PROJECT_ROOT)).replace("\\", "/") if path else "",
         "items": items
     }
-
-
-
-
 
 
 

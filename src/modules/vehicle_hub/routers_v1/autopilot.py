@@ -149,6 +149,7 @@ def create_quick_record(
     user_id = user.id if user else None
     
     record = ServiceRecordModel(
+        tenant_id=vehicle.tenant_id or getattr(user, "tenant_id", None) or 1,
         vehicle_id=vehicle_id,
         user_id=user_id,
         performed_at=datetime.now(),
@@ -169,7 +170,6 @@ def create_quick_record(
         "vehicle_id": vehicle_id,
         "message": "Servisní záznam vytvořen"
     }
-
 
 
 

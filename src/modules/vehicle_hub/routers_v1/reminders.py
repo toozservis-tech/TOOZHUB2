@@ -4,24 +4,135 @@ Kompletní CRUD operace pro automatické i ruční připomínky
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import inspect
-from typing import List
-from datetime import date, datetime, timedelta
+from sqlalchemy import func, or_
+from typing import List, Optional
+from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from ..database import get_db
 from ..models import (
     Vehicle as VehicleModel,
     ServiceRecord as ServiceRecordModel,
     Customer,
-    Reminder as ReminderModel
+    Reminder as ReminderModel,
+    EmailNotificationLog,
+    PushSubscription,
 )
 from .auth import get_current_user
-from .schemas import ReminderOutV1, ReminderCreateV1, ReminderUpdateV1
+from .schemas import (
+    ReminderOutV1,
+    ReminderCreateV1,
+    ReminderUpdateV1,
+)
 from ..email_notifications import send_reminder_email, send_reminder_created_email
+from ..push_notifications import send_push_to_customer
+from ..schema_management import assert_module_ready
 from .reminder_settings import get_reminder_settings
-from datetime import date, timedelta
 
 router = APIRouter(prefix="/reminders", tags=["reminders-v1"])
+
+
+def _to_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Převede datetime na UTC bez timezone info (DB ukládá naive UTC)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _ensure_reminders_schema(db: Session) -> None:
+    assert_module_ready(db, "reminders", detail_prefix="Připomínky nejsou připravené")
+
+
+def _already_sent_today(
+    db: Session,
+    *,
+    notification_type: str,
+    entity_id: Optional[int],
+    customer_id: Optional[int],
+    tenant_id: Optional[int],
+    today: date,
+) -> bool:
+    query = db.query(EmailNotificationLog).filter(
+        EmailNotificationLog.notification_type == notification_type,
+        EmailNotificationLog.entity_id == entity_id,
+        EmailNotificationLog.customer_id == customer_id,
+        func.date(EmailNotificationLog.sent_at) == today,
+    )
+    if tenant_id is not None:
+        query = query.filter(EmailNotificationLog.tenant_id == tenant_id)
+    return query.first() is not None
+
+
+def _notification_channels(notification_method: Optional[str]) -> tuple[bool, bool]:
+    """Vrátí (email, push) kanály podle nastavení."""
+    method = (notification_method or "app").strip().lower()
+    send_email = method in {"email", "both", "all"}
+    send_push = method in {"app", "both", "push", "all"}
+    return send_email, send_push
+
+
+def _has_active_push_subscription(db: Session, *, tenant_id: int, customer_id: int) -> bool:
+    """Vrátí True, pokud má zákazník aktivní push subskripci."""
+    try:
+        row = db.query(PushSubscription.id).filter(
+            PushSubscription.tenant_id == tenant_id,
+            PushSubscription.customer_id == customer_id,
+            PushSubscription.is_active == True,
+        ).first()
+        return row is not None
+    except Exception:
+        return False
+
+
+def _normalize_notification_method(notification_method: Optional[str], *, strict: bool = True) -> Optional[str]:
+    """
+    Normalizuje per-reminder kanál notifikace.
+    Vrací None pro "inherit/default" => použije se globální nastavení uživatele.
+    """
+    if notification_method is None:
+        return None
+
+    method = str(notification_method).strip().lower()
+    if method in {"", "inherit", "default", "global", "none", "null"}:
+        return None
+
+    if method not in {"app", "email", "both"}:
+        if strict:
+            raise HTTPException(
+                status_code=422,
+                detail="Neplatná hodnota notification_method. Povolené: app, email, both.",
+            )
+        return None
+
+    return method
+
+
+def _log_push_notification(
+    db: Session,
+    *,
+    tenant_id: int,
+    customer: Customer,
+    notification_type: str,
+    entity_id: Optional[int],
+    subject: str,
+    status: str = "sent",
+    error_message: Optional[str] = None,
+) -> None:
+    """Zapíše push událost do email_notification_logs (pro audit + deduplikaci)."""
+    db.add(
+        EmailNotificationLog(
+            tenant_id=tenant_id,
+            customer_id=customer.id,
+            email=customer.email,
+            subject=subject,
+            notification_type=notification_type,
+            entity_id=entity_id,
+            status=status,
+            error_message=error_message,
+        )
+    )
 
 
 @router.get("", response_model=List[ReminderOutV1])
@@ -30,7 +141,19 @@ def get_reminders(
     db: Session = Depends(get_db)
 ):
     """Vrací připomínky pro aktuálního uživatele (automatické i ruční)"""
+    from fastapi import HTTPException
+    from ...licensing.service import assert_feature
+    
+    # KROK 1: Zkontrolovat feature flag
+    tenant_id = getattr(current_user, 'tenant_id', None)
+    if tenant_id:
+        try:
+            assert_feature(db, tenant_id, "reminders")
+        except HTTPException as e:
+            raise
+    
     try:
+        _ensure_reminders_schema(db)
         reminders = []
         
         # Načíst všechna vozidla uživatele
@@ -62,6 +185,7 @@ def get_reminders(
                         vehicle_name=vehicle_name,
                         text=text,
                         due_date=vehicle.stk_valid_until,
+                        notify_at=None,
                         is_manual=False,
                         is_completed=False
                     ))
@@ -96,6 +220,7 @@ def get_reminders(
                             vehicle_name=vehicle_name,
                             text=f"Výměna oleje za cca {km_until_oil} km (při {current_km} km)",
                             due_date=None,
+                            notify_at=None,
                             is_manual=False,
                             is_completed=False
                         ))
@@ -125,6 +250,7 @@ def get_reminders(
                             vehicle_name=vehicle_name,
                             text=text,
                             due_date=one_year_later,
+                            notify_at=None,
                             is_manual=False,
                             is_completed=False
                         ))
@@ -152,6 +278,7 @@ def get_reminders(
                     vehicle_name=vehicle_name,
                     text=text,
                     due_date=service.next_service_due_date,
+                    notify_at=None,
                     is_manual=False,
                     is_completed=False
                 ))
@@ -164,17 +291,26 @@ def get_reminders(
                 inspector = inspect(db.bind)
                 table_names = [table.name for table in inspector.get_table_names()]
                 if 'reminders' in table_names:
-                    manual_reminders = db.query(ReminderModel).filter(
+                    # Filtrovat podle customer_id a tenant_id (pokud existuje)
+                    query = db.query(ReminderModel).filter(
                         ReminderModel.customer_id == current_user.id,
                         ReminderModel.is_completed == False
-                    ).all()
+                    )
+                    # Přidat filtr podle tenant_id pokud uživatel má tenant_id
+                    if hasattr(current_user, 'tenant_id') and current_user.tenant_id is not None:
+                        query = query.filter(ReminderModel.tenant_id == current_user.tenant_id)
+                    manual_reminders = query.all()
             except (AttributeError, TypeError):
                 # Pokud inspect selže, zkusit přímo dotaz
                 try:
-                    manual_reminders = db.query(ReminderModel).filter(
+                    query = db.query(ReminderModel).filter(
                         ReminderModel.customer_id == current_user.id,
                         ReminderModel.is_completed == False
-                    ).all()
+                    )
+                    # Přidat filtr podle tenant_id pokud uživatel má tenant_id
+                    if hasattr(current_user, 'tenant_id') and current_user.tenant_id is not None:
+                        query = query.filter(ReminderModel.tenant_id == current_user.tenant_id)
+                    manual_reminders = query.all()
                 except Exception:
                     manual_reminders = []
         except Exception as e:
@@ -201,13 +337,22 @@ def get_reminders(
                 vehicle_name=vehicle_name,
                 text=reminder.text,
                 due_date=reminder.due_date,
+                notify_at=reminder.notify_at,
+                notification_method=_normalize_notification_method(reminder.notification_method, strict=False),
                 is_manual=True,
                 is_completed=reminder.is_completed
             ))
         
-        # Seřadit podle due_date (nejbližší první, připomínky bez data na konci)
+        # Seřadit podle notify_at (pokud je), jinak due_date
         try:
-            reminders.sort(key=lambda r: (r.due_date if r.due_date else date.max, r.is_manual))
+            reminders.sort(
+                key=lambda r: (
+                    r.notify_at
+                    if r.notify_at is not None
+                    else datetime.combine(r.due_date, datetime.min.time()) if r.due_date is not None else datetime.max,
+                    r.is_manual
+                )
+            )
         except Exception as e:
             # Pokud sort selže, pokračovat bez řazení
             print(f"[REMINDERS] Warning: Nepodařilo se seřadit připomínky: {e}")
@@ -232,8 +377,10 @@ def create_reminder(
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Vytvoří novou ruční připomínku"""
+    """Vytvoří novou ruční připomínku, volitelně včetně opakování."""
     try:
+        _ensure_reminders_schema(db)
+
         # Ověřit, že vozidlo patří uživateli (pokud je zadáno)
         if reminder_data.vehicle_id:
             vehicle = db.query(VehicleModel).filter(
@@ -245,48 +392,86 @@ def create_reminder(
                 raise HTTPException(status_code=404, detail="Vozidlo nenalezeno nebo nemáte oprávnění")
         
         # Vytvořit připomínku
-        reminder = ReminderModel(
-            customer_id=current_user.id,
-            vehicle_id=reminder_data.vehicle_id,
-            type=reminder_data.type,
-            text=reminder_data.text,
-            due_date=reminder_data.due_date,
-            is_completed=False
-        )
+        # DŮLEŽITÉ: tenant_id je povinné pole v modelu - musí být nastaveno při registraci/autentizaci
+        tenant_id = getattr(current_user, 'tenant_id', None)
+        if tenant_id is None:
+            # V multi-tenant systému musí mít každý uživatel tenant_id
+            # Silent fallback na tenant_id = 1 by porušil data integrity
+            # Místo toho vrátíme chybu, která upozorní na problém v konfiguraci uživatele
+            raise HTTPException(
+                status_code=403,
+                detail=f"Uživatel {current_user.email} nemá přiřazený tenant. Kontaktujte administrátora pro opravu účtu."
+            )
         
-        db.add(reminder)
-        db.commit()
-        db.refresh(reminder)
-        
+        # Podpora opakování: repeat_count + repeat_interval_days
+        reminders_created = []
+        repeat_count = reminder_data.repeat_count or 0
+        repeat_interval = reminder_data.repeat_interval_days or 0
+        notify_at_base = _to_naive_utc(reminder_data.notify_at)
+        notification_method = _normalize_notification_method(reminder_data.notification_method)
+
+        def add_reminder(due_date_val, notify_at_val):
+            r = ReminderModel(
+                tenant_id=tenant_id,
+                customer_id=current_user.id,
+                vehicle_id=reminder_data.vehicle_id,
+                type=reminder_data.type,
+                text=reminder_data.text,
+                due_date=due_date_val,
+                notify_at=notify_at_val,
+                notification_method=notification_method,
+                last_notified_at=None,
+                is_completed=False,
+                is_manual=True
+            )
+            db.add(r)
+            db.commit()
+            db.refresh(r)
+            reminders_created.append(r)
+            return r
+
+        # Vždy vytvořit základní připomínku
+        first = add_reminder(reminder_data.due_date, notify_at_base)
+
+        # Pokud je nastaveno opakování, vytvořit další
+        if repeat_count > 0 and repeat_interval > 0 and (reminder_data.due_date or notify_at_base):
+            base_due = reminder_data.due_date
+            for i in range(1, repeat_count + 1):
+                next_due = base_due + timedelta(days=repeat_interval * i) if base_due else None
+                next_notify_at = notify_at_base + timedelta(days=repeat_interval * i) if notify_at_base else None
+                add_reminder(next_due, next_notify_at)
+
         # Odeslat email notifikaci při vytvoření připomínky (pokud je to povoleno)
         try:
             settings = get_reminder_settings(current_user)
             notification_settings = settings.get("notification", {})
-            notification_method = notification_settings.get("notification_method", "app")
+            notification_method_effective = notification_method or notification_settings.get("notification_method", "app")
             
             # Odeslat email, pokud je nastaveno "email" nebo "both"
-            if notification_method in ["email", "both"]:
-                send_reminder_created_email(db, reminder)
+            if notification_method_effective in ["email", "both"]:
+                send_reminder_created_email(db, first)
         except Exception as e:
             # Nechceme, aby selhalo vytvoření připomínky kvůli chybě při odesílání emailu
             print(f"[REMINDERS] Warning: Nepodařilo se odeslat email při vytvoření připomínky: {e}")
         
         # Vytvořit odpověď
         vehicle_name = "Obecná připomínka"
-        if reminder.vehicle_id:
-            vehicle = db.query(VehicleModel).filter(VehicleModel.id == reminder.vehicle_id).first()
+        if first.vehicle_id:
+            vehicle = db.query(VehicleModel).filter(VehicleModel.id == first.vehicle_id).first()
             if vehicle:
                 vehicle_name = vehicle.nickname or vehicle.plate or f"{vehicle.brand} {vehicle.model}" or "Vozidlo"
         
         return ReminderOutV1(
-            id=reminder.id,
-            type=reminder.type,
-            vehicle_id=reminder.vehicle_id,
+            id=first.id,
+            type=first.type,
+            vehicle_id=first.vehicle_id,
             vehicle_name=vehicle_name,
-            text=reminder.text,
-            due_date=reminder.due_date,
+            text=first.text,
+            due_date=first.due_date,
+            notify_at=first.notify_at,
+            notification_method=_normalize_notification_method(first.notification_method, strict=False),
             is_manual=True,
-            is_completed=reminder.is_completed
+            is_completed=first.is_completed
         )
     except HTTPException:
         raise
@@ -308,6 +493,8 @@ def update_reminder(
 ):
     """Aktualizuje ruční připomínku"""
     try:
+        _ensure_reminders_schema(db)
+
         # Načíst připomínku
         reminder = db.query(ReminderModel).filter(
             ReminderModel.id == reminder_id,
@@ -316,13 +503,15 @@ def update_reminder(
         
         if not reminder:
             raise HTTPException(status_code=404, detail="Připomínka nenalezena nebo nemáte oprávnění")
-        
+
+        update_payload = reminder_update.model_dump(exclude_unset=True)
+        reset_last_notified = False
+
         # Aktualizovat pouze poskytnutá pole
-        if reminder_update.type is not None:
+        if "type" in update_payload:
             reminder.type = reminder_update.type
-        if reminder_update.vehicle_id is not None:
-            # Validace vozidla (pokud je zadáno)
-            if reminder_update.vehicle_id != 0:
+        if "vehicle_id" in update_payload:
+            if reminder_update.vehicle_id:
                 vehicle = db.query(VehicleModel).filter(
                     VehicleModel.id == reminder_update.vehicle_id,
                     VehicleModel.user_email == current_user.email
@@ -332,16 +521,22 @@ def update_reminder(
                 reminder.vehicle_id = reminder_update.vehicle_id
             else:
                 reminder.vehicle_id = None
-        elif hasattr(reminder_update, 'vehicle_id') and reminder_update.vehicle_id is None:
-            # Explicitně None - odstranit vazbu na vozidlo
-            reminder.vehicle_id = None
-        if reminder_update.text is not None:
+        if "text" in update_payload:
             reminder.text = reminder_update.text
-        if reminder_update.due_date is not None:
+        if "due_date" in update_payload:
             reminder.due_date = reminder_update.due_date
-        if reminder_update.is_completed is not None:
+            reset_last_notified = True
+        if "notify_at" in update_payload:
+            reminder.notify_at = _to_naive_utc(reminder_update.notify_at)
+            reset_last_notified = True
+        if "notification_method" in update_payload:
+            reminder.notification_method = _normalize_notification_method(reminder_update.notification_method)
+        if "is_completed" in update_payload:
             reminder.is_completed = reminder_update.is_completed
-        
+
+        if reset_last_notified:
+            reminder.last_notified_at = None
+
         db.commit()
         db.refresh(reminder)
         
@@ -359,6 +554,8 @@ def update_reminder(
             vehicle_name=vehicle_name,
             text=reminder.text,
             due_date=reminder.due_date,
+            notify_at=reminder.notify_at,
+            notification_method=_normalize_notification_method(reminder.notification_method, strict=False),
             is_manual=True,
             is_completed=reminder.is_completed
         )
@@ -381,6 +578,8 @@ def delete_reminder(
 ):
     """Smaže ruční připomínku"""
     try:
+        _ensure_reminders_schema(db)
+
         # Načíst připomínku
         reminder = db.query(ReminderModel).filter(
             ReminderModel.id == reminder_id,
@@ -414,63 +613,365 @@ def check_and_send_reminder_notifications(
     Tento endpoint by měl být volán pravidelně (např. jednou denně z cron jobu nebo Task Scheduleru).
     """
     try:
+        _ensure_reminders_schema(db)
         today = date.today()
+        now_utc = datetime.utcnow()
         sent_count = 0
         error_count = 0
-        
-        # Načíst všechny aktivní připomínky s due_date
+        email_sent_count = 0
+        push_sent_count = 0
+
+        checked_manual = 0
+        checked_auto_stk = 0
+
+        # Načíst všechny aktivní ruční připomínky s due_date nebo notify_at
         reminders = db.query(ReminderModel).filter(
-            ReminderModel.due_date.isnot(None),
-            ReminderModel.is_completed == False
+            ReminderModel.is_completed == False,
+            or_(
+                ReminderModel.due_date.isnot(None),
+                ReminderModel.notify_at.isnot(None)
+            )
         ).all()
-        
+
         for reminder in reminders:
+            checked_manual += 1
             try:
                 # Načíst uživatele a jeho nastavení
                 customer = db.query(Customer).filter(Customer.id == reminder.customer_id).first()
-                if not customer or not customer.notify_email:
+                if not customer:
                     continue
-                
+
                 settings = get_reminder_settings(customer)
-                notification_settings = settings.get("notification", {})
-                notification_method = notification_settings.get("notification_method", "app")
-                notify_days_before = notification_settings.get("notify_days_before", 7)
-                
-                # Zkontrolovat, zda má být odesláno upozornění
-                if notification_method not in ["email", "both"]:
+                if not settings.get("enabled", True):
                     continue
-                
-                # Vypočítat dny do termínu
-                days_until = (reminder.due_date - today).days
-                
-                # Odeslat upozornění, pokud je to správný den
-                if days_until == notify_days_before:
-                    # Zkontrolovat, zda už nebylo odesláno upozornění pro tento den
-                    from ..models import EmailNotificationLog
-                    existing_log = db.query(EmailNotificationLog).filter(
-                        EmailNotificationLog.notification_type == "REMINDER",
-                        EmailNotificationLog.related_id == reminder.id,
-                        EmailNotificationLog.created_at >= datetime.combine(today, datetime.min.time())
-                    ).first()
-                    
-                    if not existing_log:
-                        if send_reminder_email(db, reminder):
-                            sent_count += 1
-                            print(f"[REMINDERS] Odesláno upozornění pro připomínku ID {reminder.id} (uživatel {customer.email}, {days_until} dní před termínem)")
-                        else:
-                            error_count += 1
-                            print(f"[REMINDERS] Chyba při odesílání upozornění pro připomínku ID {reminder.id}")
-                
+
+                notification_settings = settings.get("notification", {})
+                reminder_method = _normalize_notification_method(reminder.notification_method, strict=False)
+                notification_method = reminder_method or notification_settings.get("notification_method", "app")
+                send_email, send_push = _notification_channels(notification_method)
+                if send_email and not customer.notify_email:
+                    send_email = False
+                # Pokud je zvolen kanál "aplikace" ale uživatel nemá aktivní push zařízení,
+                # fallbackneme na e-mail (pokud je povolený), aby upozornění nezaniklo.
+                if send_push and not send_email:
+                    if not _has_active_push_subscription(
+                        db,
+                        tenant_id=(reminder.tenant_id or getattr(customer, "tenant_id", None) or 1),
+                        customer_id=customer.id,
+                    ) and customer.notify_email:
+                        send_email = True
+                if not send_email and not send_push:
+                    continue
+
+                try:
+                    notify_days_before = int(notification_settings.get("notify_days_before", 7))
+                except (TypeError, ValueError):
+                    notify_days_before = 7
+
+                tenant_id = reminder.tenant_id or getattr(customer, "tenant_id", None) or 1
+                should_send = False
+                notification_type = "REMINDER_DUE_DATE"
+                debug_reason = None
+
+                # Priorita: explicitní notify_at na konkrétní datum+čas
+                if reminder.notify_at is not None:
+                    notify_at = _to_naive_utc(reminder.notify_at)
+                    if notify_at and now_utc >= notify_at:
+                        if reminder.last_notified_at is None or reminder.last_notified_at < notify_at:
+                            if not send_email or not _already_sent_today(
+                                db,
+                                notification_type="REMINDER_NOTIFY_AT",
+                                entity_id=reminder.id,
+                                customer_id=customer.id,
+                                tenant_id=tenant_id,
+                                today=today,
+                            ):
+                                should_send = True
+                                notification_type = "REMINDER_NOTIFY_AT"
+                                debug_reason = f"notify_at reached ({notify_at.isoformat()})"
+                elif reminder.due_date is not None:
+                    # Fallback: globální nastavení předstihu
+                    days_until = (reminder.due_date - today).days
+                    # Odešli notifikaci, jakmile jsme v okně předstihu (<=),
+                    # ale pouze jednou pro aktuální due_date.
+                    threshold_anchor = datetime.combine(
+                        reminder.due_date - timedelta(days=notify_days_before),
+                        datetime.min.time(),
+                    )
+                    last_notified_at = _to_naive_utc(reminder.last_notified_at)
+                    if days_until <= notify_days_before:
+                        if last_notified_at is None or last_notified_at < threshold_anchor:
+                            if not send_email or not _already_sent_today(
+                                db,
+                                notification_type="REMINDER_DUE_DATE",
+                                entity_id=reminder.id,
+                                customer_id=customer.id,
+                                tenant_id=tenant_id,
+                                today=today,
+                            ):
+                                should_send = True
+                                notification_type = "REMINDER_DUE_DATE"
+                                debug_reason = f"due_date in {days_until} days"
+
+                if not should_send:
+                    continue
+
+                sent_channels = []
+
+                if send_email and send_reminder_email(
+                    db,
+                    reminder,
+                    notification_type=notification_type,
+                    entity_id=reminder.id
+                ):
+                    sent_channels.append("email")
+                    email_sent_count += 1
+                elif send_email:
+                    error_count += 1
+                    print(f"[REMINDERS] Chyba při odesílání email notifikace pro připomínku ID {reminder.id}")
+
+                if send_push:
+                    vehicle_name = "Obecná připomínka"
+                    if reminder.vehicle_id:
+                        vehicle = db.query(VehicleModel).filter(VehicleModel.id == reminder.vehicle_id).first()
+                        if vehicle:
+                            vehicle_name = vehicle.nickname or vehicle.plate or f"{vehicle.brand} {vehicle.model}" or "Vozidlo"
+
+                    push_title = "📅 Připomínka TooZ Hub 2"
+                    if reminder.type == "STK":
+                        push_title = "🚗 STK připomínka"
+                    elif reminder.type == "OLEJ":
+                        push_title = "🛢️ Připomínka výměny oleje"
+
+                    push_body = f"{vehicle_name}: {reminder.text}".strip()
+                    if len(push_body) > 220:
+                        push_body = push_body[:217] + "..."
+
+                    push_result = send_push_to_customer(
+                        db,
+                        tenant_id=tenant_id,
+                        customer_id=customer.id,
+                        title=push_title,
+                        body=push_body,
+                        url="/web/index.html?tab=reminders",
+                        tag=f"reminder-{reminder.id}",
+                    )
+
+                    if push_result.get("sent", 0) > 0:
+                        _log_push_notification(
+                            db,
+                            tenant_id=tenant_id,
+                            customer=customer,
+                            notification_type=f"PUSH_{notification_type}",
+                            entity_id=reminder.id,
+                            subject=push_title,
+                            status="sent",
+                        )
+                        sent_channels.append("push")
+                        push_sent_count += 1
+                    elif push_result.get("reason") not in {"no_active_subscriptions"}:
+                        _log_push_notification(
+                            db,
+                            tenant_id=tenant_id,
+                            customer=customer,
+                            notification_type=f"PUSH_{notification_type}",
+                            entity_id=reminder.id,
+                            subject=push_title,
+                            status="failed",
+                            error_message=str(push_result),
+                        )
+                        error_count += 1
+
+                if sent_channels:
+                    reminder.last_notified_at = now_utc
+                    db.commit()
+                    sent_count += len(sent_channels)
+                    print(
+                        f"[REMINDERS] Odeslána notifikace {notification_type} pro připomínku "
+                        f"ID {reminder.id} ({customer.email}); reason={debug_reason}; channels={','.join(sent_channels)}"
+                    )
+
             except Exception as e:
                 error_count += 1
                 print(f"[REMINDERS] Chyba při zpracování připomínky ID {reminder.id}: {e}")
                 import traceback
                 traceback.print_exc()
-        
+
+        # Automatické STK notifikace dle nastavení zákazníka
+        customers = db.query(Customer).filter(Customer.notify_stk == True).all()
+        for customer in customers:
+            try:
+                settings = get_reminder_settings(customer)
+                if not settings.get("enabled", True):
+                    continue
+
+                stk_settings = settings.get("stk", {})
+                if not stk_settings.get("enabled", True):
+                    continue
+
+                notification_settings = settings.get("notification", {})
+                notification_method = notification_settings.get("notification_method", "app")
+                send_email, send_push = _notification_channels(notification_method)
+                if send_email and not customer.notify_email:
+                    send_email = False
+                if send_push and not send_email:
+                    tenant_id_for_push = getattr(customer, "tenant_id", None) or 1
+                    if not _has_active_push_subscription(
+                        db,
+                        tenant_id=tenant_id_for_push,
+                        customer_id=customer.id,
+                    ) and customer.notify_email:
+                        send_email = True
+                if not send_email and not send_push:
+                    continue
+
+                try:
+                    stk_days_before = int(stk_settings.get("days_before", 30))
+                except (TypeError, ValueError):
+                    stk_days_before = 30
+
+                user_vehicles = db.query(VehicleModel).filter(
+                    VehicleModel.user_email == customer.email,
+                    VehicleModel.stk_valid_until.isnot(None)
+                ).all()
+
+                for vehicle in user_vehicles:
+                    checked_auto_stk += 1
+                    vehicle_send_email = send_email
+                    vehicle_send_push = send_push
+
+                    stk_due = vehicle.stk_valid_until
+                    if isinstance(stk_due, datetime):
+                        stk_due = stk_due.date()
+                    elif isinstance(stk_due, str):
+                        try:
+                            stk_due = datetime.fromisoformat(stk_due).date()
+                        except ValueError:
+                            continue
+
+                    if not isinstance(stk_due, date):
+                        continue
+
+                    days_until = (stk_due - today).days
+                    if days_until != stk_days_before:
+                        continue
+
+                    tenant_id = getattr(customer, "tenant_id", None) or getattr(vehicle, "tenant_id", None) or 1
+                    email_already_sent = vehicle_send_email and _already_sent_today(
+                        db,
+                        notification_type="AUTO_STK",
+                        entity_id=vehicle.id,
+                        customer_id=customer.id,
+                        tenant_id=tenant_id,
+                        today=today,
+                    )
+                    push_already_sent = vehicle_send_push and _already_sent_today(
+                        db,
+                        notification_type="PUSH_AUTO_STK",
+                        entity_id=vehicle.id,
+                        customer_id=customer.id,
+                        tenant_id=tenant_id,
+                        today=today,
+                    )
+                    if email_already_sent:
+                        vehicle_send_email = False
+                    if push_already_sent:
+                        vehicle_send_push = False
+                    if not vehicle_send_email and not vehicle_send_push:
+                        continue
+
+                    if days_until < 0:
+                        text = f"STK vypršela před {abs(days_until)} dny"
+                    elif days_until == 0:
+                        text = "STK vyprší dnes"
+                    elif days_until == 1:
+                        text = "STK vyprší zítra"
+                    else:
+                        text = f"STK vyprší za {days_until} dní"
+
+                    synthetic_reminder = SimpleNamespace(
+                        id=vehicle.id,  # pro log entity_id používáme vehicle.id
+                        tenant_id=tenant_id,
+                        customer_id=customer.id,
+                        vehicle_id=vehicle.id,
+                        type="STK",
+                        text=text,
+                        due_date=stk_due,
+                    )
+
+                    sent_channels = []
+
+                    if vehicle_send_email and send_reminder_email(
+                        db,
+                        synthetic_reminder,
+                        notification_type="AUTO_STK",
+                        entity_id=vehicle.id
+                    ):
+                        sent_channels.append("email")
+                        email_sent_count += 1
+                    elif vehicle_send_email:
+                        error_count += 1
+                        print(f"[REMINDERS] Chyba při AUTO_STK email notifikaci pro vehicle {vehicle.id}")
+
+                    if vehicle_send_push:
+                        vehicle_name = vehicle.nickname or vehicle.plate or f"{vehicle.brand} {vehicle.model}" or "Vozidlo"
+                        push_title = f"🚗 STK brzy: {vehicle_name}"
+                        push_result = send_push_to_customer(
+                            db,
+                            tenant_id=tenant_id,
+                            customer_id=customer.id,
+                            title=push_title,
+                            body=text,
+                            url="/web/index.html?tab=vehicles",
+                            tag=f"stk-{vehicle.id}",
+                        )
+                        if push_result.get("sent", 0) > 0:
+                            _log_push_notification(
+                                db,
+                                tenant_id=tenant_id,
+                                customer=customer,
+                                notification_type="PUSH_AUTO_STK",
+                                entity_id=vehicle.id,
+                                subject=push_title,
+                                status="sent",
+                            )
+                            sent_channels.append("push")
+                            push_sent_count += 1
+                        elif push_result.get("reason") not in {"no_active_subscriptions"}:
+                            _log_push_notification(
+                                db,
+                                tenant_id=tenant_id,
+                                customer=customer,
+                                notification_type="PUSH_AUTO_STK",
+                                entity_id=vehicle.id,
+                                subject=push_title,
+                                status="failed",
+                                error_message=str(push_result),
+                            )
+                            error_count += 1
+                            print(f"[REMINDERS] Chyba při AUTO_STK push notifikaci pro vehicle {vehicle.id}: {push_result}")
+
+                    if sent_channels:
+                        sent_count += len(sent_channels)
+                        db.commit()
+                        print(
+                            f"[REMINDERS] Odeslána AUTO_STK notifikace pro vehicle {vehicle.id} "
+                            f"({customer.email}), dní do STK: {days_until}; channels={','.join(sent_channels)}"
+                        )
+
+            except Exception as e:
+                error_count += 1
+                print(f"[REMINDERS] Chyba při AUTO_STK pro uživatele {customer.id}: {e}")
+                import traceback
+                traceback.print_exc()
+
         return {
             "status": "ok",
-            "checked_reminders": len(reminders),
+            "checked_reminders": checked_manual,
+            "checked_auto_stk": checked_auto_stk,
             "notifications_sent": sent_count,
+            "email_notifications_sent": email_sent_count,
+            "push_notifications_sent": push_sent_count,
             "errors": error_count
         }
         

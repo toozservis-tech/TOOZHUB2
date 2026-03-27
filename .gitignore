@@ -22,10 +22,17 @@ test_vehicles.db
 *.cache
 __pycache__/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # QA artifacts
 artifacts/qa/
 test_vehicles.db
+artifacts/
+backups/control_center/
+playwright-report/
+tests/e2e/playwright-report/
+tests/e2e/test-results/
 
 # Node.js
 node_modules/
@@ -45,6 +52,7 @@ venv/
 env/
 ENV/
 .venv/
+.venv.invalid/
 
 # IDE
 .vscode/
@@ -65,6 +73,9 @@ desktop.ini
 *.bak
 *.backup
 *~
+.build/
+ios/TooZHubiOS/.build/
+ios/TooZHubiOS/artifacts/
 
 # Secrets and keys
 *.pem
@@ -80,3 +91,4 @@ secrets/
 data/uploads/
 data/pdfs/
 data/images/
+data.backup_*/

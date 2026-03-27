@@ -2,7 +2,7 @@
 
 ## 🎯 Cíl
 
-Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhub-aplikace/** pomocí přesměrování na:
+Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/sprava-vozidel/** pomocí přesměrování na:
 
 **https://hub.toozservis.cz/web/index.html**
 
@@ -13,7 +13,7 @@ Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhu
 - ✅ Backend běží na **https://hub.toozservis.cz**
 - ✅ Aplikace je dostupná na **https://hub.toozservis.cz/web/index.html**
 - ✅ Máte přístup do Webnode editoru
-- ✅ Stránka `toozhub-aplikace` existuje nebo ji můžete vytvořit
+- ✅ Stránka `sprava-vozidel` existuje nebo ji můžete vytvořit
 
 ---
 
@@ -29,7 +29,7 @@ Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhu
 
 1. Přidejte novou stránku nebo upravte existující stránku:
    - **Název stránky:** `TooZ Hub aplikace` (doporučeno)
-   - **URL / adresa:** `/toozhub-aplikace/`
+   - **URL / adresa:** `/sprava-vozidel/`
    - **Typ:** běžná stránka
 
 ### Krok 3: Nastavení přesměrování
@@ -56,7 +56,7 @@ Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhu
 
 1. Otevřete stránku v prohlížeči:
    ```
-   https://www.toozservis.cz/toozhub-aplikace/
+   https://www.toozservis.cz/sprava-vozidel/
    ```
 
 2. ✅ Stránka se musí automaticky přesměrovat na:
@@ -85,7 +85,7 @@ Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhu
 
 2. **Zkontrolujte, že přesměrování funguje:**
    - Otevřete Developer Tools (F12) → Network tab
-   - Obnovte stránku `https://www.toozservis.cz/toozhub-aplikace/`
+   - Obnovte stránku `https://www.toozservis.cz/sprava-vozidel/`
    - Mělo by dojít k přesměrování (HTTP 301/302) na `https://hub.toozservis.cz/web/index.html`
 
 3. **Zkontrolujte konzoli prohlížeče:**
@@ -108,7 +108,7 @@ Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhu
 ### Přesměrování nefunguje
 
 1. **Zkontrolujte nastavení stránky v Webnode:**
-   - Otevřete stránku `/toozhub-aplikace/` v editoru
+   - Otevřete stránku `/sprava-vozidel/` v editoru
    - Zkontrolujte, že je zapnuté přesměrování
    - Zkontrolujte, že URL je správná: `https://hub.toozservis.cz/web/index.html`
 
@@ -123,7 +123,7 @@ Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/toozhu
 
 Pokud z nějakého důvodu nemůžete použít přesměrování, můžete použít iframe variantu:
 
-1. Otevřete stránku `/toozhub-aplikace/` v Webnode editoru
+1. Otevřete stránku `/sprava-vozidel/` v Webnode editoru
 2. Klikněte na **"Přidat prvek"** → **"HTML / Code"**
 3. Vložte tento kód:
 
@@ -149,11 +149,11 @@ Pokud z nějakého důvodu nemůžete použít přesměrování, můžete použ�
 - [ ] ✅ Backend běží na `https://hub.toozservis.cz`
 - [ ] ✅ Aplikace je dostupná na `https://hub.toozservis.cz/web/index.html`
 - [ ] ✅ Health check vrací: `{"status":"online"}`
-- [ ] ✅ Stránka `toozhub-aplikace` existuje v Webnode
+- [ ] ✅ Stránka `sprava-vozidel` existuje v Webnode
 - [ ] ✅ Přesměrování je nastaveno v nastavení stránky
 - [ ] ✅ URL přesměrování: `https://hub.toozservis.cz/web/index.html`
 - [ ] ✅ Stránka byla publikována
-- [ ] ✅ Přesměrování funguje na `https://www.toozservis.cz/toozhub-aplikace/`
+- [ ] ✅ Přesměrování funguje na `https://www.toozservis.cz/sprava-vozidel/`
 - [ ] ✅ Aplikace se načítá správně
 - [ ] ✅ Přihlášení funguje
 - [ ] ✅ API volání fungují
@@ -164,7 +164,7 @@ Pokud z nějakého důvodu nemůžete použít přesměrování, můžete použ�
 
 Po dokončení všech kroků bude aplikace dostupná na:
 
-**https://www.toozservis.cz/toozhub-aplikace/**
+**https://www.toozservis.cz/sprava-vozidel/**
 
 Stránka automaticky přesměruje na:
 

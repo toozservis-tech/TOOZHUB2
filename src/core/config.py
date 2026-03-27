@@ -6,11 +6,14 @@ import os
 from pathlib import Path
 
 # Pokusit se načíst .env soubor
+_env_loaded = False
+_env_source = None
 try:
     from dotenv import load_dotenv, dotenv_values
     from io import StringIO
     env_path = Path(__file__).parent.parent.parent / ".env"
     if env_path.exists():
+        _env_source = str(env_path)
         # Zkusit načíst s různými kódováními (UTF-8, Windows-1250, latin-1)
         env_loaded = False
         for encoding in ['utf-8', 'windows-1250', 'cp1250', 'latin-1']:
@@ -26,7 +29,8 @@ try:
                         for key, value in env_vars.items():
                             if key and value is not None:
                                 os.environ.setdefault(key, value)
-                        env_loaded = True
+                        _env_loaded = True
+                        print(f"[CONFIG] .env soubor načten z: {env_path}")
                         break
                     except Exception:
                         # Pokud dotenv_values selže, zkusit načíst řádek po řádku
@@ -39,7 +43,8 @@ try:
                                     value = value.strip().strip('"').strip("'")
                                     if key:
                                         os.environ.setdefault(key, value)
-                            env_loaded = True
+                            _env_loaded = True
+                            print(f"[CONFIG] .env soubor načten z: {env_path} (fallback parser)")
                             break
                         except Exception:
                             continue
@@ -47,19 +52,26 @@ try:
                 continue
         
         # Pokud se nepodařilo načíst žádné kódování, zkusit standardní load_dotenv
-        if not env_loaded:
+        if not _env_loaded:
             try:
                 load_dotenv(env_path)
+                _env_loaded = True
+                print(f"[CONFIG] .env soubor načten z: {env_path} (load_dotenv)")
             except Exception:
                 # Pokud všechno selže, pokračovat bez .env souboru
-                import warnings
-                warnings.warn(f"Nepodařilo se načíst .env soubor z {env_path}. Používají se výchozí hodnoty.")
+                print(f"[CONFIG] WARNING: Nepodařilo se načíst .env soubor z {env_path}")
+    else:
+        print(f"[CONFIG] .env soubor neexistuje: {env_path}")
 except ImportError:
+    print("[CONFIG] WARNING: python-dotenv není nainstalován - .env soubor nebude načten")
     pass  # python-dotenv není nainstalován
 except Exception as e:
     # Při jakékoliv chybě pokračovat bez .env souboru
-    import warnings
-    warnings.warn(f"Chyba při načítání .env souboru: {e}. Používají se výchozí hodnoty.")
+    print(f"[CONFIG] ERROR: Chyba při načítání .env souboru: {e}")
+
+# Export informace o načtení .env
+ENV_FILE_LOADED = _env_loaded
+ENV_FILE_SOURCE = _env_source
 
 # =============================================================================
 # SERVER CONFIGURATION
@@ -142,10 +154,32 @@ API_BASE_URL = os.getenv("API_BASE_URL", PUBLIC_API_BASE_URL)
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", PUBLIC_API_BASE_URL)
 
 # Feature flags
-ENABLE_SERVICE_MODULE = os.getenv("ENABLE_SERVICE_MODULE", "true").lower() == "true"
+def _env_flag(name: str, default: bool) -> bool:
+    """Načte boolean feature flag z env (1/true/yes/on = True)."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+ENABLE_SERVICE_MODULE = _env_flag("ENABLE_SERVICE_MODULE", True)
+# Experimentální části jsou ve výchozím stavu v produkci vypnuté.
+ENABLE_CUSTOMER_COMMANDS = _env_flag("ENABLE_CUSTOMER_COMMANDS", ENVIRONMENT != "production")
+ENABLE_AI_FEATURES = _env_flag("ENABLE_AI_FEATURES", ENVIRONMENT != "production")
+# Autopilot M2M může být produkčně potřebný, default proto zůstává zapnutý.
+ENABLE_AUTOPILOT_API = _env_flag("ENABLE_AUTOPILOT_API", True)
 
 # AI / Autopilot Configuration
 AUTOPILOT_SHARED_SECRET = os.getenv("AUTOPILOT_SHARED_SECRET", "")
+
+# =============================================================================
+# WEB PUSH CONFIGURATION
+# =============================================================================
+
+WEB_PUSH_ENABLED = _env_flag("WEB_PUSH_ENABLED", True)
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "").strip()
+VAPID_CLAIMS_SUBJECT = os.getenv("VAPID_CLAIMS_SUBJECT", "mailto:info@toozservis.cz").strip()
 
 # =============================================================================
 # DATAOVOZIDLECH.CZ API CONFIGURATION (MDČR / Datová kostka)
@@ -177,11 +211,46 @@ EU_VEHICLE_API_TOKEN = os.getenv("EU_VEHICLE_API_TOKEN", "")
 # =============================================================================
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
+DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
+LOCAL_FALLBACK_DATA_DIR = PROJECT_ROOT / ".local_data"
+
+
+def _resolve_data_dir() -> Path:
+    configured = os.getenv("DATA_DIR_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+
+    if DEFAULT_DATA_DIR.is_symlink() and not DEFAULT_DATA_DIR.exists():
+        fallback = LOCAL_FALLBACK_DATA_DIR
+        print(
+            f"[CONFIG] data symlink target is unavailable, using local fallback: {fallback}"
+        )
+        return fallback
+
+    return DEFAULT_DATA_DIR
+
+
+DATA_DIR = _resolve_data_dir()
 UPLOADS_DIR = DATA_DIR / "uploads"
 PDF_DIR = DATA_DIR / "pdfs"
 IMAGES_DIR = DATA_DIR / "images"
 
-# Vytvořit složky pokud neexistují
+def _ensure_directory(path: Path) -> None:
+    """
+    Bezpečný bootstrap adresářů i pro případ, kdy `data` je symlink na externí volume.
+    """
+    if path.exists():
+        if path.is_dir():
+            return
+        raise RuntimeError(f"Path exists but is not a directory: {path}")
+
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except FileExistsError:
+        if path.exists() and path.is_dir():
+            return
+        raise
+
+
 for directory in [DATA_DIR, UPLOADS_DIR, PDF_DIR, IMAGES_DIR]:
-    directory.mkdir(parents=True, exist_ok=True)
+    _ensure_directory(directory)

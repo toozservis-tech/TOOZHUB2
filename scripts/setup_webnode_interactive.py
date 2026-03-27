@@ -41,7 +41,7 @@ def main():
         return
     
     print()
-    page_url = input("🌐 URL stránky (např. https://www.toozservis.cz/toozhub-aplikace/): ").strip()
+    page_url = input("🌐 URL stránky (např. https://www.toozservis.cz/sprava-vozidel/): ").strip()
     if not page_url:
         print("❌ URL stránky je povinná!")
         return

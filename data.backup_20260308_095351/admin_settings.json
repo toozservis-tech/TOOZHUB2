@@ -1,0 +1,199 @@
+{
+  "general": {
+    "app_name": {
+      "value": "TooZ Hub",
+      "value_type": "string",
+      "description": "Název aplikace"
+    },
+    "app_version": {
+      "value": "2.2.0",
+      "value_type": "string",
+      "description": "Verze aplikace"
+    },
+    "app_description": {
+      "value": "Správa vozidel a servisních záznamů",
+      "value_type": "string",
+      "description": "Popis aplikace"
+    },
+    "maintenance_mode": {
+      "value": false,
+      "value_type": "boolean",
+      "description": "Zapnout režim údržby"
+    }
+  },
+  "security": {
+    "jwt_expiration_hours": {
+      "value": 24,
+      "value_type": "number",
+      "description": "Jak dlouho je token platný"
+    },
+    "session_timeout_minutes": {
+      "value": 60,
+      "value_type": "number",
+      "description": "Automatické odhlášení po nečinnosti"
+    },
+    "max_login_attempts": {
+      "value": 5,
+      "value_type": "number",
+      "description": "Počet pokusů před zablokováním"
+    },
+    "password_min_length": {
+      "value": 6,
+      "value_type": "number",
+      "description": "Minimální počet znaků"
+    },
+    "password_require_uppercase": {
+      "value": true,
+      "value_type": "boolean",
+      "description": "Heslo musí obsahovat velká písmena"
+    },
+    "password_require_numbers": {
+      "value": true,
+      "value_type": "boolean",
+      "description": "Heslo musí obsahovat čísla"
+    }
+  },
+  "database": {
+    "backup_enabled": {
+      "value": true,
+      "value_type": "boolean",
+      "description": "Povolit automatické zálohování"
+    },
+    "backup_frequency_hours": {
+      "value": 24,
+      "value_type": "number",
+      "description": "Jak často se má zálohovat"
+    },
+    "backup_retention_days": {
+      "value": 30,
+      "value_type": "number",
+      "description": "Kolik dní uchovávat zálohy"
+    },
+    "backup_path": {
+      "value": "/opt/toozhub2/app/data/backups",
+      "value_type": "string",
+      "description": "Složka pro ukládání záloh"
+    }
+  },
+  "server": {
+    "host": {
+      "value": "127.0.0.1",
+      "value_type": "string",
+      "description": "IP adresa nebo hostname"
+    },
+    "port": {
+      "value": 8000,
+      "value_type": "number",
+      "description": "Port serveru"
+    },
+    "cors_enabled": {
+      "value": true,
+      "value_type": "boolean",
+      "description": "Povolit Cross-Origin Resource Sharing"
+    },
+    "cors_origins": {
+      "value": [
+        "https://www.toozservis.cz",
+        "https://toozservis.cz",
+        "https://hub.toozservis.cz"
+      ],
+      "value_type": "json",
+      "description": "JSON pole povolených originů"
+    },
+    "rate_limit_enabled": {
+      "value": true,
+      "value_type": "boolean",
+      "description": "Omezit počet požadavků"
+    },
+    "rate_limit_per_minute": {
+      "value": 150,
+      "value_type": "number",
+      "description": "Maximální počet požadavků za minutu"
+    }
+  },
+  "email": {
+    "smtp_enabled": {
+      "value": true,
+      "value_type": "boolean",
+      "description": "Zapnout odesílání e-mailů"
+    },
+    "smtp_host": {
+      "value": "smtp.mail.webnode.com",
+      "value_type": "string",
+      "description": "Adresa SMTP serveru"
+    },
+    "smtp_port": {
+      "value": 587,
+      "value_type": "number",
+      "description": "Port SMTP serveru"
+    },
+    "smtp_user": {
+      "value": "info@toozservis.cz",
+      "value_type": "string",
+      "description": "Uživatelské jméno"
+    },
+    "smtp_from": {
+      "value": "info@toozservis.cz",
+      "value_type": "string",
+      "description": "E-mailová adresa odesílatele"
+    }
+  },
+  "logging": {
+    "log_level": {
+      "value": "INFO",
+      "value_type": "string",
+      "description": "Minimální úroveň logů"
+    },
+    "log_file_enabled": {
+      "value": true,
+      "value_type": "boolean",
+      "description": "Ukládat logy do souboru"
+    },
+    "log_file_path": {
+      "value": "/opt/toozhub2/app/logs",
+      "value_type": "string",
+      "description": "Složka pro ukládání logů"
+    },
+    "log_rotation_days": {
+      "value": 7,
+      "value_type": "number",
+      "description": "Po kolika dnech rotovat logy"
+    }
+  },
+  "ui": {
+    "theme": {
+      "value": "dark",
+      "value_type": "string",
+      "description": "Vzhled aplikace"
+    },
+    "primary_color": {
+      "value": "#6366f1",
+      "value_type": "string",
+      "description": "Hex kód primární barvy"
+    },
+    "items_per_page": {
+      "value": 30,
+      "value_type": "number",
+      "description": "Výchozí počet položek v seznamech"
+    }
+  },
+  "api": {
+    "api_docs_enabled": {
+      "value": false,
+      "value_type": "boolean",
+      "description": "Zobrazit Swagger dokumentaci"
+    },
+    "api_rate_limit": {
+      "value": 120,
+      "value_type": "number",
+      "description": "Maximální počet API požadavků za minutu"
+    }
+  },
+  "system": {
+    "autostart_enabled": {
+      "value": false,
+      "value_type": "boolean",
+      "description": "Spustit aplikaci při startu PC"
+    }
+  }
+}

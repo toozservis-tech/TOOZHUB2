@@ -98,7 +98,6 @@ jobs:
       - name: Run API tests
         run: |
           python -m pytest tests/api -v --tb=short --junit-xml=artifacts/qa/pytest-report.xml
-        continue-on-error: true
       
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -123,7 +122,6 @@ jobs:
         working-directory: tests/e2e
         run: |
           npx playwright test --reporter=list,html --project=chromium
-        continue-on-error: true
       
       - name: Check for sensitive files
         run: |
@@ -176,4 +174,3 @@ jobs:
           echo "✅ Security check (sensitive files): PASSED" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Check individual test steps for detailed results." >> $GITHUB_STEP_SUMMARY
-

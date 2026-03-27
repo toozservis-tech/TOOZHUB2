@@ -4,7 +4,7 @@
 
 Zajistit, aby stránka na Webnode:
 
-**https://www.toozservis.cz/toozhub-aplikace/**
+**https://www.toozservis.cz/sprava-vozidel/**
 
 automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 
@@ -17,7 +17,7 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 - Backend TooZ Hub 2 běží na:
   - `https://hub.toozservis.cz`
   - frontend aplikace: `https://hub.toozservis.cz/web/index.html`
-- Stránka `toozhub-aplikace` je vytvořená v Webnode (nebo ji vytvoříte).
+- Stránka `sprava-vozidel` je vytvořená v Webnode (nebo ji vytvoříte).
 
 ---
 
@@ -33,7 +33,7 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 - V horním menu klikněte na **Stránky**.
 - Přidejte novou stránku nebo upravte existující:
   - Název: `TooZ Hub aplikace` (doporučeno)
-  - URL / adresa: `/toozhub-aplikace/`.
+  - URL / adresa: `/sprava-vozidel/`.
 
 ### 3️⃣ Nastavení přesměrování na aplikaci
 
@@ -56,7 +56,7 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 ## ✅ Ověření funkčnosti
 
 1. Otevřete v prohlížeči:
-   - `https://www.toozservis.cz/toozhub-aplikace/`
+   - `https://www.toozservis.cz/sprava-vozidel/`
 
 2. Stránka se musí automaticky přesměrovat na:
    - `https://hub.toozservis.cz/web/index.html`
@@ -108,7 +108,7 @@ Pro alternativní iframe variantu (experimentální):
 
 Zajistit, aby stránka na Webnode:
 
-**https://www.toozservis.cz/toozhub-aplikace/**
+**https://www.toozservis.cz/sprava-vozidel/**
 
 automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 
@@ -121,7 +121,7 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 - Backend TooZ Hub 2 běží na:
   - `https://hub.toozservis.cz`
   - frontend aplikace: `https://hub.toozservis.cz/web/index.html`
-- Stránka `toozhub-aplikace` je vytvořená v Webnode (nebo ji vytvoříte).
+- Stránka `sprava-vozidel` je vytvořená v Webnode (nebo ji vytvoříte).
 
 ---
 
@@ -137,7 +137,7 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 - V horním menu klikněte na **Stránky**.
 - Přidejte novou stránku nebo upravte existující:
   - Název: `TooZ Hub aplikace` (doporučeno)
-  - URL / adresa: `/toozhub-aplikace/`.
+  - URL / adresa: `/sprava-vozidel/`.
 
 ### 3️⃣ Nastavení přesměrování na aplikaci
 
@@ -160,7 +160,7 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 ## ✅ Ověření funkčnosti
 
 1. Otevřete v prohlížeči:
-   - `https://www.toozservis.cz/toozhub-aplikace/`
+   - `https://www.toozservis.cz/sprava-vozidel/`
 
 2. Stránka se musí automaticky přesměrovat na:
    - `https://hub.toozservis.cz/web/index.html`

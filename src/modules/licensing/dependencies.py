@@ -14,6 +14,7 @@ from .types import EffectiveEntitlement
 
 
 def require_plan_active_dependency(
+    db: Session = Depends(get_db),
     current_user: Customer = Depends(get_current_user)
 ) -> None:
     """
@@ -22,7 +23,12 @@ def require_plan_active_dependency(
     Raises:
         HTTPException 403: Pokud status není ACTIVE
     """
-    require_plan_active(current_user)
+    entitlement = get_effective_entitlement(db, current_user)
+    if not entitlement.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail=f"License is not active (status: {entitlement.status.value}). Please activate your license.",
+        )
 
 
 def require_feature(feature_name: str):
@@ -86,7 +92,6 @@ def get_effective_entitlement_dependency(
         EffectiveEntitlement s kompletními informacemi o licenci
     """
     return get_effective_entitlement(db, current_user)
-
 
 
 

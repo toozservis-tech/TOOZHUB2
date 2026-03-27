@@ -1,0 +1,38 @@
+name: TooZHubiOS
+options:
+  deploymentTarget:
+    iOS: 17.0
+configs:
+  Debug: debug
+  Release: release
+settings:
+  base:
+    SWIFT_VERSION: 5.0
+    PRODUCT_BUNDLE_IDENTIFIER: cz.toozservis.spravavozidel.ios
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_CFBundleDisplayName: Správa vozidel
+    INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+    INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleDefault
+    INFOPLIST_KEY_UIRequiresFullScreen: YES
+    INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Správa vozidel potřebuje přístup k fotkám kvůli přílohám servisních záznamů.
+    INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Správa vozidel ukládá vygenerované výstupy a snímky vozidel.
+    INFOPLIST_KEY_NSCameraUsageDescription: Správa vozidel potřebuje kameru pro focení vozidel a účtenek.
+    INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: Správa vozidel používá polohu pro vyhledání blízkých servisů.
+    INFOPLIST_KEY_CFBundleDevelopmentRegion: cs
+    TARGETED_DEVICE_FAMILY: 1,2
+targets:
+  TooZHubiOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+        excludes:
+          - "**/Resources/**"
+      - path: Sources/TooZHub/Resources
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: TooZHubiOS
+    scheme:
+      testTargets: []

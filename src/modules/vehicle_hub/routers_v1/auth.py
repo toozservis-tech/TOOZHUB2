@@ -1,18 +1,28 @@
 """
 Helper funkce pro autorizaci v1.0
 """
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 from typing import Optional
 
 from ..database import get_db
 from ..models import Customer
+from ..account_state import (
+    ensure_customer_account_state_schema,
+    customer_is_deleted,
+    customer_is_disabled,
+    customer_session_version,
+)
+from ..ownership import user_owns_vehicle
 from src.core.auth import get_current_user_email
+from src.core.rbac import is_admin, is_service, normalize_role, service_record_write_policy, vehicle_read_policy
+from src.server.security_tracking import log_user_activity
 
 
 def get_current_user(
     user_email: str = Depends(get_current_user_email),
+    request: Request = None,
     db: Session = Depends(get_db)
 ) -> Customer:
     """
@@ -21,13 +31,25 @@ def get_current_user(
     Raises:
         HTTPException: Pokud uživatel neexistuje
     """
+    ensure_customer_account_state_schema(db)
     user = db.query(Customer).filter(Customer.email == user_email).first()
     if not user:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
+    if customer_is_deleted(user) or customer_is_disabled(user):
+        raise HTTPException(status_code=401, detail="Účet je neaktivní")
+
+    log_user_activity(
+        request=request,
+        user_email=user.email,
+        customer_id=user.id,
+        tenant_id=user.tenant_id,
+        endpoint=str(request.url.path) if request else None,
+    )
     return user
 
 
 def get_current_user_optional(
+    request: Request = None,
     db: Session = Depends(get_db),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))
 ) -> Optional[Customer]:
@@ -42,15 +64,38 @@ def get_current_user_optional(
         return None
     
     try:
-        from src.core.security import decode_access_token
+        from src.core.security import decode_access_token_payload
         token = credentials.credentials
-        user_email = decode_access_token(token)
+        payload = decode_access_token_payload(token)
+        user_email = (payload or {}).get("sub")
         
         if not user_email:
             return None
         
+        ensure_customer_account_state_schema(db)
         user = db.query(Customer).filter(Customer.email == user_email).first()
-        return user
+        token_session_version = (payload or {}).get("sv")
+        try:
+            token_session_version_int = int(token_session_version if token_session_version is not None else 0)
+        except (TypeError, ValueError):
+            token_session_version_int = 0
+
+        if (
+            user
+            and not customer_is_deleted(user)
+            and not customer_is_disabled(user)
+            and token_session_version_int == customer_session_version(user)
+        ):
+            log_user_activity(
+                request=request,
+                user_email=user.email,
+                customer_id=user.id,
+                tenant_id=user.tenant_id,
+                endpoint=str(request.url.path) if request else None,
+                details={"source": "optional_auth"},
+            )
+            return user
+        return None
     except Exception:
         return None
 
@@ -68,7 +113,7 @@ def require_role(required_role: str):
     def role_checker(
         current_user: Customer = Depends(get_current_user)
     ) -> Customer:
-        if current_user.role != required_role and current_user.role != "admin":
+        if normalize_role(current_user.role) != normalize_role(required_role) and not is_admin(current_user.role):
             raise HTTPException(
                 status_code=403,
                 detail=f"Přístup zamítnut. Požadována role: {required_role}"
@@ -88,9 +133,12 @@ def get_current_user_id(
     Returns:
         User ID
     """
+    ensure_customer_account_state_schema(db)
     user = db.query(Customer).filter(Customer.email == user_email).first()
     if not user:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
+    if customer_is_deleted(user) or customer_is_disabled(user):
+        raise HTTPException(status_code=401, detail="Účet je neaktivní")
     return user.id
 
 
@@ -110,10 +158,16 @@ def can_access_vehicle(
     Returns:
         True pokud má přístup
     """
-    from ..models import Vehicle, ServiceIntake, Reservation
+    from ..models import (
+        Vehicle,
+        ServiceIntake,
+        Reservation,
+        ServiceVehicleAccess,
+        ServiceRecord as ServiceRecordModel,
+    )
     
     # Admin má přístup ke všemu
-    if current_user.role == "admin":
+    if is_admin(current_user.role):
         return True
     
     # Najít vozidlo
@@ -122,11 +176,12 @@ def can_access_vehicle(
         return False
     
     # Vlastník vozidla má vždy přístup
-    if vehicle.user_email == current_user.email:
+    if user_owns_vehicle(db, current_user, vehicle):
         return True
-    
-    # Service role - může přistupovat k vozidlům zákazníků s intake/rezervací
-    if current_user.role == "service":
+
+    # Service role - přístup pouze k explicitně sdíleným vozidlům
+    role_key = normalize_role(current_user.role)
+    if is_service(role_key):
         # Kontrola přes ServiceIntake
         intake_exists = db.query(ServiceIntake).filter(
             ServiceIntake.vehicle_id == vehicle_id,
@@ -138,9 +193,34 @@ def can_access_vehicle(
         # Kontrola přes Reservation
         reservation_exists = db.query(Reservation).filter(
             Reservation.vehicle_id == vehicle_id,
-            Reservation.service_id == current_user.id
+            Reservation.service_id == current_user.id,
+            Reservation.status != "CANCELLED",
         ).first()
         if reservation_exists:
             return True
-    
-    return False
+
+        # Kontrola přes existující servisní záznam, který servis dříve vytvořil
+        service_record_exists = db.query(ServiceRecordModel).filter(
+            ServiceRecordModel.vehicle_id == vehicle_id,
+            ServiceRecordModel.user_id == current_user.id,
+        ).first()
+        if service_record_exists:
+            return True
+
+        # Kontrola přes explicitní povolení vozidla od zákazníka
+        explicit_vehicle_access_exists = (
+            db.query(ServiceVehicleAccess.id)
+            .filter(
+                ServiceVehicleAccess.service_customer_id == current_user.id,
+                ServiceVehicleAccess.vehicle_id == vehicle_id,
+                ServiceVehicleAccess.status == "active",
+            )
+            .first()
+        )
+        if explicit_vehicle_access_exists:
+            return True
+
+        decision = vehicle_read_policy(role=role_key, is_owner=False, has_service_access=True)
+        return decision.allowed
+
+    return vehicle_read_policy(role=role_key, is_owner=False, has_service_access=False).allowed

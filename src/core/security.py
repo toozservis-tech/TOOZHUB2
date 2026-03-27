@@ -141,6 +141,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     else:
         expire = datetime.utcnow() + timedelta(minutes=JWT_EXPIRE_MINUTES)
 
+    if "iat" not in to_encode:
+        to_encode["iat"] = datetime.utcnow()
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
     return encoded_jwt
@@ -160,12 +162,30 @@ def decode_access_token(token: str) -> Optional[str]:
         # Fallback - token je přímo email
         return token if "@" in token else None
 
+    payload = decode_access_token_payload(token)
+    if not payload:
+        return None
+    email: str = payload.get("sub")
+    if email is None:
+        return None
+    return email
+
+
+def decode_access_token_payload(token: str) -> Optional[dict]:
+    """
+    Dekóduje JWT token a vrátí celý payload.
+
+    Returns:
+        Dict payload nebo None pokud je token neplatný.
+    """
+    if not JWT_AVAILABLE or jwt is None:
+        return {"sub": token} if "@" in token else None
+
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
+        if not isinstance(payload, dict):
             return None
-        return email
+        return payload
     except JWTError:
         return None
 

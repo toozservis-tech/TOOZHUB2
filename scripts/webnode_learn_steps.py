@@ -377,7 +377,7 @@ def main():
             return
         
         # Otevřít projekt
-        page_url = config.get('page_url', 'https://finalni-verze.cms.webnode.cz/toozhub-aplikace/')
+        page_url = config.get('page_url', 'https://finalni-verze.cms.webnode.cz/sprava-vozidel/')
         if not open_project(driver, page_url):
             print("❌ Otevření projektu selhalo")
             return

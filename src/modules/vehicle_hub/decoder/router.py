@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 
 from src.modules.vehicle_hub.database import get_db
+from src.modules.vehicle_hub.routers_v1.auth import get_current_user
+from src.modules.vehicle_hub.models import Customer
 from .models import VinDecodeRequest, PlateDecodeRequest, VehicleDecodeResponse, VehicleDecodedData
 from .vin_decoder import decode_vin_local
 from .mdcr_client import fetch_vehicle_by_vin_from_mdcr
@@ -21,7 +23,11 @@ router = APIRouter(prefix="/api/vehicles", tags=["vehicles", "decoder"])
 
 
 @router.post("/decode-vin", response_model=VehicleDecodeResponse)
-async def decode_vin(req: VinDecodeRequest, db: Session = Depends(get_db)) -> VehicleDecodeResponse:
+async def decode_vin(
+    req: VinDecodeRequest,
+    db: Session = Depends(get_db),
+    current_user: Customer = Depends(get_current_user)
+) -> VehicleDecodeResponse:
     """
     Dekóduje VIN z více zdrojů (MDČR, EU Open Data, lokální VIN dekódování).
     
@@ -31,10 +37,52 @@ async def decode_vin(req: VinDecodeRequest, db: Session = Depends(get_db)) -> Ve
     Returns:
         VehicleDecodeResponse s dekódovanými daty
     """
+    import time
+    from ...licensing.service import assert_feature
+    
+    request_start = time.time()
+    
     vin = req.vin.strip().upper().replace(" ", "").replace("-", "")
     errors = []
+    tenant_id = getattr(current_user, 'tenant_id', None)
     
-    logger.info(f"[DECODER] Dekóduji VIN: {vin}")
+    logger.info(f"[DECODER] ========================================")
+    logger.info(f"[DECODER] VIN decode request received")
+    logger.info(f"[DECODER] VIN: {vin}")
+    logger.info(f"[DECODER] VIN length: {len(vin)}")
+    logger.info(f"[DECODER] Tenant ID: {tenant_id}")
+    
+    # Validace VIN
+    if len(vin) != 17:
+        logger.warning(f"[DECODER] Invalid VIN length: {len(vin)} (expected 17)")
+        return VehicleDecodeResponse(
+            success=False,
+            errors=[f"VIN musí mít přesně 17 znaků (zadáno: {len(vin)})"]
+        )
+    
+    # Validace znaků (nesmí obsahovat I, O, Q)
+    if not all(c in "ABCDEFGHJKLMNPRSTUVWXYZ0123456789" for c in vin):
+        invalid_chars = [c for c in vin if c not in "ABCDEFGHJKLMNPRSTUVWXYZ0123456789"]
+        logger.warning(f"[DECODER] Invalid VIN characters: {invalid_chars}")
+        return VehicleDecodeResponse(
+            success=False,
+            errors=[f"VIN obsahuje nepovolené znaky: {', '.join(set(invalid_chars))} (I, O, Q nejsou povoleny)"]
+        )
+
+    # KROK 1: Zkontrolovat feature flag až po základní validaci vstupu.
+    # Uživatel tak dostane konzistentní chybu vstupu i bez aktivní licence VIN decode.
+    if tenant_id:
+        try:
+            assert_feature(db, tenant_id, "vin_decode")
+        except HTTPException as e:
+            logger.warning(f"[DECODER] VIN decode disabled for tenant_id={tenant_id}")
+            return VehicleDecodeResponse(
+                success=False,
+                errors=[e.detail]
+            )
+    
+    logger.info(f"[DECODER] VIN validation passed")
+    logger.info(f"[DECODER] Starting decode process...")
     
     # 1) Lokální VIN dekódování (vždy zkusit)
     local_data, vin_errors = decode_vin_local(vin)
@@ -42,16 +90,24 @@ async def decode_vin(req: VinDecodeRequest, db: Session = Depends(get_db)) -> Ve
     logger.info(f"[DECODER] Local VIN data: make={local_data.make if local_data else None}, model_year={local_data.model_year if local_data else None}")
     
     # 2) MDČR API (pokud je dostupné)
+    # DŮLEŽITÉ: MDČR API má vždy prioritu, pokud vrátí data
     mdcr_data = None
+    mdcr_start = time.time()
     try:
-        logger.info(f"[DECODER] Zkouším načíst data z MDČR API pro VIN {vin}")
+        logger.info(f"[DECODER] [MDCR] Attempting to fetch data from MDČR API for VIN {vin}")
         mdcr_data = await fetch_vehicle_by_vin_from_mdcr(vin)
+        mdcr_duration = time.time() - mdcr_start
         if mdcr_data:
-            logger.info(f"[DECODER] MDČR data získána: make={mdcr_data.make}, model={mdcr_data.model}, engine_code={mdcr_data.engine_code}")
+            logger.info(f"[DECODER] [MDCR] ✅ Data received (took {mdcr_duration:.2f}s): make={mdcr_data.make}, model={mdcr_data.model}, engine_code={mdcr_data.engine_code}")
+            logger.info(f"[DECODER] [MDCR] source_priority: {mdcr_data.source_priority}")
+            # Ověření, že "mdcr" je v source_priority
+            if "mdcr" not in mdcr_data.source_priority:
+                logger.error(f"[DECODER] [MDCR] ❌ CHYBA: 'mdcr' není v source_priority! {mdcr_data.source_priority}")
         else:
-            logger.warning(f"[DECODER] MDČR API nevrátilo žádná data pro VIN {vin}")
+            logger.warning(f"[DECODER] [MDCR] ⚠️ No data returned for VIN {vin} (took {mdcr_duration:.2f}s)")
     except Exception as e:
-        logger.warning(f"[DECODER] Chyba při volání MDČR API: {e}", exc_info=True)
+        mdcr_duration = time.time() - mdcr_start
+        logger.warning(f"[DECODER] [MDCR] ❌ Error calling MDČR API (took {mdcr_duration:.2f}s): {type(e).__name__}: {str(e)}", exc_info=True)
         errors.append(f"MDČR API chyba: {str(e)}")
     
     # 3) EU Open Data API (pokud je dostupné)
@@ -144,12 +200,19 @@ async def decode_vin(req: VinDecodeRequest, db: Session = Depends(get_db)) -> Ve
     # Detailní logování výsledků
     has_data = bool(merged.make or merged.model or merged.production_year or merged.engine_code or merged.plate or merged.stk_valid_until)
     
+    request_duration = time.time() - request_start
+    
     logger.info(f"[DECODER] ========================================")
-    logger.info(f"[DECODER] ✅ Dekódování dokončeno pro VIN {vin}")
+    logger.info(f"[DECODER] ✅ Decode completed for VIN {vin} (took {request_duration:.2f}s)")
     logger.info(f"[DECODER] Sources: {merged.source_priority}")
     
     if "mdcr" in merged.source_priority:
         logger.info("[DECODER] [VIN] Using MDČR data")
+        # Ověření, že "mdcr" je na první pozici
+        if merged.source_priority[0] != "mdcr":
+            logger.error(f"[DECODER] [VIN] ❌ CHYBA: 'mdcr' není na první pozici! source_priority={merged.source_priority}")
+        else:
+            logger.info(f"[DECODER] [VIN] ✅ 'mdcr' je na první pozici v source_priority")
     if "local_vin" in merged.source_priority:
         logger.info("[DECODER] [VIN] Using local_vin fallback")
     if "template" in merged.source_priority:
@@ -175,6 +238,7 @@ async def decode_vin(req: VinDecodeRequest, db: Session = Depends(get_db)) -> Ve
     logger.info(f"[DECODER]   - Extra records: {bool(merged.extra_records)}")
     logger.info(f"[DECODER]   - Tyres (count): {len(merged.tyres) if merged.tyres else 0}")
     logger.info(f"[DECODER]   - Has meaningful data: {has_data}")
+    logger.info(f"[DECODER]   - Errors: {len(errors)}")
     
     # Serializovat data pro logování
     try:
@@ -183,6 +247,8 @@ async def decode_vin(req: VinDecodeRequest, db: Session = Depends(get_db)) -> Ve
         logger.debug(f"[DECODER] Serialized data (first 500 chars): {str(data_dict)[:500]}")
     except Exception as e:
         logger.warning(f"[DECODER] Nepodařilo se serializovat data: {e}")
+    
+    logger.info(f"[DECODER] ========================================")
     
     return VehicleDecodeResponse(
         success=True,
@@ -221,5 +287,4 @@ async def decode_plate(req: PlateDecodeRequest) -> VehicleDecodeResponse:
         data=decoded,
         errors=[]
     )
-
 

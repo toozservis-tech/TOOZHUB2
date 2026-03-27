@@ -135,6 +135,7 @@ def create_record_from_ai(
     
     # 5. Vytvořit servisní záznam
     record = ServiceRecordModel(
+        tenant_id=vehicle.tenant_id or getattr(user, "tenant_id", None) or 1,
         vehicle_id=vehicle.id,
         user_id=user.id,
         performed_at=datetime.now(),

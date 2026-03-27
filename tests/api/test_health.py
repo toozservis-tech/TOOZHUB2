@@ -15,12 +15,10 @@ def test_health_endpoint(api_url):
 
 
 def test_root_endpoint(api_url):
-    """Test root endpoint"""
-    response = requests.get(f"{api_url}/", timeout=5)
-    assert response.status_code == 200
-    data = response.json()
-    assert "message" in data
-    assert "TooZ Hub" in data.get("message", "")
+    """Root endpoint má vracet redirect na web UI."""
+    response = requests.get(f"{api_url}/", timeout=5, allow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers.get("location") == "/web/index.html"
 
 
 def test_version_endpoint(api_url):
@@ -29,4 +27,3 @@ def test_version_endpoint(api_url):
     assert response.status_code == 200
     data = response.json()
     assert "version" in data or "project" in data
-

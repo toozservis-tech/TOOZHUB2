@@ -1,0 +1,7 @@
+{
+  "backup_id": "pre_restore_20260310_223629",
+  "created_at": "2026-03-10T22:36:29.765954",
+  "created_by": "devadmin.e2e@example.com",
+  "reason": "automatic pre-restore snapshot",
+  "source_restore": "20260310_223629"
+}

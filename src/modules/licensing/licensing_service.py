@@ -1,224 +1,95 @@
 """
-Licensing service - centralizovaná logika pro správu licencí
-Source of truth je TOOZ_SERVICE_HUB, tento modul pouze enforce limity
+Deprecated compatibility layer.
+All licensing decisions are delegated to src.modules.licensing.service.
 """
-from datetime import datetime, timezone
-from typing import Optional, Dict
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Dict, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ..vehicle_hub.models import Customer, Vehicle
-from .types import LicensePlan, LicenseStatus, EffectiveEntitlement
-
-# Maximální počet vozidel podle plánu
-MAX_VEHICLES_BY_PLAN: Dict[str, Optional[int]] = {
-    "FREE": 1,
-    "BASIC": 5,
-    "PREMIUM": None,  # None = neomezeně
-}
+from ..vehicle_hub.models import Customer
+from .service import assert_vehicle_quota, get_license_status
+from .types import EffectiveEntitlement, LicensePlan, LicenseStatus
 
 
 def vehicles_count(db: Session, customer_email: str) -> int:
-    """
-    Spočítá počet vozidel pro daného uživatele.
-    
-    Args:
-        db: Databázová session
-        customer_email: Email uživatele
-        
-    Returns:
-        Počet vozidel
-    """
-    return db.query(Vehicle).filter(Vehicle.user_email == customer_email).count()
+    customer = db.query(Customer).filter(Customer.email == customer_email).first()
+    if not customer or customer.tenant_id is None:
+        return 0
+    status = get_license_status(db, customer.tenant_id, customer.email)
+    return int(status.get("vehicles_current_user") or status.get("vehicles_current") or 0)
 
 
 def get_entitlement(customer: Customer) -> Dict:
-    """
-    Získá entitlement z cache polí v Customer modelu.
-    
-    Args:
-        customer: Uživatel
-        
-    Returns:
-        dict s klíči: plan, status, period_end
-    """
-    plan_str = getattr(customer, 'license_plan_cached', 'FREE')
-    status_str = getattr(customer, 'license_status_cached', 'ACTIVE')
-    period_end = getattr(customer, 'license_period_end_cached', None)
-    
     return {
-        "plan": plan_str,
-        "status": status_str,
-        "period_end": period_end,
+        "plan": str(getattr(customer, "_deprecated_license_plan", None) or "FREE"),
+        "status": str(getattr(customer, "_deprecated_license_status", None) or "ACTIVE"),
+        "period_end": None,
     }
 
 
 def effective_max_vehicles(entitlement: Dict) -> Optional[int]:
-    """
-    Vrátí efektivní maximální počet vozidel podle plánu.
-    
-    Args:
-        entitlement: dict s plánem a statusem
-        
-    Returns:
-        Maximální počet vozidel (None = neomezeně)
-    """
-    plan = entitlement.get("plan", "FREE")
-    return MAX_VEHICLES_BY_PLAN.get(plan, 1)
+    plan = str((entitlement or {}).get("plan") or "FREE").strip().upper()
+    if plan == "PREMIUM":
+        return None
+    if plan == "BASIC":
+        return 5
+    return 1
 
 
 def is_active(entitlement: Dict) -> bool:
-    """
-    Zkontroluje, zda je licence aktivní.
-    Zatím pouze ACTIVE (bez grace period).
-    
-    Args:
-        entitlement: dict s plánem a statusem
-        
-    Returns:
-        True pokud je licence aktivní
-    """
-    status = entitlement.get("status", "EXPIRED")
-    return status == "ACTIVE"
+    return str((entitlement or {}).get("status") or "ACTIVE").strip().upper() == "ACTIVE"
 
 
 def is_over_limit(db: Session, customer_email: str, entitlement: Dict) -> bool:
-    """
-    Zkontroluje, zda je uživatel nad limitem vozidel.
-    
-    Args:
-        db: Databázová session
-        customer_email: Email uživatele
-        entitlement: dict s plánem a statusem
-        
-    Returns:
-        True pokud je nad limitem
-    """
     max_vehicles = effective_max_vehicles(entitlement)
     if max_vehicles is None:
-        return False  # Neomezeně
-    
-    count = vehicles_count(db, customer_email)
-    return count >= max_vehicles
+        return False
+    return vehicles_count(db, customer_email) >= max_vehicles
 
 
 def enforce_vehicle_limit(db: Session, customer: Customer) -> None:
-    """
-    Vynutí limit vozidel - pokud je limit dosažen, vyhodí HTTPException 403.
-    
-    Args:
-        db: Databázová session
-        customer: Uživatel
-        
-    Raises:
-        HTTPException 403: Pokud je limit dosažen nebo licence není aktivní
-    """
-    # Načíst entitlement z cache polí
-    entitlement = get_entitlement(customer)
-    
-    # Pokud status není ACTIVE, chovej se jako FREE (max=1)
-    if not is_active(entitlement):
-        status = entitlement.get("status", "EXPIRED")
-        # Pro neaktivní licence použij FREE limit (1 vozidlo)
-        max_vehicles = 1
-        count = vehicles_count(db, customer.email)
-        
-        if count >= max_vehicles:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"Licence není aktivní (status: {status}). "
-                    f"Pro přidání vozidel aktivujte licenci."
-                )
-            )
-        return
-    
-    # Spočítat počet vozidel
-    count = vehicles_count(db, customer.email)
-    
-    # Získat limit podle plánu
-    max_vehicles = effective_max_vehicles(entitlement)
-    
-    # Pokud je limit None (PREMIUM), povolit neomezeně
-    if max_vehicles is None:
-        return
-    
-    # Kontrola limitu
-    if count >= max_vehicles:
-        plan = entitlement.get("plan", "FREE")
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"Vehicle limit reached for your plan. "
-                f"Plan: {plan}, Limit: {max_vehicles}, Current: {count}. "
-                f"Upgrade to add more vehicles."
-            )
-        )
+    if customer.tenant_id is None:
+        raise HTTPException(status_code=403, detail="Uživatel nemá přiřazený tenant.")
+    assert_vehicle_quota(db, customer.tenant_id)
 
 
 def get_effective_entitlement(db: Session, customer: Customer) -> EffectiveEntitlement:
-    """
-    Získá efektivní oprávnění uživatele z cache polí.
-    
-    Args:
-        db: Databázová session
-        customer: Uživatel
-        
-    Returns:
-        EffectiveEntitlement s kompletními informacemi o licenci
-    """
-    # Načíst entitlement z cache polí
-    entitlement_dict = get_entitlement(customer)
-    
-    # Převedení na enumy
-    try:
-        plan = LicensePlan(entitlement_dict["plan"])
-    except ValueError:
-        plan = LicensePlan.FREE
-    
-    try:
-        status = LicenseStatus(entitlement_dict["status"])
-    except ValueError:
-        status = LicenseStatus.EXPIRED
-    
-    period_end = entitlement_dict.get("period_end")
-    
-    # Spočítat počet vozidel
-    vehicles_count_val = vehicles_count(db, customer.email)
-    
-    # Získat limit
-    max_vehicles = effective_max_vehicles(entitlement_dict)
-    
-    # Zkontrolovat, zda je nad limitem
-    is_over = False
-    if max_vehicles is not None:
-        is_over = vehicles_count_val >= max_vehicles
-    
+    if customer.tenant_id is None:
+        return EffectiveEntitlement(
+            plan=LicensePlan.FREE,
+            status=LicenseStatus.EXPIRED,
+            period_end=None,
+            vehicles_count=0,
+            vehicles_limit=1,
+            is_over_limit=False,
+        )
+
+    status = get_license_status(db, customer.tenant_id, customer.email)
+    plan_raw = str(status.get("plan") or "free").upper()
+    status_raw = str(status.get("status") or "inactive").upper()
+    plan = LicensePlan[plan_raw] if plan_raw in LicensePlan.__members__ else LicensePlan.FREE
+    status_enum = LicenseStatus.ACTIVE if status_raw == "ACTIVE" else LicenseStatus.EXPIRED
+    vehicles_limit = None if bool(status.get("is_unlimited")) else int(status.get("vehicles_limit") or 1)
+    vehicles_count_value = int(status.get("vehicles_current_user") or status.get("vehicles_current") or 0)
     return EffectiveEntitlement(
         plan=plan,
-        status=status,
-        period_end=period_end,
-        vehicles_count=vehicles_count_val,
-        vehicles_limit=max_vehicles,
-        is_over_limit=is_over,
+        status=status_enum,
+        period_end=None,
+        vehicles_count=vehicles_count_value,
+        vehicles_limit=vehicles_limit,
+        is_over_limit=bool(status.get("vehicles_remaining") == 0 and not status.get("is_unlimited")),
     )
 
 
 def require_plan_active(customer: Customer) -> None:
-    """
-    Dependency funkce pro kontrolu, zda je plán aktivní.
-    
-    Args:
-        customer: Uživatel
-        
-    Raises:
-        HTTPException 403: Pokud status není ACTIVE
-    """
     entitlement = get_entitlement(customer)
     if not is_active(entitlement):
         status = entitlement.get("status", "EXPIRED")
         raise HTTPException(
             status_code=403,
-            detail=f"License is not active (status: {status}). Please activate your license."
+            detail=f"License is not active (status: {status}). Please activate your license.",
         )

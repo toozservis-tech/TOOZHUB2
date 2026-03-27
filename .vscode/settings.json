@@ -1,3 +1,7 @@
 {
-    "gitlens.ai.largePromptWarningThreshold": 200000
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.terminal.activateEnvironment": true,
+    "gitlens.ai.largePromptWarningThreshold": 200000,
+    "chatgpt.openOnStartup": true,
+    "chatgpt.runCodexInWindowsSubsystemForLinux": true
 }

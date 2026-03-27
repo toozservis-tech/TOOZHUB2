@@ -1,6 +1,6 @@
 """
 Licensing module - centralizovaná správa licencí a limitů
-Source of truth je TOOZ_SERVICE_HUB, tento modul pouze enforce limity
+Source of truth je src.modules.licensing.service
 """
 
 from .types import LicensePlan, LicenseStatus, EffectiveEntitlement
@@ -31,7 +31,6 @@ __all__ = [
     "require_plan_active_dependency",
     "require_feature",
 ]
-
 
 
 

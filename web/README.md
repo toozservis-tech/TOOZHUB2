@@ -8,7 +8,7 @@
    - Nastavte URL vašeho API serveru (např. `http://127.0.0.1:8001` nebo `https://hub.toozservis.cz`)
 
 2. **Napojení na Webnode (produkční metoda):**
-   - V nastavení stránky `/toozhub-aplikace/` v Webnode nastavte přesměrování na:
+   - V nastavení stránky `/sprava-vozidel/` v Webnode nastavte přesměrování na:
    - `https://hub.toozservis.cz/web/index.html`
    - Viz podrobnější návod: `RYCHLY_POSTUP_WEBNODE.md` nebo `POSTUP_VLOZENI_DO_WEBNODE.md`
 

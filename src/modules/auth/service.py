@@ -36,9 +36,10 @@ class AuthService:
         Returns:
             True pokud přihlášení proběhlo úspěšně
         """
+        normalized_email = email.strip().lower()
         try:
             url = f"{BASE_API_URL}/user/login"
-            data = {"email": email, "password": password}
+            data = {"email": normalized_email, "password": password}
             headers = {}
             
             response = requests.post(url, json=data, headers=headers, timeout=10)
@@ -47,15 +48,15 @@ class AuthService:
                 result = response.json()
                 self.access_token = result.get("access_token")
                 user = result.get("user", {})
-                self.current_user_email = user.get("email") or email
+                self.current_user_email = user.get("email") or normalized_email
                 self.current_user = user
                 return True
             return False
         except requests.exceptions.ConnectionError:
             print(f"[AUTH] Backend není dostupný ({BASE_API_URL}), používá se lokální režim")
             # Fallback - pro testování bez serveru
-            self.current_user_email = email
-            self.current_user = {"email": email}
+            self.current_user_email = normalized_email
+            self.current_user = {"email": normalized_email}
             return True
         except Exception as e:
             print(f"[AUTH] Chyba při přihlášení: {e}")
@@ -73,10 +74,11 @@ class AuthService:
         Returns:
             True pokud registrace proběhla úspěšně
         """
+        normalized_email = email.strip().lower()
         try:
             url = f"{BASE_API_URL}/user/register"
             data = {
-                "email": email,
+                "email": normalized_email,
                 "password": password,
                 **customer_data
             }
@@ -88,14 +90,14 @@ class AuthService:
                 result = response.json()
                 self.access_token = result.get("access_token")
                 user = result.get("user", {})
-                self.current_user_email = user.get("email") or email
+                self.current_user_email = user.get("email") or normalized_email
                 self.current_user = user
                 return True
             return False
         except requests.exceptions.ConnectionError:
             print(f"[AUTH] Backend není dostupný ({BASE_API_URL}), používá se lokální režim")
-            self.current_user_email = email
-            self.current_user = {"email": email}
+            self.current_user_email = normalized_email
+            self.current_user = {"email": normalized_email}
             return True
         except Exception as e:
             print(f"[AUTH] Chyba při registraci: {e}")

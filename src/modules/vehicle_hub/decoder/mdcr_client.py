@@ -95,16 +95,21 @@ def parse_date_like(date_value) -> Optional[str]:
         logger.warning(f"[MDČR] Chyba při parsování data {date_value}: {e}")
         return str(date_value) if date_value else None
 
-# Načíst config proměnné - podporujeme více variant názvů
+# Načíst config proměnné - podporujeme více variant názvů pro zpětnou kompatibilitu
 import os
+# DŮLEŽITÉ: Podporujeme oba názvy (nové i legacy) pro zpětnou kompatibilitu
+# Preferujeme nové názvy, ale fallback na staré pokud nové nejsou nastavené
 try:
-    from src.core.config import DATAOVO_API_KEY, DATAOVO_API_BASE_URL, MDCR_API_TOKEN, MDCR_API_BASE_URL
-    # Použít nové názvy s fallbackem na staré
-    DATAOVOZIDLECH_API_KEY = DATAOVO_API_KEY or MDCR_API_TOKEN or os.getenv("DATAOVO_API_KEY") or os.getenv("DATAOVOZIDLECH_API_KEY", "")
-    DATAOVOZIDLECH_API_URL = DATAOVO_API_BASE_URL or MDCR_API_BASE_URL or os.getenv("DATAOVO_API_BASE_URL") or os.getenv("DATAOVOZIDLECH_API_URL", "https://api.dataovozidlech.cz/api/vehicletechnicaldata/v2")
+    from src.core.config import DATAOVO_API_KEY, DATAOVO_API_BASE_URL
+    # Config.py už má fallback logiku, použijeme ji
 except ImportError:
-    DATAOVOZIDLECH_API_KEY = os.getenv("DATAOVO_API_KEY") or os.getenv("DATAOVOZIDLECH_API_KEY") or os.getenv("MDCR_API_TOKEN", "")
-    DATAOVOZIDLECH_API_URL = os.getenv("DATAOVO_API_BASE_URL") or os.getenv("DATAOVOZIDLECH_API_URL") or os.getenv("MDCR_API_BASE_URL", "https://api.dataovozidlech.cz/api/vehicletechnicaldata/v2")
+    # Pokud config.py není dostupný, použít přímé čtení z ENV s fallbackem
+    DATAOVO_API_KEY = os.getenv("DATAOVO_API_KEY") or os.getenv("DATAOVOZIDLECH_API_KEY", "")
+    DATAOVO_API_BASE_URL = os.getenv("DATAOVO_API_BASE_URL") or os.getenv("DATAOVOZIDLECH_API_URL", "https://api.dataovozidlech.cz/api/vehicletechnicaldata/v2")
+
+# Aliasy pro zpětnou kompatibilitu (pouze pro čtení, ne pro zápis)
+DATAOVOZIDLECH_API_KEY = DATAOVO_API_KEY
+DATAOVOZIDLECH_API_URL = DATAOVO_API_BASE_URL
 
 
 async def fetch_vehicle_by_vin_from_mdcr(vin: str) -> Optional[VehicleDecodedData]:
@@ -120,32 +125,36 @@ async def fetch_vehicle_by_vin_from_mdcr(vin: str) -> Optional[VehicleDecodedDat
     # Normalizace VIN
     normalized_vin = vin.strip().upper().replace(" ", "").replace("-", "")
     
-    # Kontrola konfigurace
-    if not DATAOVOZIDLECH_API_KEY or not DATAOVOZIDLECH_API_URL:
-        logger.warning(f"[MDČR] API není nakonfigurováno (BASE_URL nebo TOKEN chybí), vracím None pro VIN {normalized_vin}")
+    # KROK 1: Kontrola konfigurace - POUZE z ENV
+    if not DATAOVO_API_KEY or not DATAOVO_API_BASE_URL:
+        logger.warning(f"[MDCR] API není nakonfigurováno - DATAOVO_API_KEY nebo DATAOVO_API_BASE_URL chybí v ENV")
+        logger.warning(f"[MDCR] DATAOVO_API_KEY: {'SET' if DATAOVO_API_KEY else 'MISSING'}")
+        logger.warning(f"[MDCR] DATAOVO_API_BASE_URL: {DATAOVO_API_BASE_URL if DATAOVO_API_BASE_URL else 'MISSING'}")
         return None
     
-    # Detailní logování konfigurace
-    logger.info(f"[MDČR] ========================================")
-    logger.info(f"[MDČR] Dekóduji VIN: {normalized_vin}")
-    logger.info(f"[MDČR] API URL: {DATAOVOZIDLECH_API_URL}")
-    logger.info(f"[MDČR] Token nastaven: {bool(DATAOVOZIDLECH_API_KEY)}")
-    logger.info(f"[MDČR] Token délka: {len(DATAOVOZIDLECH_API_KEY) if DATAOVOZIDLECH_API_KEY else 0} znaků")
+    # KROK 2: Logování před voláním API
+    logger.info(f"[MDCR] ========================================")
+    logger.info(f"[MDCR] API CALLED WITH VIN={normalized_vin}")
+    logger.info(f"[MDCR] API URL: {DATAOVO_API_BASE_URL}")
+    logger.info(f"[MDCR] API KEY: {'SET' if DATAOVO_API_KEY else 'MISSING'} (length: {len(DATAOVO_API_KEY) if DATAOVO_API_KEY else 0})")
     
     try:
-        url = f"{DATAOVOZIDLECH_API_URL}?vin={urllib.parse.quote(normalized_vin)}"
+        # KROK 2: Vytvoření requestu
+        url = f"{DATAOVO_API_BASE_URL}?vin={urllib.parse.quote(normalized_vin)}"
         headers = {
-            "api_key": DATAOVOZIDLECH_API_KEY
+            "api_key": DATAOVO_API_KEY,
+            "Accept": "application/json"
         }
         
-        logger.info(f"[MDČR] Request URL: {url}")
-        logger.debug(f"[MDČR] Request headers: api_key={'***' + DATAOVOZIDLECH_API_KEY[-4:] if DATAOVOZIDLECH_API_KEY else 'N/A'}")
+        logger.info(f"[MDCR] Request URL: {url}")
+        logger.debug(f"[MDCR] Request headers: api_key={'***' + DATAOVO_API_KEY[-4:] if len(DATAOVO_API_KEY) > 4 else '***'}")
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(url, headers=headers)
         
-        logger.info(f"[MDČR] Response status: {response.status_code}")
-        logger.info(f"[MDČR] Response headers: {dict(response.headers)}")
+        # KROK 2: Logování response status
+        logger.info(f"[MDCR] RESPONSE STATUS={response.status_code}")
+        logger.info(f"[MDCR] Response headers: {dict(response.headers)}")
         
         if response.status_code != 200:
             logger.warning(f"[MDČR] ❌ API vrátilo status {response.status_code}")

@@ -1,0 +1,65 @@
+Collecting pywebpush
+  Downloading pywebpush-2.3.0-py3-none-any.whl.metadata (9.7 kB)
+Collecting aiohttp (from pywebpush)
+  Downloading aiohttp-3.13.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (8.1 kB)
+Collecting cryptography>=2.6.1 (from pywebpush)
+  Downloading cryptography-46.0.5-cp38-abi3-manylinux_2_34_x86_64.whl.metadata (5.7 kB)
+Collecting http-ece>=1.1.0 (from pywebpush)
+  Downloading http_ece-1.2.1.tar.gz (8.8 kB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: requests>=2.21.0 in ./.venv/lib/python3.10/site-packages (from pywebpush) (2.32.5)
+Collecting py-vapid>=1.7.0 (from pywebpush)
+  Downloading py_vapid-1.9.4-py2.py3-none-any.whl.metadata (4.6 kB)
+Collecting cffi>=2.0.0 (from cryptography>=2.6.1->pywebpush)
+  Downloading cffi-2.0.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.6 kB)
+Requirement already satisfied: typing-extensions>=4.13.2 in ./.venv/lib/python3.10/site-packages (from cryptography>=2.6.1->pywebpush) (4.15.0)
+Collecting pycparser (from cffi>=2.0.0->cryptography>=2.6.1->pywebpush)
+  Downloading pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+Requirement already satisfied: charset_normalizer<4,>=2 in ./.venv/lib/python3.10/site-packages (from requests>=2.21.0->pywebpush) (3.4.4)
+Requirement already satisfied: idna<4,>=2.5 in ./.venv/lib/python3.10/site-packages (from requests>=2.21.0->pywebpush) (3.11)
+Requirement already satisfied: urllib3<3,>=1.21.1 in ./.venv/lib/python3.10/site-packages (from requests>=2.21.0->pywebpush) (2.6.2)
+Requirement already satisfied: certifi>=2017.4.17 in ./.venv/lib/python3.10/site-packages (from requests>=2.21.0->pywebpush) (2025.11.12)
+Collecting aiohappyeyeballs>=2.5.0 (from aiohttp->pywebpush)
+  Downloading aiohappyeyeballs-2.6.1-py3-none-any.whl.metadata (5.9 kB)
+Collecting aiosignal>=1.4.0 (from aiohttp->pywebpush)
+  Downloading aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+Collecting async-timeout<6.0,>=4.0 (from aiohttp->pywebpush)
+  Downloading async_timeout-5.0.1-py3-none-any.whl.metadata (5.1 kB)
+Requirement already satisfied: attrs>=17.3.0 in ./.venv/lib/python3.10/site-packages (from aiohttp->pywebpush) (25.4.0)
+Collecting frozenlist>=1.1.1 (from aiohttp->pywebpush)
+  Downloading frozenlist-1.8.0-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (20 kB)
+Collecting multidict<7.0,>=4.5 (from aiohttp->pywebpush)
+  Downloading multidict-6.7.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.3 kB)
+Collecting propcache>=0.2.0 (from aiohttp->pywebpush)
+  Downloading propcache-0.4.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (13 kB)
+Collecting yarl<2.0,>=1.17.0 (from aiohttp->pywebpush)
+  Downloading yarl-1.22.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (75 kB)
+Downloading pywebpush-2.3.0-py3-none-any.whl (22 kB)
+Downloading cryptography-46.0.5-cp38-abi3-manylinux_2_34_x86_64.whl (4.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.5/4.5 MB 82.2 MB/s  0:00:00
+Downloading cffi-2.0.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (216 kB)
+Downloading py_vapid-1.9.4-py2.py3-none-any.whl (23 kB)
+Downloading aiohttp-3.13.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.7/1.7 MB 68.1 MB/s  0:00:00
+Downloading async_timeout-5.0.1-py3-none-any.whl (6.2 kB)
+Downloading multidict-6.7.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (243 kB)
+Downloading yarl-1.22.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (346 kB)
+Downloading aiohappyeyeballs-2.6.1-py3-none-any.whl (15 kB)
+Downloading aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+Downloading frozenlist-1.8.0-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (219 kB)
+Downloading propcache-0.4.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (196 kB)
+Downloading pycparser-3.0-py3-none-any.whl (48 kB)
+Building wheels for collected packages: http-ece
+  Building wheel for http-ece (pyproject.toml): started
+  Building wheel for http-ece (pyproject.toml): finished with status 'done'
+  Created wheel for http-ece: filename=http_ece-1.2.1-py2.py3-none-any.whl size=4850 sha256=d0851d14d0baf26f06afa8ec670197d1851e8c9f6b4407894102b15cda70423a
+  Stored in directory: /home/toozhub2/.cache/pip/wheels/86/10/d5/0816d809e1e3de9325f87862fe37ced8737fcfa4540410b5ee
+Successfully built http-ece
+Installing collected packages: pycparser, propcache, multidict, frozenlist, async-timeout, aiohappyeyeballs, yarl, cffi, aiosignal, cryptography, aiohttp, py-vapid, http-ece, pywebpush
+
+Successfully installed aiohappyeyeballs-2.6.1 aiohttp-3.13.3 aiosignal-1.4.0 async-timeout-5.0.1 cffi-2.0.0 cryptography-46.0.5 frozenlist-1.8.0 http-ece-1.2.1 multidict-6.7.1 propcache-0.4.1 py-vapid-1.9.4 pycparser-3.0 pywebpush-2.3.0 yarl-1.22.0

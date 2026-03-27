@@ -4,6 +4,8 @@ Testy pro vehicles API
 import pytest
 import requests
 
+VALID_STK_DATE = "2030-12-31"
+
 
 def test_create_vehicle(api_url, authenticated_headers, cleanup_test_data):
     """Test vytvoření vozidla"""
@@ -15,7 +17,8 @@ def test_create_vehicle(api_url, authenticated_headers, cleanup_test_data):
         "plate": "TEST123",
         "brand": "Test Brand",
         "model": "Test Model",
-        "year": 2020
+        "year": 2020,
+        "stk_valid_until": VALID_STK_DATE,
     }
     
     response = requests.post(
@@ -61,7 +64,8 @@ def test_get_vehicle_detail(api_url, authenticated_headers, cleanup_test_data):
         "plate": "TEST456",
         "brand": "Test Brand",
         "model": "Test Model",
-        "year": 2020
+        "year": 2020,
+        "stk_valid_until": VALID_STK_DATE,
     }
     
     create_response = requests.post(
@@ -97,7 +101,8 @@ def test_update_vehicle(api_url, authenticated_headers, cleanup_test_data):
         "plate": "TEST789",
         "brand": "Test Brand",
         "model": "Test Model",
-        "year": 2020
+        "year": 2020,
+        "stk_valid_until": VALID_STK_DATE,
     }
     
     create_response = requests.post(
@@ -139,7 +144,8 @@ def test_delete_vehicle(api_url, authenticated_headers):
         "plate": "TEST999",
         "brand": "Test Brand",
         "model": "Test Model",
-        "year": 2020
+        "year": 2020,
+        "stk_valid_until": VALID_STK_DATE,
     }
     
     create_response = requests.post(
@@ -167,4 +173,3 @@ def test_delete_vehicle(api_url, authenticated_headers):
         timeout=5
     )
     assert get_response.status_code == 404
-

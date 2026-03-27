@@ -85,13 +85,11 @@ jobs:
       - name: Run API tests
         run: |
           python -m pytest tests/api -v --tb=short --junit-xml=artifacts/qa/pytest-report.xml
-        continue-on-error: true
       
       - name: Run E2E tests
         working-directory: tests/e2e
         run: |
           npx playwright test --reporter=list,html --project=chromium
-        continue-on-error: true
       
       - name: Upload test artifacts
         if: always()
@@ -114,4 +112,3 @@ jobs:
           fi
           # Kill any remaining uvicorn processes
           pkill -f "uvicorn src.server.main:app" || true
-

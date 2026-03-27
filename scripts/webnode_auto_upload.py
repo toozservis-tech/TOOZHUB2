@@ -44,7 +44,7 @@ def load_config():
 {
     "email": "vas@email.cz",
     "password": "vase-heslo",
-    "page_url": "https://finalni-verze.cms.webnode.cz/toozhub-aplikace"
+    "page_url": "https://finalni-verze.cms.webnode.cz/sprava-vozidel"
 }
         """)
         sys.exit(1)
@@ -319,7 +319,7 @@ def edit_page(driver, page_url):
             editor_url = page_url
         else:
             # Pokud je to publikovaná URL, převést na editor URL
-            # finalni-verze.cms.webnode.cz/toozhub-aplikace -> editor URL
+            # finalni-verze.cms.webnode.cz/sprava-vozidel -> editor URL
             editor_url = page_url.replace("www.toozservis.cz", "finalni-verze.cms.webnode.cz")
             if not editor_url.startswith("http"):
                 editor_url = "https://" + editor_url
@@ -1290,7 +1290,7 @@ def main():
             if not edit_page(driver, page_url):
                 print("❌ Otevření stránky selhalo")
                 print(f"💡 Zkontrolujte URL v konfiguraci: {page_url}")
-                print("💡 URL by měla být: https://finalni-verze.cms.webnode.cz/toozhub-aplikace")
+                print("💡 URL by měla být: https://finalni-verze.cms.webnode.cz/sprava-vozidel")
                 return
             
             # KROK 1: Vložit HTML do HTML bloku

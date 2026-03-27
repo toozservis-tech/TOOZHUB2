@@ -102,18 +102,36 @@ class EmailService:
             # Port 465 vyžaduje SSL (SMTP_SSL), port 587 vyžaduje STARTTLS
             if self.port == 465:
                 # SSL připojení pro port 465
-                with smtplib.SMTP_SSL(self.host, self.port, timeout=10) as server:
+                print(f"[EMAIL] Connecting to {self.host}:{self.port} using SMTP_SSL")
+                with smtplib.SMTP_SSL(self.host, self.port, timeout=30) as server:
+                    print(f"[EMAIL] Connected, authenticating as {self.username}")
                     server.login(self.username, self.password)
+                    print(f"[EMAIL] Authenticated, sending email to {len(all_recipients)} recipient(s)")
                     server.sendmail(self.from_email, all_recipients, msg.as_string())
+                    print(f"[EMAIL] Email successfully sent")
             else:
                 # STARTTLS pro port 587 a ostatní
-                with smtplib.SMTP(self.host, self.port, timeout=10) as server:
+                print(f"[EMAIL] Connecting to {self.host}:{self.port} using SMTP + STARTTLS")
+                with smtplib.SMTP(self.host, self.port, timeout=30) as server:
+                    print(f"[EMAIL] Connected, starting TLS")
                     server.starttls()
+                    print(f"[EMAIL] TLS started, authenticating as {self.username}")
                     server.login(self.username, self.password)
+                    print(f"[EMAIL] Authenticated, sending email to {len(all_recipients)} recipient(s)")
                     server.sendmail(self.from_email, all_recipients, msg.as_string())
+                    print(f"[EMAIL] Email successfully sent")
             return True
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"[EMAIL] Authentication failed: {e}")
+            raise ValueError("SMTP autentizace selhala - zkontrolujte uživatelské jméno a heslo")
+        except smtplib.SMTPConnectError as e:
+            print(f"[EMAIL] Connection failed: {e}")
+            raise ValueError(f"Nelze se připojit k SMTP serveru {self.host}:{self.port}")
         except smtplib.SMTPException as e:
-            print(f"[EMAIL] Chyba při odesílání emailu: {e}")
+            print(f"[EMAIL] SMTP error: {e}")
+            raise
+        except Exception as e:
+            print(f"[EMAIL] Unexpected error: {type(e).__name__}: {e}")
             raise
     
     def _add_attachment(self, msg: MIMEMultipart, file_path: Path) -> None:

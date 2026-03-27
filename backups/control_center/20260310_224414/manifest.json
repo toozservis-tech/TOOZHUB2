@@ -1,0 +1,9 @@
+{
+  "backup_id": "20260310_224414",
+  "created_at": "2026-03-10T22:44:14.826568",
+  "created_by": "devadmin.e2e@example.com",
+  "db_file": "vehicles.db",
+  "db_size_bytes": 3768320,
+  "include_data_dir": false,
+  "data_dirs": []
+}

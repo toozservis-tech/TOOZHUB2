@@ -26,7 +26,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
-        response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        # Geolokaci povolime pro self, aby slo presnejsi urceni polohy po souhlasu uzivatele.
+        response.headers.setdefault("Permissions-Policy", "geolocation=(self), microphone=(), camera=()")
         
         # HSTS - pouze pro HTTPS
         if request.url.scheme == "https":
@@ -43,23 +44,25 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # Development: povolit všechny (pro testování)
             frame_ancestors = "*"
         
-        # CSP - kompatibilní se stávajícími skripty
+        # CSP - kompatibilní se stávajícími skripty a API voláními
         if ENVIRONMENT == "production":
-            # Produkce: povolit embed jen z toozservis.cz domén
+            # Produkce: povolit embed jen z toozservis.cz domén, API volání na hub.toozservis.cz
             csp = (
-                "default-src 'self'; "
-                "img-src 'self' data:; "
+                "default-src 'self' https://hub.toozservis.cz; "
+                "img-src 'self' data: https:; "
                 "style-src 'self' 'unsafe-inline'; "
                 "script-src 'self' 'unsafe-inline'; "
+                "connect-src 'self' https://hub.toozservis.cz https://api.dataovozidlech.cz https://ares.gov.cz; "
                 "frame-ancestors 'self' https://www.toozservis.cz https://toozservis.cz;"
             )
         else:
             # Development: povolit všechny (pro testování)
             csp = (
                 "default-src 'self'; "
-                "img-src 'self' data:; "
+                "img-src 'self' data: https:; "
                 "style-src 'self' 'unsafe-inline'; "
                 "script-src 'self' 'unsafe-inline'; "
+                "connect-src 'self' http://localhost:* https:; "
                 "frame-ancestors *;"
             )
         
@@ -82,6 +85,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.period = period  # Období v sekundách
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # OPTIONS requests (CORS preflight) nejsou rate-limited
+        if request.method == "OPTIONS":
+            return await call_next(request)
+        
+        # Health check endpoints nejsou rate-limited (včetně sub-paths jako /health/config)
+        # Použít prefix matching místo exact match, aby všechny health endpoints byly vyňaty
+        if request.url.path.startswith("/health"):
+            return await call_next(request)
+        
         # Získat IP adresu
         client_ip = request.client.host if request.client else "unknown"
         
@@ -145,4 +157,3 @@ class AntiTamperingMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = str(int(time.time() * 1000))
         
         return response
-

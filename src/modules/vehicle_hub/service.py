@@ -6,8 +6,9 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 from .api_vin import decode_vin_api
-from .database import SessionLocal, engine, Base
+from .database import SessionLocal
 from .models import Vehicle as VehicleModel, ServiceRecord as ServiceRecordModel
+from .schema_management import assert_module_ready
 
 
 @dataclass
@@ -40,8 +41,6 @@ class VehicleHubService:
 
     def __init__(self, user_email: Optional[str] = None) -> None:
         self.user_email = user_email
-        # Vytvoření tabulek pokud neexistují
-        Base.metadata.create_all(bind=engine)
 
     def _get_db(self) -> Session:
         """Vrací databázovou session"""
@@ -58,6 +57,7 @@ class VehicleHubService:
         
         db = self._get_db()
         try:
+            assert_module_ready(db, "vehicles", detail_prefix="Modul vozidel není připraven")
             vin = vehicle.vin.strip().upper() if vehicle.vin else None
             
             # Zkusíme najít existující vozidlo podle VIN nebo SPZ
@@ -110,6 +110,7 @@ class VehicleHubService:
         
         db = self._get_db()
         try:
+            assert_module_ready(db, "vehicles", detail_prefix="Modul vozidel není připraven")
             db_vehicles = db.query(VehicleModel).filter(
                 VehicleModel.user_email == self.user_email
             ).all()
@@ -137,6 +138,7 @@ class VehicleHubService:
         
         db = self._get_db()
         try:
+            assert_module_ready(db, "vehicles", detail_prefix="Modul vozidel není připraven")
             db_vehicle = db.query(VehicleModel).filter(
                 VehicleModel.user_email == self.user_email,
                 VehicleModel.vin == vin.strip().upper()
@@ -166,6 +168,7 @@ class VehicleHubService:
         
         db = self._get_db()
         try:
+            assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
             vin = record.vehicle_vin.strip().upper()
             vehicle = db.query(VehicleModel).filter(
                 VehicleModel.user_email == self.user_email,
@@ -176,6 +179,7 @@ class VehicleHubService:
                 raise ValueError(f"Unknown vehicle VIN: {vin}")
             
             db_record = ServiceRecordModel(
+                tenant_id=vehicle.tenant_id or 1,
                 vehicle_id=vehicle.id,
                 performed_at=record.date,
                 mileage=record.odometer_km,
@@ -195,6 +199,7 @@ class VehicleHubService:
         
         db = self._get_db()
         try:
+            assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
             vehicle = db.query(VehicleModel).filter(
                 VehicleModel.user_email == self.user_email,
                 VehicleModel.vin == vin.strip().upper()
@@ -246,4 +251,3 @@ class VehicleHubService:
         except Exception as e:
             # Ostatní chyby zabalíme do obecné výjimky
             raise Exception(f"Chyba při dekódování VIN: {str(e)}") from e
-
