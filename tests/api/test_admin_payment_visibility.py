@@ -13,7 +13,10 @@ from src.modules.vehicle_hub.models import (
     License,
     LicensePaymentTransaction,
     LicenseSubscription,
+    ServiceRecord,
     Tenant,
+    Vehicle,
+    VehicleOwnership,
 )
 from src.server import admin_api
 
@@ -98,6 +101,59 @@ def _add_payment_tx(
         created_at=created_at or datetime.utcnow(),
     )
     db.add(tx)
+
+
+def _seed_owned_vehicle(
+    db,
+    *,
+    tenant_id: int,
+    owner: Customer,
+    vehicle_id: int,
+    legacy_user_email: str,
+    nickname: str,
+) -> Vehicle:
+    vehicle = Vehicle(
+        id=vehicle_id,
+        tenant_id=tenant_id,
+        user_email=legacy_user_email,
+        nickname=nickname,
+        brand="Skoda",
+        model="Octavia",
+        plate=f"{vehicle_id}ABC",
+        vin=f"VIN{vehicle_id:014d}"[-17:],
+        created_at=datetime.utcnow(),
+    )
+    db.add(vehicle)
+    db.flush()
+    db.add(
+        VehicleOwnership(
+            tenant_id=tenant_id,
+            vehicle_id=vehicle.id,
+            customer_id=owner.id,
+            ownership_type="owner",
+            is_primary=True,
+            is_active=True,
+            assigned_by_customer_id=owner.id,
+            assigned_at=datetime.utcnow(),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+    )
+    db.flush()
+    db.add(
+        ServiceRecord(
+            tenant_id=tenant_id,
+            vehicle_id=vehicle.id,
+            user_id=owner.id,
+            performed_at=datetime.utcnow(),
+            mileage=123456,
+            description=f"Service for {nickname}",
+            price=1500.0,
+        )
+    )
+    db.commit()
+    db.refresh(vehicle)
+    return vehicle
 
 
 def test_control_center_payments_separates_live_and_test(db_session):
@@ -253,3 +309,83 @@ def test_user_insight_reports_live_and_test_consistently(db_session):
     assert detail_summary["has_paid"] is True
     assert detail_summary["has_live_paid"] is True
     assert detail_summary["live_paid_count"] == 1
+
+
+def test_admin_vehicle_views_use_vehicle_ownership_source_of_truth(db_session):
+    owner = _seed_user_with_license(db_session, tenant_id=30, user_id=300, email="owner-admin@example.com")
+    vehicle = _seed_owned_vehicle(
+        db_session,
+        tenant_id=owner.tenant_id,
+        owner=owner,
+        vehicle_id=3000,
+        legacy_user_email="stale-legacy@example.com",
+        nickname="Ownership Admin Vehicle",
+    )
+
+    user_vehicles = admin_api.get_user_vehicles(
+        user_id=owner.id,
+        email="developer@example.com",
+        db=db_session,
+    )
+    assert len(user_vehicles) == 1
+    assert user_vehicles[0].id == vehicle.id
+    assert user_vehicles[0].user_email == owner.email
+
+    all_vehicles = admin_api.get_all_vehicles(
+        limit=50,
+        offset=0,
+        email="developer@example.com",
+        db=db_session,
+    )
+    by_id = {item["id"]: item for item in all_vehicles}
+    assert by_id[vehicle.id]["owner_id"] == owner.id
+    assert by_id[vehicle.id]["owner_name"] == owner.name
+    assert by_id[vehicle.id]["user_email"] == owner.email
+
+
+def test_admin_update_vehicle_reassigns_primary_owner_via_ownership(db_session):
+    old_owner = _seed_user_with_license(db_session, tenant_id=31, user_id=310, email="old-owner@example.com")
+    new_owner = Customer(
+        id=311,
+        tenant_id=31,
+        email="new-owner@example.com",
+        password_hash="hash",
+        role="user",
+        name="new-owner",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(new_owner)
+    db_session.commit()
+    db_session.refresh(new_owner)
+    vehicle = _seed_owned_vehicle(
+        db_session,
+        tenant_id=old_owner.tenant_id,
+        owner=old_owner,
+        vehicle_id=3100,
+        legacy_user_email="legacy-owner@example.com",
+        nickname="Transfer Vehicle",
+    )
+
+    response = admin_api.update_vehicle(
+        vehicle_id=vehicle.id,
+        vehicle_data=admin_api.VehicleUpdate(user_email=new_owner.email),
+        request=None,
+        email="developer@example.com",
+        db=db_session,
+    )
+
+    assert response["message"] == "Vozidlo bylo upraveno"
+    db_session.refresh(vehicle)
+    assert vehicle.user_email == new_owner.email
+    assert vehicle.tenant_id == new_owner.tenant_id
+
+    active_owner = (
+        db_session.query(VehicleOwnership)
+        .filter(
+            VehicleOwnership.vehicle_id == vehicle.id,
+            VehicleOwnership.is_primary.is_(True),
+            VehicleOwnership.is_active.is_(True),
+        )
+        .one()
+    )
+    assert active_owner.customer_id == new_owner.id

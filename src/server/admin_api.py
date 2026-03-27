@@ -39,6 +39,7 @@ from src.modules.vehicle_hub.database import get_db, DB_URL, engine
 from src.modules.vehicle_hub.models import (
     Customer,
     Vehicle,
+    VehicleOwnership,
     ServiceRecord,
     Reservation,
     Reminder,
@@ -59,6 +60,10 @@ from src.modules.vehicle_hub.account_state import (
     customer_is_disabled,
     customer_session_version,
     increment_customer_session_version,
+)
+from src.modules.vehicle_hub.ownership import (
+    ensure_vehicle_owner_assignment,
+    get_primary_vehicle_owner,
 )
 from src.modules.vehicle_hub.tenant_provisioning import (
     create_dedicated_tenant,
@@ -120,6 +125,99 @@ def get_db_file_path() -> Optional[Path]:
     if raw.startswith("sqlite:///"):
         return Path(raw.replace("sqlite:///", ""))
     return None
+
+
+def _primary_owner_join_sql(
+    *,
+    vehicle_alias: str = "v",
+    selector_alias: str = "vo_primary",
+    ownership_alias: str = "vo",
+    owner_alias: str = "owner_customer",
+) -> str:
+    return f"""
+        LEFT JOIN (
+            SELECT vehicle_id, MIN(id) AS ownership_id
+            FROM vehicle_ownerships
+            WHERE is_active = 1 AND is_primary = 1
+            GROUP BY vehicle_id
+        ) {selector_alias} ON {selector_alias}.vehicle_id = {vehicle_alias}.id
+        LEFT JOIN vehicle_ownerships {ownership_alias} ON {ownership_alias}.id = {selector_alias}.ownership_id
+        LEFT JOIN customers {owner_alias} ON {owner_alias}.id = {ownership_alias}.customer_id
+    """
+
+
+def _customer_vehicle_count_join_sql(*, customer_alias: str = "c", join_alias: str = "vehicle_counts") -> str:
+    return f"""
+        LEFT JOIN (
+            SELECT customer_id, COUNT(DISTINCT vehicle_id) AS vehicles_count
+            FROM vehicle_ownerships
+            WHERE is_active = 1
+            GROUP BY customer_id
+        ) {join_alias} ON {join_alias}.customer_id = {customer_alias}.id
+    """
+
+
+def _vehicle_ids_owned_by_customer(db: Session, customer_id: int) -> List[int]:
+    rows = (
+        db.query(VehicleOwnership.vehicle_id)
+        .filter(
+            VehicleOwnership.customer_id == customer_id,
+            VehicleOwnership.is_active.is_(True),
+        )
+        .all()
+    )
+    return [int(vehicle_id) for (vehicle_id,) in rows if vehicle_id is not None]
+
+
+def _sync_vehicle_user_email_display_for_customer(db: Session, customer_id: int, display_email: str) -> int:
+    """
+    Deprecated compatibility sync for UI fields.
+    Ownership logic must use vehicle_ownerships, not Vehicle.user_email.
+    """
+    vehicle_ids = _vehicle_ids_owned_by_customer(db, customer_id)
+    if not vehicle_ids:
+        return 0
+    return (
+        db.query(Vehicle)
+        .filter(Vehicle.id.in_(vehicle_ids))
+        .update({Vehicle.user_email: display_email}, synchronize_session=False)
+    )
+
+
+def _reassign_vehicle_primary_owner(
+    db: Session,
+    *,
+    vehicle: Vehicle,
+    owner: Customer,
+    assigned_by_customer_id: Optional[int],
+) -> None:
+    now = datetime.utcnow()
+    (
+        db.query(VehicleOwnership)
+        .filter(
+            VehicleOwnership.vehicle_id == vehicle.id,
+            VehicleOwnership.is_active.is_(True),
+            VehicleOwnership.is_primary.is_(True),
+            VehicleOwnership.customer_id != owner.id,
+        )
+        .update(
+            {
+                VehicleOwnership.is_active: False,
+                VehicleOwnership.is_primary: False,
+                VehicleOwnership.revoked_at: now,
+                VehicleOwnership.updated_at: now,
+            },
+            synchronize_session=False,
+        )
+    )
+    ensure_vehicle_owner_assignment(
+        db,
+        vehicle=vehicle,
+        owner=owner,
+        assigned_by_customer_id=assigned_by_customer_id,
+    )
+    vehicle.tenant_id = owner.tenant_id
+    vehicle.user_email = owner.email
 
 
 def _json_serialize_for_audit(value: Any) -> str:
@@ -493,6 +591,14 @@ def _upsert_rows_from_backup(
     return len(rows)
 
 
+def _attached_sqlite_has_table(conn: sqlite3.Connection, schema_name: str, table_name: str) -> bool:
+    row = conn.execute(
+        f"SELECT name FROM {schema_name}.sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
 def _restore_user_scope_from_backup(
     *,
     backup_db_file: Path,
@@ -519,18 +625,43 @@ def _restore_user_scope_from_backup(
                 params=(user_id,),
             )
 
-            vehicle_rows = conn.execute(
-                "SELECT id FROM backupdb.vehicles WHERE lower(user_email) = lower(?)",
-                (user_email,),
-            ).fetchall()
-            vehicle_ids = [int(row["id"]) for row in vehicle_rows]
+            vehicle_ids: List[int] = []
+            if _attached_sqlite_has_table(conn, "backupdb", "vehicle_ownerships"):
+                ownership_rows = conn.execute(
+                    """
+                    SELECT DISTINCT vehicle_id
+                    FROM backupdb.vehicle_ownerships
+                    WHERE customer_id = ?
+                      AND COALESCE(is_active, 1) = 1
+                    """,
+                    (user_id,),
+                ).fetchall()
+                vehicle_ids = [int(row["vehicle_id"]) for row in ownership_rows if row["vehicle_id"] is not None]
+                restored["vehicle_ownerships"] = _upsert_rows_from_backup(
+                    conn,
+                    table_name="vehicle_ownerships",
+                    where_sql="customer_id = ?",
+                    params=(user_id,),
+                )
+            else:
+                # Deprecated fallback for snapshots from legacy user_email ownership era.
+                vehicle_rows = conn.execute(
+                    "SELECT id FROM backupdb.vehicles WHERE lower(user_email) = lower(?)",
+                    (user_email,),
+                ).fetchall()
+                vehicle_ids = [int(row["id"]) for row in vehicle_rows]
+                restored["vehicle_ownerships"] = 0
 
-            restored["vehicles"] = _upsert_rows_from_backup(
-                conn,
-                table_name="vehicles",
-                where_sql="lower(user_email) = lower(?)",
-                params=(user_email,),
-            )
+            if vehicle_ids:
+                placeholders = ", ".join(["?"] * len(vehicle_ids))
+                restored["vehicles"] = _upsert_rows_from_backup(
+                    conn,
+                    table_name="vehicles",
+                    where_sql=f"id IN ({placeholders})",
+                    params=tuple(vehicle_ids),
+                )
+            else:
+                restored["vehicles"] = 0
             restored["reminders"] = _upsert_rows_from_backup(
                 conn,
                 table_name="reminders",
@@ -597,17 +728,45 @@ def _restore_vehicle_scope_from_backup(
             if not vehicle_row:
                 raise ValueError(f"Vozidlo {vehicle_id} v záloze neexistuje")
 
-            owner_email = str(vehicle_row["user_email"] or "").strip().lower()
-
-            if owner_email:
-                restored["customers"] = _upsert_rows_from_backup(
+            if _attached_sqlite_has_table(conn, "backupdb", "vehicle_ownerships"):
+                owner_rows = conn.execute(
+                    """
+                    SELECT DISTINCT customer_id
+                    FROM backupdb.vehicle_ownerships
+                    WHERE vehicle_id = ?
+                    """,
+                    (vehicle_id,),
+                ).fetchall()
+                owner_ids = [int(row["customer_id"]) for row in owner_rows if row["customer_id"] is not None]
+                if owner_ids:
+                    placeholders = ", ".join(["?"] * len(owner_ids))
+                    restored["customers"] = _upsert_rows_from_backup(
+                        conn,
+                        table_name="customers",
+                        where_sql=f"id IN ({placeholders})",
+                        params=tuple(owner_ids),
+                    )
+                else:
+                    restored["customers"] = 0
+                restored["vehicle_ownerships"] = _upsert_rows_from_backup(
                     conn,
-                    table_name="customers",
-                    where_sql="lower(email) = lower(?)",
-                    params=(owner_email,),
+                    table_name="vehicle_ownerships",
+                    where_sql="vehicle_id = ?",
+                    params=(vehicle_id,),
                 )
             else:
-                restored["customers"] = 0
+                # Deprecated fallback for snapshots from legacy user_email ownership era.
+                owner_email = str(vehicle_row["user_email"] or "").strip().lower()
+                if owner_email:
+                    restored["customers"] = _upsert_rows_from_backup(
+                        conn,
+                        table_name="customers",
+                        where_sql="lower(email) = lower(?)",
+                        params=(owner_email,),
+                    )
+                else:
+                    restored["customers"] = 0
+                restored["vehicle_ownerships"] = 0
 
             restored["vehicles"] = _upsert_rows_from_backup(
                 conn,
@@ -1511,7 +1670,7 @@ def get_all_users(
                     COALESCE(c.is_disabled, 0) as is_disabled,
                     COALESCE(c.is_deleted, 0) as is_deleted,
                     COALESCE(c.session_version, 0) as session_version,
-                    COUNT(v.id) as vehicles_count,
+                    COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count,
                     (
                         SELECT sal.ip_address
                         FROM security_access_logs sal
@@ -1557,9 +1716,9 @@ def get_all_users(
                     {has_paid_sql} as has_paid,
                     {last_paid_at_sql} as last_paid_at
                 FROM customers c
-                LEFT JOIN vehicles v ON lower(v.user_email) = lower(c.email)
+                {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
                 WHERE COALESCE(c.is_deleted, 0) = 0
-                GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version
+                GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, vehicle_counts.vehicles_count
                 ORDER BY c.created_at DESC
                 LIMIT :limit OFFSET :offset
             """), {"limit": limit, "offset": offset})
@@ -1577,15 +1736,15 @@ def get_all_users(
                     COALESCE(c.is_disabled, 0) as is_disabled,
                     COALESCE(c.is_deleted, 0) as is_deleted,
                     COALESCE(c.session_version, 0) as session_version,
-                    COUNT(v.id) as vehicles_count,
+                    COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count,
                     {license_plan_sql} as license_plan,
                     {license_status_sql} as license_status,
                     {has_paid_sql} as has_paid,
                     {last_paid_at_sql} as last_paid_at
                 FROM customers c
-                LEFT JOIN vehicles v ON lower(v.user_email) = lower(c.email)
+                {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
                 WHERE COALESCE(c.is_deleted, 0) = 0
-                GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version
+                GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, vehicle_counts.vehicles_count
                 ORDER BY c.created_at DESC
                 LIMIT :limit OFFSET :offset
             """), {"limit": limit, "offset": offset})
@@ -1768,13 +1927,8 @@ def update_user(
             ).first()
             if existing:
                 raise HTTPException(status_code=400, detail="Uživatel s tímto emailem již existuje")
-            old_email = user.email
             user.email = new_email
-            # Vazba vozidel je přes user_email -> je potřeba přepsat i vozidla uživatele
-            db.query(Vehicle).filter(Vehicle.user_email == old_email).update(
-                {Vehicle.user_email: new_email},
-                synchronize_session=False,
-            )
+            _sync_vehicle_user_email_display_for_customer(db, user.id, new_email)
         
         if user_data.name is not None:
             user.name = user_data.name
@@ -1846,11 +2000,9 @@ def delete_user(
         previous_email = (user.email or "").strip().lower()
         deleted_alias = build_deleted_alias_email(user.id)
 
-        # Přesun vazeb přes email, aby po nové registraci stejného emailu nedošlo k úniku cizích dat.
-        db.query(Vehicle).filter(func.lower(Vehicle.user_email) == previous_email).update(
-            {Vehicle.user_email: deleted_alias},
-            synchronize_session=False,
-        )
+        # Deprecated compatibility sync: display alias on Vehicle.user_email.
+        # Ownership logic uses vehicle_ownerships and remains intact.
+        _sync_vehicle_user_email_display_for_customer(db, user.id, deleted_alias)
 
         user.email = deleted_alias
         user.name = user.name or f"Deleted user #{user.id}"
@@ -1905,13 +2057,12 @@ def get_user_vehicles(
         if not user:
             raise HTTPException(status_code=404, detail="Uživatel nenalezen")
         
-        user_email = user.email
         
-        # Načíst vozidla uživatele s počtem servisních záznamů
-        vehicles_result = db.execute(text("""
+        # Načíst vozidla uživatele podle explicitního ownership source-of-truth.
+        vehicles_result = db.execute(text(f"""
             SELECT 
                 v.id,
-                v.user_email,
+                COALESCE(owner_customer.email, v.user_email) as user_email,
                 v.nickname,
                 v.brand,
                 v.model,
@@ -1922,10 +2073,12 @@ def get_user_vehicles(
                 COUNT(sr.id) as service_count
             FROM vehicles v
             LEFT JOIN service_records sr ON sr.vehicle_id = v.id
-            WHERE v.user_email = :user_email
-            GROUP BY v.id, v.user_email, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.created_at
+            {_primary_owner_join_sql(vehicle_alias="v", selector_alias="uvo_primary", ownership_alias="uvo", owner_alias="owner_customer")}
+            WHERE uvo.customer_id = :user_id
+              AND uvo.is_active = 1
+            GROUP BY v.id, owner_customer.email, v.user_email, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.created_at
             ORDER BY v.created_at DESC
-        """), {"user_email": user_email})
+        """), {"user_id": user_id})
         
         vehicles = []
         for row in vehicles_result:
@@ -1966,10 +2119,9 @@ def get_user_detail(
         user = db.query(Customer).filter(Customer.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-
         normalized_email = (user.email or "").strip().lower()
 
-        vehicle_rows = db.execute(text("""
+        vehicle_rows = db.execute(text(f"""
             SELECT
                 v.id,
                 v.nickname,
@@ -1987,12 +2139,14 @@ def get_user_detail(
                 COUNT(sr.id) as service_count
             FROM vehicles v
             LEFT JOIN service_records sr ON sr.vehicle_id = v.id
-            WHERE lower(v.user_email) = :user_email
+            {_primary_owner_join_sql(vehicle_alias="v", selector_alias="udv_primary", ownership_alias="udv_ownership", owner_alias="udv_owner")}
+            WHERE udv_ownership.customer_id = :customer_id
+              AND udv_ownership.is_active = 1
             GROUP BY
                 v.id, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.engine, v.notes,
                 v.stk_valid_until, v.insurance_provider, v.insurance_valid_until, v.created_at
             ORDER BY v.created_at DESC
-        """), {"user_email": normalized_email})
+        """), {"customer_id": user_id})
 
         vehicles: List[Dict[str, Any]] = []
         for row in vehicle_rows:
@@ -2114,9 +2268,12 @@ def get_user_detail(
                 v.plate
             FROM service_records sr
             JOIN vehicles v ON v.id = sr.vehicle_id
-            WHERE lower(v.user_email) = :user_email
+            JOIN vehicle_ownerships vo
+              ON vo.vehicle_id = v.id
+             AND vo.customer_id = :customer_id
+             AND vo.is_active = 1
             ORDER BY sr.performed_at DESC
-        """), {"user_email": normalized_email})
+        """), {"customer_id": user_id})
 
         records: List[Dict[str, Any]] = []
         for row in record_rows:
@@ -2161,7 +2318,7 @@ def get_user_detail(
                       AND TRIM(ip_address) != ''
                     ORDER BY created_at DESC
                     LIMIT 20
-                """), {"customer_id": user_id, "user_email": normalized_email})
+                """), {"customer_id": user_id, "user_email": (user.email or "").strip().lower()})
 
                 for row in ip_rows:
                     location_label = build_location_line(row[4], row[5], row[6])
@@ -2216,7 +2373,7 @@ def get_user_detail(
                       AND TRIM(ip_address) != ''
                     ORDER BY timestamp DESC
                     LIMIT 10
-                """), {"user_email": normalized_email})
+                """), {"user_email": (user.email or "").strip().lower()})
 
                 for row in ip_rows:
                     ip_history.append({
@@ -2526,7 +2683,7 @@ def get_all_services(
     """Vrátí seznam servisních účtů (role='service') - pouze pro developer_admin"""
     try:
         ensure_customer_account_state_schema(db)
-        result = db.execute(text("""
+        result = db.execute(text(f"""
             SELECT 
                 c.id,
                 c.email,
@@ -2539,8 +2696,9 @@ def get_all_services(
                 COALESCE(c.is_disabled, 0) as is_disabled,
                 COALESCE(c.is_deleted, 0) as is_deleted,
                 COALESCE(c.session_version, 0) as session_version,
-                0 as vehicles_count
+                COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count
             FROM customers c
+            {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
             WHERE c.role = 'service'
               AND COALESCE(c.is_deleted, 0) = 0
             ORDER BY c.created_at DESC
@@ -2559,7 +2717,7 @@ def get_all_services(
                 city=row[5],
                 phone=row[6],
                 created_at=created_at,
-                vehicles_count=0,
+                vehicles_count=int(row[11] or 0),
                 is_disabled=bool(row[8]),
                 is_deleted=bool(row[9]),
                 session_version=int(row[10] or 0),
@@ -2663,13 +2821,8 @@ def update_service(
             ).first()
             if existing:
                 raise HTTPException(status_code=400, detail="Servis s tímto emailem již existuje")
-            old_email = service.email
             service.email = new_email
-            # Přepsat vlastníka vozidel u servis účtu při změně emailu
-            db.query(Vehicle).filter(Vehicle.user_email == old_email).update(
-                {Vehicle.user_email: new_email},
-                synchronize_session=False,
-            )
+            _sync_vehicle_user_email_display_for_customer(db, service.id, new_email)
         
         if service_data.name is not None:
             service.name = service_data.name
@@ -2714,7 +2867,15 @@ def delete_service(
         if service.role != "service":
             raise HTTPException(status_code=400, detail="Zadaný uživatel není servis")
 
-        vehicles_count = db.query(Vehicle).filter(Vehicle.user_email == service.email).count()
+        vehicles_count = (
+            db.query(func.count(func.distinct(VehicleOwnership.vehicle_id)))
+            .filter(
+                VehicleOwnership.customer_id == service.id,
+                VehicleOwnership.is_active.is_(True),
+            )
+            .scalar()
+            or 0
+        )
         if vehicles_count > 0:
             raise HTTPException(
                 status_code=400,
@@ -2945,10 +3106,10 @@ def get_all_vehicles(
 ):
     """Vrátí seznam všech vozidel - pouze pro developer_admin"""
     try:
-        result = db.execute(text("""
+        result = db.execute(text(f"""
             SELECT 
                 v.id,
-                v.user_email,
+                COALESCE(owner_customer.email, v.user_email) as user_email,
                 v.nickname,
                 v.brand,
                 v.model,
@@ -2957,13 +3118,13 @@ def get_all_vehicles(
                 v.vin,
                 v.created_at,
                 COUNT(sr.id) as service_count,
-                c.name as owner_name,
-                c.id as owner_id,
+                owner_customer.name as owner_name,
+                owner_customer.id as owner_id,
                 v.tenant_id
             FROM vehicles v
             LEFT JOIN service_records sr ON sr.vehicle_id = v.id
-            LEFT JOIN customers c ON c.email = v.user_email
-            GROUP BY v.id, v.user_email, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.created_at, c.name, c.id, v.tenant_id
+            {_primary_owner_join_sql(vehicle_alias="v", selector_alias="gav_primary", ownership_alias="gav_ownership", owner_alias="owner_customer")}
+            GROUP BY v.id, owner_customer.email, v.user_email, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.created_at, owner_customer.name, owner_customer.id, v.tenant_id
             ORDER BY v.created_at DESC
             LIMIT :limit OFFSET :offset
         """), {"limit": limit, "offset": offset})
@@ -3003,6 +3164,7 @@ def create_vehicle(
 ):
     """Vytvoření nového vozidla"""
     try:
+        actor = get_customer_by_email(db, email)
         target_email = str(vehicle_data.user_email).strip().lower()
         # Zkontrolovat, zda uživatel existuje
         user = get_customer_by_email(db, target_email)
@@ -3028,8 +3190,30 @@ def create_vehicle(
             created_at=datetime.utcnow()
         )
         db.add(new_vehicle)
+        db.flush()
+        _reassign_vehicle_primary_owner(
+            db,
+            vehicle=new_vehicle,
+            owner=user,
+            assigned_by_customer_id=actor.id if actor else user.id,
+        )
         db.commit()
         db.refresh(new_vehicle)
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="vehicle.create",
+            target_resource=f"vehicle:{new_vehicle.id}",
+            parameters={
+                "vehicle_id": new_vehicle.id,
+                "tenant_id": new_vehicle.tenant_id,
+                "owner_customer_id": user.id,
+                "owner_email": user.email,
+            },
+            result="success",
+            status_code=200,
+        )
         
         return {"id": new_vehicle.id, "tenant_id": new_vehicle.tenant_id, "message": "Vozidlo bylo vytvořeno"}
         
@@ -3052,6 +3236,7 @@ def update_vehicle(
 ):
     """Úprava vozidla"""
     try:
+        actor = get_customer_by_email(db, email)
         vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
@@ -3062,8 +3247,12 @@ def update_vehicle(
             user = get_customer_by_email(db, target_email)
             if not user:
                 raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-            vehicle.user_email = user.email
-            vehicle.tenant_id = user.tenant_id
+            _reassign_vehicle_primary_owner(
+                db,
+                vehicle=vehicle,
+                owner=user,
+                assigned_by_customer_id=actor.id if actor else user.id,
+            )
         
         if vehicle_data.nickname is not None:
             vehicle.nickname = vehicle_data.nickname
@@ -3084,6 +3273,22 @@ def update_vehicle(
             vehicle.vin = vehicle_data.vin
         
         db.commit()
+        primary_owner = get_primary_vehicle_owner(db, vehicle)
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="vehicle.update",
+            target_resource=f"vehicle:{vehicle.id}",
+            parameters={
+                "vehicle_id": vehicle.id,
+                "tenant_id": vehicle.tenant_id,
+                "owner_customer_id": primary_owner.id if primary_owner else None,
+                "owner_email": primary_owner.email if primary_owner else None,
+            },
+            result="success",
+            status_code=200,
+        )
         return {"message": "Vozidlo bylo upraveno"}
         
     except HTTPException:
@@ -3107,9 +3312,24 @@ def delete_vehicle(
         vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
-        
+        primary_owner = get_primary_vehicle_owner(db, vehicle)
         db.delete(vehicle)
         db.commit()
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="vehicle.delete",
+            target_resource=f"vehicle:{vehicle_id}",
+            parameters={
+                "vehicle_id": vehicle_id,
+                "tenant_id": vehicle.tenant_id,
+                "owner_customer_id": primary_owner.id if primary_owner else None,
+                "owner_email": primary_owner.email if primary_owner else None,
+            },
+            result="success",
+            status_code=200,
+        )
         
         return {"message": "Vozidlo bylo smazáno"}
         

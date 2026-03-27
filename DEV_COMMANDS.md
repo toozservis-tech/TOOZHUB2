@@ -4,6 +4,9 @@
 # bootstrap
 scripts/bootstrap_dev.sh
 
+# backend sanity minimum
+scripts/backend_sanity_gate.sh
+
 # aktivace
 source .venv/bin/activate
 

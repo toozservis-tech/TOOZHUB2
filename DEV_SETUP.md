@@ -45,6 +45,11 @@ Lokální izolovaný smoke:
 scripts/run_tests.sh local
 ```
 
+Povinné minimum před backend změnou:
+```bash
+scripts/backend_sanity_gate.sh
+```
+
 Integration testy proti běžícímu API:
 ```bash
 scripts/run_backend.sh
@@ -55,6 +60,13 @@ scripts/run_tests.sh integration
 ```bash
 scripts/schema_smoke.sh
 ```
+
+## Co běží v CI
+- Workflow `Backend Sanity Gate` spouští přesně:
+  - `scripts/bootstrap_dev.sh`
+  - `scripts/schema_smoke.sh -q`
+  - `scripts/run_tests.sh local -q`
+- Je to minimální povinný gate pro backendové změny.
 
 ## Nejběžnější chyby
 - `Python 3.12 nebyl nalezen`
