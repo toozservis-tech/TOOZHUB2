@@ -9635,6 +9635,70 @@
             loadingPromise: null,
             ownerKey: ''
         };
+
+        function getCapabilityModuleForTab(tabKey) {
+            const mapping = {
+                vehicles: 'vehicles',
+                addVehicle: 'vehicles',
+                reminders: 'vehicles',
+                reservations: 'reservations',
+                servicesDirectory: 'service_workspace',
+                serviceWorkspace: 'service_workspace',
+            };
+            return mapping[tabKey] || null;
+        }
+
+        function isCapabilityAvailable(moduleKey) {
+            if (!moduleKey) return true;
+            const report = moduleCapabilities[moduleKey];
+            return !report || report.available !== false;
+        }
+
+        function formatCapabilityHint(report) {
+            if (!report || report.available !== false) return '';
+            const missingTables = Array.isArray(report.missing_tables) ? report.missing_tables : [];
+            const missingColumns = Array.isArray(report.missing_columns) ? report.missing_columns : [];
+            const parts = [];
+            if (missingTables.length) parts.push('chybí tabulky: ' + missingTables.join(', '));
+            if (missingColumns.length) parts.push('chybí sloupce: ' + missingColumns.join(', '));
+            return parts.join(' | ');
+        }
+
+        function applySystemCapabilitiesUi() {
+            document.querySelectorAll('.tab[data-tab-key]').forEach((button) => {
+                const tabKey = button.getAttribute('data-tab-key');
+                const moduleKey = getCapabilityModuleForTab(tabKey);
+                const report = moduleCapabilities[moduleKey];
+                const unavailable = report && report.available === false;
+                const baseLabel = String(button.getAttribute('data-base-label') || button.textContent || '').trim();
+                if (!button.getAttribute('data-base-label')) {
+                    button.setAttribute('data-base-label', baseLabel);
+                }
+                button.dataset.disabledReason = unavailable ? formatCapabilityHint(report) : '';
+                button.title = unavailable ? ('Dočasně nedostupné po migraci: ' + button.dataset.disabledReason) : '';
+                button.classList.toggle('disabled', !!unavailable);
+                button.textContent = unavailable ? (baseLabel + ' (dočasně nedostupné)') : baseLabel;
+            });
+        }
+
+        async function loadSystemCapabilities(force = true) {
+            if (!isAuthenticated()) return;
+            if (!force && isUiSectionCacheFresh(systemCapabilitiesState)) {
+                applySystemCapabilitiesUi();
+                return;
+            }
+            try {
+                const response = await apiRequest('GET', '/api/v1/system/capabilities');
+                moduleCapabilities = (response && response.modules) || {};
+                markUiSectionLoaded(systemCapabilitiesState);
+            } catch (error) {
+                console.warn('[CAPABILITIES] Unable to load capabilities:', error?.message || error);
+                moduleCapabilities = {};
+                systemCapabilitiesState.loadedAt = 0;
+            }
+            applySystemCapabilitiesUi();
+        }
+
         var servicesDirectoryState = {
             loadedAt: 0,
             payload: null
@@ -28227,65 +28291,3 @@
     <script src="ai-features.js"></script>
 </body>
 </html>
-        function getCapabilityModuleForTab(tabKey) {
-            const mapping = {
-                vehicles: 'vehicles',
-                addVehicle: 'vehicles',
-                reminders: 'vehicles',
-                reservations: 'reservations',
-                servicesDirectory: 'service_workspace',
-                serviceWorkspace: 'service_workspace',
-            };
-            return mapping[tabKey] || null;
-        }
-
-        function isCapabilityAvailable(moduleKey) {
-            if (!moduleKey) return true;
-            const report = moduleCapabilities[moduleKey];
-            return !report || report.available !== false;
-        }
-
-        function formatCapabilityHint(report) {
-            if (!report || report.available !== false) return '';
-            const missingTables = Array.isArray(report.missing_tables) ? report.missing_tables : [];
-            const missingColumns = Array.isArray(report.missing_columns) ? report.missing_columns : [];
-            const parts = [];
-            if (missingTables.length) parts.push('chybí tabulky: ' + missingTables.join(', '));
-            if (missingColumns.length) parts.push('chybí sloupce: ' + missingColumns.join(', '));
-            return parts.join(' | ');
-        }
-
-        function applySystemCapabilitiesUi() {
-            document.querySelectorAll('.tab[data-tab-key]').forEach((button) => {
-                const tabKey = button.getAttribute('data-tab-key');
-                const moduleKey = getCapabilityModuleForTab(tabKey);
-                const report = moduleCapabilities[moduleKey];
-                const unavailable = report && report.available === false;
-                const baseLabel = String(button.getAttribute('data-base-label') || button.textContent || '').trim();
-                if (!button.getAttribute('data-base-label')) {
-                    button.setAttribute('data-base-label', baseLabel);
-                }
-                button.dataset.disabledReason = unavailable ? formatCapabilityHint(report) : '';
-                button.title = unavailable ? ('Dočasně nedostupné po migraci: ' + button.dataset.disabledReason) : '';
-                button.classList.toggle('disabled', !!unavailable);
-                button.textContent = unavailable ? (baseLabel + ' (dočasně nedostupné)') : baseLabel;
-            });
-        }
-
-        async function loadSystemCapabilities(force = true) {
-            if (!isAuthenticated()) return;
-            if (!force && isUiSectionCacheFresh(systemCapabilitiesState)) {
-                applySystemCapabilitiesUi();
-                return;
-            }
-            try {
-                const response = await apiRequest('GET', '/api/v1/system/capabilities');
-                moduleCapabilities = (response && response.modules) || {};
-                markUiSectionLoaded(systemCapabilitiesState);
-            } catch (error) {
-                console.warn('[CAPABILITIES] Unable to load capabilities:', error?.message || error);
-                moduleCapabilities = {};
-                systemCapabilitiesState.loadedAt = 0;
-            }
-            applySystemCapabilitiesUi();
-        }
