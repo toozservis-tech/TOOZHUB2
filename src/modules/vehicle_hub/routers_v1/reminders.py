@@ -31,6 +31,11 @@ from .reminder_settings import get_reminder_settings
 
 router = APIRouter(prefix="/reminders", tags=["reminders-v1"])
 
+REMINDER_COMPLETION_BLOCK_MESSAGE = (
+    "Tento typ připomínky nelze uzavřít jednorázovým přepnutím. "
+    "Automatické a opakované připomínky upravte změnou termínu nebo celé série."
+)
+
 
 def _to_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
     """Převede datetime na UTC bez timezone info (DB ukládá naive UTC)."""
@@ -107,6 +112,25 @@ def _normalize_notification_method(notification_method: Optional[str], *, strict
         return None
 
     return method
+
+
+def is_recurring_reminder(reminder: ReminderModel) -> bool:
+    return bool(getattr(reminder, "recurrence_group_id", None))
+
+
+def ensure_completion_update_allowed(reminder: ReminderModel, requested_is_completed: Optional[bool]) -> None:
+    if requested_is_completed is None:
+        return
+    if not bool(getattr(reminder, "is_manual", False)) or is_recurring_reminder(reminder):
+        raise HTTPException(status_code=422, detail=REMINDER_COMPLETION_BLOCK_MESSAGE)
+
+
+def apply_reminder_completion_update(reminder: ReminderModel, requested_is_completed: Optional[bool]) -> None:
+    if requested_is_completed is None:
+        return
+    ensure_completion_update_allowed(reminder, requested_is_completed)
+    reminder.is_completed = bool(requested_is_completed)
+    reminder.last_notified_at = None
 
 
 def _log_push_notification(
