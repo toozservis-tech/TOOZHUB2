@@ -100,3 +100,15 @@ Předchozí významná změna `web/index.html` v historii: `776fd79` (2026-03-27
 
 **Správná verze je v Gitu na `main` (HEAD `e4aa067`).**  
 Problém na produkci je téměř jistě **nesprávný nasazený artefakt nebo stará kopie**, nikoli chybějící historie v tomto repozitáři. Obnova = **znovu nasadit kompletní `web/` z `main`** a ověřit výše uvedený checklist.
+
+---
+
+## 9. Doplnění sloučená do `main` (web, po 2c74412)
+
+Následující úpravy byly znovu zavedeny do `web/index.html` a zapsány do Gitu jako samostatný commit (aby šly bezpečně stáhnout z GitHubu a nasadit na produkci):
+
+- **Záložka „Přehled“** (`data-tab-key="home"`), funkce `loadHomeDashboard()` (statistiky z `GET /api/v1/vehicles`), výchozí zobrazení po přihlášení pro běžného uživatele (`switchTab('home')`); u servisního režimu je Přehled skrytý.
+- **ORV** ve formuláři Přidat vozidlo: nahrání přední/zadní strany, `POST /api/v1/vehicles/parse-orv`, předvyplnění polí, při uložení vozidla odeslání `orv_scan_id` / `orv_number` dle API.
+- Drobná úprava textu patičky: **Rychlé sekce ToozServis.cz** (jednotné „Tooz“).
+
+Tyto body doplňují dřívější stav `main` (capabilities uvnitř `<script>`, velký monolitický `index.html`), aniž by se vracela orphan-JS regrese.

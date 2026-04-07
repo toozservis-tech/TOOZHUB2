@@ -7126,6 +7126,47 @@
             }
         }
 
+        .home-dashboard {
+            max-width: 960px;
+            margin: 0 auto;
+        }
+        .home-dashboard-hero {
+            margin-bottom: 20px;
+        }
+        .home-dashboard-hero h2 {
+            margin: 0 0 8px 0;
+            font-size: 1.5rem;
+            color: #1e293b;
+        }
+        .home-dashboard-lead {
+            margin: 0;
+            color: #64748b;
+            font-size: 1rem;
+            line-height: 1.5;
+        }
+        .home-dashboard-stats {
+            margin-bottom: 20px;
+        }
+        .home-dashboard-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .home-dashboard-hint {
+            margin: 0;
+            padding: 14px 16px;
+            background: #f1f5f9;
+            border-radius: 10px;
+            color: #475569;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        .home-dashboard-error {
+            color: #b91c1c;
+            margin: 0;
+        }
+
         /* ========================================
            FINAL MOBILE E2E OPTIMIZATION
            ======================================== */
@@ -9231,17 +9272,34 @@
                 <!-- LICENSE_UI_END -->
                 
                 <div class="tabs">
-                    <button class="tab active" data-tab-key="vehicles" onclick="switchTab('vehicles')" data-testid="tab-vehicles">Vozidla</button>
-                    <button class="tab" data-tab-key="addVehicle" onclick="switchTab('addVehicle')" data-testid="tab-add-vehicle">Přidat vozidlo</button>
-                    <button class="tab" data-tab-key="reminders" onclick="switchTab('reminders')" data-testid="tab-reminders">Připomínky</button>
-                    <button class="tab" data-tab-key="reservations" onclick="switchTab('reservations')" data-testid="tab-reservations">Rezervace</button>
-                    <button class="tab hidden" id="servicesDirectoryTabButton" data-tab-key="servicesDirectory" onclick="switchTab('servicesDirectory')" data-testid="tab-services-directory">Servisy</button>
-                    <button class="tab hidden" id="serviceWorkspaceTabButton" data-tab-key="serviceWorkspace" onclick="switchTab('serviceWorkspace')" data-testid="tab-service-workspace">Servis klienti</button>
-                    <button class="tab" data-tab-key="profile" onclick="switchTab('profile')" data-testid="tab-profile">Nastavení</button>
-                    <button class="tab" data-tab-key="support" onclick="switchTab('support')" data-testid="tab-support">Podpora</button>
+                    <button type="button" class="tab active" data-tab-key="home" data-base-label="Přehled" onclick="switchTab('home')" data-testid="tab-home">Přehled</button>
+                    <button type="button" class="tab" data-tab-key="vehicles" data-base-label="Vozidla" onclick="switchTab('vehicles')" data-testid="tab-vehicles">Vozidla</button>
+                    <button type="button" class="tab" data-tab-key="addVehicle" data-base-label="Přidat vozidlo" onclick="switchTab('addVehicle')" data-testid="tab-add-vehicle">Přidat vozidlo</button>
+                    <button type="button" class="tab" data-tab-key="reminders" data-base-label="Připomínky" onclick="switchTab('reminders')" data-testid="tab-reminders">Připomínky</button>
+                    <button type="button" class="tab" data-tab-key="reservations" data-base-label="Rezervace" onclick="switchTab('reservations')" data-testid="tab-reservations">Rezervace</button>
+                    <button type="button" class="tab hidden" id="servicesDirectoryTabButton" data-tab-key="servicesDirectory" data-base-label="Servisy" onclick="switchTab('servicesDirectory')" data-testid="tab-services-directory">Servisy</button>
+                    <button type="button" class="tab hidden" id="serviceWorkspaceTabButton" data-tab-key="serviceWorkspace" data-base-label="Servis klienti" onclick="switchTab('serviceWorkspace')" data-testid="tab-service-workspace">Servis klienti</button>
+                    <button type="button" class="tab" data-tab-key="profile" data-base-label="Nastavení" onclick="switchTab('profile')" data-testid="tab-profile">Nastavení</button>
+                    <button type="button" class="tab" data-tab-key="support" data-base-label="Podpora" onclick="switchTab('support')" data-testid="tab-support">Podpora</button>
                 </div>
 
-                <div id="vehiclesTab" class="tab-content active" data-testid="vehicles-tab">
+                <div id="homeTab" class="tab-content active" data-testid="home-tab">
+                    <section class="home-dashboard" aria-label="Přehled">
+                        <div class="home-dashboard-hero">
+                            <h2 id="homeDashboardGreeting">Vítejte</h2>
+                            <p class="home-dashboard-lead">Rychlý přehled vozidel a STK. Detail nájezdu a historie STK / tachometru otevřete u konkrétního vozidla.</p>
+                        </div>
+                        <div id="homeDashboardStats" class="stats-grid home-dashboard-stats" data-testid="home-dashboard-stats"></div>
+                        <p id="homeDashboardMileageHint" class="home-dashboard-hint" style="margin-top: 0;"></p>
+                        <div class="home-dashboard-actions">
+                            <button type="button" class="btn btn-primary" onclick="switchTab('vehicles')">Moje vozidla</button>
+                            <button type="button" class="btn btn-secondary" onclick="switchTab('addVehicle')">Přidat vozidlo</button>
+                            <button type="button" class="btn btn-secondary" onclick="switchTab('reminders')">Připomínky</button>
+                        </div>
+                    </section>
+                </div>
+
+                <div id="vehiclesTab" class="tab-content" data-testid="vehicles-tab">
                     <div id="vehiclesList">
                         <div class="vehicles-header">
                             <h2>Moje vozidla</h2>
@@ -9368,6 +9426,23 @@
                                 <button type="button" id="vinFetchBtn" class="btn-secondary">Načíst podle VIN</button>
                                 <div id="vinStatus" class="vin-status-text"></div>
                             </div>
+                        </div>
+
+                        <div class="form-group full-width orv-scan-panel" style="padding: 16px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;">
+                            <h3 style="margin: 0 0 8px 0; font-size: 1.05rem;">OSVědčení o registraci vozidla (ORV)</h3>
+                            <p class="form-hint" style="margin-bottom: 12px;">Nahrajte fotografie přední a zadní strany ORV. Údaje se předvyplní – před uložením vždy zkontrolujte zejména VIN.</p>
+                            <div class="form-row" style="display: flex; flex-wrap: wrap; gap: 16px;">
+                                <div class="form-group">
+                                    <label for="orvFrontInput">Přední strana ORV</label>
+                                    <input type="file" id="orvFrontInput" accept="image/*">
+                                </div>
+                                <div class="form-group">
+                                    <label for="orvBackInput">Zadní strana ORV</label>
+                                    <input type="file" id="orvBackInput" accept="image/*">
+                                </div>
+                            </div>
+                            <button type="button" class="btn-secondary" onclick="parseOrvForAddVehicle()">Načíst údaje z ORV</button>
+                            <div id="orvScanStatus" class="form-hint" style="margin-top: 10px;"></div>
                         </div>
                         
                         <!-- Povinná pole - na začátku -->
@@ -9514,7 +9589,7 @@
                 <div id="managedServiceContactsList" class="managed-service-contacts-list"></div>
             </div>
             <div class="web-sections-shortcuts">
-                <span class="web-sections-shortcuts-title">Rychlé sekce TooZServis.cz</span>
+                <span class="web-sections-shortcuts-title">Rychlé sekce ToozServis.cz</span>
                 <div class="web-sections-links">
                     <a class="external-web-section-link" href="https://www.toozservis.cz/" target="_blank" rel="noopener noreferrer">Domů</a>
                     <a class="external-web-section-link" href="https://www.toozservis.cz/#sluzby" target="_blank" rel="noopener noreferrer">Služby</a>
@@ -9636,8 +9711,12 @@
             ownerKey: ''
         };
 
+        var orvPendingScanId = null;
+        var orvPendingNumber = null;
+
         function getCapabilityModuleForTab(tabKey) {
             const mapping = {
+                home: 'vehicles',
                 vehicles: 'vehicles',
                 addVehicle: 'vehicles',
                 reminders: 'vehicles',
@@ -13202,6 +13281,7 @@
 
             if (serviceMode) {
                 // Finální servisní dashboard: 1 Klienti 2 Kalendář 3 Připomínky 4 Přidat vozidlo 5 Nastavení 6 Podpora
+                setDashboardTabVisibility('home', false);
                 setDashboardTabVisibility('vehicles', false);
                 setDashboardTabVisibility('servicesDirectory', false);
                 setDashboardTabVisibility('serviceWorkspace', true);
@@ -13228,6 +13308,7 @@
             }
 
             // User / admin-user režim
+            setDashboardTabVisibility('home', true);
             setDashboardTabVisibility('vehicles', true);
             setDashboardTabVisibility('addVehicle', true);
             setDashboardTabVisibility('reminders', true);
@@ -13237,6 +13318,7 @@
             setDashboardTabVisibility('serviceWorkspace', false);
             setDashboardTabVisibility('servicesDirectory', shouldShowServicesDirectoryTab());
 
+            setDashboardTabLabel('home', 'Přehled');
             setDashboardTabLabel('vehicles', 'Vozidla');
             setDashboardTabLabel('addVehicle', 'Přidat vozidlo');
             setDashboardTabLabel('reminders', 'Připomínky');
@@ -13248,7 +13330,11 @@
 
             const serviceTab = document.getElementById('serviceWorkspaceTab');
             if (serviceTab) serviceTab.classList.remove('active');
-            ensureActiveVisibleDashboardTab('vehicles');
+            if (typeof switchTab === 'function') {
+                switchTab('home', { skipUnsavedGuard: true });
+            } else {
+                ensureActiveVisibleDashboardTab('vehicles');
+            }
         }
 
         function capturePendingServiceInviteTokenFromUrl() {
@@ -15183,6 +15269,68 @@
             return { className: 'stk-ok', label: 'STK OK' };
         }
 
+        function getVehicleStkDateValueSimple(vehicle) {
+            if (!vehicle || typeof vehicle !== 'object') return null;
+            if (vehicle.stk_valid_until) {
+                try {
+                    const d = new Date(vehicle.stk_valid_until);
+                    if (!isNaN(d.getTime())) return d;
+                } catch (e) { /* ignore */ }
+            }
+            return null;
+        }
+
+        let homeDashboardLoadToken = 0;
+        async function loadHomeDashboard() {
+            const statsEl = document.getElementById('homeDashboardStats');
+            const greetEl = document.getElementById('homeDashboardGreeting');
+            const hintEl = document.getElementById('homeDashboardMileageHint');
+            if (!statsEl || !greetEl) return;
+            if (!isAuthenticated()) return;
+
+            const nm = String(currentUser?.name || '').trim();
+            const em = String(currentUser?.email || '').trim();
+            const shortName = nm || (em ? em.split('@')[0] : 'uživateli');
+            greetEl.textContent = `Vítejte, ${shortName}`;
+
+            const token = ++homeDashboardLoadToken;
+            statsEl.innerHTML = '<div class="stat-card"><div class="stat-value">…</div><div class="stat-label">Načítám přehled</div></div>';
+            if (hintEl) hintEl.textContent = '';
+
+            try {
+                const vehicles = await apiCall('/api/v1/vehicles', 'GET');
+                if (token !== homeDashboardLoadToken) return;
+                const list = Array.isArray(vehicles) ? vehicles : [];
+                let stkSoon = 0;
+                let stkExpired = 0;
+                list.forEach((v) => {
+                    const d = getVehicleStkDateValueSimple(v);
+                    if (!d) return;
+                    const meta = getVehicleStkStatusMeta(d);
+                    if (meta.className === 'stk-soon') stkSoon += 1;
+                    if (meta.className === 'stk-expired') stkExpired += 1;
+                });
+                statsEl.innerHTML = `
+                    <div class="stat-card"><div class="stat-value">${list.length}</div><div class="stat-label">Vozidel v účtu</div></div>
+                    <div class="stat-card"><div class="stat-value">${stkSoon}</div><div class="stat-label">STK do 60 dnů</div></div>
+                    <div class="stat-card"><div class="stat-value">${stkExpired}</div><div class="stat-label">Po platnosti STK</div></div>
+                `;
+                if (hintEl) {
+                    hintEl.textContent = list.length
+                        ? 'Nájezd, historii STK a tachometru zobrazíte u konkrétního vozidla (záložka Vozidla → otevřít kartu).'
+                        : 'Přidejte první vozidlo (VIN, ORV nebo ručně). Poté doplníte km a uvidíte přehledy u vozidla.';
+                }
+            } catch (err) {
+                if (token !== homeDashboardLoadToken) return;
+                console.error('[HOME_DASHBOARD]', err);
+                statsEl.innerHTML = '';
+                const pe = document.createElement('p');
+                pe.className = 'home-dashboard-error';
+                pe.textContent = 'Přehled se nepodařilo načíst: ' + (err && err.message ? String(err.message) : String(err));
+                statsEl.appendChild(pe);
+            }
+        }
+
         function applyVehicleViewModeUI() {
             const selectedMode = getVehicleViewMode();
             document.querySelectorAll('.vehicle-view-btn').forEach((button) => {
@@ -16488,6 +16636,100 @@
             }
         }
 
+        function orvFileToBase64Data(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const s = String(reader.result || '');
+                    const i = s.indexOf(',');
+                    resolve(i >= 0 ? s.slice(i + 1) : s);
+                };
+                reader.onerror = () => reject(new Error('Soubor nelze přečíst'));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function parseOrvForAddVehicle() {
+            const frontIn = document.getElementById('orvFrontInput');
+            const backIn = document.getElementById('orvBackInput');
+            const statusEl = document.getElementById('orvScanStatus');
+            const front = frontIn && frontIn.files && frontIn.files[0] ? frontIn.files[0] : null;
+            const back = backIn && backIn.files && backIn.files[0] ? backIn.files[0] : null;
+            if (!front || !back) {
+                showAlert('Vyberte obě fotografie ORV (přední i zadní strana).', 'warning');
+                return;
+            }
+            if (!isAuthenticated()) {
+                showAlert('Nejste přihlášeni.', 'error');
+                return;
+            }
+            if (statusEl) statusEl.textContent = 'Zpracovávám ORV…';
+            orvPendingScanId = null;
+            orvPendingNumber = null;
+            try {
+                const payload = {
+                    front_image_base64: await orvFileToBase64Data(front),
+                    back_image_base64: await orvFileToBase64Data(back),
+                    front_image_mime_type: front.type || 'image/jpeg',
+                    back_image_mime_type: back.type || 'image/jpeg',
+                    source: 'web_add_vehicle',
+                };
+                const result = await apiCall('/api/v1/vehicles/parse-orv', 'POST', payload);
+                const scanId = Number(result?.scan_id);
+                if (!Number.isFinite(scanId) || scanId <= 0) {
+                    throw new Error('Neplatná odpověď serveru (scan_id)');
+                }
+                orvPendingScanId = scanId;
+                const vf = result.vehicle_fields && typeof result.vehicle_fields === 'object' ? result.vehicle_fields : {};
+                const plateEl = document.getElementById('vehiclePlate');
+                const vinEl = document.getElementById('vehicleVin');
+                const modelEl = document.getElementById('vehicleModel');
+                const yearEl = document.getElementById('vehicleYear');
+                const engineEl = document.getElementById('vehicleEngine');
+                const nameEl = document.getElementById('vehicleName');
+                const brandHidden = document.getElementById('vehicleBrand');
+                if (plateEl && vf.plate) plateEl.value = String(vf.plate).trim();
+                if (vinEl && vf.vin) vinEl.value = String(vf.vin).trim().toUpperCase();
+                if (modelEl && vf.model) modelEl.value = String(vf.model).trim();
+                if (brandHidden && vf.brand) brandHidden.value = String(vf.brand).trim();
+                if (engineEl) {
+                    const engParts = [vf.fuel, vf.engine_power_kw ? `${vf.engine_power_kw} kW` : '', vf.engine_displacement_cc ? `${vf.engine_displacement_cc} cm³` : ''].filter(Boolean);
+                    if (engParts.length) engineEl.value = engParts.join(' · ');
+                }
+                if (vf.first_registration_date || vf.first_registration_cz_date) {
+                    const raw = String(vf.first_registration_cz_date || vf.first_registration_date || '').trim();
+                    const y = raw.length >= 4 ? parseInt(raw.slice(0, 4), 10) : NaN;
+                    if (yearEl && Number.isFinite(y) && y >= 1900 && y <= 2100) yearEl.value = String(y);
+                }
+                const titleCandidate = String(vf.commercial_name || vf.type_label || vf.variant || '').trim();
+                if (nameEl && titleCandidate && !String(nameEl.value || '').trim()) {
+                    nameEl.value = titleCandidate;
+                }
+                if (vf.orv_number) {
+                    orvPendingNumber = String(vf.orv_number).trim();
+                }
+                if (statusEl) {
+                    statusEl.textContent = `ORV zpracováno (scan #${scanId}). Zkontrolujte VIN a SPZ před uložením vozidla.`;
+                }
+                showAlert('Údaje z ORV načteny. Před uložením zkontrolujte VIN (povinný pro vazbu na scan).', 'success');
+            } catch (err) {
+                console.error('[ORV]', err);
+                if (statusEl) statusEl.textContent = '';
+                showAlert(`ORV se nepodařilo zpracovat: ${err?.message || err}`, 'error');
+            }
+        }
+
+        function resetOrvAddVehicleState() {
+            orvPendingScanId = null;
+            orvPendingNumber = null;
+            const f = document.getElementById('orvFrontInput');
+            const b = document.getElementById('orvBackInput');
+            const st = document.getElementById('orvScanStatus');
+            if (f) f.value = '';
+            if (b) b.value = '';
+            if (st) st.textContent = '';
+        }
+
         // Přidání vozidla
         async function handleAddVehicle() {
             console.log('[ADD VEHICLE] Starting...');
@@ -16585,6 +16827,11 @@
                 insurance_provider: null,
                 insurance_valid_until: null
             };
+            if (orvPendingScanId) {
+                vehicleData.orv_scan_id = orvPendingScanId;
+                if (orvPendingNumber) vehicleData.orv_number = orvPendingNumber;
+                vehicleData.orv_use_owner_data = false;
+            }
             
             console.log('[ADD VEHICLE] Vehicle data:', vehicleData);
 
@@ -16631,6 +16878,7 @@
                 clearFieldError('vehicleName', 'vehicleNameError');
                 clearFieldError('vehiclePlate', 'vehiclePlateError');
                 clearFieldError('vehicleStkDate', 'vehicleStkError');
+                resetOrvAddVehicleState();
                 
                 // Skrýt informační box o zdrojích
                 const sourceInfoBox = document.getElementById('vinSourceInfo');
@@ -20167,6 +20415,7 @@
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
 
             const tabMap = {
+                home: 'homeTab',
                 vehicles: 'vehiclesTab',
                 addVehicle: 'addVehicleTab',
                 reminders: 'remindersTab',
@@ -20188,7 +20437,9 @@
                 targetButton.classList.add('active');
             }
 
-            if (tab === 'vehicles') {
+            if (tab === 'home') {
+                loadHomeDashboard();
+            } else if (tab === 'vehicles') {
                 applyVehicleViewModeUI();
                 loadVehicles(false);
             } else if (tab === 'addVehicle') {
@@ -20248,7 +20499,9 @@
                 '#vehicleAdditionalNotes',
                 '#vehicleInspectionDate',
                 '#vehicleNotes',
-                '#vehiclePhotoInput'
+                '#vehiclePhotoInput',
+                '#orvFrontInput',
+                '#orvBackInput'
             ];
 
             for (const selector of selectors) {
