@@ -184,6 +184,91 @@ class ServiceVehicleAccess(Base):
     )
 
 
+class ServiceVehicleLookupAudit(Base):
+    """Audit každého lookupu vozidla servisem přes SPZ/VIN."""
+    __tablename__ = "service_vehicle_lookup_audit"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    service_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+
+    lookup_query_raw = Column(String, nullable=True)
+    lookup_query_normalized = Column(String, nullable=True, index=True)
+    lookup_query_hash = Column(String, nullable=True, index=True)
+    lookup_identifier_type = Column(String, nullable=False, default="unknown", index=True)  # plate, vin, unknown
+
+    matched_vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)
+    matched_owner_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    result_status = Column(String, nullable=False, default="not_found", index=True)
+    returned_candidate_count = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class VehicleServiceLink(Base):
+    """Produkční source of truth pro schválený nebo odvolaný přístup servisu k vozidlu."""
+    __tablename__ = "vehicle_service_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    service_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    owner_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False, index=True)
+
+    source_request_id = Column(Integer, ForeignKey("service_access_requests.id"), nullable=True, index=True)
+    source_type = Column(String, nullable=False, default="request_approved", index=True)
+    status = Column(String, nullable=False, default="approved", index=True)  # approved, revoked
+
+    scope_vehicle_history_read = Column(Boolean, nullable=False, default=True)
+    scope_create_service_record = Column(Boolean, nullable=False, default=True)
+    scope_edit_existing_records = Column(Boolean, nullable=False, default=False)
+    scope_delete_existing_records = Column(Boolean, nullable=False, default=False)
+    owner_data_access_level = Column(String, nullable=False, default="none")
+
+    approved_at = Column(DateTime, nullable=True)
+    approved_by_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_by_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    revoked_reason = Column(Text, nullable=True)
+    note = Column(Text, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("service_customer_id", "vehicle_id", name="uq_vehicle_service_link_pair"),
+    )
+
+
+class ServiceAccessRequest(Base):
+    """Žádost servisu o přístup ke konkrétnímu vozidlu."""
+    __tablename__ = "service_access_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    service_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    owner_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False, index=True)
+
+    lookup_audit_id = Column(Integer, ForeignKey("service_vehicle_lookup_audit.id"), nullable=True, index=True)
+    requested_scope = Column(String, nullable=False, default="history_read_create_record")
+    status = Column(String, nullable=False, default="pending", index=True)  # pending, approved, rejected, revoked
+    request_message = Column(Text, nullable=True)
+
+    requested_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    decided_at = Column(DateTime, nullable=True)
+    decided_by_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    decision_note = Column(Text, nullable=True)
+    approved_link_id = Column(Integer, nullable=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class ServiceCustomerInvite(Base):
     """Pozvánka od servisu pro zákazníka (registrace / propojení účtu)."""
     __tablename__ = "service_customer_invites"
@@ -267,6 +352,13 @@ class Vehicle(Base):
     engine = Column(String, nullable=True)
     vin = Column(String, nullable=True)
     plate = Column(String, nullable=True)
+    orv_number = Column(String, nullable=True, index=True)
+    orv_scan_source = Column(String, nullable=True)
+    orv_front_image_path = Column(Text, nullable=True)
+    orv_back_image_path = Column(Text, nullable=True)
+    orv_scanned_at = Column(DateTime, nullable=True)
+    orv_confidence_json = Column(Text, nullable=True)
+    data_trust_state = Column(String, nullable=True, index=True)
     notes = Column(String, nullable=True)
     photo_path = Column(Text, nullable=True)  # Relativní cesta k fotce vozidla uložené na serveru
     stk_valid_until = Column(Date, nullable=True)  # Datum konce platnosti STK
@@ -285,6 +377,44 @@ class Vehicle(Base):
     )
 
 
+class VehicleORVScan(Base):
+    """Auditní a review vrstva pro skeny ORV před založením / úpravou vozidla."""
+    __tablename__ = "vehicle_orv_scans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    initiated_by_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)
+
+    source = Column(String, nullable=False, default="ios_orv_scan")
+    status = Column(String, nullable=False, default="processing", index=True)
+    trust_state = Column(String, nullable=False, default="scanned_unverified", index=True)
+    use_owner_data = Column(Boolean, nullable=False, default=False)
+    front_captured = Column(Boolean, nullable=False, default=False)
+    back_captured = Column(Boolean, nullable=False, default=False)
+
+    orv_number = Column(String, nullable=True, index=True)
+    front_image_path = Column(Text, nullable=True)
+    back_image_path = Column(Text, nullable=True)
+    front_image_hash = Column(String, nullable=True, index=True)
+    back_image_hash = Column(String, nullable=True, index=True)
+
+    front_ocr_text = Column(Text, nullable=True)
+    back_ocr_text = Column(Text, nullable=True)
+    parsed_vehicle_json = Column(Text, nullable=True)
+    parsed_owner_json = Column(Text, nullable=True)
+    confidence_json = Column(Text, nullable=True)
+    warnings_json = Column(Text, nullable=True)
+    missing_fields_json = Column(Text, nullable=True)
+    extracted_fields_json = Column(Text, nullable=True)
+    manual_overrides_json = Column(Text, nullable=True)
+
+    processed_at = Column(DateTime, nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class VehicleOwnership(Base):
     """
     Explicitní vazba vlastník <-> vozidlo.
@@ -299,10 +429,13 @@ class VehicleOwnership(Base):
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
 
     ownership_type = Column(String, nullable=False, default="owner", index=True)  # owner, delegated
+    ownership_origin = Column(String, nullable=False, default="manual", index=True)
     is_primary = Column(Boolean, nullable=False, default=True, index=True)
     is_active = Column(Boolean, nullable=False, default=True, index=True)
 
     assigned_by_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    owned_from = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    owned_until = Column(DateTime, nullable=True, index=True)
     assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     revoked_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -332,6 +465,8 @@ class ServiceRecord(Base):
     attachments = Column(Text, nullable=True)  # JSON string s přílohami
     next_service_due_date = Column(Date, nullable=True)  # Datum dalšího plánovaného servisu
     created_by_ai = Column(Boolean, default=False, nullable=False)  # True pokud byl záznam vytvořen AI asistentem
+    created_by_service_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    service_access_link_id = Column(Integer, ForeignKey("vehicle_service_links.id"), nullable=True, index=True)
     is_deleted = Column(Boolean, default=False, nullable=False, index=True)
     deleted_at = Column(DateTime, nullable=True, index=True)
     deleted_by_user_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
@@ -339,6 +474,42 @@ class ServiceRecord(Base):
     snapshot_hash = Column(String, nullable=True, index=True)
 
     vehicle = relationship("Vehicle", back_populates="records")
+
+
+class VehicleTachometerHistoryEntry(Base):
+    """Sekundární důkazní evidence importů STK / tachometru."""
+    __tablename__ = "vehicle_tachometer_history_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False, index=True)
+
+    check_date = Column(DateTime, nullable=True, index=True)
+    mileage_km = Column(Integer, nullable=True)
+    protocol_number = Column(String, nullable=True, index=True)
+    inspection_type = Column(String, nullable=True)
+    source = Column(String, nullable=False, default="kontrolatachometru.cz")
+    status = Column(String, nullable=False, default="imported", index=True)
+    summary = Column(Text, nullable=True)
+    findings_summary = Column(Text, nullable=True)
+    findings_items_json = Column(Text, nullable=True)
+    detail_snapshot_json = Column(Text, nullable=True)
+    source_detail_reference = Column(Text, nullable=True)
+    documents_json = Column(Text, nullable=True)  # JSON list reprezentující dostupné / nedostupné dokumenty
+    raw_payload_json = Column(Text, nullable=True)  # Persistovaná metadata importovaného řádku
+    imported_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "vehicle_id",
+            "check_date",
+            "mileage_km",
+            "protocol_number",
+            name="uq_vehicle_tachometer_history_entry",
+        ),
+    )
 
 
 class ServiceRecordAuditLog(Base):
@@ -427,6 +598,9 @@ class Reminder(Base):
     last_notified_at = Column(DateTime, nullable=True)  # Kdy byla notifikace naposledy odeslána
     is_manual = Column(Boolean, default=False, nullable=False)  # True = ruční, False = automatická
     is_completed = Column(Boolean, default=False, nullable=False)
+    recurrence_group_id = Column(String, nullable=True, index=True)  # Identifikátor série opakovaných připomínek
+    recurrence_index = Column(Integer, nullable=False, default=0)  # Pořadí v sérii (0 = první výskyt)
+    repeat_interval_days = Column(Integer, nullable=True)  # Interval opakování ve dnech pro sérii
     
     created_at = Column(DateTime, default=datetime.utcnow)
 

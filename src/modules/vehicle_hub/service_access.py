@@ -1,0 +1,391 @@
+from __future__ import annotations
+
+import hashlib
+import re
+from datetime import datetime
+from typing import Optional
+
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from src.core.rbac import is_service, normalize_role
+
+from .models import (
+    Customer,
+    ServiceAccessRequest,
+    ServiceCustomerLink,
+    ServiceVehicleAccess,
+    ServiceVehicleLookupAudit,
+    ServiceRecord,
+    Vehicle,
+    VehicleServiceLink,
+)
+from .ownership import get_primary_vehicle_owner
+
+_VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
+
+
+def normalize_lookup_query(raw_value: Optional[str]) -> tuple[str, str]:
+    value = str(raw_value or "").strip().upper()
+    collapsed = re.sub(r"\s+", "", value)
+    if not collapsed:
+        return "", "unknown"
+    if _VIN_RE.fullmatch(collapsed):
+        return collapsed, "vin"
+    return collapsed, "plate"
+
+
+def masked_vin(vin: Optional[str]) -> Optional[str]:
+    normalized = str(vin or "").strip().upper()
+    if len(normalized) < 7:
+        return None
+    return f"{normalized[:3]}***{normalized[-4:]}"
+
+
+def vehicle_label(vehicle: Vehicle) -> str:
+    composed = " ".join(part for part in [vehicle.brand, vehicle.model] if part).strip()
+    return vehicle.nickname or composed or vehicle.plate or f"Vozidlo #{vehicle.id}"
+
+
+def get_active_vehicle_service_link(
+    db: Session,
+    *,
+    service_customer_id: int,
+    vehicle_id: int,
+) -> Optional[VehicleServiceLink]:
+    return (
+        db.query(VehicleServiceLink)
+        .filter(
+            VehicleServiceLink.service_customer_id == int(service_customer_id),
+            VehicleServiceLink.vehicle_id == int(vehicle_id),
+            VehicleServiceLink.status == "approved",
+        )
+        .first()
+    )
+
+
+def service_can_read_vehicle(db: Session, current_user: Customer, vehicle_id: int) -> bool:
+    if not is_service(normalize_role(getattr(current_user, "role", None))):
+        return False
+    return get_active_vehicle_service_link(
+        db,
+        service_customer_id=int(current_user.id),
+        vehicle_id=int(vehicle_id),
+    ) is not None
+
+
+def require_service_vehicle_link(
+    db: Session,
+    *,
+    current_user: Customer,
+    vehicle_id: int,
+    require_create_record: bool = False,
+) -> VehicleServiceLink:
+    link = get_active_vehicle_service_link(
+        db,
+        service_customer_id=int(current_user.id),
+        vehicle_id=int(vehicle_id),
+    )
+    if not link:
+        raise HTTPException(
+            status_code=403,
+            detail="Servis nemá schválený přístup k tomuto vozidlu.",
+        )
+    if require_create_record and not bool(link.scope_create_service_record):
+        raise HTTPException(
+            status_code=403,
+            detail="Servis nemá oprávnění vytvářet nové servisní záznamy pro toto vozidlo.",
+        )
+    link.last_used_at = datetime.utcnow()
+    db.flush()
+    return link
+
+
+def forbid_service_record_mutation(current_user: Customer) -> None:
+    if is_service(normalize_role(getattr(current_user, "role", None))):
+        raise HTTPException(
+            status_code=403,
+            detail="Servis může po schválení přístupu vytvářet nové servisní záznamy, ale nesmí upravovat ani mazat starší historii.",
+        )
+
+
+def log_vehicle_lookup(
+    db: Session,
+    *,
+    current_user: Customer,
+    raw_query: str,
+    normalized_query: str,
+    identifier_type: str,
+    vehicle: Optional[Vehicle],
+    owner_customer: Optional[Customer],
+    result_status: str,
+    returned_candidate_count: int,
+) -> ServiceVehicleLookupAudit:
+    query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest() if normalized_query else None
+    audit = ServiceVehicleLookupAudit(
+        tenant_id=current_user.tenant_id or 1,
+        service_customer_id=current_user.id,
+        lookup_query_raw=raw_query or None,
+        lookup_query_normalized=normalized_query or None,
+        lookup_query_hash=query_hash,
+        lookup_identifier_type=identifier_type or "unknown",
+        matched_vehicle_id=getattr(vehicle, "id", None),
+        matched_owner_customer_id=getattr(owner_customer, "id", None),
+        result_status=result_status,
+        returned_candidate_count=max(0, int(returned_candidate_count or 0)),
+        created_at=datetime.utcnow(),
+    )
+    db.add(audit)
+    db.flush()
+    return audit
+
+
+def resolve_vehicle_for_lookup(
+    db: Session,
+    *,
+    current_user: Customer,
+    query: str,
+) -> tuple[Optional[Vehicle], Optional[Customer], str, str, str]:
+    normalized_query, identifier_type = normalize_lookup_query(query)
+    if not normalized_query:
+        raise HTTPException(status_code=422, detail="Zadejte SPZ nebo VIN vozidla.")
+
+    candidate_query = db.query(Vehicle).order_by(Vehicle.created_at.asc(), Vehicle.id.asc())
+
+    if identifier_type == "vin":
+        vehicle = candidate_query.filter(Vehicle.vin == normalized_query).first()
+    else:
+        vehicle = candidate_query.filter(Vehicle.plate == normalized_query).first()
+
+    if not vehicle:
+        return None, None, normalized_query, identifier_type, "not_found"
+
+    owner_customer = get_primary_vehicle_owner(db, vehicle)
+    if not owner_customer:
+        return vehicle, None, normalized_query, identifier_type, "owner_missing"
+
+    existing_link = get_active_vehicle_service_link(
+        db,
+        service_customer_id=current_user.id,
+        vehicle_id=vehicle.id,
+    )
+    if existing_link:
+        return vehicle, owner_customer, normalized_query, identifier_type, "already_approved"
+
+    pending_request = (
+        db.query(ServiceAccessRequest.id)
+        .filter(
+            ServiceAccessRequest.service_customer_id == current_user.id,
+            ServiceAccessRequest.vehicle_id == vehicle.id,
+            ServiceAccessRequest.status == "pending",
+        )
+        .first()
+    )
+    if pending_request:
+        return vehicle, owner_customer, normalized_query, identifier_type, "pending_request"
+
+    return vehicle, owner_customer, normalized_query, identifier_type, "matched"
+
+
+def create_or_update_vehicle_service_link(
+    db: Session,
+    *,
+    tenant_id: Optional[int],
+    service_customer_id: int,
+    owner_customer_id: int,
+    vehicle_id: int,
+    approved_by_customer_id: int,
+    source_type: str,
+    source_request_id: Optional[int] = None,
+    note: Optional[str] = None,
+) -> VehicleServiceLink:
+    now = datetime.utcnow()
+    resolved_tenant_id = tenant_id
+    if resolved_tenant_id is None:
+        vehicle = db.query(Vehicle).filter(Vehicle.id == int(vehicle_id)).first()
+        resolved_tenant_id = getattr(vehicle, "tenant_id", None)
+    if resolved_tenant_id is None:
+        owner = db.query(Customer).filter(Customer.id == int(owner_customer_id)).first()
+        resolved_tenant_id = getattr(owner, "tenant_id", None)
+
+    link = (
+        db.query(VehicleServiceLink)
+        .filter(
+            VehicleServiceLink.service_customer_id == int(service_customer_id),
+            VehicleServiceLink.vehicle_id == int(vehicle_id),
+        )
+        .first()
+    )
+    if link:
+        link.owner_customer_id = int(owner_customer_id)
+        link.source_request_id = source_request_id
+        link.source_type = source_type
+        link.status = "approved"
+        link.scope_vehicle_history_read = True
+        link.scope_create_service_record = True
+        link.scope_edit_existing_records = False
+        link.scope_delete_existing_records = False
+        link.owner_data_access_level = "none"
+        link.approved_at = now
+        link.approved_by_customer_id = int(approved_by_customer_id)
+        link.revoked_at = None
+        link.revoked_by_customer_id = None
+        link.revoked_reason = None
+        if note is not None:
+            link.note = note
+        link.updated_at = now
+        db.flush()
+    else:
+        link = VehicleServiceLink(
+            tenant_id=int(resolved_tenant_id or 1),
+            service_customer_id=int(service_customer_id),
+            owner_customer_id=int(owner_customer_id),
+            vehicle_id=int(vehicle_id),
+            source_request_id=source_request_id,
+            source_type=source_type,
+            status="approved",
+            scope_vehicle_history_read=True,
+            scope_create_service_record=True,
+            scope_edit_existing_records=False,
+            scope_delete_existing_records=False,
+            owner_data_access_level="none",
+            approved_at=now,
+            approved_by_customer_id=int(approved_by_customer_id),
+            note=note,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(link)
+        db.flush()
+
+    legacy_access = (
+        db.query(ServiceVehicleAccess)
+        .filter(
+            ServiceVehicleAccess.service_customer_id == int(service_customer_id),
+            ServiceVehicleAccess.customer_id == int(owner_customer_id),
+            ServiceVehicleAccess.vehicle_id == int(vehicle_id),
+        )
+        .first()
+    )
+    if legacy_access:
+        legacy_access.status = "active"
+        legacy_access.granted_by_customer_id = int(approved_by_customer_id)
+        legacy_access.note = note
+        legacy_access.revoked_at = None
+        legacy_access.updated_at = now
+    else:
+        db.add(
+            ServiceVehicleAccess(
+                service_customer_id=int(service_customer_id),
+                customer_id=int(owner_customer_id),
+                vehicle_id=int(vehicle_id),
+                status="active",
+                granted_by_customer_id=int(approved_by_customer_id),
+                note=note,
+                revoked_at=None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    service_link = (
+        db.query(ServiceCustomerLink)
+        .filter(
+            ServiceCustomerLink.service_customer_id == int(service_customer_id),
+            ServiceCustomerLink.customer_id == int(owner_customer_id),
+        )
+        .first()
+    )
+    if service_link:
+        service_link.status = "active"
+        service_link.updated_at = now
+        if note is not None:
+            service_link.note = note
+
+    return link
+
+
+def revoke_vehicle_service_link(
+    db: Session,
+    *,
+    service_customer_id: int,
+    vehicle_id: int,
+    revoked_by_customer_id: int,
+    reason: Optional[str],
+) -> Optional[VehicleServiceLink]:
+    now = datetime.utcnow()
+    link = (
+        db.query(VehicleServiceLink)
+        .filter(
+            VehicleServiceLink.service_customer_id == int(service_customer_id),
+            VehicleServiceLink.vehicle_id == int(vehicle_id),
+            VehicleServiceLink.status == "approved",
+        )
+        .first()
+    )
+    if link:
+        link.status = "revoked"
+        link.revoked_at = now
+        link.revoked_by_customer_id = int(revoked_by_customer_id)
+        link.revoked_reason = reason
+        link.updated_at = now
+
+    legacy_access = (
+        db.query(ServiceVehicleAccess)
+        .filter(
+            ServiceVehicleAccess.service_customer_id == int(service_customer_id),
+            ServiceVehicleAccess.vehicle_id == int(vehicle_id),
+            ServiceVehicleAccess.status == "active",
+        )
+        .first()
+    )
+    if legacy_access:
+        legacy_access.status = "revoked"
+        legacy_access.revoked_at = now
+        legacy_access.updated_at = now
+
+    if link:
+        linked_request = (
+            db.query(ServiceAccessRequest)
+            .filter(ServiceAccessRequest.approved_link_id == link.id)
+            .order_by(ServiceAccessRequest.id.desc())
+            .first()
+        )
+        if linked_request:
+            linked_request.status = "revoked"
+            linked_request.decided_at = now
+            linked_request.decided_by_customer_id = int(revoked_by_customer_id)
+            linked_request.decision_note = reason
+            linked_request.updated_at = now
+
+    return link
+
+
+def backfill_vehicle_service_links_from_legacy_access(db: Session) -> None:
+    rows = (
+        db.query(ServiceVehicleAccess)
+        .filter(ServiceVehicleAccess.status == "active")
+        .all()
+    )
+    for row in rows:
+        create_or_update_vehicle_service_link(
+            db,
+            tenant_id=getattr(row, "tenant_id", None),
+            service_customer_id=int(row.service_customer_id),
+            owner_customer_id=int(row.customer_id),
+            vehicle_id=int(row.vehicle_id),
+            approved_by_customer_id=int(row.granted_by_customer_id or row.customer_id),
+            source_type="legacy_service_vehicle_access",
+            note=row.note,
+        )
+
+
+def attach_service_access_to_record(
+    *,
+    record: ServiceRecord,
+    current_user: Customer,
+    access_link: Optional[VehicleServiceLink],
+) -> None:
+    if is_service(normalize_role(getattr(current_user, "role", None))):
+        record.created_by_service_customer_id = int(current_user.id)
+        record.service_access_link_id = int(access_link.id) if access_link else None

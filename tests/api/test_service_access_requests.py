@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from uuid import uuid4
+
+import requests
+from sqlalchemy import func
+
+from src.modules.vehicle_hub.database import SessionLocal
+from src.modules.vehicle_hub.models import Customer
+
+
+def _unique_email(prefix: str) -> str:
+    return f"{prefix}_{uuid4().hex[:10]}@example.com"
+
+
+def _register_user(api_url: str, *, email: str, password: str = "testpass123", name: str = "Test User") -> tuple[str, int]:
+    response = requests.post(
+        f"{api_url}/user/register",
+        json={
+            "email": email,
+            "password": password,
+            "name": name,
+            "phone": "+420123456789",
+        },
+        timeout=8,
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    return payload["access_token"], int(payload["user"]["id"])
+
+
+def _promote_user_to_service(email: str) -> None:
+    db = SessionLocal()
+    try:
+        customer = (
+            db.query(Customer)
+            .filter(func.lower(Customer.email) == str(email).lower())
+            .first()
+        )
+        assert customer is not None
+        customer.role = "service"
+        db.commit()
+    finally:
+        db.close()
+
+
+def _create_vehicle(api_url: str, token: str, *, plate: str, vin: str) -> int:
+    response = requests.post(
+        f"{api_url}/api/v1/vehicles",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "nickname": "Test Access Vehicle",
+            "brand": "Skoda",
+            "model": "Octavia",
+            "year": 2021,
+            "plate": plate,
+            "vin": vin,
+            "stk_valid_until": (date.today() + timedelta(days=365)).isoformat(),
+        },
+        timeout=8,
+    )
+    assert response.status_code == 200, response.text
+    return int(response.json()["id"])
+
+
+def test_service_access_request_approval_flow(api_url):
+    service_email = _unique_email("service_access")
+    user_email = _unique_email("user_access")
+
+    service_token, service_id = _register_user(api_url, email=service_email, name="Servis Access")
+    _promote_user_to_service(service_email)
+    user_token, _user_id = _register_user(api_url, email=user_email, name="Uživatel Access")
+
+    plate = f"ACC{uuid4().hex[:4].upper()}"
+    vin = f"TMB{uuid4().hex[:14].upper()}"[:17].replace("I", "A").replace("O", "B").replace("Q", "C")
+    vehicle_id = _create_vehicle(api_url, user_token, plate=plate, vin=vin)
+
+    service_headers = {"Authorization": f"Bearer {service_token}"}
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+
+    pre_approve_create = requests.post(
+        f"{api_url}/api/v1/vehicles/{vehicle_id}/records",
+        headers=service_headers,
+        json={
+            "performed_at": datetime.utcnow().isoformat(),
+            "mileage": 123456,
+            "description": "Předčasný pokus",
+            "price": 500,
+            "category": "SERVIS",
+        },
+        timeout=8,
+    )
+    assert pre_approve_create.status_code == 403, pre_approve_create.text
+
+    lookup_response = requests.post(
+        f"{api_url}/api/v1/services/workspace/vehicle-lookup",
+        headers=service_headers,
+        json={"query": plate},
+        timeout=8,
+    )
+    assert lookup_response.status_code == 200, lookup_response.text
+    lookup_payload = lookup_response.json()
+    assert lookup_payload["candidates"]
+    candidate = lookup_payload["candidates"][0]
+    assert candidate["vehicle_id"] == vehicle_id
+    assert candidate["plate_masked"] == plate
+    assert candidate["vin_masked"]
+    assert "owner" not in candidate
+
+    request_response = requests.post(
+        f"{api_url}/api/v1/services/workspace/access-requests",
+        headers=service_headers,
+        json={"vehicle_id": vehicle_id, "lookup_query": plate, "note": "Prosím o schválení přístupu"},
+        timeout=8,
+    )
+    assert request_response.status_code == 200, request_response.text
+    request_payload = request_response.json()
+    assert request_payload["status"] == "pending"
+    request_id = int(request_payload["request_id"])
+
+    pending_response = requests.get(
+        f"{api_url}/api/v1/services/access-requests",
+        headers=user_headers,
+        timeout=8,
+    )
+    assert pending_response.status_code == 200, pending_response.text
+    pending_payload = pending_response.json()
+    assert any(int(item["id"]) == request_id and int(item["service_id"]) == service_id for item in pending_payload["requests"])
+
+    approve_response = requests.put(
+        f"{api_url}/api/v1/services/access-requests/{request_id}",
+        headers=user_headers,
+        json={"decision": "approved"},
+        timeout=8,
+    )
+    assert approve_response.status_code == 200, approve_response.text
+
+    approved_vehicles_response = requests.get(
+        f"{api_url}/api/v1/services/workspace/approved-vehicles",
+        headers=service_headers,
+        timeout=8,
+    )
+    assert approved_vehicles_response.status_code == 200, approved_vehicles_response.text
+    approved_items = approved_vehicles_response.json()["items"]
+    assert any(int(item["id"]) == vehicle_id for item in approved_items)
+
+    create_response = requests.post(
+        f"{api_url}/api/v1/vehicles/{vehicle_id}/records",
+        headers=service_headers,
+        json={
+            "performed_at": datetime.utcnow().isoformat(),
+            "mileage": 123456,
+            "description": "Schválený servisní zásah",
+            "price": 1500,
+            "category": "SERVIS",
+        },
+        timeout=8,
+    )
+    assert create_response.status_code == 200, create_response.text
+    created_record = create_response.json()
+    record_id = int(created_record["id"])
+
+    history_response = requests.get(
+        f"{api_url}/api/v1/vehicles/{vehicle_id}/records",
+        headers=service_headers,
+        timeout=8,
+    )
+    assert history_response.status_code == 200, history_response.text
+    assert any(int(item["id"]) == record_id for item in history_response.json())
+
+    update_response = requests.put(
+        f"{api_url}/api/v1/vehicles/{vehicle_id}/records/{record_id}",
+        headers=service_headers,
+        json={"description": "Neplatná úprava"},
+        timeout=8,
+    )
+    assert update_response.status_code == 403, update_response.text
+
+    delete_response = requests.delete(
+        f"{api_url}/api/v1/vehicles/{vehicle_id}/records/{record_id}",
+        headers=service_headers,
+        timeout=8,
+    )
+    assert delete_response.status_code == 403, delete_response.text

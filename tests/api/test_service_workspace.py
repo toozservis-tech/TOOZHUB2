@@ -70,13 +70,14 @@ def test_service_workspace_link_existing_and_ingest(api_url):
     service_email = _unique_email("service")
     customer_email = _unique_email("customer")
 
-    service_token, _ = _register_user(api_url, email=service_email, name="Service účet")
+    service_token, service_id = _register_user(api_url, email=service_email, name="Service účet")
     _promote_user_to_service(service_email)
 
     customer_token, customer_id = _register_user(api_url, email=customer_email, name="Koncový zákazník")
     vehicle_id = _create_vehicle(api_url, customer_token, nickname="Fleet test")
 
     service_headers = {"Authorization": f"Bearer {service_token}"}
+    customer_headers = {"Authorization": f"Bearer {customer_token}"}
 
     link_response = requests.post(
         f"{api_url}/api/v1/services/workspace/customers/link-existing",
@@ -87,6 +88,14 @@ def test_service_workspace_link_existing_and_ingest(api_url):
     assert link_response.status_code == 200, link_response.text
     link_payload = link_response.json()
     assert link_payload["linked"] is True
+
+    grant_response = requests.post(
+        f"{api_url}/api/v1/services/vehicle-access",
+        headers=customer_headers,
+        json={"vehicle_id": vehicle_id, "service_id": service_id, "note": "Schválený servisní přístup"},
+        timeout=8,
+    )
+    assert grant_response.status_code == 200, grant_response.text
 
     customers_response = requests.get(
         f"{api_url}/api/v1/services/workspace/customers",

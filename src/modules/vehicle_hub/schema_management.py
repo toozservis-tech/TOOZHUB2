@@ -13,19 +13,73 @@ from sqlalchemy.orm import Session
 
 MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
     "vehicles": {
-        "tables": {"vehicles", "vehicle_ownerships"},
-        "columns": {"vehicles": {"photo_path", "current_mileage_km", "last_stk_mileage_km", "mileage_checked_at"}},
+        "tables": {"vehicles", "vehicle_ownerships", "vehicle_tachometer_history_entries", "vehicle_orv_scans"},
+        "columns": {
+            "vehicles": {
+                "photo_path",
+                "current_mileage_km",
+                "last_stk_mileage_km",
+                "mileage_checked_at",
+                "orv_number",
+                "orv_scan_source",
+                "orv_front_image_path",
+                "orv_back_image_path",
+                "orv_scanned_at",
+                "orv_confidence_json",
+                "data_trust_state",
+            },
+            "vehicle_ownerships": {
+                "ownership_origin",
+                "owned_from",
+                "owned_until",
+            },
+            "vehicle_tachometer_history_entries": {
+                "findings_summary",
+                "findings_items_json",
+                "detail_snapshot_json",
+                "source_detail_reference",
+            },
+        },
     },
     "service_records": {
         "tables": {"service_records", "service_record_audit_logs"},
-        "columns": {"service_records": {"is_deleted", "deleted_at", "deleted_by_user_id", "deletion_reason", "snapshot_hash"}},
+        "columns": {
+            "service_records": {
+                "is_deleted",
+                "deleted_at",
+                "deleted_by_user_id",
+                "deletion_reason",
+                "snapshot_hash",
+                "created_by_service_customer_id",
+                "service_access_link_id",
+            }
+        },
     },
     "reminders": {
         "tables": {"reminders"},
-        "columns": {"reminders": {"notify_at", "last_notified_at", "notification_method", "is_manual", "is_completed"}},
+        "columns": {
+            "reminders": {
+                "notify_at",
+                "last_notified_at",
+                "notification_method",
+                "is_manual",
+                "is_completed",
+                "recurrence_group_id",
+                "recurrence_index",
+                "repeat_interval_days",
+            }
+        },
     },
     "service_workspace": {
-        "tables": {"service_customer_links", "service_customer_invites", "service_vehicle_access", "service_document_ingestions"},
+        "tables": {
+            "service_customer_links",
+            "service_customer_invites",
+            "service_vehicle_access",
+            "service_document_ingestions",
+            "service_access_requests",
+            "vehicle_service_links",
+            "service_vehicle_lookup_audit",
+        },
     },
     "reservations": {
         "tables": {"reservations", "service_vehicle_access"},

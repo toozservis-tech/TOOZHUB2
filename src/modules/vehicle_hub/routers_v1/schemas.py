@@ -25,6 +25,10 @@ class VehicleCreateV1(BaseModel):
     tyres_info: Optional[str] = None
     insurance_provider: Optional[str] = None
     insurance_valid_until: Optional[date] = None
+    orv_scan_id: Optional[int] = Field(default=None, gt=0)
+    orv_number: Optional[str] = None
+    orv_use_owner_data: bool = False
+    data_trust_state: Optional[str] = None
     # assigned_service_id: Optional[int] = None  # ID servisu přiřazeného k vozidlu - DOČASNĚ ZAKÁZÁNO
 
 
@@ -43,6 +47,10 @@ class VehicleUpdateV1(BaseModel):
     tyres_info: Optional[str] = None
     insurance_provider: Optional[str] = None
     insurance_valid_until: Optional[date] = None
+    orv_scan_id: Optional[int] = Field(default=None, gt=0)
+    orv_number: Optional[str] = None
+    orv_use_owner_data: Optional[bool] = None
+    data_trust_state: Optional[str] = None
     # assigned_service_id: Optional[int] = None  # ID servisu přiřazeného k vozidlu - DOČASNĚ ZAKÁZÁNO
 
 
@@ -56,6 +64,13 @@ class VehicleOutV1(BaseModel):
     engine: Optional[str]
     vin: Optional[str]
     plate: Optional[str]
+    orv_number: Optional[str] = None
+    orv_scan_source: Optional[str] = None
+    orv_front_image_path: Optional[str] = None
+    orv_back_image_path: Optional[str] = None
+    orv_scanned_at: Optional[datetime] = None
+    orv_confidence_json: Optional[str] = None
+    data_trust_state: Optional[str] = None
     notes: Optional[str]
     photo_path: Optional[str] = None
     stk_valid_until: Optional[date]
@@ -65,12 +80,165 @@ class VehicleOutV1(BaseModel):
     tyres_info: Optional[str] = None
     insurance_provider: Optional[str] = None
     insurance_valid_until: Optional[date] = None
+    current_owner_since: Optional[datetime] = None
     # assigned_service_id: Optional[int] = None  # DOČASNĚ ZAKÁZÁNO
     tenant_id: Optional[int] = None  # Multi-tenant podpora
     created_at: datetime
     
     class Config:
         from_attributes = True
+
+
+class VehicleMileageRecordV1(BaseModel):
+    mileage_km: int = Field(..., ge=0)
+    note: Optional[str] = Field(default=None, max_length=1000)
+    confirm_lower_than_current: bool = False
+
+
+class VehicleMileageRecordResultV1(BaseModel):
+    vehicle: VehicleOutV1
+    created_record_id: int
+
+
+class ORVParsedVehicleFieldsV1(BaseModel):
+    plate: Optional[str] = None
+    vin: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    type_label: Optional[str] = None
+    variant: Optional[str] = None
+    version: Optional[str] = None
+    commercial_name: Optional[str] = None
+    category: Optional[str] = None
+    vehicle_kind: Optional[str] = None
+    fuel: Optional[str] = None
+    engine_power_kw: Optional[str] = None
+    engine_displacement_cc: Optional[str] = None
+    first_registration_date: Optional[str] = None
+    first_registration_cz_date: Optional[str] = None
+    seats_count: Optional[str] = None
+    max_speed_kmh: Optional[str] = None
+    emissions: Optional[str] = None
+    consumption: Optional[str] = None
+    weights: Optional[str] = None
+    orv_number: Optional[str] = None
+
+
+class ORVParsedOwnerFieldsV1(BaseModel):
+    owner_name: Optional[str] = None
+    owner_identifier: Optional[str] = None
+    owner_address: Optional[str] = None
+    operator_name: Optional[str] = None
+    operator_identifier: Optional[str] = None
+    operator_address: Optional[str] = None
+
+
+class ORVParseFieldConfidenceV1(BaseModel):
+    field_name: str
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    state: str = "review"
+
+
+class ORVParseRequestV1(BaseModel):
+    front_image_base64: str = Field(..., min_length=100)
+    back_image_base64: str = Field(..., min_length=100)
+    front_image_mime_type: Optional[str] = Field(default="image/jpeg", max_length=255)
+    back_image_mime_type: Optional[str] = Field(default="image/jpeg", max_length=255)
+    source: Optional[str] = Field(default="ios_orv_scan", max_length=64)
+
+
+class ORVParseResponseV1(BaseModel):
+    scan_id: int
+    trust_state: str
+    vehicle_fields: ORVParsedVehicleFieldsV1
+    owner_fields: ORVParsedOwnerFieldsV1
+    confidence: List[ORVParseFieldConfidenceV1] = []
+    warnings: List[str] = []
+    missing_fields: List[str] = []
+
+
+# ==========================
+#   SERVISNÍ PŘÍSTUPY
+# ==========================
+
+class ServiceVehicleLookupRequestV1(BaseModel):
+    query: str = Field(..., min_length=2, max_length=128)
+
+
+class ServiceVehicleLookupCandidateOutV1(BaseModel):
+    id: str
+    vehicle_id: Optional[int] = None
+    nickname: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    plate_masked: Optional[str] = None
+    vin_masked: Optional[str] = None
+    city: Optional[str] = None
+    owner_label: Optional[str] = None
+    status: str
+    can_request_access: bool = True
+
+
+class ServiceVehicleLookupResponseV1(BaseModel):
+    candidates: List[ServiceVehicleLookupCandidateOutV1] = []
+
+
+class ServiceAccessRequestCreateV1(BaseModel):
+    vehicle_id: Optional[int] = Field(default=None, gt=0)
+    lookup_query: str = Field(..., min_length=2, max_length=128)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class ServiceAccessRequestDecisionV1(BaseModel):
+    decision: str = Field(..., min_length=3, max_length=32)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class ServiceAccessRequestOutV1(BaseModel):
+    id: int
+    vehicle_id: int
+    service_id: int
+    service_name: str
+    service_email: Optional[str] = None
+    vehicle_name: Optional[str] = None
+    vehicle_plate: Optional[str] = None
+    requested_at: Optional[datetime] = None
+    status: str
+    note: Optional[str] = None
+    scope_summary: Optional[str] = None
+
+
+class ServiceAccessRequestListOutV1(BaseModel):
+    requests: List[ServiceAccessRequestOutV1] = []
+
+
+class VehicleServiceLinkOutV1(BaseModel):
+    service_id: int
+    vehicle_id: int
+    customer_id: int
+    service_name: str
+    service_email: str
+    vehicle_name: Optional[str] = None
+    vehicle_plate: Optional[str] = None
+    status: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class VehicleServiceLinkListOutV1(BaseModel):
+    grants: List[VehicleServiceLinkOutV1] = []
+
+
+class ServiceApprovedVehicleOutV1(BaseModel):
+    id: int
+    customer_id: Optional[int] = None
+    customer_name: Optional[str] = None
+    vehicle_name: Optional[str] = None
+    vehicle_plate: Optional[str] = None
+    last_shared_at: Optional[datetime] = None
+
+
+class ServiceApprovedVehicleListOutV1(BaseModel):
+    items: List[ServiceApprovedVehicleOutV1] = []
 
 
 # ==========================
@@ -222,6 +390,9 @@ class ReminderOutV1(BaseModel):
     notification_method: Optional[str] = None  # app, email, both; None = globální nastavení
     is_manual: bool = False  # True = ruční, False = automatická
     is_completed: Optional[bool] = False
+    is_recurring: bool = False
+    recurrence_group_id: Optional[str] = None
+    recurrence_index: Optional[int] = None
 
 
 class ReminderCreateV1(BaseModel):

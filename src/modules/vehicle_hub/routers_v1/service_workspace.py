@@ -25,23 +25,47 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from src.core.branding import APP_DISPLAY_NAME
 from src.core.config import DATA_DIR, FRONTEND_BASE_URL
 from src.modules.email_client.service import EmailService
+from src.modules.email_client.templates import render_email_layout, render_panel
 from ..database import get_db
 from ..models import (
     Customer,
     Reminder as ReminderModel,
     Reservation as ReservationModel,
+    ServiceAccessRequest,
     ServiceCustomerInvite,
     ServiceCustomerLink,
     ServiceVehicleAccess,
+    ServiceVehicleLookupAudit,
     ServiceDocumentIngestion,
     ServiceIntake,
     ServiceRecord as ServiceRecordModel,
+    VehicleOwnership,
     Vehicle as VehicleModel,
+    VehicleServiceLink,
 )
+from ..orv_scans import apply_orv_scan_to_vehicle
+from ..ownership import ensure_vehicle_owner_assignment, get_owned_vehicle, get_owned_vehicle_rows, get_primary_vehicle_owner
 from ..schema_management import assert_module_ready
+from ..service_access import (
+    create_or_update_vehicle_service_link,
+    log_vehicle_lookup,
+    masked_vin,
+    normalize_lookup_query,
+    require_service_vehicle_link,
+    resolve_vehicle_for_lookup,
+    vehicle_label,
+)
 from .auth import get_current_user
+from .reminders import apply_reminder_completion_update, is_recurring_reminder
+from .schemas import (
+    ServiceAccessRequestCreateV1,
+    ServiceApprovedVehicleListOutV1,
+    ServiceVehicleLookupRequestV1,
+    ServiceVehicleLookupResponseV1,
+)
 
 router = APIRouter(prefix="/services/workspace", tags=["service-workspace-v1"])
 
@@ -86,6 +110,13 @@ class SendServiceInviteRequest(BaseModel):
     invite_message: Optional[str] = Field(default=None, max_length=2000)
 
 
+class PendingVehicleRegistrationRequest(BaseModel):
+    invite_email: EmailStr
+    invite_name: Optional[str] = Field(default=None, max_length=120)
+    invite_message: Optional[str] = Field(default=None, max_length=2000)
+    vehicle: "ServiceWorkspaceVehicleCreateRequest"
+
+
 class AcceptServiceInviteRequest(BaseModel):
     token: str = Field(min_length=12, max_length=512)
 
@@ -115,6 +146,10 @@ class ServiceWorkspaceVehicleCreateRequest(BaseModel):
     current_mileage_km: Optional[int] = Field(default=None, ge=0)
     last_stk_mileage_km: Optional[int] = Field(default=None, ge=0)
     tyres_info: Optional[str] = Field(default=None, max_length=8000)
+    orv_scan_id: Optional[int] = Field(default=None, gt=0)
+    orv_number: Optional[str] = Field(default=None, max_length=128)
+    orv_use_owner_data: bool = False
+    data_trust_state: Optional[str] = Field(default=None, max_length=64)
 
 
 class ServiceWorkspaceReminderCreateRequest(BaseModel):
@@ -191,18 +226,17 @@ def _get_linked_customer_or_404(db: Session, current_user: Customer, customer_id
 
 def _get_shared_vehicle_ids_for_pair(db: Session, *, service_customer_id: int, customer_id: int) -> set[int]:
     """
-    Vrátí ID vozidel, která jsou pro daný pár servis<->klient explicitně sdílená.
-    Sdílení vzniká přes explicitní povolení, rezervaci, servisní příjem nebo ingest dokladu.
+    Vrátí ID vozidel, která mají pro daný pár servis<->klient explicitně schválený přístup.
     """
     shared_ids: set[int] = set()
 
     access_rows = (
-        db.query(ServiceVehicleAccess.vehicle_id)
+        db.query(VehicleServiceLink.vehicle_id)
         .filter(
-            ServiceVehicleAccess.service_customer_id == service_customer_id,
-            ServiceVehicleAccess.customer_id == customer_id,
-            ServiceVehicleAccess.vehicle_id.isnot(None),
-            ServiceVehicleAccess.status == "active",
+            VehicleServiceLink.service_customer_id == service_customer_id,
+            VehicleServiceLink.owner_customer_id == customer_id,
+            VehicleServiceLink.vehicle_id.isnot(None),
+            VehicleServiceLink.status == "approved",
         )
         .distinct()
         .all()
@@ -211,62 +245,11 @@ def _get_shared_vehicle_ids_for_pair(db: Session, *, service_customer_id: int, c
         if vehicle_id:
             shared_ids.add(int(vehicle_id))
 
-    reservation_rows = (
-        db.query(ReservationModel.vehicle_id)
-        .filter(
-            ReservationModel.service_id == service_customer_id,
-            ReservationModel.customer_id == customer_id,
-            ReservationModel.vehicle_id.isnot(None),
-            ReservationModel.status != "CANCELLED",
-        )
-        .distinct()
-        .all()
-    )
-    for (vehicle_id,) in reservation_rows:
-        if vehicle_id:
-            shared_ids.add(int(vehicle_id))
-
-    intake_rows = (
-        db.query(ServiceIntake.vehicle_id)
-        .filter(
-            ServiceIntake.service_id == service_customer_id,
-            ServiceIntake.customer_id == customer_id,
-            ServiceIntake.vehicle_id.isnot(None),
-        )
-        .distinct()
-        .all()
-    )
-    for (vehicle_id,) in intake_rows:
-        if vehicle_id:
-            shared_ids.add(int(vehicle_id))
-
-    document_rows = (
-        db.query(ServiceDocumentIngestion.vehicle_id)
-        .filter(
-            ServiceDocumentIngestion.service_customer_id == service_customer_id,
-            ServiceDocumentIngestion.customer_id == customer_id,
-            ServiceDocumentIngestion.vehicle_id.isnot(None),
-        )
-        .distinct()
-        .all()
-    )
-    for (vehicle_id,) in document_rows:
-        if vehicle_id:
-            shared_ids.add(int(vehicle_id))
-
     return shared_ids
 
 
 def _get_customer_vehicle_rows(db: Session, customer: Customer) -> list[VehicleModel]:
-    email_key = _normalize_email(customer.email)
-    if not email_key:
-        return []
-    return (
-        db.query(VehicleModel)
-        .filter(func.lower(VehicleModel.user_email) == email_key)
-        .order_by(VehicleModel.created_at.desc())
-        .all()
-    )
+    return get_owned_vehicle_rows(db, customer, tenant_id=getattr(customer, "tenant_id", None))
 
 
 def _upsert_service_vehicle_access(
@@ -307,6 +290,32 @@ def _upsert_service_vehicle_access(
         )
     )
     db.flush()
+
+
+def _service_access_scope_summary() -> str:
+    return "Čtení historie vozidla a možnost vytvářet nové servisní záznamy bez úprav starší cizí historie."
+
+
+def _lookup_candidate_payload(
+    *,
+    vehicle: VehicleModel,
+    owner_customer: Optional[Customer],
+    status: str,
+    can_request_access: bool,
+) -> dict[str, Any]:
+    return {
+        "id": f"vehicle-{int(vehicle.id)}",
+        "vehicle_id": int(vehicle.id),
+        "nickname": vehicle.nickname,
+        "brand": vehicle.brand,
+        "model": vehicle.model,
+        "plate_masked": vehicle.plate,
+        "vin_masked": masked_vin(vehicle.vin),
+        "city": owner_customer.city if owner_customer else None,
+        "owner_label": None,
+        "status": status,
+        "can_request_access": bool(can_request_access),
+    }
 
 
 def _normalize_service_reminder_type(raw_type: Optional[str]) -> str:
@@ -406,13 +415,13 @@ def _send_invitation_email(
     if not email_service.is_configured():
         return False
 
-    service_name = (service_user.name or service_user.email or "TooZ Hub 2 servis").strip()
+    service_name = (service_user.name or service_user.email or f"{APP_DISPLAY_NAME} servis").strip()
     recipient_name = (invite_name or "zákazníku").strip()
     custom_message = (invite_message or "").strip()
 
     body = f"""Dobrý den {recipient_name},
 
-servis {service_name} Vám poslal pozvánku do TooZ Hub 2.
+servis {service_name} Vám poslal pozvánku do aplikace {APP_DISPLAY_NAME}.
 
 Po registraci nebo přihlášení potvrďte propojení účtu kliknutím na odkaz:
 {invitation_url}
@@ -422,29 +431,43 @@ Po registraci nebo přihlášení potvrďte propojení účtu kliknutím na odka
 Díky tomuto propojení uvidíte servisní historii a plánované úkony pro vaše vozidla.
 """
 
-    html_body = f"""
-<html lang="cs">
-<body style="font-family: Arial, sans-serif; line-height:1.6; color:#1e293b;">
-  <div style="max-width:640px; margin:0 auto; padding:24px;">
-    <h2 style="margin:0 0 10px; color:#1e3a8a;">Pozvánka do TooZ Hub 2</h2>
-    <p>Dobrý den {recipient_name},</p>
-    <p>servis <strong>{service_name}</strong> Vám poslal pozvánku do aplikace TooZ Hub 2.</p>
-    <p>
-      <a href="{invitation_url}" style="display:inline-block; background:#4f46e5; color:#fff; text-decoration:none; padding:12px 18px; border-radius:10px;">
-        Otevřít pozvánku
-      </a>
-    </p>
-    {"<p><strong>Zpráva od servisu:</strong><br>" + custom_message + "</p>" if custom_message else ""}
-    <p style="color:#475569;">Po potvrzení propojení získáte přístup k evidenci servisních úkonů pro Vaše vozidla.</p>
-  </div>
-</body>
-</html>
-"""
+    panels = [
+        render_panel(
+            title="Detaily pozvánky",
+            rows=[("Servis", service_name), ("Příjemce", invite_email)],
+            accent="#3b82f6",
+            tone="#eff6ff",
+        )
+    ]
+    if custom_message:
+        panels.append(
+            render_panel(
+                title="Zpráva od servisu",
+                message=custom_message,
+                accent="#64748b",
+                tone="#f8fafc",
+            )
+        )
+
+    html_body = render_email_layout(
+        title="Pozvánka od servisu",
+        subtitle="Propojení účtu se servisním workspace.",
+        intro=f"Dobrý den {recipient_name},",
+        paragraphs=[
+            f"servis {service_name} Vám poslal pozvánku do aplikace {APP_DISPLAY_NAME}.",
+            "Po potvrzení propojení získáte přístup k evidenci servisních úkonů a plánovaným úkolům pro Vaše vozidla.",
+        ],
+        panels=panels,
+        cta_label="Otevřít pozvánku",
+        cta_url=invitation_url,
+        accent="#f59e0b",
+        footer_note=f"Pokud účet ještě nemáte, po otevření odkazu se můžete zaregistrovat do aplikace {APP_DISPLAY_NAME}.",
+    )
 
     try:
         email_service.send_simple_email(
             to=invite_email,
-            subject="Pozvánka od servisu do TooZ Hub 2",
+            subject=f"Pozvánka od servisu do aplikace {APP_DISPLAY_NAME}",
             body=body,
             html_body=html_body,
         )
@@ -1939,7 +1962,6 @@ def list_service_customers(
 
     result = []
     for link, customer in links:
-        customer_email_key = _normalize_email(customer.email)
         shared_vehicle_ids = _get_shared_vehicle_ids_for_pair(
             db,
             service_customer_id=current_user.id,
@@ -1948,9 +1970,10 @@ def list_service_customers(
         customer_vehicles = _get_customer_vehicle_rows(db, customer)
         last_service_date = (
             db.query(func.max(ServiceRecordModel.performed_at))
-            .join(VehicleModel, ServiceRecordModel.vehicle_id == VehicleModel.id)
+            .join(VehicleOwnership, VehicleOwnership.vehicle_id == ServiceRecordModel.vehicle_id)
             .filter(
-                func.lower(VehicleModel.user_email) == customer_email_key,
+                VehicleOwnership.customer_id == customer.id,
+                VehicleOwnership.is_active.is_(True),
                 ServiceRecordModel.user_id == current_user.id,
             )
             .scalar()
@@ -1969,6 +1992,203 @@ def list_service_customers(
             }
         )
     return result
+
+
+@router.post("/vehicle-lookup", response_model=ServiceVehicleLookupResponseV1)
+def lookup_vehicle_for_service(
+    payload: ServiceVehicleLookupRequestV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Servisní lookup vozidla podle SPZ/VIN. Před schválením vrací jen omezenou identifikaci.
+    """
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    raw_query = str(payload.query or "").strip()
+    vehicle, owner_customer, normalized_query, identifier_type, result_status = resolve_vehicle_for_lookup(
+        db,
+        current_user=current_user,
+        query=raw_query,
+    )
+
+    candidates: list[dict[str, Any]] = []
+    if vehicle and owner_customer:
+        candidates.append(
+            _lookup_candidate_payload(
+                vehicle=vehicle,
+                owner_customer=owner_customer,
+                status=result_status,
+                can_request_access=result_status not in {"already_approved", "pending_request"},
+            )
+        )
+
+    log_vehicle_lookup(
+        db,
+        current_user=current_user,
+        raw_query=raw_query,
+        normalized_query=normalized_query,
+        identifier_type=identifier_type,
+        vehicle=vehicle,
+        owner_customer=owner_customer,
+        result_status=result_status,
+        returned_candidate_count=len(candidates),
+    )
+    db.commit()
+    return {"candidates": candidates}
+
+
+@router.post("/access-requests")
+def create_service_access_request(
+    payload: ServiceAccessRequestCreateV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Servis vytvoří žádost o přístup k vozidlu nalezenému přes SPZ/VIN.
+    """
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    raw_query = str(payload.lookup_query or "").strip()
+    vehicle: Optional[VehicleModel] = None
+    owner_customer: Optional[Customer] = None
+    normalized_query = ""
+    identifier_type = "unknown"
+    result_status = "not_found"
+
+    if payload.vehicle_id:
+        vehicle = db.query(VehicleModel).filter(VehicleModel.id == int(payload.vehicle_id)).first()
+        if vehicle:
+            owner_customer = get_primary_vehicle_owner(db, vehicle)
+            normalized_query, identifier_type = normalize_lookup_query(raw_query)
+            result_status = "matched" if owner_customer else "owner_missing"
+    else:
+        vehicle, owner_customer, normalized_query, identifier_type, result_status = resolve_vehicle_for_lookup(
+            db,
+            current_user=current_user,
+            query=raw_query,
+        )
+
+    audit = log_vehicle_lookup(
+        db,
+        current_user=current_user,
+        raw_query=raw_query,
+        normalized_query=normalized_query,
+        identifier_type=identifier_type,
+        vehicle=vehicle,
+        owner_customer=owner_customer,
+        result_status=result_status,
+        returned_candidate_count=1 if vehicle and owner_customer else 0,
+    )
+
+    if not vehicle or not owner_customer:
+        db.commit()
+        raise HTTPException(status_code=404, detail="Pro zadanou SPZ nebo VIN nebylo nalezeno schvalovatelné vozidlo.")
+    if owner_customer.id == current_user.id:
+        db.commit()
+        raise HTTPException(status_code=400, detail="Servis nemůže žádat o přístup ke svému vlastnímu vozidlu.")
+
+    active_link = (
+        db.query(VehicleServiceLink.id)
+        .filter(
+            VehicleServiceLink.service_customer_id == current_user.id,
+            VehicleServiceLink.vehicle_id == vehicle.id,
+            VehicleServiceLink.status == "approved",
+        )
+        .first()
+    )
+    if active_link:
+        db.commit()
+        raise HTTPException(status_code=409, detail="Servis už má k tomuto vozidlu schválený přístup.")
+
+    existing_pending = (
+        db.query(ServiceAccessRequest)
+        .filter(
+            ServiceAccessRequest.service_customer_id == current_user.id,
+            ServiceAccessRequest.vehicle_id == vehicle.id,
+            ServiceAccessRequest.status == "pending",
+        )
+        .order_by(ServiceAccessRequest.id.desc())
+        .first()
+    )
+    if existing_pending:
+        db.commit()
+        return {
+            "created": False,
+            "request_id": int(existing_pending.id),
+            "status": "pending",
+            "message": "Pro toto vozidlo už existuje čekající žádost o přístup.",
+        }
+
+    request_row = ServiceAccessRequest(
+        tenant_id=vehicle.tenant_id or current_user.tenant_id or owner_customer.tenant_id or 1,
+        service_customer_id=current_user.id,
+        owner_customer_id=owner_customer.id,
+        vehicle_id=vehicle.id,
+        lookup_audit_id=audit.id,
+        requested_scope="history_read_create_record",
+        status="pending",
+        request_message=(payload.note or "").strip() or None,
+        requested_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(request_row)
+    db.commit()
+    db.refresh(request_row)
+    return {
+        "created": True,
+        "request_id": int(request_row.id),
+        "status": "pending",
+        "message": "Žádost o přístup byla uložena a čeká na schválení uživatelem.",
+    }
+
+
+@router.get("/approved-vehicles", response_model=ServiceApprovedVehicleListOutV1)
+def list_approved_service_vehicles(
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Vrátí vozidla, ke kterým má servis schválený přístup.
+    """
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    rows = (
+        db.query(VehicleServiceLink, VehicleModel, Customer)
+        .join(VehicleModel, VehicleServiceLink.vehicle_id == VehicleModel.id)
+        .outerjoin(Customer, VehicleServiceLink.owner_customer_id == Customer.id)
+        .filter(
+            VehicleServiceLink.service_customer_id == current_user.id,
+            VehicleServiceLink.status == "approved",
+        )
+        .order_by(VehicleServiceLink.updated_at.desc(), VehicleServiceLink.id.desc())
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": int(vehicle.id),
+                "customer_id": int(owner.id) if owner else None,
+                "customer_name": (
+                    owner.name or owner.email
+                    if owner and owner.id != current_user.id
+                    else (
+                        f"Čeká na registraci: {vehicle.user_email}"
+                        if getattr(vehicle, "user_email", None) and str(vehicle.user_email).lower() != str(current_user.email).lower()
+                        else (owner.name or owner.email if owner else "Čeká na registraci")
+                    )
+                ),
+                "vehicle_name": vehicle_label(vehicle),
+                "vehicle_plate": vehicle.plate,
+                "last_shared_at": link.updated_at.isoformat() if link.updated_at else None,
+            }
+            for link, vehicle, owner in rows
+        ]
+    }
 
 
 @router.post("/customers/link-existing")
@@ -2382,6 +2602,33 @@ def list_customer_vehicles(
     ]
 
 
+def _build_workspace_vehicle_row(
+    *,
+    tenant_id: int,
+    owner_email: str,
+    payload: ServiceWorkspaceVehicleCreateRequest,
+) -> VehicleModel:
+    normalized_plate = str(payload.plate or "").strip() or None
+    normalized_vin = str(payload.vin or "").strip().upper() or None
+    return VehicleModel(
+        tenant_id=tenant_id,
+        user_email=owner_email,
+        nickname=str(payload.nickname or "").strip(),
+        plate=normalized_plate,
+        vin=normalized_vin,
+        brand=str(payload.brand or "").strip() or None,
+        model=str(payload.model or "").strip() or None,
+        year=payload.year,
+        engine=str(payload.engine or "").strip() or None,
+        notes=str(payload.notes or "").strip() or None,
+        stk_valid_until=payload.stk_valid_until,
+        current_mileage_km=payload.current_mileage_km,
+        last_stk_mileage_km=payload.last_stk_mileage_km,
+        mileage_checked_at=datetime.utcnow() if payload.last_stk_mileage_km is not None else None,
+        tyres_info=str(payload.tyres_info or "").strip() or None,
+    )
+
+
 @router.post("/customers/{customer_id}/vehicles")
 def create_customer_vehicle(
     customer_id: int,
@@ -2403,6 +2650,8 @@ def create_customer_vehicle(
 
     normalized_plate = str(payload.plate or "").strip() or None
     normalized_vin = str(payload.vin or "").strip().upper() or None
+    if payload.orv_scan_id and not normalized_vin:
+        raise HTTPException(status_code=422, detail="ORV scan vyžaduje doplněný VIN před uložením vozidla.")
     normalized_stk = payload.stk_valid_until
     if not normalized_stk:
         raise HTTPException(status_code=422, detail="Vyplňte platnost STK.")
@@ -2443,32 +2692,28 @@ def create_customer_vehicle(
         if duplicate_vin:
             raise HTTPException(status_code=409, detail="Vozidlo s tímto VIN už v tenantu existuje.")
 
-    vehicle = VehicleModel(
+    vehicle = _build_workspace_vehicle_row(
         tenant_id=tenant_id,
-        user_email=customer_email_key,
-        nickname=str(payload.nickname or "").strip(),
-        plate=normalized_plate,
-        vin=normalized_vin,
-        brand=str(payload.brand or "").strip() or None,
-        model=str(payload.model or "").strip() or None,
-        year=payload.year,
-        engine=str(payload.engine or "").strip() or None,
-        notes=str(payload.notes or "").strip() or None,
-        stk_valid_until=normalized_stk,
-        current_mileage_km=payload.current_mileage_km,
-        last_stk_mileage_km=payload.last_stk_mileage_km,
-        mileage_checked_at=datetime.utcnow() if payload.last_stk_mileage_km is not None else None,
-        tyres_info=str(payload.tyres_info or "").strip() or None,
+        owner_email=customer_email_key,
+        payload=payload,
     )
     db.add(vehicle)
     db.flush()
-
-    _upsert_service_vehicle_access(
+    apply_orv_scan_to_vehicle(
+        db=db,
+        vehicle=vehicle,
+        current_user=current_user,
+        scan_id=payload.orv_scan_id,
+        orv_number=payload.orv_number,
+        use_owner_data=payload.orv_use_owner_data,
+        data_trust_state=payload.data_trust_state or "verified_by_user",
+        create_payload=payload.dict(),
+    )
+    ensure_vehicle_owner_assignment(
         db,
-        service_customer_id=current_user.id,
-        customer_id=customer.id,
-        vehicle_id=int(vehicle.id),
-        note="Vozidlo přidáno servisem",
+        vehicle=vehicle,
+        owner=customer,
+        assigned_by_customer_id=current_user.id,
     )
 
     db.commit()
@@ -2481,6 +2726,9 @@ def create_customer_vehicle(
         "nickname": vehicle.nickname,
         "plate": vehicle.plate,
         "vin": vehicle.vin,
+        "orv_number": vehicle.orv_number,
+        "orv_scan_source": vehicle.orv_scan_source,
+        "data_trust_state": vehicle.data_trust_state,
         "brand": vehicle.brand,
         "model": vehicle.model,
         "year": vehicle.year,
@@ -2493,6 +2741,181 @@ def create_customer_vehicle(
         "is_shared": True,
         "message": "Vozidlo bylo přidáno ke klientovi a zpřístupněno servisu.",
     }
+
+
+@router.post("/pending-vehicles")
+def create_pending_vehicle_registration(
+    payload: PendingVehicleRegistrationRequest,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    invite_email = _normalize_email(payload.invite_email)
+    if not invite_email:
+        raise HTTPException(status_code=422, detail="Email budoucího vlastníka je povinný.")
+
+    vehicle_payload = payload.vehicle
+    normalized_vin = str(vehicle_payload.vin or "").strip().upper() or None
+    if not normalized_vin:
+        raise HTTPException(status_code=422, detail="Pro předregistraci vozidla je povinný VIN.")
+
+    existing_vehicle = (
+        db.query(VehicleModel)
+        .filter(VehicleModel.vin == normalized_vin)
+        .order_by(VehicleModel.created_at.asc(), VehicleModel.id.asc())
+        .first()
+    )
+    if existing_vehicle:
+        raise HTTPException(
+            status_code=409,
+            detail="Vozidlo s tímto VIN už v databázi existuje. Použijte lookup a navazující žádost o přístup.",
+        )
+
+    existing_customer = _find_customer_by_email(db, invite_email)
+    if existing_customer and existing_customer.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Nelze předregistrovat vozidlo na servisní účet.")
+
+    try:
+        if existing_customer:
+            _, created_link = _upsert_service_customer_link(
+                db,
+                service_customer_id=current_user.id,
+                service_tenant_id=current_user.tenant_id,
+                target_customer=existing_customer,
+                note="Propojeno při předregistraci vozidla servisem",
+            )
+            vehicle = _build_workspace_vehicle_row(
+                tenant_id=int(existing_customer.tenant_id or current_user.tenant_id or 1),
+                owner_email=invite_email,
+                payload=vehicle_payload,
+            )
+            db.add(vehicle)
+            db.flush()
+            apply_orv_scan_to_vehicle(
+                db=db,
+                vehicle=vehicle,
+                current_user=current_user,
+                scan_id=vehicle_payload.orv_scan_id,
+                orv_number=vehicle_payload.orv_number,
+                use_owner_data=vehicle_payload.orv_use_owner_data,
+                data_trust_state=vehicle_payload.data_trust_state or "verified_by_service",
+                create_payload=vehicle_payload.dict(),
+            )
+            ensure_vehicle_owner_assignment(
+                db,
+                vehicle=vehicle,
+                owner=existing_customer,
+                assigned_by_customer_id=current_user.id,
+                ownership_origin="service_pre_registration",
+            )
+            create_or_update_vehicle_service_link(
+                db,
+                tenant_id=vehicle.tenant_id,
+                service_customer_id=current_user.id,
+                owner_customer_id=existing_customer.id,
+                vehicle_id=vehicle.id,
+                approved_by_customer_id=current_user.id,
+                source_type="service_pre_registration",
+                note="Vozidlo bylo založeno servisem pro existující zákaznický účet.",
+            )
+            db.commit()
+            return {
+                "vehicle_id": vehicle.id,
+                "customer_id": existing_customer.id,
+                "linked_now": True,
+                "already_linked": not created_link,
+                "email_sent": False,
+                "registration_state": "linked_existing_customer",
+                "message": "Existující účet byl propojen a vozidlo bylo založeno přímo do profilu zákazníka.",
+            }
+
+        (
+            db.query(ServiceCustomerInvite)
+            .filter(
+                ServiceCustomerInvite.service_customer_id == current_user.id,
+                func.lower(ServiceCustomerInvite.invite_email) == invite_email,
+                ServiceCustomerInvite.status == "pending",
+            )
+            .update(
+                {
+                    ServiceCustomerInvite.status: "cancelled",
+                    ServiceCustomerInvite.updated_at: datetime.utcnow(),
+                },
+                synchronize_session=False,
+            )
+        )
+
+        token = secrets.token_urlsafe(32)
+        invitation_url = _build_invitation_url(token)
+        invite = ServiceCustomerInvite(
+            service_tenant_id=current_user.tenant_id,
+            service_customer_id=current_user.id,
+            invite_email=invite_email,
+            invite_name=(payload.invite_name or "").strip() or None,
+            invite_message=(payload.invite_message or "").strip() or None,
+            token=token,
+            status="pending",
+            sent_at=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(days=30),
+        )
+        db.add(invite)
+        db.flush()
+
+        vehicle = _build_workspace_vehicle_row(
+            tenant_id=int(current_user.tenant_id or 1),
+            owner_email=invite_email,
+            payload=vehicle_payload,
+        )
+        db.add(vehicle)
+        db.flush()
+        apply_orv_scan_to_vehicle(
+            db=db,
+            vehicle=vehicle,
+            current_user=current_user,
+            scan_id=vehicle_payload.orv_scan_id,
+            orv_number=vehicle_payload.orv_number,
+            use_owner_data=vehicle_payload.orv_use_owner_data,
+            data_trust_state=vehicle_payload.data_trust_state or "verified_by_service",
+            create_payload=vehicle_payload.dict(),
+        )
+        create_or_update_vehicle_service_link(
+            db,
+            tenant_id=vehicle.tenant_id,
+            service_customer_id=current_user.id,
+            owner_customer_id=current_user.id,
+            vehicle_id=vehicle.id,
+            approved_by_customer_id=current_user.id,
+            source_type="pending_owner_registration",
+            note="Vozidlo bylo předregistrováno servisem a čeká na převzetí budoucím vlastníkem.",
+        )
+        db.commit()
+
+        email_sent = _send_invitation_email(
+            service_user=current_user,
+            invite_email=invite_email,
+            invite_name=payload.invite_name,
+            invite_message=payload.invite_message,
+            invitation_url=invitation_url,
+        )
+        return {
+            "vehicle_id": vehicle.id,
+            "linked_now": False,
+            "email_sent": bool(email_sent),
+            "registration_state": "pending_registration",
+            "registration_url": invitation_url,
+            "message": (
+                "Vozidlo bylo zaevidováno a pozvánka odeslána."
+                if email_sent
+                else "Vozidlo bylo zaevidováno. SMTP není dostupné, registrační odkaz pošlete zákazníkovi ručně."
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Předregistrace vozidla selhala: {exc}") from exc
 
 
 @router.get("/reminders")
@@ -2569,6 +2992,9 @@ def list_service_workspace_reminders(
                 "notification_method": reminder.notification_method,
                 "is_completed": bool(reminder.is_completed),
                 "is_manual": bool(reminder.is_manual),
+                "is_recurring": bool(is_recurring_reminder(reminder)),
+                "recurrence_group_id": getattr(reminder, "recurrence_group_id", None),
+                "recurrence_index": getattr(reminder, "recurrence_index", None),
                 "created_at": reminder.created_at.isoformat() if reminder.created_at else None,
                 "service_account_id": current_user.id,
             }
@@ -2588,14 +3014,11 @@ def create_service_workspace_reminder(
     customer = _get_linked_customer_or_404(db, current_user, int(payload.customer_id))
     vehicle = None
     if payload.vehicle_id:
-        customer_email_key = _normalize_email(customer.email)
-        vehicle = (
-            db.query(VehicleModel)
-            .filter(
-                VehicleModel.id == int(payload.vehicle_id),
-                func.lower(VehicleModel.user_email) == customer_email_key,
-            )
-            .first()
+        vehicle = get_owned_vehicle(
+            db,
+            customer,
+            int(payload.vehicle_id),
+            tenant_id=getattr(customer, "tenant_id", None),
         )
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vybrané vozidlo klienta nebylo nalezeno.")
@@ -2615,15 +3038,6 @@ def create_service_workspace_reminder(
     )
     db.add(reminder)
     db.flush()
-
-    if vehicle is not None:
-        _upsert_service_vehicle_access(
-            db,
-            service_customer_id=current_user.id,
-            customer_id=customer.id,
-            vehicle_id=int(vehicle.id),
-            note="Sdílení potvrzeno přes servisní připomínku",
-        )
 
     db.commit()
     db.refresh(reminder)
@@ -2645,6 +3059,9 @@ def create_service_workspace_reminder(
         "notification_method": reminder.notification_method,
         "is_completed": bool(reminder.is_completed),
         "is_manual": bool(reminder.is_manual),
+        "is_recurring": bool(is_recurring_reminder(reminder)),
+        "recurrence_group_id": getattr(reminder, "recurrence_group_id", None),
+        "recurrence_index": getattr(reminder, "recurrence_index", None),
         "created_at": reminder.created_at.isoformat() if reminder.created_at else None,
         "service_account_id": current_user.id,
     }
@@ -2699,9 +3116,7 @@ def update_service_workspace_reminder(
     if "notification_method" in fields_set:
         reminder.notification_method = _normalize_service_reminder_notification_method(payload.notification_method)
     if "is_completed" in fields_set and payload.is_completed is not None:
-        reminder.is_completed = bool(payload.is_completed)
-        if reminder.is_completed:
-            reminder.last_notified_at = None
+        apply_reminder_completion_update(reminder, bool(payload.is_completed))
 
     db.commit()
     db.refresh(reminder)
@@ -2728,6 +3143,9 @@ def update_service_workspace_reminder(
         "notification_method": reminder.notification_method,
         "is_completed": bool(reminder.is_completed),
         "is_manual": bool(reminder.is_manual),
+        "is_recurring": bool(is_recurring_reminder(reminder)),
+        "recurrence_group_id": getattr(reminder, "recurrence_group_id", None),
+        "recurrence_index": getattr(reminder, "recurrence_index", None),
         "created_at": reminder.created_at.isoformat() if reminder.created_at else None,
         "service_account_id": current_user.id,
     }
@@ -2865,12 +3283,22 @@ def ingest_service_document(
 
     customer = _get_linked_customer_or_404(db, current_user, payload.customer_id)
     vehicle: Optional[VehicleModel] = None
+    approved_vehicle_link: Optional[VehicleServiceLink] = None
     if payload.vehicle_id:
-        vehicle = db.query(VehicleModel).filter(VehicleModel.id == payload.vehicle_id).first()
+        vehicle = get_owned_vehicle(
+            db,
+            customer,
+            int(payload.vehicle_id),
+            tenant_id=getattr(customer, "tenant_id", None),
+        )
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vybrané vozidlo nebylo nalezeno.")
-        if _normalize_email(vehicle.user_email) != _normalize_email(customer.email):
-            raise HTTPException(status_code=403, detail="Vozidlo nepatří vybranému zákazníkovi.")
+        approved_vehicle_link = require_service_vehicle_link(
+            db,
+            current_user=current_user,
+            vehicle_id=int(vehicle.id),
+            require_create_record=bool(payload.auto_create_service_record),
+        )
 
     raw_file_content = b""
     if payload.file_content_base64:
@@ -2966,6 +3394,8 @@ def ingest_service_document(
                 tenant_id=vehicle.tenant_id or current_user.tenant_id or 1,
                 vehicle_id=vehicle.id,
                 user_id=current_user.id,
+                created_by_service_customer_id=current_user.id,
+                service_access_link_id=approved_vehicle_link.id if approved_vehicle_link else None,
                 performed_at=performed_at,
                 mileage=None,
                 description=_build_service_record_description(parsed_data),
