@@ -1,7 +1,7 @@
 # LEGAL_IMPLEMENTATION_AUDIT
 
 Datum auditu: 8. 3. 2026  
-Projekt: TooZ Hub 2  
+Projekt: Správa vozidel  
 Rozsah: UI + backend + DB schéma + platební flow + cookies/storage + logování + anti-abuse  
 Porovnávané dokumenty: `obchodni-podminky.html`, `reklamacni-rad.html`, `ochrana-osobnich-udaju.html`, `cookies.html`, `platebni-podminky.html`
 

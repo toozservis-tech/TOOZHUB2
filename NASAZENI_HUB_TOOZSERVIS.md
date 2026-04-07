@@ -1,10 +1,10 @@
-# 🚀 Nasazení TooZ Hub 2 na hub.toozservis.cz
+# 🚀 Nasazení aplikace Správa vozidel na hub.toozservis.cz
 
 ## 📋 Přehled architektury
 
 ```
-bot.toozservis.cz  → chatbot (TooZ Autopilot) - JINÝ PROJEKT
-hub.toozservis.cz  → TooZ Hub 2 backend (FastAPI) - NOVÝ
+bot.toozservis.cz  → chatbot (Autopilot) – jiný projekt
+hub.toozservis.cz  → Správa vozidel backend (FastAPI) - NOVÝ
 www.toozservis.cz  → Webnode (frontend s iframe)
 ```
 
@@ -66,7 +66,7 @@ Každá služba má vlastní subdoménu - čisté rozdělení, žádné konflikt
 
 ---
 
-## 2️⃣ Konfigurace TooZ Hub 2
+## 2️⃣ Konfigurace Správa vozidel
 
 ### Nastavení v `.env` souboru
 
@@ -117,7 +117,7 @@ Můžete přidat další přes proměnnou `ALLOWED_ORIGINS`.
 
 ### Varianta A: iframe (nejjednodušší)
 
-V Webnode editoru na stránce typu "TOOZHUB APLIKACE" nebo "Můj vozový park":
+V Webnode editoru na stránce typu "SPRÁVA VOZIDEL" nebo "Můj vozový park":
 
 ```html
 <iframe 
@@ -137,7 +137,7 @@ Vložte do Webnode tento HTML:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TooZ Hub 2</title>
+    <title>Správa vozidel</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { height: 100%; overflow: hidden; }
@@ -183,7 +183,7 @@ Vložte do Webnode tento HTML:
 
 ### Varianta B: JS Widget (pokročilejší, pro budoucí rozšíření)
 
-Pro tuto variantu by bylo potřeba vytvořit widget endpoint v TooZ Hub 2, což je mimo rozsah této dokumentace.
+Pro tuto variantu by bylo potřeba vytvořit widget endpoint v Správa vozidel, což je mimo rozsah této dokumentace.
 
 ---
 
@@ -213,7 +213,7 @@ const DEFAULT_API_URL = window.location.hostname === 'hub.toozservis.cz'
 ### Krok 1: Příprava na serveru
 
 ```bash
-cd /home/toozservis/TOOZHUB2
+cd /home/toozservis/sprava-vozidel
 
 # Aktualizovat z Gitu (pokud používáte Git)
 git pull
@@ -249,16 +249,16 @@ Vytvořte `/etc/systemd/system/toozhub-server.service`:
 
 ```ini
 [Unit]
-Description=TooZ Hub 2 API Server
+Description=Správa vozidel API Server
 After=network.target
 
 [Service]
 Type=simple
 User=toozservis
-WorkingDirectory=/home/toozservis/TOOZHUB2
-Environment="PATH=/home/toozservis/TOOZHUB2/venv/bin"
-EnvironmentFile=/home/toozservis/TOOZHUB2/.env
-ExecStart=/home/toozservis/TOOZHUB2/venv/bin/uvicorn src.server.main:app --host 127.0.0.1 --port 8000
+WorkingDirectory=/home/toozservis/sprava-vozidel
+Environment="PATH=/home/toozservis/sprava-vozidel/venv/bin"
+EnvironmentFile=/home/toozservis/sprava-vozidel/.env
+ExecStart=/home/toozservis/sprava-vozidel/venv/bin/uvicorn src.server.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=10
 
@@ -313,7 +313,7 @@ Odpověď:
 ```json
 {
   "status": "online",
-  "service": "TooZ Hub 2 API",
+  "service": "Správa vozidel API",
   "version": "2.0.0"
 }
 ```

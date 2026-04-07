@@ -15,11 +15,11 @@
 - V obchodních podmínkách i reklamačním řádu doplněn korektní spotřebitelský režim vad digitální služby: odstranění vady v přiměřené době, sleva/odstoupení při splnění zákonných podmínek, zákaz odstoupení pro nevýznamnou vadu.
 - Zpřesněn režim odstoupení pro digitální službu zahájenou před uplynutím 14 dnů na základě aktivního potvrzení spotřebitele.
 - Do obchodních a platebních podmínek doplněna logika důkazního záznamu souhlasu (timestamp, user ID, text souhlasu, verze dokumentu, IP/relace pokud dostupná) a doporučení potvrzovacího e-mailu na trvalém nosiči.
-- Kompletní přepis `web/reklamacni-rad.html` na digitální službu TooZ Hub 2: přesné kategorie podání, co není reklamace, procesní workflow, možnost vyžádat součinnost, důkazní význam auditních/payment logů, pravidla refundací.
+- Kompletní přepis `web/reklamacni-rad.html` na digitální službu Správa vozidel: přesné kategorie podání, co není reklamace, procesní workflow, možnost vyžádat součinnost, důkazní význam auditních/payment logů, pravidla refundací.
 - Kompletní přepis `web/ochrana-osobnich-udaju.html` s novými sekcemi: „Údaje o vozidle vs. údaje o osobě“, role správce vs. zpracovatele, autorizace vložení údajů, ověření identity při výkonu práv, retenční kritéria, příjemci/zpracovatelé, třetí země, prevence podvodů a obhajoba nároků.
 - Kompletní přepis `web/cookies.html` s technicky konkrétní tabulkou reálně používaných klíčů localStorage/sessionStorage a výslovným potvrzením, že nejsou aktivní analytické/marketingové cookies.
 - Kompletní přepis `web/platebni-podminky.html` ve prospěch poskytovatele: aktivace pouze po `PAID`, explicitní vyloučení nároku při `PENDING/CANCELLED/FAILED/EXPIRED`, risk/fraud/chargeback kontrola, jasná refund logika.
-- Ve všech dokumentech sjednocena identifikace poskytovatele, kontaktní e-mail, brand logika (TooZ Hub 2 = služba; TooZ Servis = poskytovatel), verze dokumentu, datum účinnosti, věta o online aktuální verzi a cross-linking.
+- Ve všech dokumentech sjednocena identifikace poskytovatele, kontaktní e-mail, brand logika (Správa vozidel = služba; TooZ Servis = poskytovatel), verze dokumentu, datum účinnosti, věta o online aktuální verzi a cross-linking.
 - Do každého HTML souboru doplněn závěrečný komentář `<!-- CHANGES: ... -->`.
 
 ## Proč je to lepší pro poskytovatele

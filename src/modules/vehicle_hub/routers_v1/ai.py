@@ -1,5 +1,5 @@
 """
-AI Endpoint v1.0 router (pro TooZ Autopilota)
+AI Endpoint v1.0 router (autopilot integrace)
 """
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
@@ -89,7 +89,7 @@ def create_record_from_ai(
     db: Session = Depends(get_db)
 ):
     """
-    Vytvoří servisní záznam z AI zprávy (TooZ Autopilot).
+    Vytvoří servisní záznam z AI zprávy (autopilot integrace).
     
     Očekává:
     - shared_secret: pro autentizaci

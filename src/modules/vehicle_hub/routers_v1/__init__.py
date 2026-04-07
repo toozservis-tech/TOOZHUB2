@@ -1,5 +1,5 @@
 """
-API Routery pro TooZ Hub v1.0
+API Routery pro Správu vozidel (API v1)
 Všechny endpointy pod prefixem /api/v1/
 """
 from fastapi import APIRouter

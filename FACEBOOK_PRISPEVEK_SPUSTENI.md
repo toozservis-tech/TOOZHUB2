@@ -1,12 +1,12 @@
-# 📱 Příspěvek na Facebook - Spuštění TooZ Hub 2
+# 📱 Příspěvek na Facebook – spuštění aplikace Správa vozidel
 
 ## Verze 1: Profesionální a stručná
 
-🚗 **TooZ Hub 2 je tady!** 🎉
+🚗 **Správa vozidel je tady!** 🎉
 
 Jsme rádi, že můžeme oznámit spuštění naší nové aplikace pro správu vozidel a dokumentů!
 
-✨ **Co vám TooZ Hub 2 nabízí:**
+✨ **Co vám Správa vozidel nabízí:**
 • 🚗 Kompletní správa vozidel s databází
 • 🔍 VIN dekodér s integrací MDČR a NHTSA API
 • 📝 Servisní záznamy a historie
@@ -18,7 +18,7 @@ Jsme rádi, že můžeme oznámit spuštění naší nové aplikace pro správu 
 
 Navštivte náš web a začněte spravovat svá vozidla jednoduše a efektivně!
 
-# TooZHub #SprávaVozidel #Autoservis #VINdekoder #TooZServis
+# SpravaVozidel #SprávaVozidel #Autoservis #VINdekoder #TooZServis
 
 ---
 
@@ -26,7 +26,7 @@ Navštivte náš web a začněte spravovat svá vozidla jednoduše a efektivně!
 
 Ahoj všichni! 👋
 
-Máme skvělou novinku! 🎉 Spustili jsme **TooZ Hub 2** - aplikaci, která vám usnadní správu vozidel a všech souvisejících dokumentů.
+Máme skvělou novinku! 🎉 Spustili jsme **Správa vozidel** - aplikaci, která vám usnadní správu vozidel a všech souvisejících dokumentů.
 
 Proč by vás to mělo zajímat? 🤔
 
@@ -40,7 +40,7 @@ Více informací a přístup k aplikaci najdete na našich webových stránkách
 
 Vyzkoušejte ji a dejte nám vědět, co si o ní myslíte! 💬
 
-# TooZHub #SprávaVozidel #Autoservis #TooZServis
+# SpravaVozidel #SprávaVozidel #Autoservis #TooZServis
 
 ---
 
@@ -48,7 +48,7 @@ Vyzkoušejte ji a dejte nám vědět, co si o ní myslíte! 💬
 
 🎯 **Už vás nebaví hledat dokumenty k autu po celém bytě?**
 
-**TooZ Hub 2** to řeší za vás!
+**Správa vozidel** to řeší za vás!
 
 📱 **Jednoduchá správa vozidel:**
 → Všechny informace o vašich autech na jednom místě
@@ -63,7 +63,7 @@ Vyzkoušejte ji a dejte nám vědět, co si o ní myslíte! 💬
 
 🌐 **Začněte ještě dnes:** Navštivte <https://toozservis.cz> a zjistěte více!
 
-# TooZHub #SprávaVozidel #Autoservis #TooZServis
+# SpravaVozidel #SprávaVozidel #Autoservis #TooZServis
 
 ---
 
@@ -71,7 +71,7 @@ Vyzkoušejte ji a dejte nám vědět, co si o ní myslíte! 💬
 
 🔧 **Pro autoservisy a majitele vozidel**
 
-Spustili jsme **TooZ Hub 2** - profesionální nástroj pro správu vozidel a dokumentů.
+Spustili jsme **Správa vozidel** - profesionální nástroj pro správu vozidel a dokumentů.
 
 **Hlavní funkce:**
 • Správa vozidel s kompletní databází
@@ -89,23 +89,23 @@ Spustili jsme **TooZ Hub 2** - profesionální nástroj pro správu vozidel a do
 
 Začněte používat ještě dnes a zjednodušte si správu vozidel!
 
-# TooZHub #Autoservis #SprávaVozidel #VINdekoder #TooZServis
+# SpravaVozidel #Autoservis #SprávaVozidel #VINdekoder #TooZServis
 
 ---
 
 ## Verze 5: Krátká a výstižná (pro Stories nebo krátký post)
 
-🚗 **TooZ Hub 2 je online!**
+🚗 **Správa vozidel je online!**
 
 Správa vozidel nikdy nebyla jednodušší ✨
 
 🌐 Více na: <https://toozservis.cz>
 
-# TooZHub #SprávaVozidel #TooZServis
+# SpravaVozidel #SprávaVozidel #TooZServis
 
 ## 📝 Poznámky pro publikování
 
-1. **Obrázek:** Přidejte screenshot aplikace nebo logo TooZ Hub
+1. **Obrázek:** Přidejte screenshot aplikace nebo logo Správa vozidel
 2. **Hashtagy:** Můžete přidat další relevantní hashtagy podle vaší cílové skupiny
 3. **Odkaz:** Ujistěte se, že odkaz <https://toozservis.cz> funguje a že na webu je odkaz na aplikaci
 4. **Call-to-action:** Zvažte přidání tlačítka "Zjistit více" nebo "Navštívit web"
@@ -114,6 +114,6 @@ Správa vozidel nikdy nebyla jednodušší ✨
 ## 🎨 Doporučení pro vizuál
 
 - Screenshot hlavní obrazovky aplikace
-- Logo TooZ Hub
+- Logo Správa vozidel
 - Ilustrace s autem a nástroji
 - Infografika s hlavními funkcemi

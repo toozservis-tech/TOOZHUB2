@@ -20469,7 +20469,8 @@
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.addEventListener('message', (event) => {
                     const payload = event && event.data ? event.data : null;
-                    if (!payload || payload.type !== 'TOOZHUB_NOTIFICATION_CLICK' || !payload.url) return;
+                    const _pushClickTypes = ['SPRAVA_VOZIDEL_NOTIFICATION_CLICK', 'TOOZHUB_NOTIFICATION_CLICK'];
+                    if (!payload || !_pushClickTypes.includes(payload.type) || !payload.url) return;
                     try {
                         const parsed = new URL(payload.url, window.location.origin);
                         const tab = parsed.searchParams.get('tab');

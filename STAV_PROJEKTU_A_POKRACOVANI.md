@@ -1,4 +1,4 @@
-# Stav projektu TooZ Hub 2 – kde jsme skončili a kde pokračovat
+# Stav projektu Správa vozidel – kde jsme skončili a kde pokračovat
 
 **Datum:** 2026-01-25
 

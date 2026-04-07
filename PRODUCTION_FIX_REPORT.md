@@ -1,4 +1,4 @@
-# PRODUCTION FIX REPORT - TooZ Hub 2
+# PRODUCTION FIX REPORT - Správa vozidel
 ## Datum: 2025-12-29
 
 ## Shrnutí Změn
@@ -242,7 +242,7 @@ Aplikace automaticky přidává tyto security headers:
 - `Permissions-Policy: geolocation=(), microphone=(), camera=()`
 - `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` (pouze HTTPS)
 - `Content-Security-Policy: ...` (podle prostředí)
-- `Server: TooZ Hub` (skrytí server info)
+- `Server: Správa vozidel` (skrytí server info)
 
 ---
 

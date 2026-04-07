@@ -1,4 +1,4 @@
-# Diagnostika přihlášení – TooZ Hub 2
+# Diagnostika přihlášení – Správa vozidel
 
 ## Co bylo přidáno
 

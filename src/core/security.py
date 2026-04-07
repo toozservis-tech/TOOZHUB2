@@ -1,5 +1,5 @@
 """
-Bezpečnostní modul pro TooZ Hub 2
+Bezpečnostní modul pro Správu vozidel
 - Hashování hesel pomocí bcrypt
 - JWT tokeny pro autentizaci
 """

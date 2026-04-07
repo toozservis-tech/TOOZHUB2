@@ -1,5 +1,5 @@
 """
-AI Asistent Bot Router pro TooZ Hub 2
+AI Asistent Bot Router pro Správu vozidel
 
 Tento router poskytuje endpointy pro komunikaci s AI asistentem.
 Bot přijímá textové příkazy, zpracovává je a provádí akce v systému.

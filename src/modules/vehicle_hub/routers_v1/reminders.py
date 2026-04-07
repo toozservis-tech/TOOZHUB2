@@ -9,6 +9,8 @@ from typing import List, Optional
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from src.core.branding import APP_DISPLAY_NAME
+
 from ..database import get_db
 from ..models import (
     Vehicle as VehicleModel,
@@ -761,7 +763,7 @@ def check_and_send_reminder_notifications(
                         if vehicle:
                             vehicle_name = vehicle.nickname or vehicle.plate or f"{vehicle.brand} {vehicle.model}" or "Vozidlo"
 
-                    push_title = "📅 Připomínka TooZ Hub 2"
+                    push_title = f"📅 Připomínka · {APP_DISPLAY_NAME}"
                     if reminder.type == "STK":
                         push_title = "🚗 STK připomínka"
                     elif reminder.type == "OLEJ":

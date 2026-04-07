@@ -1,4 +1,4 @@
-# CONFIG RECOVERY REPORT - TooZ Hub 2
+# CONFIG RECOVERY REPORT - Správa vozidel
 ## Datum: 2025-12-29
 
 ## Shrnutí Problému

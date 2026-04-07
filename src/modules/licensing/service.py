@@ -1,5 +1,5 @@
 """
-License Service - produkční licencování pro TOOZHUB2
+License Service - produkční licencování pro Správu vozidel
 """
 import os
 import logging

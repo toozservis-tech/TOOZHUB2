@@ -72,7 +72,7 @@ git clone --mirror https://github.com/toozservis-tech/TOOZHUB2.git TOOZHUB2-back
 java -jar bfg.jar --delete-files .env,tunnel.log,vehicles.db TOOZHUB2.git
 
 # Vyčištění
-cd TOOZHUB2.git
+cd sprava-vozidel.git
 git reflog expire --expire=now --all
 git gc --prune=now --aggressive
 

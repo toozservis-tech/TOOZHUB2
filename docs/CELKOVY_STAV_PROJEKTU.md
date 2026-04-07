@@ -1,4 +1,4 @@
-# 📊 Celkový stav projektu TOOZHUB2 - 12. prosince 2025
+# 📊 Celkový stav projektu sprava-vozidel - 12. prosince 2025
 
 ## ✅ STAV: PROJEKT JE PLNĚ FUNKČNÍ A PŘIPRAVEN K POUŽITÍ
 

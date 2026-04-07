@@ -14,20 +14,20 @@ Soubor `web/index.html` obsahuje 3 kompletní HTML dokumenty, což způsobuje:
 
 **PowerShell:**
 ```powershell
-cd c:\Projects\TOOZHUB2
+cd c:\Projects\sprava-vozidel
 python -c "with open('web/index.html','r',encoding='utf-8') as f: lines=f.readlines(); first=[i for i,l in enumerate(lines) if '</html>' in l][0]; open('web/index.html','w',encoding='utf-8').writelines(lines[:first+1]); print(f'Opraveno: {len(lines[:first+1])} řádků z původních {len(lines)}')"
 ```
 
 **Nebo použijte Python skript:**
 ```powershell
-cd c:\Projects\TOOZHUB2
+cd c:\Projects\sprava-vozidel
 python fix_index_duplicates.py
 ```
 
 ### Metoda 2: PowerShell
 
 ```powershell
-cd c:\Projects\TOOZHUB2\web
+cd c:\Projects\sprava-vozidel\web
 $lines = Get-Content index.html -Encoding UTF8
 $firstEnd = ($lines | Select-String -Pattern '</html>' | Select-Object -First 1).LineNumber - 1
 $lines[0..$firstEnd] | Set-Content index.html -Encoding UTF8

@@ -1,4 +1,4 @@
-# Postup pro vytvoření a použití testovací verze TooZ Hub 2
+# Postup pro vytvoření a použití testovací verze Správa vozidel
 
 ## Úvod
 
@@ -18,19 +18,19 @@ Tento dokument popisuje, jak vytvořit testovací verzi projektu pro vývoj a te
 
 1. **Vytvoření worktree pro testovací verzi:**
    ```bash
-   # Z hlavní složky projektu (TOOZHUB2)
-   git worktree add ../TOOZHUB2-TEST -b test-version
+   # Z hlavní složky projektu (sprava-vozidel)
+   git worktree add ../sprava-vozidel-test -b test-version
    ```
 
 2. **Přepnutí do testovací verze:**
    ```bash
-   cd ../TOOZHUB2-TEST
+   cd ../sprava-vozidel-test
    ```
 
 3. **Nastavení testovacího prostředí:**
    - Vytvořte vlastní `.env` soubor s jiným portem (např. `PORT=8002`)
    - Upravte `VERSION` soubor na testovací verzi (např. `2.2.0-test`)
-   - Změňte název aplikace v `web/index.html` (např. "TooZ Hub 2 [TEST]")
+   - Změňte název aplikace v `web/index.html` (např. "Správa vozidel [TEST]")
 
 4. **Spuštění testovacího serveru:**
    ```bash
@@ -45,26 +45,26 @@ Tento dokument popisuje, jak vytvořit testovací verzi projektu pro vývoj a te
 
 5. **Přepnutí zpět do produkční verze:**
    ```bash
-   cd ../TOOZHUB2
+   cd ../sprava-vozidel
    ```
 
 6. **Synchronizace změn mezi verzemi:**
    ```bash
    # V testovací verzi
-   cd ../TOOZHUB2-TEST
+   cd ../sprava-vozidel-test
    git add .
    git commit -m "Testovací změny"
    git push origin test-version
    
    # V produkční verzi
-   cd ../TOOZHUB2
+   cd ../sprava-vozidel
    git merge test-version  # nebo git cherry-pick <commit-hash>
    ```
 
 7. **Odstranění worktree (když už není potřeba):**
    ```bash
    # Z hlavní složky projektu
-   git worktree remove ../TOOZHUB2-TEST
+   git worktree remove ../sprava-vozidel-test
    git branch -d test-version  # Odstranění test branch
    ```
 
@@ -84,10 +84,10 @@ Tento dokument popisuje, jak vytvořit testovací verzi projektu pro vývoj a te
 
 1. **Zkopírování projektu:**
    ```bash
-   # Zkopírujte celou složku TOOZHUB2
-   xcopy TOOZHUB2 TOOZHUB2-TEST /E /I
+   # Zkopírujte celou složku sprava-vozidel
+   xcopy sprava-vozidel sprava-vozidel-test /E /I
    # nebo použijte PowerShell
-   Copy-Item -Path TOOZHUB2 -Destination TOOZHUB2-TEST -Recurse
+   Copy-Item -Path sprava-vozidel -Destination sprava-vozidel-test -Recurse
    ```
 
 2. **Nastavení testovací verze:**
@@ -98,7 +98,7 @@ Tento dokument popisuje, jak vytvořit testovací verzi projektu pro vývoj a te
 
 3. **Aktualizace virtuálního prostředí:**
    ```bash
-   cd TOOZHUB2-TEST
+   cd sprava-vozidel-TEST
    python -m venv venv
    venv\Scripts\activate
    pip install -r requirements.txt
@@ -168,7 +168,7 @@ Tento dokument popisuje, jak vytvořit testovací verzi projektu pro vývoj a te
 
 3. **Přechod do produkční složky:**
    ```bash
-   cd TOOZHUB2
+   cd sprava-vozidel
    ```
 
 4. **Aktualizace kódu z Git:**

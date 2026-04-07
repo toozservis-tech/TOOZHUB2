@@ -7,6 +7,8 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from typing import Optional
 
+from src.core.branding import APP_DISPLAY_NAME
+
 # Cesta ke kořenovému adresáři projektu
 _project_root = Path(__file__).parent.parent.parent
 _version_file = _project_root / "VERSION"
@@ -67,4 +69,3 @@ def log_version_update(db: Session, version: str, description: Optional[str] = N
         traceback.print_exc()
         db.rollback()
         return False
-from src.core.branding import APP_DISPLAY_NAME

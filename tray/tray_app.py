@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-TooZ Hub 2 - Izolovaná Tray Aplikace
+Správa vozidel – izolovaná tray aplikace
 Samostatná tray ikonka pro monitorování a správu serveru.
 """
 
@@ -30,7 +30,7 @@ except ImportError as e:
 # KONFIGURACE
 # =============================================================================
 
-APP_NAME = "TooZ Hub 2"
+APP_NAME = "Správa vozidel"
 HEALTH_URL = "http://127.0.0.1:8000/health"
 OPEN_URL = "https://hub.toozservis.cz/web/index.html"
 CHECK_INTERVAL = 3  # sekundy

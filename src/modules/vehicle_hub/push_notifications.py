@@ -1,4 +1,4 @@
-"""Web Push helpery pro TooZ Hub 2."""
+"""Web Push helpery pro Správu vozidel."""
 
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
-# 📝 Postup - Napojení TooZ Hub 2 aplikace na Webnode
+# 📝 Postup - Napojení Správa vozidel aplikace na Webnode
 
 ## 🎯 Cíl
 
-Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/sprava-vozidel/** pomocí přesměrování na:
+Zpřístupnit Správa vozidel aplikaci na stránce **https://www.toozservis.cz/sprava-vozidel/** pomocí přesměrování na:
 
 **https://hub.toozservis.cz/web/index.html**
 
@@ -30,7 +30,7 @@ Canonical mapa aktivních a legacy větví je v `PRODUCT_ENTRYPOINTS_STATUS.md`.
 ### Krok 2: Vytvoření / otevření stránky
 
 1. Přidejte novou stránku nebo upravte existující stránku:
-   - **Název stránky:** `TooZ Hub aplikace` (doporučeno)
+   - **Název stránky:** `Aplikace Správa vozidel` (doporučeno)
    - **URL / adresa:** `/sprava-vozidel/`
    - **Typ:** běžná stránka
 
@@ -66,7 +66,7 @@ Canonical mapa aktivních a legacy větví je v `PRODUCT_ENTRYPOINTS_STATUS.md`.
    https://hub.toozservis.cz/web/index.html
    ```
 
-3. ✅ Aplikace TooZ Hub 2 se načte přes celou stránku
+3. ✅ Aplikace Správa vozidel se načte přes celou stránku
 
 4. ✅ Měla by být dostupná přihlašovací obrazovka
 
@@ -135,7 +135,7 @@ Pokud z nějakého důvodu nemůžete použít přesměrování, můžete použ�
         src="https://hub.toozservis.cz/web/index.html" 
         style="width: 100%; height: 100%; min-height: 800px; border: none; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"
         allow="camera; microphone; geolocation"
-        title="TooZ Hub 2 - Vozový park">
+        title="Správa vozidel - Vozový park">
     </iframe>
 </div>
 ```

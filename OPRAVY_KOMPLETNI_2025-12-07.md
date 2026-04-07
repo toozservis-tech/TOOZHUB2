@@ -1,4 +1,4 @@
-# Kompletní opravy projektu TooZ Hub 2
+# Kompletní opravy projektu Správa vozidel
 **Datum:** 7. prosince 2025
 
 ## Přehled opravených problémů

@@ -22,7 +22,7 @@ self.addEventListener('push', (event) => {
     body: payload.body || 'Máte nové upozornění.',
     icon: payload.icon || '/web/assets/toozservis-logo-icon.png',
     badge: payload.badge || '/web/assets/toozservis-logo-icon.png',
-    tag: payload.tag || 'toozhub-notification',
+    tag: payload.tag || 'sprava-vozidel-notification',
     data: {
       url: payload.url || '/web/index.html',
       timestamp: payload.timestamp || Date.now(),
@@ -46,7 +46,7 @@ self.addEventListener('notificationclick', (event) => {
       for (const client of clients) {
         if (client.url && client.url.includes('/web/')) {
           client.focus();
-          client.postMessage({ type: 'TOOZHUB_NOTIFICATION_CLICK', url: targetUrl });
+          client.postMessage({ type: 'SPRAVA_VOZIDEL_NOTIFICATION_CLICK', url: targetUrl });
           return client.navigate(targetUrl);
         }
       }

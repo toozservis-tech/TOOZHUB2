@@ -1,4 +1,4 @@
-# FINÁLNÍ OPRAVA TOOZHUB2 - REPORT
+# FINÁLNÍ OPRAVA sprava-vozidel - REPORT
 
 **Datum:** 2025-01-27  
 **Root:** /opt/toozhub2/
@@ -125,7 +125,7 @@ sudo nano /etc/systemd/system/toozhub2.service
 **Obsah:**
 ```ini
 [Unit]
-Description=TooZ Hub 2 API Server
+Description=Správa vozidel API Server
 After=network.target
 
 [Service]

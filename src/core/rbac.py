@@ -1,5 +1,5 @@
 """
-Centralizovaná RBAC/policy vrstva pro TooZ Hub.
+Centralizovaná RBAC/policy vrstva pro Správu vozidel.
 """
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 """
 Autopilot M2M API v1.0 router
-API pro machine-to-machine komunikaci s TooZ Autopilotem
+API pro machine-to-machine komunikaci s integrací Autopilot
 """
 from fastapi import APIRouter, HTTPException, Depends, Header
 from sqlalchemy.orm import Session
@@ -157,7 +157,7 @@ def create_quick_record(
         description=description,
         price=price,
         category=category or "GENERAL",
-        note="Vytvořeno z TooZ Autopilota"
+        note=f"Vytvořeno z autopilot integrace ({APP_DISPLAY_NAME})"
     )
     
     db.add(record)

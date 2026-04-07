@@ -1,4 +1,4 @@
-# Instrukce pro spuštění serveru TOOZHUB2
+# Instrukce pro spuštění serveru sprava-vozidel
 
 ## Rychlý start
 

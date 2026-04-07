@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-License clickthrough smoke flow for TooZ Hub 2.
+License clickthrough smoke flow for Správa vozidel.
 
 Runs end-to-end flow:
 - health/register/login prechecks

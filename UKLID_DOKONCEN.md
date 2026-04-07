@@ -1,4 +1,4 @@
-# ✅ ÚKLID PROJEKTU DOKONČEN - TOOZHUB2
+# ✅ ÚKLID PROJEKTU DOKONČEN - sprava-vozidel
 
 ## 🗑️ Odstraněné zbytečnosti
 

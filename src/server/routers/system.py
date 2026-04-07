@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy import func
 
 from src.core.auth import get_current_user_email
-from src.core.branding import APP_API_DISPLAY_NAME, APP_DISPLAY_NAME
+from src.core.branding import APP_API_DISPLAY_NAME, APP_DISPLAY_NAME, APP_OPS_PROJECT_LABEL
 from src.core.config import DATABASE_URL, ENABLE_AI_FEATURES, ENABLE_AUTOPILOT_API, ENABLE_CUSTOMER_COMMANDS, ENVIRONMENT
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer, Vehicle as VehicleModel, VehicleOwnership
@@ -304,7 +304,7 @@ def health_check():
     version, version_name, build_date, update_info = _version_context()
     return {
         "status": "ok",
-        "project": "TOOZHUB2",
+        "project": APP_OPS_PROJECT_LABEL,
         "service": APP_API_DISPLAY_NAME,
         "version": version,
         "version_name": version_name,

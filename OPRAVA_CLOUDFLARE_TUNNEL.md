@@ -26,7 +26,7 @@ Pro otestování:
 
 1. **Spustit server a tunnel:**
    ```powershell
-   cd C:\Projects\TOOZHUB2
+   cd C:\Projects\sprava-vozidel
    .\scripts\windows\start_all.ps1
    ```
 

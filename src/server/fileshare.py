@@ -1,6 +1,6 @@
 """
-Solo file server pro sdílení souborů z public_share
-Nezávislý modul pouze pro file sharing - bez celého TooZ Hub 2 projektu
+Solo file server pro sdílení souborů z public_share.
+Nezávislý modul pouze pro file sharing (bez hlavního API serveru).
 """
 
 import sys
@@ -15,8 +15,10 @@ from fastapi.responses import FileResponse, HTMLResponse
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.core.branding import APP_FILESHARE_DISPLAY_NAME
+
 # Vytvoření FastAPI aplikace
-app = FastAPI(title="TooZ FileShare", version="1.0.0")
+app = FastAPI(title=APP_FILESHARE_DISPLAY_NAME, version="1.0.0")
 
 # CORS middleware - veřejný přístup
 app.add_middleware(
@@ -111,7 +113,7 @@ def file_list(path: str = ""):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Veřejné soubory - TooZ FileShare</title>
+        <title>Veřejné soubory – {APP_FILESHARE_DISPLAY_NAME}</title>
         <style>
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
             body {{
@@ -204,7 +206,7 @@ def file_list(path: str = ""):
         <div class="container">
             <div class="header">
                 <h1>📁 Veřejné soubory</h1>
-                <p>TooZ FileShare - Solo File Server</p>
+                <p>{APP_FILESHARE_DISPLAY_NAME}</p>
             </div>
             <div class="breadcrumb">
                 {breadcrumb}
@@ -246,4 +248,4 @@ def file_list(path: str = ""):
 @app.get("/health")
 def health():
     """Health check endpoint"""
-    return {"status": "ok", "service": "TooZ FileShare"}
+    return {"status": "ok", "service": APP_FILESHARE_DISPLAY_NAME}

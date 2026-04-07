@@ -1,6 +1,6 @@
-# 🚀 TooZ Hub 2.1 - Changelog
+# 🚀 Správa vozidel 2.1 - Changelog
 
-## 📦 Verze: 2.1.0 (TOOZHUB2.1)
+## 📦 Verze: 2.1.0 (sprava-vozidel.1)
 **Datum buildu:** 2025-01-27  
 **Typ aktualizace:** Minor Update
 
@@ -62,7 +62,7 @@
 - `VERSION.py` - Centralizované řízení verzí
 - `web/app.css` - CSS styl z admin dashboardu
 - `web/index.html.backup` - Záloha původního index.html
-- `TOOZHUB2.1_CHANGELOG.md` - Tento soubor
+- `sprava-vozidel.1_CHANGELOG.md` - Tento soubor
 
 ### Upravené soubory
 - `src/server/main.py` - Přidáno načítání verze z VERSION.py

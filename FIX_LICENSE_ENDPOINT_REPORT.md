@@ -86,7 +86,7 @@ curl -i http://127.0.0.1:8000/api/v1/license/status \
 
 ### src/server/main.py
 ```diff
-# Include API v1 routery (TooZ Hub v1.0)
+# Include API v1 routery (Správa vozidel v1.0)
  try:
      from src.modules.vehicle_hub.routers_v1 import api_router as v1_api_router
      app.include_router(v1_api_router)

@@ -1,4 +1,4 @@
-# ⚡ Rychlý postup – napojení TooZ Hub 2 na Webnode
+# ⚡ Rychlý postup – napojení Správa vozidel na Webnode
 
 ## 🎯 Cíl
 
@@ -6,7 +6,7 @@ Zajistit, aby stránka na Webnode:
 
 **https://www.toozservis.cz/sprava-vozidel/**
 
-automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
+automaticky přesměrovala uživatele do aplikace Správa vozidel běžící na:
 
 **https://hub.toozservis.cz/web/index.html**
 
@@ -14,7 +14,7 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 
 ## ✅ Předpoklady
 
-- Backend TooZ Hub 2 běží na:
+- Backend Správa vozidel běží na:
   - `https://hub.toozservis.cz`
   - frontend aplikace: `https://hub.toozservis.cz/web/index.html`
 - Stránka `sprava-vozidel` je vytvořená v Webnode (nebo ji vytvoříte).
@@ -28,11 +28,11 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 - Přihlaste se do administrace Webnode.
 - Otevřete projekt **toozservis.cz**.
 
-### 2️⃣ Vytvoření / otevření stránky „TooZ Hub aplikace"
+### 2️⃣ Vytvoření / otevření stránky „Aplikace Správa vozidel"
 
 - V horním menu klikněte na **Stránky**.
 - Přidejte novou stránku nebo upravte existující:
-  - Název: `TooZ Hub aplikace` (doporučeno)
+  - Název: `Aplikace Správa vozidel` (doporučeno)
   - URL / adresa: `/sprava-vozidel/`.
 
 ### 3️⃣ Nastavení přesměrování na aplikaci
@@ -61,7 +61,7 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 2. Stránka se musí automaticky přesměrovat na:
    - `https://hub.toozservis.cz/web/index.html`
 
-3. Aplikace TooZ Hub 2 se načte přes celou stránku.
+3. Aplikace Správa vozidel se načte přes celou stránku.
 
 ---
 
@@ -110,7 +110,7 @@ Zajistit, aby stránka na Webnode:
 
 **https://www.toozservis.cz/sprava-vozidel/**
 
-automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
+automaticky přesměrovala uživatele do aplikace Správa vozidel běžící na:
 
 **https://hub.toozservis.cz/web/index.html**
 
@@ -118,7 +118,7 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 
 ## ✅ Předpoklady
 
-- Backend TooZ Hub 2 běží na:
+- Backend Správa vozidel běží na:
   - `https://hub.toozservis.cz`
   - frontend aplikace: `https://hub.toozservis.cz/web/index.html`
 - Stránka `sprava-vozidel` je vytvořená v Webnode (nebo ji vytvoříte).
@@ -132,11 +132,11 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 - Přihlaste se do administrace Webnode.
 - Otevřete projekt **toozservis.cz**.
 
-### 2️⃣ Vytvoření / otevření stránky „TooZ Hub aplikace"
+### 2️⃣ Vytvoření / otevření stránky „Aplikace Správa vozidel"
 
 - V horním menu klikněte na **Stránky**.
 - Přidejte novou stránku nebo upravte existující:
-  - Název: `TooZ Hub aplikace` (doporučeno)
+  - Název: `Aplikace Správa vozidel` (doporučeno)
   - URL / adresa: `/sprava-vozidel/`.
 
 ### 3️⃣ Nastavení přesměrování na aplikaci
@@ -165,7 +165,7 @@ automaticky přesměrovala uživatele do aplikace TooZ Hub 2 běžící na:
 2. Stránka se musí automaticky přesměrovat na:
    - `https://hub.toozservis.cz/web/index.html`
 
-3. Aplikace TooZ Hub 2 se načte přes celou stránku.
+3. Aplikace Správa vozidel se načte přes celou stránku.
 
 ---
 

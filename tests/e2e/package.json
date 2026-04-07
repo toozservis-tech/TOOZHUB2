@@ -1,7 +1,7 @@
 {
   "name": "toozhub2-e2e-tests",
   "version": "1.0.0",
-  "description": "E2E tests for TooZ Hub 2",
+  "description": "E2E tests for Správa vozidel",
   "scripts": {
     "bootstrap": "bash ./bootstrap-e2e.sh",
     "test": "bash ./run-playwright.sh test",

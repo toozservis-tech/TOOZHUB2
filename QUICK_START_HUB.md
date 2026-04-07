@@ -41,7 +41,7 @@ sudo systemctl restart cloudflared
 ### 3. Konfigurace projektu (5 minut)
 
 ```bash
-cd /home/toozservis/TOOZHUB2
+cd /home/toozservis/sprava-vozidel
 
 # Vytvořit .env z příkladu
 cp .env.example .env
@@ -91,7 +91,7 @@ curl -I https://hub.toozservis.cz/web/index.html
 ### 7. Vložení do Webnode (5 minut)
 
 1. Otevřít Webnode editor
-2. Otevřít stránku "TOOZHUB APLIKACE" nebo vytvořit novou
+2. Otevřít stránku "SPRÁVA VOZIDEL" nebo vytvořit novou
 3. Přidat HTML blok
 4. Nastavit přesměrování na:
    `https://hub.toozservis.cz/web/index.html`
@@ -120,7 +120,7 @@ curl -I https://hub.toozservis.cz/web/index.html
    ```bash
    curl https://hub.toozservis.cz/health
    ```
-   Očekáváno: `{"status":"online","service":"TooZ Hub 2 API","version":"2.0.0"}`
+   Očekáváno: `{"status":"online","service":"Správa vozidel API","version":"2.0.0"}`
 
 2. **Web UI v prohlížeči:**
    Otevřít: `https://hub.toozservis.cz/web/index.html`

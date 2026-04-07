@@ -68,7 +68,7 @@ Po 5-10 minutách zkuste otestovat:
 **Očekávaný výstup:**
 ```
 Status Code: 200
-Response: {"status":"online","service":"TooZ Hub 2 API","version":"2.0.0"}
+Response: {"status":"online","service":"Správa vozidel API","version":"2.0.0"}
 ```
 
 ### Test 2: Otevřít v prohlížeči
@@ -77,7 +77,7 @@ Response: {"status":"online","service":"TooZ Hub 2 API","version":"2.0.0"}
 
 ### Test 3: Web interface
 - Otevřít: **https://hub.toozservis.cz/web/index.html**
-- Mělo by se otevřít webové rozhraní TooZ Hub 2
+- Mělo by se otevřít webové rozhraní Správa vozidel
 
 ---
 

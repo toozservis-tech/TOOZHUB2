@@ -37,10 +37,10 @@
 - ✅ WEBNODE_DOKUMENTACE_OPRAVA.md
 - ✅ WEBNODE_OPRAVA_CHANGELOG.md
 
-### 5. Duplicitní dokumentace TOOZHUB2.1 (3 soubory)
-- ✅ TOOZHUB2.1_AKTUALIZACE_DOKONCENO.md
-- ✅ TOOZHUB2.1_KONTROLA.md
-- ✅ TOOZHUB2.1_SHRNUTI.md
+### 5. Duplicitní dokumentace sprava-vozidel.1 (3 soubory)
+- ✅ sprava-vozidel.1_AKTUALIZACE_DOKONCENO.md
+- ✅ sprava-vozidel.1_KONTROLA.md
+- ✅ sprava-vozidel.1_SHRNUTI.md
 
 ### 6. Migrace a integrace dokumentace (2 soubory)
 - ✅ ADMIN_MIGRATION_PLAN.md
@@ -91,7 +91,7 @@
 
 ### Hlavní dokumentace
 - ✅ README.md
-- ✅ TOOZHUB2.1_CHANGELOG.md
+- ✅ sprava-vozidel.1_CHANGELOG.md
 
 ### Admin aplikace
 - ✅ ADMIN_APLIKACE_POUZITI.md
@@ -163,10 +163,10 @@
 - ✅ WEBNODE_DOKUMENTACE_OPRAVA.md
 - ✅ WEBNODE_OPRAVA_CHANGELOG.md
 
-### 5. Duplicitní dokumentace TOOZHUB2.1 (3 soubory)
-- ✅ TOOZHUB2.1_AKTUALIZACE_DOKONCENO.md
-- ✅ TOOZHUB2.1_KONTROLA.md
-- ✅ TOOZHUB2.1_SHRNUTI.md
+### 5. Duplicitní dokumentace sprava-vozidel.1 (3 soubory)
+- ✅ sprava-vozidel.1_AKTUALIZACE_DOKONCENO.md
+- ✅ sprava-vozidel.1_KONTROLA.md
+- ✅ sprava-vozidel.1_SHRNUTI.md
 
 ### 6. Migrace a integrace dokumentace (2 soubory)
 - ✅ ADMIN_MIGRATION_PLAN.md
@@ -217,7 +217,7 @@
 
 ### Hlavní dokumentace
 - ✅ README.md
-- ✅ TOOZHUB2.1_CHANGELOG.md
+- ✅ sprava-vozidel.1_CHANGELOG.md
 
 ### Admin aplikace
 - ✅ ADMIN_APLIKACE_POUZITI.md

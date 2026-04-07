@@ -1,5 +1,5 @@
 """
-Security Middleware pro TooZ Hub 2
+Security Middleware pro Správu vozidel
 - Security headers
 - Rate limiting
 - Anti-tampering
@@ -11,6 +11,8 @@ from typing import Callable
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
+
+from src.core.branding import APP_SERVER_PRODUCT_TOKEN
 from src.core.config import ALLOWED_ORIGINS, ENVIRONMENT
 
 # Rate limiting - ukládání požadavků
@@ -34,7 +36,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
         
         # Content Security Policy - CSP hlavně pro ochranu proti embedování z jiných webů
-        # TooZ Hub 2 se embeduje do Webnode jen z těchto domén:
+        # Webové rozhraní se embeduje do Webnode jen z těchto domén:
         # - https://www.toozservis.cz
         # - https://toozservis.cz
         if ENVIRONMENT == "production":
@@ -70,8 +72,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if "content-security-policy" not in (k.lower() for k in response.headers.keys()):
             response.headers["Content-Security-Policy"] = csp
         
-        # Hide server info
-        response.headers["Server"] = "TooZ Hub"
+        # Hide server info (ASCII token; avoid raw stack identifiers in headers)
+        response.headers["Server"] = APP_SERVER_PRODUCT_TOKEN
         
         return response
 

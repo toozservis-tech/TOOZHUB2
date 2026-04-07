@@ -1,4 +1,4 @@
-# QA Report - TooZ Hub 2
+# QA Report - Správa vozidel
 
 **Datum:** 2025-01-27  
 **Verze:** 2.2.0  
@@ -6,7 +6,7 @@
 
 ## Přehled
 
-Tento dokument popisuje QA infrastrukturu vytvořenou pro TooZ Hub 2, včetně testovacích scénářů, nalezených bugů a jejich oprav.
+Tento dokument popisuje QA infrastrukturu vytvořenou pro Správa vozidel, včetně testovacích scénářů, nalezených bugů a jejich oprav.
 
 ## Testovací infrastruktura
 

@@ -1,4 +1,4 @@
-# Production Verification Guide - TooZ Hub 2
+# Production Verification Guide - Správa vozidel
 
 ## Jak Ověřit, že Aplikace Funguje v Produkci
 

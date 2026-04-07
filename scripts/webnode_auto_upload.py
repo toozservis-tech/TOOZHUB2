@@ -1258,7 +1258,7 @@ def publish_page(driver):
         return False
 
 def main():
-    print("🚗 TooZ Hub 2 - Automatické vložení do Webnode")
+    print("🚗 Správa vozidel – automatické vložení do Webnode")
     print("=" * 50)
     
     # Získat lock - zajištění, že běží jen jedna instance

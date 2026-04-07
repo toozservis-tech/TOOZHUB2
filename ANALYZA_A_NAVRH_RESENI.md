@@ -1,4 +1,4 @@
-# 📋 Analýza projektu TooZ Hub 2 - Co je potřeba dodělat
+# 📋 Analýza projektu Správa vozidel - Co je potřeba dodělat
 
 **Datum analýzy:** 2025-01-27  
 **Verze projektu:** 2.2.0  

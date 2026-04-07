@@ -29,7 +29,7 @@
 <nav class="navbar hidden" id="mainNavbar">
     <div class="navbar-brand">
         <span class="logo">🚗</span>
-        <span class="brand-text">TooZ Hub 2 <span id="navbarVersion">v2.2.0</span></span>
+        <span class="brand-text">Správa vozidel <span id="navbarVersion">v2.2.0</span></span>
     </div>
     <div class="navbar-stats">
         <span id="userBadge" class="stat-badge hidden">

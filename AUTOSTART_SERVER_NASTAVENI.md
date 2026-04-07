@@ -1,8 +1,8 @@
-# 🚀 Nastavení automatického startu serveru TooZ Hub 2
+# 🚀 Nastavení automatického startu serveru Správa vozidel
 
 ## 📋 Přehled
 
-Tento dokument popisuje, jak nastavit automatické spuštění serveru TooZ Hub 2 a Cloudflare Tunnel při každém startu PC.
+Tento dokument popisuje, jak nastavit automatické spuštění serveru Správa vozidel a Cloudflare Tunnel při každém startu PC.
 
 ## ✅ Co se stane po nastavení
 
@@ -21,7 +21,7 @@ Při každém přihlášení do Windows:
 **Instalace:**
 ```powershell
 # Spustit PowerShell jako správce (pravý klik -> Spustit jako správce)
-cd C:\Projects\TOOZHUB2
+cd C:\Projects\sprava-vozidel
 .\install_server_autostart.ps1
 ```
 
@@ -44,7 +44,7 @@ cd C:\Projects\TOOZHUB2
 
 **Instalace:**
 ```powershell
-cd C:\Projects\TOOZHUB2
+cd C:\Projects\sprava-vozidel
 .\install_server_autostart_startup.ps1
 ```
 
@@ -82,11 +82,11 @@ cd C:\Projects\TOOZHUB2
 
 1. Otevřít **Task Scheduler** (taskschd.msc)
 2. Kliknout na **Create Basic Task**
-3. **Name:** `TooZHub2-Server-Autostart`
+3. **Name:** `SpravaVozidel-Server-Autostart`
 4. **Trigger:** **When I log on**
 5. **Action:** **Start a program**
-   - **Program:** `C:\Projects\TOOZHUB2\start_server_background.bat`
-   - **Start in:** `C:\Projects\TOOZHUB2`
+   - **Program:** `C:\Projects\sprava-vozidel\start_server_background.bat`
+   - **Start in:** `C:\Projects\sprava-vozidel`
 6. **Settings:**
    - ✅ Allow task to be run on demand
    - ✅ Run task as soon as possible after a scheduled start is missed
@@ -100,10 +100,10 @@ cd C:\Projects\TOOZHUB2
 ### 1. Kontrola Task Scheduleru
 
 ```powershell
-Get-ScheduledTask -TaskName "TooZHub2-Server-Autostart" | Format-List
+Get-ScheduledTask -TaskName "SpravaVozidel-Server-Autostart" | Format-List
 ```
 
-Měl by zobrazit úkol s názvem `TooZHub2-Server-Autostart`.
+Měl by zobrazit úkol s názvem `SpravaVozidel-Server-Autostart`.
 
 ### 2. Kontrola běžících procesů
 
@@ -154,7 +154,7 @@ Get-Content "$env:TEMP\toozhub2_tunnel.log" -Tail 20
 
 1. **Zkontrolovat Task Scheduler:**
    - Otevřít Task Scheduler
-   - Najít úkol `TooZHub2-Server-Autostart`
+   - Najít úkol `SpravaVozidel-Server-Autostart`
    - Zkontrolovat, že je povolený
    - Zkontrolovat historii spuštění (Last Run Result)
    - Zkontrolovat, zda není chyba v "Last Run Result"
@@ -172,7 +172,7 @@ Get-Content "$env:TEMP\toozhub2_tunnel.log" -Tail 20
 
 4. **Zkusit spustit ručně:**
    ```powershell
-   cd C:\Projects\TOOZHUB2
+   cd C:\Projects\sprava-vozidel
    .\start_server_background.bat
    ```
 

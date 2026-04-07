@@ -1,6 +1,6 @@
-# TooZ Hub 2 - Tray Aplikace
+# Správa vozidel – tray aplikace
 
-Izolovaná tray aplikace pro monitorování a správu TooZ Hub 2 serveru.
+Izolovaná tray aplikace pro monitorování a správu backend serveru.
 
 ## Funkce
 
@@ -51,7 +51,7 @@ python tray\tray_app.py
 Konfigurace je v souboru `tray_app.py`:
 
 ```python
-APP_NAME = "TooZ Hub 2"
+APP_NAME = "Správa vozidel"
 HEALTH_URL = "http://127.0.0.1:8000/health"
 OPEN_URL = "https://hub.toozservis.cz/web/index.html"
 CHECK_INTERVAL = 3  # sekundy

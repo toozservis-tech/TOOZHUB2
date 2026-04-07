@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Interactive end-to-end browser agent for TooZ Hub 2.
+Interactive end-to-end browser agent for Správa vozidel.
 
 What it does:
 1) Verifies API availability and ensures an E2E user exists.

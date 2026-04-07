@@ -91,10 +91,10 @@ Pokud máte GitHub CLI nainstalovaný:
 
 ```bash
 # Kontrola, zda máte admin oprávnění
-gh repo view toozservis-tech/TOOZHUB2 --json permissions
+gh repo view toozservis-tech/sprava-vozidel --json permissions
 
 # Zkontrolovat security features
-gh api repos/toozservis-tech/TOOZHUB2/vulnerability-alerts
+gh api repos/toozservis-tech/sprava-vozidel/vulnerability-alerts
 ```
 
 ## ✅ Nejjednodušší řešení: Použít náš Security workflow

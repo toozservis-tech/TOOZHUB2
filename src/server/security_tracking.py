@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest, urlopen
 
+from src.core.branding import APP_SERVER_PRODUCT_TOKEN
 from src.modules.vehicle_hub.database import SessionLocal
 from src.modules.vehicle_hub.models import SecurityAccessLog
 
@@ -216,7 +217,7 @@ def reverse_geocode_location(latitude: Optional[float], longitude: Optional[floa
             request_url,
             headers={
                 "Accept": "application/json",
-                "User-Agent": "TooZHub2-SecurityTracker/1.0",
+                "User-Agent": f"{APP_SERVER_PRODUCT_TOKEN}-SecurityTracker/1.0",
             },
         )
         with urlopen(req, timeout=_REVERSE_GEOLOOKUP_TIMEOUT) as response:
@@ -287,7 +288,7 @@ def lookup_ip_location(ip_value: Optional[str]) -> Optional[Dict[str, Any]]:
             request_url,
             headers={
                 "Accept": "application/json",
-                "User-Agent": "TooZHub2-SecurityTracker/1.0",
+                "User-Agent": f"{APP_SERVER_PRODUCT_TOKEN}-SecurityTracker/1.0",
             },
         )
         with urlopen(req, timeout=_GEOLOOKUP_TIMEOUT) as response:

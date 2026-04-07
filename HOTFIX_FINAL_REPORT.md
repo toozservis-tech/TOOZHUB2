@@ -1,4 +1,4 @@
-# HOTFIX - FINÁLNÍ OPRAVA TOOZHUB2
+# HOTFIX - FINÁLNÍ OPRAVA sprava-vozidel
 
 **Datum:** 2025-01-27  
 **Status:** ✅ DOKONČENO

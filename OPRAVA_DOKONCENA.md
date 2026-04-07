@@ -1,4 +1,4 @@
-# ✅ OPRAVA TOOZHUB2 DOKONČENA
+# ✅ OPRAVA sprava-vozidel DOKONČENA
 
 **Datum:** 2025-01-27  
 **Root:** /opt/toozhub2/
@@ -40,7 +40,7 @@ sudo nano /etc/systemd/system/toozhub2.service
 **Vložit:**
 ```ini
 [Unit]
-Description=TooZ Hub 2 API Server
+Description=Správa vozidel API Server
 After=network.target
 
 [Service]

@@ -79,7 +79,7 @@ Pro otestování oprav:
    ```powershell
    # Zastavit stávající server
    # Spustit znovu pomocí tray ikony nebo:
-   cd C:\Projects\TOOZHUB2
+   cd C:\Projects\sprava-vozidel
    .\start_for_tray.bat
    ```
 

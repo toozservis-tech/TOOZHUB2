@@ -5,8 +5,8 @@
 ### 1. Vytvoř nový repozitář na GitHubu
 
 1. Jdi na: **https://github.com/new**
-2. **Repository name:** `TOOZHUB2` (nebo jiný název)
-3. **Description:** (volitelné) "TooZ Hub 2 - Vehicle Management System"
+2. **Repository name:** `sprava-vozidel` (nebo jiný název)
+3. **Description:** (volitelné) "Správa vozidel - Vehicle Management System"
 4. **Visibility:** Vyber Private nebo Public
 5. **DŮLEŽITÉ:** 
    - ❌ **NEVYTVÁŘEJ** README
@@ -37,7 +37,7 @@ git remote add origin https://github.com/TVAJE-USERNAME/TOOZHUB2.git
 git add .
 
 # 3. Commitni změny
-git commit -m "Initial commit: Add TooZHub2 project with CI/CD workflows"
+git commit -m "Initial commit: Add sprava-vozidel project with CI/CD workflows"
 
 # 4. Pushni na GitHub
 git push -u origin master

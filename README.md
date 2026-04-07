@@ -36,9 +36,11 @@ Komplexní desktop a web aplikace pro správu vozidel, dokumentů a dalších n�
 
 ### 1. Klonování repozitáře
 ```bash
-git clone https://github.com/your-repo/TOOZHUB2.git
-cd TOOZHUB2
+git clone https://github.com/<váš-účet>/<název-repozitáře>.git
+cd <název-adresáře>
 ```
+
+Aktuální produkční klon může stále používat historický název repozitáře na GitHubu – viz `TECHNICAL_RENAME_BACKLOG.md`.
 
 ### 2. Vytvoření virtuálního prostředí
 
@@ -144,7 +146,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\run_tunnel.ps1
 4. Pravým tlačítkem na zástupce → Vlastnosti
 5. Do pole "Cíl" zadejte:
    ```
-   powershell.exe -ExecutionPolicy Bypass -File "C:\Projects\TOOZHUB2\scripts\windows\start_all.ps1"
+   powershell.exe -ExecutionPolicy Bypass -File "C:\Projects\sprava-vozidel\scripts\windows\start_all.ps1"
    ```
 6. (Volitelně) Nastavte "Spustit" na "Minimalizováno"
 
@@ -184,14 +186,14 @@ Pro automatické spuštění tray aplikace při každém přihlášení do Windo
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\add_tray_to_startup.ps1
 ```
 
-Tento skript automaticky vytvoří zástupce v Windows Startup složce s názvem `TooZ_Tray_TOOZHUB2.lnk`.
+Tento skript automaticky vytvoří zástupce v Windows Startup složce s názvem `SpravaVozidel_tray.lnk`.
 
 **Poznámka:** Při startu Windows se tray aplikace spustí automaticky na pozadí bez viditelného okna. Zobrazí se pouze ikona v systémové liště.
 
 **Ruční odebrání z Autostartu:**
 1. Stiskněte `Win + R`
 2. Zadejte: `shell:startup`
-3. Odstraňte soubor `TooZ_Tray_TOOZHUB2.lnk`
+3. Odstraňte soubor `SpravaVozidel_tray.lnk`
 
 #### Funkce tray ikonky
 
@@ -237,7 +239,7 @@ Otevřete v prohlížeči: `http://127.0.0.1:8000/web/index.html`
 ## 📁 Struktura projektu
 
 ```
-TOOZHUB2/
+sprava-vozidel/
 ├── src/
 │   ├── app/
 │   │   └── main.py          # Desktop aplikace (PySide6)

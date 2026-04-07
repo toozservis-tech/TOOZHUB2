@@ -1,5 +1,5 @@
 """
-Modul pro e-mail notifikace v TooZ Hub 2
+Modul pro e-mail notifikace ve Správě vozidel
 
 Obsahuje funkce pro odesílání e-mail notifikací:
 - Připomínky (reminders)

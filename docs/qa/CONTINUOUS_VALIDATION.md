@@ -1,7 +1,7 @@
 # Continuous Validation (Post-Change Hard Gate)
 
 ## Purpose
-Automatic validation gate for TooZHub after relevant changes.  
+Automatic validation gate for the Správa vozidel codebase after relevant changes.  
 It detects regressions across security checks, core E2E flows, responsive behavior, and cross-browser coverage without changing product behavior.
 
 ## Hard-Gate Command (Cursor default)

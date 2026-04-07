@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from src.core.branding import APP_SERVER_PRODUCT_TOKEN
 from src.core.rbac import is_admin
 from ..database import get_db
 from ..models import Customer, ServiceAccessRequest, ServiceCustomerLink, ServiceVehicleAccess, Vehicle, VehicleServiceLink
@@ -193,7 +194,7 @@ def _geocode_address(address: str) -> Optional[Dict[str, Any]]:
             request_url,
             headers={
                 "Accept": "application/json",
-                "User-Agent": "TooZHub2-ServicesDirectory/1.0",
+                "User-Agent": f"{APP_SERVER_PRODUCT_TOKEN}-ServicesDirectory/1.0",
             },
         )
         with urlopen(req, timeout=_SERVICE_GEOLOOKUP_TIMEOUT_SEC) as response:

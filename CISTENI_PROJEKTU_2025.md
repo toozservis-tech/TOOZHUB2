@@ -61,7 +61,7 @@
 
 ### Hlavní dokumentace
 - ✅ `README.md`
-- ✅ `TOOZHUB2.1_CHANGELOG.md`
+- ✅ `sprava-vozidel.1_CHANGELOG.md`
 - ✅ `VERZE_2.2.0_DOKUMENTACE.md`
 
 ### Aktuální dokumentace

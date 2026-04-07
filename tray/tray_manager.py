@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-TooZ Hub 2 - System Tray Manager
+Správa vozidel – System Tray Manager
 Zobrazuje stav serveru v systémové liště a umožňuje rychlý restart serveru nebo tunelu.
 """
 
@@ -30,9 +30,9 @@ except ImportError as e:
 # KONFIGURACE PROJEKTU
 # =============================================================================
 
-PROJECT_NAME = "TOOZHUB2"
-TRAY_APP_NAME = f"TooZ Tray - {PROJECT_NAME}"
-TRAY_SHORTCUT_NAME = f"TooZ_Tray_{PROJECT_NAME}.lnk"
+PROJECT_NAME = "sprava-vozidel"
+TRAY_APP_NAME = "Správa vozidel – tray"
+TRAY_SHORTCUT_NAME = "SpravaVozidel_tray.lnk"
 
 # URL konfigurace
 HEALTH_URL = "http://127.0.0.1:8000/health"

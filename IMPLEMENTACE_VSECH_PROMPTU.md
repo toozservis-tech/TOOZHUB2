@@ -20,7 +20,7 @@
    - Neblokuje PowerShell (používá Start-Process)
 
 4. **`src/server/main.py`**
-   - Upraven `/health` endpoint - přidán klíč `"project": "TOOZHUB2"`
+   - Upraven `/health` endpoint - přidán klíč `"project": "sprava-vozidel"`
 
 5. **`README.md`**
    - Přidána sekce "Spuštění projektu přes Cloudflare Tunnel (Windows)"
@@ -51,7 +51,7 @@
 
 ---
 
-## PROMPT 3 – Architektura tenants + instances pro TooZHub2 ✅
+## PROMPT 3 – Architektura tenants + instances pro sprava-vozidel ✅
 
 ### Vytvořené/změněné soubory:
 
@@ -164,7 +164,7 @@ Pro otestování všech změn:
 
 1. **Restartujte server:**
    ```powershell
-   cd C:\Projects\TOOZHUB2
+   cd C:\Projects\sprava-vozidel
    # Zastavit stávající server
    .\scripts\windows\start_all.ps1
    ```
@@ -173,7 +173,7 @@ Pro otestování všech změn:
    ```powershell
    curl http://127.0.0.1:8000/health
    ```
-   Mělo by vrátit `{"status": "ok", "project": "TOOZHUB2", ...}`
+   Mělo by vrátit `{"status": "ok", "project": "sprava-vozidel", ...}`
 
 3. **Otestujte registraci instance:**
    ```powershell

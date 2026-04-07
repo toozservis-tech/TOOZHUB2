@@ -1,4 +1,4 @@
-# Opravy projektu TOOZHUB2 - 7. prosince 2025
+# Opravy projektu sprava-vozidel - 7. prosince 2025
 
 ## Shrnutí oprav
 

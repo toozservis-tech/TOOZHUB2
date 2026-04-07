@@ -1,4 +1,4 @@
-# KOMPLETNÍ OPRAVA TOOZHUB2 - SHRNUTÍ
+# KOMPLETNÍ OPRAVA sprava-vozidel - SHRNUTÍ
 
 **Datum:** 2025-01-27  
 **Root:** /opt/toozhub2/

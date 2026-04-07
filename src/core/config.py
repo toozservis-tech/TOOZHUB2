@@ -1,5 +1,5 @@
 """
-Centrální konfigurace pro TooZ Hub 2
+Centrální konfigurace pro Správu vozidel
 Podporuje načítání z environment variables a .env souboru
 """
 import os

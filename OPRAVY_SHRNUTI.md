@@ -1,4 +1,4 @@
-# Shrnutí oprav - Minimální funkční verze TOOZHUB2
+# Shrnutí oprav - Minimální funkční verze sprava-vozidel
 
 ## ✅ Co bylo opraveno
 

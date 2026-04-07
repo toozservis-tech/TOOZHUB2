@@ -1,4 +1,4 @@
-# STAVOVÝ REPORT — TooZ Hub 2 (licence a runtime)
+# STAVOVÝ REPORT — Správa vozidel (licence a runtime)
 
 ## 1) Instance & Git
 - Workdir: /opt/toozhub2/app

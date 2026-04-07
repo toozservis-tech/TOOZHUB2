@@ -1,4 +1,4 @@
-# INVENTURA PROJEKTU TOOZHUB2
+# INVENTURA PROJEKTU sprava-vozidel
 
 **Datum:** 2025-01-27  
 **Root:** /opt/toozhub2/
@@ -9,7 +9,7 @@
 
 ### FastAPI App Instance
 **FOUND:** `/opt/toozhub2/app/src/server/main.py` -> FastAPI app instance (řádek 106)
-- `app = FastAPI(title="TooZ Hub 2 API", version=APP_VERSION)`
+- `app = FastAPI(title="Správa vozidel API", version=APP_VERSION)`
 
 ### Routery (include_router)
 **FOUND:** `/opt/toozhub2/app/src/server/main.py` -> registrace routerů (řádky 168-231)

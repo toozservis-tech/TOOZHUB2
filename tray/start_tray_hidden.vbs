@@ -1,5 +1,5 @@
 ' tray/start_tray_hidden.vbs
-' Skryté spuštění tray aplikace pro TOOZHUB2
+' Skryté spuštění tray aplikace pro Správu vozidel
 ' Tento VBS skript spustí tray aplikaci bez viditelného okna
 
 Set fso = CreateObject("Scripting.FileSystemObject")

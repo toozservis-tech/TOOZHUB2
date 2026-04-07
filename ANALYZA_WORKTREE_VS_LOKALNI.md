@@ -2,7 +2,7 @@
 
 ## Shrnutí
 
-Po analýze projektu TOOZHUB2 bylo zjištěno, že **server by měl fungovat v obou prostředích** (worktree i hlavní složka), protože:
+Po analýze projektu sprava-vozidel bylo zjištěno, že **server by měl fungovat v obou prostředích** (worktree i hlavní složka), protože:
 
 1. **Struktura souborů je identická** - obě složky obsahují stejné soubory
 2. **Kód je stejný** - žádné rozdíly v klíčových souborech
@@ -11,8 +11,8 @@ Po analýze projektu TOOZHUB2 bylo zjištěno, že **server by měl fungovat v o
 ## Zjištěné skutečnosti
 
 ### 1. Worktree umístění
-- **Hlavní repository**: `C:\Projects\TOOZHUB2`
-- **Worktree**: `C:\Users\djtoo\.cursor\worktrees\TOOZHUB2\vda`
+- **Hlavní repository**: `C:\Projects\sprava-vozidel`
+- **Worktree**: `C:\Users\djtoo\.cursor\worktrees\sprava-vozidel\vda`
 - **Commit**: Oba na stejném commitu `41674d0`
 
 ### 2. Struktura souborů
@@ -59,7 +59,7 @@ Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Select-Obje
 
 ### Krok 3: Nainstalovat závislosti (pokud chybí)
 ```powershell
-cd C:\Projects\TOOZHUB2
+cd C:\Projects\sprava-vozidel
 pip install -r requirements.txt
 ```
 
@@ -123,7 +123,7 @@ ingress:
 
 ## Doporučení
 
-1. **Používat hlavní složku** (`C:\Projects\TOOZHUB2`) jako primární workspace
+1. **Používat hlavní složku** (`C:\Projects\sprava-vozidel`) jako primární workspace
 2. **Worktree používat pouze pro dočasné experimenty**
 3. **Před spuštěním serveru vždy zkontrolovat port 8000**
 4. **Synchronizovat .env soubor** mezi prostředími (bez commitu tajných klíčů)

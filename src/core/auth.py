@@ -1,5 +1,5 @@
 """
-Autentizační modul pro TooZ Hub 2
+Autentizační modul pro Správu vozidel
 - JWT token validace
 - Získání aktuálního uživatele
 """

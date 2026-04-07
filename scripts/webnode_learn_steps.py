@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TooZ Hub 2 - Webnode Learning Script
+Správa vozidel – Webnode Learning Script
 Tento skript se přihlásí do Webnode, otevře projekt a pak čeká,
 až uživatel provede kroky. Všechny akce se zaznamenají do logu.
 """
@@ -349,7 +349,7 @@ def insert_html_when_ready(driver, html_content):
 
 def main():
     """Hlavní funkce"""
-    print("🎓 TooZ Hub 2 - Webnode Learning Script")
+    print("🎓 Správa vozidel – Webnode Learning Script")
     print("="*60)
     
     # Načíst konfiguraci

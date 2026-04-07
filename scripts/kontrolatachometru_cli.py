@@ -157,7 +157,7 @@ def main() -> int:
     cookie_jar = CookieJar()
     opener = build_opener(HTTPCookieProcessor(cookie_jar))
     common_headers = {
-        "User-Agent": "TooZHub-CLI/1.0",
+        "User-Agent": "SpravaVozidel-CLI/1.0",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
 

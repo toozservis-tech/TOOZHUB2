@@ -1,5 +1,5 @@
 """
-TooZ Hub 2 - Hlavní desktop aplikace
+Správa vozidel – hlavní desktop aplikace (legacy Qt shell).
 """
 import sys
 from pathlib import Path
@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self.setWindowTitle("TooZ Hub 2")
+        self.setWindowTitle("Správa vozidel")
         self.setGeometry(100, 100, 1200, 800)
         self.setStyleSheet("""
             QMainWindow {
@@ -110,7 +110,7 @@ class MainWindow(QMainWindow):
         sidebar.setLayout(sidebar_layout)
         
         # Logo/Header
-        header = QLabel("🚗 TooZ Hub 2")
+        header = QLabel("🚗 Správa vozidel")
         header.setFont(QFont("Arial", 18, QFont.Bold))
         header.setStyleSheet("color: #667eea; padding: 10px;")
         sidebar_layout.addWidget(header)
@@ -260,7 +260,7 @@ class MainWindow(QMainWindow):
         info_layout = QVBoxLayout()
         info_group.setLayout(info_layout)
         
-        info_layout.addWidget(QLabel("<b>TooZ Hub 2</b>"))
+        info_layout.addWidget(QLabel("<b>Správa vozidel</b>"))
         info_layout.addWidget(QLabel("Verze: 2.0.0"))
         info_layout.addWidget(QLabel(f"Uživatel: {self.auth_service.get_current_user_email() or 'Nepřihlášen'}"))
         

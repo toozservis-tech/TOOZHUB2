@@ -1,4 +1,4 @@
-# 🚀 Nastavení automatického startu - TooZ Hub 2
+# 🚀 Nastavení automatického startu - Správa vozidel
 
 ## 📋 Co bylo upraveno
 
@@ -31,7 +31,7 @@ Vytvořen PowerShell skript pro přidání tray aplikace do Windows Task Schedul
 
 **Instalace autostartu:**
 ```powershell
-cd C:\Projects\TOOZHUB2
+cd C:\Projects\sprava-vozidel
 .\install_tray_autostart.ps1
 ```
 
@@ -69,12 +69,12 @@ cd C:\Projects\TOOZHUB2
 
 1. Otevřít **Task Scheduler** (taskschd.msc)
 2. Kliknout na **Create Basic Task**
-3. **Name:** `TooZ Hub 2 Tray`
+3. **Name:** `Správa vozidel Tray`
 4. **Trigger:** **When I log on**
 5. **Action:** **Start a program**
    - **Program:** `C:\Python312\pythonw.exe` (nebo vaše cesta k pythonw.exe)
-   - **Arguments:** `"C:\Projects\TOOZHUB2\toozhub_tray_final.py"`
-   - **Start in:** `C:\Projects\TOOZHUB2`
+   - **Arguments:** `"C:\Projects\sprava-vozidel\toozhub_tray_final.py"`
+   - **Start in:** `C:\Projects\sprava-vozidel`
 6. Finish
 
 ---
@@ -100,9 +100,9 @@ cd C:\Projects\TOOZHUB2
 ### Pravým kliknutím na ikonu:
 
 **Hlavní menu:**
-- ▶ **Spustit TooZ Hub 2** - spustí server i tunel
-- 🔄 **Restartovat TooZ Hub 2** - restartuje vše
-- ⏹ **Zastavit TooZ Hub 2** - zastaví vše
+- ▶ **Spustit Správa vozidel** - spustí server i tunel
+- 🔄 **Restartovat Správa vozidel** - restartuje vše
+- ⏹ **Zastavit Správa vozidel** - zastaví vše
 
 **Nové submenu - Restart:**
 - 🔄 **Restartovat Server** - restartuje pouze server
@@ -123,16 +123,16 @@ cd C:\Projects\TOOZHUB2
 ### 1. Kontrola Task Scheduleru
 
 ```powershell
-Get-ScheduledTask -TaskName "TooZHub2-Tray" | Format-List
+Get-ScheduledTask -TaskName "SpravaVozidel-Tray" | Format-List
 ```
 
-Měl by zobrazit úkol s názvem `TooZHub2-Tray`.
+Měl by zobrazit úkol s názvem `SpravaVozidel-Tray`.
 
 ### 2. Kontrola běžících procesů
 
 ```powershell
 # Tray aplikace
-Get-Process pythonw -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*TOOZHUB2*" }
+Get-Process pythonw -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*sprava-vozidel*" }
 
 # Server
 Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*uvicorn*" }
@@ -174,7 +174,7 @@ Invoke-WebRequest -Uri "https://hub.toozservis.cz/health"
 
 3. **Zkontrolovat Task Scheduler:**
    - Otevřít Task Scheduler
-   - Najít úkol `TooZHub2-Tray`
+   - Najít úkol `SpravaVozidel-Tray`
    - Zkontrolovat, že je povolený
    - Zkontrolovat historii spuštění (Last Run Result)
 

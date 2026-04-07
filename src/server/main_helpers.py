@@ -54,7 +54,7 @@ try:
     UPDATE_INFO = __update_info__
 except ImportError:
     APP_VERSION = "2.1.0"
-    APP_VERSION_NAME = "TOOZHUB2.1"
+    APP_VERSION_NAME = "Správa vozidel 2.1.0"
     BUILD_DATE = "2025-01-27"
     UPDATE_INFO = "Aktualizace s vizuálními úpravami a vylepšeními"
 
