@@ -12,7 +12,9 @@ from typing import Optional, List
 from pathlib import Path
 from dataclasses import dataclass
 
+from src.core.branding import APP_DISPLAY_NAME
 from src.core.config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
+from src.modules.email_client.templates import build_app_url, render_email_layout, render_panel
 
 
 @dataclass
@@ -207,49 +209,30 @@ Typ: {reminder_type}
 Datum: {due_date}
 
 S pozdravem,
-TooZ Hub 2
+{APP_DISPLAY_NAME}
 """
         
-        html_body = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body {{ font-family: Arial, sans-serif; line-height: 1.6; }}
-        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                   color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
-        .content {{ background: #f8f9fa; padding: 20px; border-radius: 0 0 8px 8px; }}
-        .reminder-box {{ background: white; padding: 15px; border-radius: 6px; 
-                        border-left: 4px solid #667eea; margin: 15px 0; }}
-        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 20px; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚗 TooZ Hub 2</h1>
-            <p>Připomínka pro Vaše vozidlo</p>
-        </div>
-        <div class="content">
-            <p>Dobrý den,</p>
-            <p>připomínáme Vám blížící se termín pro Vaše vozidlo:</p>
-            
-            <div class="reminder-box">
-                <strong>Vozidlo:</strong> {vehicle_name}<br>
-                <strong>Typ:</strong> {reminder_type}<br>
-                <strong>Datum:</strong> {due_date}
-            </div>
-            
-            <p>Nezapomeňte včas zajistit potřebné úkony.</p>
-            
-            <div class="footer">
-                <p>S pozdravem,<br>TooZ Hub 2</p>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-"""
+        html_body = render_email_layout(
+            title="Připomínka k vozidlu",
+            subtitle="Blíží se důležitý termín.",
+            intro="Dobrý den,",
+            paragraphs=[
+                "připomínáme Vám blížící se termín pro Vaše vozidlo.",
+                "Nezapomeňte si včas zajistit potřebné úkony.",
+            ],
+            panels=[
+                render_panel(
+                    title="Přehled připomínky",
+                    rows=[
+                        ("Vozidlo", vehicle_name),
+                        ("Typ", reminder_type),
+                        ("Datum", due_date),
+                    ],
+                )
+            ],
+            cta_label="Otevřít aplikaci",
+            cta_url=build_app_url(),
+            accent="#f59e0b",
+        )
         
         return self.send_simple_email(to, subject, body, html_body)

@@ -142,7 +142,7 @@ async def file_browser_index(path: Optional[str] = None):
     <html>
     <head>
         <meta charset="UTF-8">
-        <title>File Browser - TOOZHUB2</title>
+        <title>File Browser - Správa vozidel</title>
         <style>
             body {{
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -244,7 +244,7 @@ async def file_browser_index(path: Optional[str] = None):
     </head>
     <body>
         <div class="container">
-            <h1>📁 File Browser - TOOZHUB2 Project</h1>
+            <h1>📁 File Browser - Správa vozidel</h1>
             <div class="breadcrumb">
                 <a href="/files/">🏠 Root</a>
                 {generate_breadcrumb(path) if path else ""}
@@ -483,7 +483,6 @@ async def list_files_api(path: Optional[str] = None):
         "path": str(target_path.relative_to(PROJECT_ROOT)).replace("\\", "/") if path else "",
         "items": items
     }
-
 
 
 

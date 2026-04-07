@@ -58,6 +58,33 @@ struct Reminder: Codable, Identifiable, Hashable {
     let notificationMethod: String?
     let isManual: Bool
     let isCompleted: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case type
+        case vehicleId
+        case vehicleName
+        case text
+        case dueDate
+        case notifyAt
+        case notificationMethod
+        case isManual
+        case isCompleted
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = container.decodeFlexibleInt(forKey: .id)
+        type = container.decodeFlexibleString(forKey: .type) ?? "VLASTNI"
+        vehicleId = container.decodeFlexibleInt(forKey: .vehicleId)
+        vehicleName = container.decodeFlexibleString(forKey: .vehicleName)
+        text = container.decodeFlexibleString(forKey: .text) ?? "Připomínka"
+        dueDate = container.decodeFlexibleDate(forKey: .dueDate)
+        notifyAt = container.decodeFlexibleDate(forKey: .notifyAt)
+        notificationMethod = container.decodeFlexibleString(forKey: .notificationMethod)
+        isManual = container.decodeFlexibleBool(forKey: .isManual) ?? (id != nil)
+        isCompleted = container.decodeFlexibleBool(forKey: .isCompleted)
+    }
 }
 
 struct AnalyticsSummary: Codable {

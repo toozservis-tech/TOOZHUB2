@@ -1,23 +1,12 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-import os
-from pathlib import Path
 
-# Podpora DATABASE_URL i VEHICLE_DB_URL (zpětná kompatibilita)
-# Použít DATABASE_URL pokud existuje, jinak VEHICLE_DB_URL, jinak default SQLite
-_db_url_env = os.getenv("DATABASE_URL") or os.getenv("VEHICLE_DB_URL")
+from src.core.config import DATABASE_URL
 
-if _db_url_env:
-    DB_URL = _db_url_env
-else:
-    # Default: SQLite v /opt/toozhub2/data/vehicles.db (absolutní path)
-    # File location: /opt/toozhub2/app/src/modules/vehicle_hub/database.py
-    # Need to go up 5 levels: database.py -> vehicle_hub -> modules -> src -> app -> /opt/toozhub2
-    project_root = Path(__file__).parent.parent.parent.parent.parent  # /opt/toozhub2/app/src/modules/vehicle_hub -> /opt/toozhub2
-    data_dir = project_root / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)  # Vytvořit složku pokud neexistuje
-    db_file = data_dir / "vehicles.db"
-    DB_URL = f"sqlite:///{db_file}"
+
+# Jediná runtime databázová pravda je centrální resolver v src.core.config.
+# Legacy VEHICLE_DB_URL zůstává podporovaný pouze jako compat vstup do configu.
+DB_URL = DATABASE_URL
 
 # Connect args pro SQLite
 connect_args = {"check_same_thread": False} if DB_URL.startswith("sqlite") else {}
@@ -44,4 +33,3 @@ def get_db():
         yield db
     finally:
         db.close()
-

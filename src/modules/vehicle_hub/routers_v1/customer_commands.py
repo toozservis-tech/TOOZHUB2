@@ -10,6 +10,11 @@ from datetime import datetime
 
 from ..database import get_db
 from ..models import CustomerCommand, Vehicle as VehicleModel, Customer, Reservation, Reminder, ServiceRecord as ServiceRecordModel
+from ..ownership import (
+    ensure_vehicle_owner_assignment,
+    get_customer_by_email,
+    get_owned_vehicle_rows,
+)
 from src.bot.command_engine import detect_intent, IntentType
 
 router = APIRouter(prefix="/api/customer-commands", tags=["customer-commands"])
@@ -33,6 +38,13 @@ class CustomerCommandResponse(BaseModel):
     available_vehicles: Optional[List[dict]] = None
 
 
+def _get_customer_owned_vehicles(db: Session, customer_email: str) -> List[VehicleModel]:
+    customer = get_customer_by_email(db, customer_email)
+    if customer is None:
+        return []
+    return get_owned_vehicle_rows(db, customer, tenant_id=getattr(customer, "tenant_id", None))
+
+
 def find_vehicles_by_text(text: str, customer_email: str, db: Session) -> List[dict]:
     """
     Najde vozidla uživatele podle textu v příkazu.
@@ -49,9 +61,7 @@ def find_vehicles_by_text(text: str, customer_email: str, db: Session) -> List[d
         return []
     
     # Získat všechna vozidla uživatele
-    vehicles = db.query(VehicleModel).filter(
-        VehicleModel.user_email == customer_email
-    ).all()
+    vehicles = _get_customer_owned_vehicles(db, customer_email)
     
     if not vehicles:
         return []
@@ -374,10 +384,17 @@ def execute_customer_command(command: CustomerCommand, db: Session) -> str:
                 return "VIN nebyl nalezen v příkazu. Zadejte VIN (17 znaků)."
             
             # Zkontrolovat, zda vozidlo s tímto VIN už neexistuje
-            existing = db.query(VehicleModel).filter(
-                VehicleModel.user_email == command.customer_email,
-                VehicleModel.vin == vin
-            ).first()
+            customer = get_customer_by_email(db, command.customer_email)
+            existing = None
+            if customer is not None:
+                existing = next(
+                    (
+                        vehicle
+                        for vehicle in _get_customer_owned_vehicles(db, command.customer_email)
+                        if str(getattr(vehicle, "vin", None) or "").strip().upper() == vin
+                    ),
+                    None,
+                )
             
             if existing:
                 return f"Vozidlo s VIN {vin} již existuje (ID: {existing.id})."
@@ -560,6 +577,14 @@ def execute_customer_command(command: CustomerCommand, db: Session) -> str:
                 notes="\n".join(notes_parts)
             )
             db.add(vehicle)
+            db.flush()
+            if customer is not None:
+                ensure_vehicle_owner_assignment(
+                    db,
+                    vehicle=vehicle,
+                    owner=customer,
+                    assigned_by_customer_id=customer.id,
+                )
             db.commit()
             db.refresh(vehicle)
             
@@ -700,9 +725,7 @@ def create_customer_command(
             else:
                 # Žádná shoda - zobrazit všechna vozidla uživatele
                 try:
-                    all_vehicles = db.query(VehicleModel).filter(
-                        VehicleModel.user_email == request.customer_email
-                    ).all()
+                    all_vehicles = _get_customer_owned_vehicles(db, request.customer_email)
                     available_vehicles = [
                         {
                             "id": v.id,
@@ -922,8 +945,6 @@ def get_customer_command(
         "error_message": command.error_message,
         "processed_at": command.processed_at.isoformat() if command.processed_at else None
     }
-
-
 
 
 

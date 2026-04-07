@@ -10,8 +10,10 @@ from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import func
 
 from src.core.config import ENVIRONMENT, PUBLIC_API_BASE_URL
+from src.core.branding import APP_DISPLAY_NAME
 from src.core.rate_limiter import rate_limiter
 from src.core.security import create_access_token, hash_password, needs_rehash, verify_password
+from src.modules.email_client.templates import build_app_url, render_email_layout, render_panel
 from src.modules.vehicle_hub.account_state import (
     customer_is_deleted,
     customer_is_disabled,
@@ -109,7 +111,7 @@ def register_user(user_data: UserRegister, db=Depends(get_db)):
             email_body = f"""
 Dobrý den {user_name},
 
-vaše registrace do TooZ Hub 2 byla úspěšně dokončena.
+vaše registrace do aplikace {APP_DISPLAY_NAME} byla úspěšně dokončena.
 
 Registrovaný účet: {customer.email}
 Datum registrace: {registered_at} UTC
@@ -117,31 +119,34 @@ Datum registrace: {registered_at} UTC
 Nyní se můžete přihlásit a začít spravovat svá vozidla.
 
 S pozdravem,
-TooZ Hub 2
+{APP_DISPLAY_NAME}
 """
 
-            html_body = f"""
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #6366f1;">Vítejte v TooZ Hub 2</h2>
-        <p>Dobrý den {user_name},</p>
-        <p>vaše registrace do <strong>TooZ Hub 2</strong> byla úspěšně dokončena.</p>
-        <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0;"><strong>Registrovaný účet:</strong> {customer.email}</p>
-            <p style="margin: 6px 0 0;"><strong>Datum registrace:</strong> {registered_at} UTC</p>
-        </div>
-        <p>Nyní se můžete přihlásit a začít spravovat svá vozidla.</p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="color: #666; font-size: 0.9em;">S pozdravem,<br>TooZ Hub 2</p>
-    </div>
-</body>
-</html>
-"""
+            html_body = render_email_layout(
+                title="Účet je připraven",
+                subtitle="Registrace byla úspěšně dokončena.",
+                intro=f"Dobrý den {user_name},",
+                paragraphs=[
+                    f"vaše registrace do aplikace {APP_DISPLAY_NAME} byla úspěšně dokončena.",
+                    "Teď se můžete přihlásit a začít spravovat svá vozidla, servisní historii i připomínky.",
+                ],
+                panels=[
+                    render_panel(
+                        title="Přehled účtu",
+                        rows=[
+                            ("Registrovaný účet", customer.email),
+                            ("Datum registrace", f"{registered_at} UTC"),
+                        ],
+                    )
+                ],
+                cta_label="Otevřít aplikaci",
+                cta_url=build_app_url(),
+                accent="#f59e0b",
+            )
             try:
                 email_service.send_simple_email(
                     to=customer.email,
-                    subject="Potvrzení registrace - TooZ Hub 2",
+                    subject=f"Potvrzení registrace - {APP_DISPLAY_NAME}",
                     body=email_body,
                     html_body=html_body,
                 )
@@ -694,7 +699,7 @@ def forgot_password(payload: ForgotPasswordRequest, db=Depends(get_db)):
             email_body = f"""
 Dobrý den,
 
-obdrželi jsme žádost o obnovení hesla k vašemu účtu v TooZ Hub 2.
+obdrželi jsme žádost o obnovení hesla k vašemu účtu v aplikaci {APP_DISPLAY_NAME}.
 
 Pro vytvoření nového hesla klikněte na následující odkaz:
 {reset_url}
@@ -704,33 +709,35 @@ Tento odkaz je platný 24 hodin.
 Pokud jste tento požadavek nevytvořili, ignorujte tento email.
 
 S pozdravem,
-TooZ Hub 2
+{APP_DISPLAY_NAME}
 """
-            html_body = f"""
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #6366f1;">Obnovení hesla - TooZ Hub 2</h2>
-        <p>Dobrý den,</p>
-        <p>obdrželi jsme žádost o obnovení hesla k vašemu účtu.</p>
-        <p>Pro vytvoření nového hesla klikněte na následující tlačítko:</p>
-        <div style="text-align: center; margin: 30px 0;">
-            <a href="{reset_url}" style="background-color: #6366f1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Obnovit heslo</a>
-        </div>
-        <p>Nebo zkopírujte tento odkaz do prohlížeče:</p>
-        <p style="word-break: break-all; color: #6366f1;">{reset_url}</p>
-        <p><small>Tento odkaz je platný 24 hodin.</small></p>
-        <p>Pokud jste tento požadavek nevytvořili, ignorujte tento email.</p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="color: #666; font-size: 0.9em;">S pozdravem,<br>TooZ Hub 2</p>
-    </div>
-</body>
-</html>
-"""
+            html_body = render_email_layout(
+                title="Obnovení hesla",
+                subtitle="Požadavek na změnu hesla k vašemu účtu.",
+                intro="Dobrý den,",
+                paragraphs=[
+                    f"obdrželi jsme žádost o obnovení hesla k vašemu účtu v aplikaci {APP_DISPLAY_NAME}.",
+                    "Odkaz je platný 24 hodin. Pokud jste o změnu hesla nežádali, tento e-mail ignorujte.",
+                ],
+                panels=[
+                    render_panel(
+                        title="Bezpečnostní informace",
+                        rows=[
+                            ("Platnost odkazu", "24 hodin"),
+                            ("Účet", target_email),
+                        ],
+                        accent="#ef4444",
+                        tone="#fef2f2",
+                    )
+                ],
+                cta_label="Obnovit heslo",
+                cta_url=reset_url,
+                accent="#f59e0b",
+            )
             try:
                 email_service.send_simple_email(
                     to=target_email,
-                    subject="Obnovení hesla - TooZ Hub 2",
+                    subject=f"Obnovení hesla - {APP_DISPLAY_NAME}",
                     body=email_body,
                     html_body=html_body,
                 )

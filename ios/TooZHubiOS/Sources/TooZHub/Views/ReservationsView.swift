@@ -1,25 +1,31 @@
 import SwiftUI
 
 struct ReservationsView: View {
-    @EnvironmentObject private var env: AppEnvironment
-    @StateObject private var viewModel: ReservationsViewModel
-    @State private var showNewReservation = false
+    private enum ReservationFilter: String, CaseIterable, Identifiable {
+        case all = "Vše"
+        case pending = "Čeká"
+        case confirmed = "Potvrzené"
+        case completed = "Hotové"
+        case cancelled = "Zrušené"
 
-    init() {
-        let api = APIClient()
-        _viewModel = StateObject(wrappedValue: ReservationsViewModel(service: ReservationService(api: api), featureService: UserFeatureService(api: api)))
+        var id: String { rawValue }
     }
+
+    @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var viewModel: ReservationsViewModel
+    @State private var showNewReservation = false
+    @State private var selectedFilter: ReservationFilter = .all
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                LazyVStack(alignment: .leading, spacing: Theme.Spacing.lg) {
                     HStack(alignment: .center) {
-                        Text("Naplánované termíny a servisní schůzky")
+                        Text(isServiceRole ? "Příchozí rezervace klientů a servisní kalendář" : "Naplánované termíny a servisní schůzky")
                             .font(Theme.Typography.caption)
                             .foregroundStyle(Theme.Colors.textSecondary)
                         Spacer()
-                        PillBadge(title: "\(viewModel.reservations.count) termínů", style: .success)
+                        PillBadge(title: "\(filteredReservations.count) termínů", style: .success)
                     }
 
                     if viewModel.isLoading {
@@ -39,8 +45,13 @@ struct ReservationsView: View {
                             showNewReservation = true
                         }
                     } else {
-                        ForEach(viewModel.reservations) { reservation in
-                            reservationCard(reservation)
+                        reservationSummary
+                        reservationFilterBar
+
+                        LazyVStack(spacing: Theme.Spacing.md) {
+                            ForEach(filteredReservations) { reservation in
+                                reservationCard(reservation)
+                            }
                         }
                     }
                 }
@@ -87,7 +98,7 @@ struct ReservationsView: View {
                 }
             }
             .task { await reload() }
-            .refreshable { await reload() }
+            .refreshable { await reload(force: true) }
         }
     }
 
@@ -117,6 +128,17 @@ struct ReservationsView: View {
                 VehicleInfoPillLight(icon: "clock", label: "Čas", value: reservation.startDatetime.formatted(date: .omitted, time: .shortened))
             }
 
+            if isServiceRole {
+                HStack(spacing: Theme.Spacing.sm) {
+                    if let customerName = reservation.customerName ?? reservation.customerEmail {
+                        VehicleInfoPillLight(icon: "person", label: "Klient", value: customerName)
+                    }
+                    if let vehicleName = reservation.vehicleName ?? reservation.vehiclePlate {
+                        VehicleInfoPillLight(icon: "car.fill", label: "Vozidlo", value: vehicleName)
+                    }
+                }
+            }
+
             if let note = reservation.note, !note.isEmpty {
                 Text(note)
                     .font(Theme.Typography.caption)
@@ -124,29 +146,61 @@ struct ReservationsView: View {
             }
 
             HStack(spacing: Theme.Spacing.sm) {
-                Button("Zrušit") {
-                    guard let token = env.authManager.token else { return }
-                    Task {
-                        await viewModel.cancelReservation(
-                            reservationId: reservation.id,
-                            token: token,
-                            role: env.authManager.user?.role ?? "user"
-                        )
+                if shouldShowConfirmAction(for: reservation) {
+                    Button("Potvrdit") {
+                        guard let token = env.authManager.token else { return }
+                        Task {
+                            await viewModel.confirmReservation(
+                                reservationId: reservation.id,
+                                token: token,
+                                role: env.authManager.user?.role ?? "user"
+                            )
+                        }
                     }
+                    .buttonStyle(InlineChipButtonStyle(isSelected: true))
                 }
-                .buttonStyle(InlineChipButtonStyle(isSelected: false))
 
-                Button("Smazat") {
-                    guard let token = env.authManager.token else { return }
-                    Task {
-                        await viewModel.deleteReservation(
-                            reservationId: reservation.id,
-                            token: token,
-                            role: env.authManager.user?.role ?? "user"
-                        )
+                if shouldShowCompleteAction(for: reservation) {
+                    Button("Dokončit") {
+                        guard let token = env.authManager.token else { return }
+                        Task {
+                            await viewModel.completeReservation(
+                                reservationId: reservation.id,
+                                token: token,
+                                role: env.authManager.user?.role ?? "user"
+                            )
+                        }
                     }
+                    .buttonStyle(InlineChipButtonStyle(isSelected: false))
                 }
-                .buttonStyle(InlineChipButtonStyle(isSelected: false))
+
+                if shouldShowCancelAction(for: reservation) {
+                    Button("Zrušit") {
+                        guard let token = env.authManager.token else { return }
+                        Task {
+                            await viewModel.cancelReservation(
+                                reservationId: reservation.id,
+                                token: token,
+                                role: env.authManager.user?.role ?? "user"
+                            )
+                        }
+                    }
+                    .buttonStyle(InlineChipButtonStyle(isSelected: false))
+                }
+
+                if shouldShowDeleteAction(for: reservation) {
+                    Button("Smazat") {
+                        guard let token = env.authManager.token else { return }
+                        Task {
+                            await viewModel.deleteReservation(
+                                reservationId: reservation.id,
+                                token: token,
+                                role: env.authManager.user?.role ?? "user"
+                            )
+                        }
+                    }
+                    .buttonStyle(InlineChipButtonStyle(isSelected: false))
+                }
             }
         }
         .hubLightCard()
@@ -180,9 +234,111 @@ struct ReservationsView: View {
         }
     }
 
-    private func reload() async {
+    private var reservationSummary: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            reservationSummaryCard(title: "Čeká", value: count(for: .pending))
+            reservationSummaryCard(title: "Potvrzené", value: count(for: .confirmed))
+            reservationSummaryCard(title: "Hotové", value: count(for: .completed))
+        }
+    }
+
+    private var reservationFilterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Theme.Spacing.sm) {
+                ForEach(ReservationFilter.allCases) { filter in
+                    Button(filter.rawValue) {
+                        selectedFilter = filter
+                    }
+                    .buttonStyle(InlineChipButtonStyle(isSelected: selectedFilter == filter))
+                }
+            }
+        }
+    }
+
+    private var filteredReservations: [Reservation] {
+        let source = viewModel.reservations.sorted { $0.startDatetime < $1.startDatetime }
+        switch selectedFilter {
+        case .all:
+            return source
+        case .pending:
+            return source.filter { normalizedStatus($0.status) == "PENDING" }
+        case .confirmed:
+            return source.filter { normalizedStatus($0.status) == "CONFIRMED" }
+        case .completed:
+            return source.filter { normalizedStatus($0.status) == "COMPLETED" }
+        case .cancelled:
+            return source.filter { normalizedStatus($0.status) == "CANCELLED" }
+        }
+    }
+
+    private var isServiceRole: Bool {
+        (env.authManager.user?.role ?? "").lowercased() == "service"
+    }
+
+    private func normalizedStatus(_ status: String) -> String {
+        status.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    }
+
+    private func count(for filter: ReservationFilter) -> Int {
+        switch filter {
+        case .all:
+            return viewModel.reservations.count
+        case .pending:
+            return viewModel.reservations.filter { normalizedStatus($0.status) == "PENDING" }.count
+        case .confirmed:
+            return viewModel.reservations.filter { normalizedStatus($0.status) == "CONFIRMED" }.count
+        case .completed:
+            return viewModel.reservations.filter { normalizedStatus($0.status) == "COMPLETED" }.count
+        case .cancelled:
+            return viewModel.reservations.filter { normalizedStatus($0.status) == "CANCELLED" }.count
+        }
+    }
+
+    private func shouldShowConfirmAction(for reservation: Reservation) -> Bool {
+        isServiceRole && normalizedStatus(reservation.status) == "PENDING"
+    }
+
+    private func shouldShowCompleteAction(for reservation: Reservation) -> Bool {
+        isServiceRole && normalizedStatus(reservation.status) == "CONFIRMED"
+    }
+
+    private func shouldShowCancelAction(for reservation: Reservation) -> Bool {
+        let status = normalizedStatus(reservation.status)
+        if isServiceRole {
+            return status == "PENDING" || status == "CONFIRMED"
+        }
+        return status != "CANCELLED" && status != "COMPLETED"
+    }
+
+    private func shouldShowDeleteAction(for reservation: Reservation) -> Bool {
+        let status = normalizedStatus(reservation.status)
+        return isServiceRole || status == "CANCELLED" || status == "COMPLETED"
+    }
+
+    private func reservationSummaryCard(title: String, value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(Theme.Typography.tiny)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            Text("\(value)")
+                .font(Theme.Typography.headline)
+                .foregroundStyle(.white)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                .fill(Theme.Colors.surface)
+        )
+    }
+
+    private func reload(force: Bool = false) async {
         guard let token = env.authManager.token else { return }
-        await viewModel.load(token: token, role: env.authManager.user?.role ?? "user")
+        await viewModel.loadIfNeeded(
+            token: token,
+            role: env.authManager.user?.role ?? "user",
+            force: force
+        )
     }
 
     private var serviceOptionsForCurrentUserRole: [ServiceContact] {

@@ -17,6 +17,11 @@ final class UserFeatureService {
         return try await api.request(.put("/api/v1/vehicles/\(id)", body: body), token: token)
     }
 
+    func updateVehiclePartial(id: Int, _ request: VehicleUpdateRequest, token: String) async throws -> Vehicle {
+        let body = try api.encodeBody(request)
+        return try await api.request(.put("/api/v1/vehicles/\(id)", body: body), token: token)
+    }
+
     func deleteVehicle(id: Int, token: String) async throws {
         try await api.requestNoContent(.delete("/api/v1/vehicles/\(id)"), token: token)
     }
@@ -133,6 +138,20 @@ final class UserFeatureService {
 
     func fetchVehicleAccessGrants(token: String) async throws -> VehicleAccessGrantListResponse {
         try await api.request(.get("/api/v1/services/vehicle-access"), token: token)
+    }
+
+    func fetchServiceAccessRequests(token: String) async throws -> ServiceAccessRequestListResponse {
+        try await api.request(.get("/api/v1/services/access-requests"), token: token)
+    }
+
+    func resolveServiceAccessRequest(
+        requestId: Int,
+        decision: String,
+        note: String?,
+        token: String
+    ) async throws -> ServiceAccessRequestDecisionResponse {
+        let body = try api.encodeBody(ServiceAccessRequestDecisionRequest(decision: decision, note: note))
+        return try await api.request(.put("/api/v1/services/access-requests/\(requestId)", body: body), token: token)
     }
 
     func grantVehicleAccess(_ request: VehicleAccessGrantRequest, token: String) async throws {

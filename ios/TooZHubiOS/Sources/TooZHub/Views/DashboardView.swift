@@ -3,7 +3,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject private var env: AppEnvironment
-    @StateObject private var viewModel: DashboardViewModel
+    @EnvironmentObject private var viewModel: DashboardViewModel
     @AppStorage("dashboard.didDismissWelcomeExperience") private var didDismissWelcomeExperience = false
     @AppStorage("dashboard.showWelcomeDeck") private var showWelcomeDeck = true
     @AppStorage("dashboard.showWorkspaceDeck") private var showWorkspaceDeck = true
@@ -16,15 +16,12 @@ struct DashboardView: View {
     @AppStorage("dashboard.highlightMode") private var highlightModeRaw = DashboardHighlightMode.balanced.rawValue
     @AppStorage("dashboard.moduleOrder") private var moduleOrderRaw = DashboardModule.defaultStorageValue
     @State private var isPresentingCustomization = false
-
-    init() {
-        _viewModel = StateObject(wrappedValue: DashboardViewModel(service: DashboardService(api: APIClient())))
-    }
+    @State private var selectedVehicleForDetail: Vehicle?
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: dashboardSpacing) {
+                LazyVStack(alignment: .leading, spacing: dashboardSpacing) {
                     if viewModel.isLoading {
                         ProgressView()
                             .tint(.white)
@@ -71,7 +68,7 @@ struct DashboardView: View {
                 }
             }
             .task { await reload() }
-            .refreshable { await reload() }
+            .refreshable { await reload(force: true) }
             .sheet(isPresented: $isPresentingCustomization) {
                 DashboardCustomizationSheet(
                     showWelcomeDeck: $showWelcomeDeck,
@@ -82,6 +79,11 @@ struct DashboardView: View {
                 )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+            }
+            .sheet(item: $selectedVehicleForDetail) { vehicle in
+                NavigationStack {
+                    VehicleDetailView(vehicleId: vehicle.id)
+                }
             }
             .fullScreenCover(isPresented: welcomeExperienceBinding) {
                 DashboardWelcomeExperienceView {
@@ -490,10 +492,11 @@ struct DashboardView: View {
                 }
             } else {
                 ForEach(viewModel.vehicles.prefix(compactMode ? 1 : 2)) { vehicle in
-                    NavigationLink {
-                        VehicleDetailView(vehicleId: vehicle.id)
+                    Button {
+                        selectedVehicleForDetail = vehicle
                     } label: {
                         VehicleCard(vehicle: vehicle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .buttonStyle(.plain)
                 }
@@ -999,9 +1002,9 @@ struct DashboardView: View {
         .buttonStyle(.plain)
     }
 
-    private func reload() async {
+    private func reload(force: Bool = false) async {
         guard let token = env.authManager.token else { return }
-        await viewModel.load(token: token)
+        await viewModel.loadIfNeeded(token: token, force: force)
     }
 }
 

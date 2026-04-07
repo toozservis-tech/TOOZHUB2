@@ -1,6 +1,6 @@
 # Licensing Module
 
-Centralizovaný modul pro správu licencí a limitů v TooZ Hub 2.
+Centralizovaný modul pro správu licencí a limitů v aplikaci Správa vozidel.
 
 ## Struktura
 
@@ -55,7 +55,6 @@ print(f"Over limit: {entitlement.is_over_limit}")
 ## Integrace s TOOZ_service_hub
 
 Pro budoucí integraci použijte `request_plan_change_via_service_hub()` - aktuálně je to placeholder.
-
 
 
 

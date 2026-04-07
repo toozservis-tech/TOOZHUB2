@@ -4,6 +4,7 @@ import UIKit
 private struct ServiceTachometerCaptchaSheet: View {
     let challenge: TachometerChallengeResponse
     let isSubmitting: Bool
+    let errorMessage: String?
     let onSubmit: (String) -> Void
     let onCancel: () -> Void
 
@@ -47,6 +48,12 @@ private struct ServiceTachometerCaptchaSheet: View {
                             .fill(Theme.Colors.surface)
                     )
 
+                if let errorMessage, !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.red)
+                }
+
                 HStack(spacing: Theme.Spacing.md) {
                     Button("Zrušit", role: .cancel, action: onCancel)
                         .buttonStyle(.bordered)
@@ -73,9 +80,29 @@ private struct ServiceTachometerCaptchaSheet: View {
 }
 
 struct ServiceAddVehicleView: View {
+    private enum AssignmentMode: String, CaseIterable, Identifiable {
+        case linkedCustomer
+        case inviteOwner
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .linkedCustomer:
+                return "Existující klient"
+            case .inviteOwner:
+                return "Pozvat majitele"
+            }
+        }
+    }
+
     @EnvironmentObject private var env: AppEnvironment
     @State private var customers: [ServiceWorkspaceCustomer] = []
     @State private var selectedCustomerId: Int = 0
+    @State private var assignmentMode: AssignmentMode = .linkedCustomer
+    @State private var inviteEmail = ""
+    @State private var inviteName = ""
+    @State private var inviteMessage = ""
     @State private var nickname = ""
     @State private var brand = ""
     @State private var model = ""
@@ -94,6 +121,8 @@ struct ServiceAddVehicleView: View {
     @State private var showTachometerCaptchaSheet = false
     @State private var hasManualNicknameOverride = false
     @State private var isSyncingNickname = false
+    @State private var showORVScanFlow = false
+    @State private var appliedORVScan: ORVScanReviewResult?
 
     private let service = ServiceWorkspaceService(api: APIClient())
     private let vehicleService = VehicleService(api: APIClient())
@@ -108,13 +137,69 @@ struct ServiceAddVehicleView: View {
         return "Aktuální stav km musí být alespoň \(formatMileage(lastStk)) km (poslední údaj ze STK/emisí)."
     }
 
+    private var orvValidationError: String? {
+        guard appliedORVScan != nil else { return nil }
+        return VehicleInputValidator.validationMessage(for: vin, required: true)
+    }
+
+    private var isInviteMode: Bool {
+        assignmentMode == .inviteOwner
+    }
+
+    private var inviteEmailError: String? {
+        guard isInviteMode else { return nil }
+        let trimmed = inviteEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Vyplňte e-mail budoucího vlastníka." }
+        return trimmed.contains("@") ? nil : "E-mail budoucího vlastníka není ve správném formátu."
+    }
+
     var body: some View {
         NavigationStack {
             Form {
+                Section("Přidání pomocí ORV") {
+                    Button {
+                        showORVScanFlow = true
+                    } label: {
+                        Label("Naskenovat ORV", systemImage: "doc.text.viewfinder")
+                    }
+
+                    if let appliedORVScan {
+                        VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
+                            Text("Údaje z ORV jsou připravené ve formuláři")
+                                .font(Theme.Typography.captionStrong)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            Text("Po kontrole v aplikaci: \(appliedORVScan.reviewTrustStateLabel)")
+                                .font(Theme.Typography.caption)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            Text("Při finálním přidání vozidla se scan uloží jako: \(appliedORVScan.persistedTrustStateLabel)")
+                                .font(Theme.Typography.caption)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            Text("Vozidlo klientovi přidáte až tlačítkem Přidat vozidlo klientovi.")
+                                .font(Theme.Typography.caption)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                    }
+                }
                 Section("Klient") {
-                    Picker("Vyberte klienta", selection: $selectedCustomerId) {
-                        ForEach(customers) { customer in
-                            Text(customer.name ?? customer.email).tag(customer.customerId)
+                    Picker("Režim", selection: $assignmentMode) {
+                        ForEach(AssignmentMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+
+                    if isInviteMode {
+                        TextField("E-mail budoucího vlastníka", text: $inviteEmail)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .keyboardType(.emailAddress)
+                        TextField("Jméno majitele", text: $inviteName)
+                        TextField("Zpráva do pozvánky", text: $inviteMessage, axis: .vertical)
+                            .lineLimit(2...4)
+                    } else {
+                        Picker("Vyberte klienta", selection: $selectedCustomerId) {
+                            ForEach(customers) { customer in
+                                Text(customer.name ?? customer.email).tag(customer.customerId)
+                            }
                         }
                     }
                 }
@@ -127,7 +212,7 @@ struct ServiceAddVehicleView: View {
                         Button("Načíst") {
                             Task { await decodeVIN() }
                         }
-                        .disabled(vinLoading || vin.trimmingCharacters(in: .whitespacesAndNewlines).count != 17)
+                        .disabled(vinLoading || !VehicleInputValidator.isValidVIN(vin))
                     }
                     TextField("Název", text: $nickname)
                     TextField("Značka", text: $brand)
@@ -162,7 +247,7 @@ struct ServiceAddVehicleView: View {
                     }
                     .disabled(
                         isLookingUpTachometer ||
-                        normalizeVin(vin).count != 17
+                        !VehicleInputValidator.isValidVIN(vin)
                     )
                 }
 
@@ -181,6 +266,20 @@ struct ServiceAddVehicleView: View {
                             .foregroundStyle(.red)
                     }
                 }
+                if let orvValidationError {
+                    Section {
+                        Text(orvValidationError)
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+                if let inviteEmailError {
+                    Section {
+                        Text(inviteEmailError)
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
 
                 if let message {
                     Section {
@@ -190,14 +289,16 @@ struct ServiceAddVehicleView: View {
                 }
 
                 Section {
-                    Button("Přidat vozidlo klientovi") {
+                    Button(isInviteMode ? "Zařadit vozidlo a poslat pozvánku" : "Přidat vozidlo klientovi") {
                         Task { await submit() }
                     }
                     .disabled(
                         isLoading ||
-                        selectedCustomerId == 0 ||
+                        (!isInviteMode && selectedCustomerId == 0) ||
                         nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                        mileageValidationError != nil
+                        (isInviteMode && inviteEmailError != nil) ||
+                        mileageValidationError != nil ||
+                        orvValidationError != nil
                     )
                 }
             }
@@ -229,6 +330,7 @@ struct ServiceAddVehicleView: View {
                     ServiceTachometerCaptchaSheet(
                         challenge: challenge,
                         isSubmitting: isLookingUpTachometer,
+                        errorMessage: message,
                         onSubmit: { code in
                             Task { await submitTachometerLookup(captchaCode: code) }
                         },
@@ -239,6 +341,12 @@ struct ServiceAddVehicleView: View {
                     )
                 }
             }
+            .sheet(isPresented: $showORVScanFlow) {
+                ORVScanFlowSheet { result in
+                    applyORVScanResult(result)
+                    showORVScanFlow = false
+                }
+            }
         }
     }
 
@@ -247,8 +355,17 @@ struct ServiceAddVehicleView: View {
         do {
             customers = try await service.fetchCustomers(token: token)
             selectedCustomerId = customers.first?.customerId ?? 0
+            if customers.isEmpty {
+                assignmentMode = .inviteOwner
+            }
         } catch {
-            message = error.localizedDescription
+            customers = []
+            assignmentMode = .inviteOwner
+            message = UserFacingErrorMapper.message(
+                for: error,
+                context: .account,
+                fallback: "Seznam klientů se nepodařilo načíst. Můžete ale zaevidovat vozidlo a pozvat budoucího majitele."
+            )
         }
     }
 
@@ -263,22 +380,44 @@ struct ServiceAddVehicleView: View {
         formatter.dateFormat = "yyyy-MM-dd"
 
         do {
-            try await service.createCustomerVehicle(
-                customerId: selectedCustomerId,
-                request: ServiceWorkspaceVehicleCreateRequest(
-                    nickname: nickname,
-                    brand: brand.isEmpty ? nil : brand,
-                    model: model.isEmpty ? nil : model,
-                    year: Int(year),
-                    plate: plate.isEmpty ? nil : plate,
-                    vin: vin.isEmpty ? nil : vin,
-                    stkValidUntil: formatter.string(from: stkDate),
-                    currentMileageKm: parsedCurrentMileageKm,
-                    lastStkMileageKm: parsedLastStkMileageKm
-                ),
-                token: token
+            let vehicleRequest = ServiceWorkspaceVehicleCreateRequest(
+                nickname: nickname,
+                brand: brand.isEmpty ? nil : brand,
+                model: model.isEmpty ? nil : model,
+                year: Int(year),
+                plate: plate.isEmpty ? nil : plate,
+                vin: VehicleInputValidator.normalizedVIN(vin).nilIfBlank,
+                stkValidUntil: formatter.string(from: stkDate),
+                currentMileageKm: parsedCurrentMileageKm,
+                lastStkMileageKm: parsedLastStkMileageKm,
+                engine: nil,
+                notes: nil,
+                orvScanId: appliedORVScan?.scanId,
+                orvNumber: appliedORVScan?.vehicleFields.orvNumber.nilIfBlank,
+                orvUseOwnerData: appliedORVScan?.includeOwnerData,
+                dataTrustState: appliedORVScan?.persistedTrustState
             )
-            message = "Vozidlo bylo úspěšně přidáno."
+
+            if isInviteMode {
+                let response = try await service.createPendingVehicleRegistration(
+                    PendingVehicleRegistrationRequest(
+                        inviteEmail: inviteEmail.trimmingCharacters(in: .whitespacesAndNewlines),
+                        inviteName: inviteName.nilIfBlank,
+                        inviteMessage: inviteMessage.nilIfBlank,
+                        vehicle: vehicleRequest
+                    ),
+                    token: token
+                )
+                message = response.message ?? "Vozidlo bylo zaevidováno a pozvánka připravena."
+            } else {
+                try await service.createCustomerVehicle(
+                    customerId: selectedCustomerId,
+                    request: vehicleRequest,
+                    token: token
+                )
+                message = "Vozidlo bylo úspěšně přidáno."
+            }
+
             nickname = ""
             brand = ""
             model = ""
@@ -288,16 +427,25 @@ struct ServiceAddVehicleView: View {
             currentMileageKm = ""
             lastStkMileageKm = ""
             hasManualNicknameOverride = false
+            appliedORVScan = nil
+            inviteName = ""
+            inviteMessage = ""
         } catch {
-            message = error.localizedDescription
+            message = UserFacingErrorMapper.message(
+                for: error,
+                context: .account,
+                fallback: isInviteMode
+                    ? "Vozidlo se nepodařilo zaevidovat a pozvánku odeslat."
+                    : "Vozidlo se nepodařilo přidat klientovi."
+            )
         }
     }
 
     private func decodeVIN() async {
         guard let token = env.authManager.token else { return }
-        let vinValue = normalizeVin(vin)
-        guard vinValue.count == 17 else {
-            message = "VIN musí mít přesně 17 znaků."
+        let vinValue = VehicleInputValidator.normalizedVIN(vin)
+        if let validationMessage = VehicleInputValidator.validationMessage(for: vin, required: true) {
+            message = validationMessage
             return
         }
 
@@ -384,9 +532,9 @@ struct ServiceAddVehicleView: View {
     private func startTachometerLookup() async {
         guard let token = env.authManager.token else { return }
         message = nil
-        let normalizedVin = normalizeVin(vin)
-        guard normalizedVin.count == 17 else {
-            message = "VIN musí mít 17 znaků, aby šlo načíst STK tachometr."
+        let normalizedVin = VehicleInputValidator.normalizedVIN(vin)
+        if VehicleInputValidator.validationMessage(for: vin, required: true) != nil {
+            message = "VIN musí být validní, aby šlo načíst STK tachometr."
             return
         }
 
@@ -394,10 +542,10 @@ struct ServiceAddVehicleView: View {
         defer { isLookingUpTachometer = false }
 
         do {
-            tachometerChallenge = try await vehicleService.createTachometerChallenge(token: token)
+            tachometerChallenge = try await vehicleService.createTachometerChallenge(vin: normalizedVin, token: token)
             showTachometerCaptchaSheet = true
         } catch {
-            message = error.localizedDescription
+            message = friendlyTachometerError(from: error)
         }
     }
 
@@ -437,17 +585,29 @@ struct ServiceAddVehicleView: View {
             showTachometerCaptchaSheet = false
             tachometerChallenge = nil
         } catch {
-            message = error.localizedDescription
-            showTachometerCaptchaSheet = false
-            tachometerChallenge = nil
+            message = friendlyTachometerError(from: error)
+            if shouldResetTachometerChallenge(after: error) {
+                showTachometerCaptchaSheet = false
+                tachometerChallenge = nil
+            }
         }
     }
 
-    private func normalizeVin(_ value: String) -> String {
-        value
-            .uppercased()
-            .replacingOccurrences(of: " ", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    private func shouldResetTachometerChallenge(after error: Error) -> Bool {
+        let lowered = error.localizedDescription.lowercased()
+        return lowered.contains("vypršel")
+            || lowered.contains("neplatný")
+            || lowered.contains("jinému vozidlu")
+    }
+
+    private func friendlyTachometerError(from error: Error) -> String {
+        let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = message.lowercased()
+        if lowered == "not found" || lowered.contains("404") || lowered.contains("not found") {
+            let baseURL = APIClient.configuredBaseURLString()
+            return "Aktuální server (\(baseURL)) ještě neumí Kontrolu tachometru. V Xcode přepněte aplikaci na backend, kde jsou aktivní endpointy /api/v1/vehicles/tachometer/*."
+        }
+        return message
     }
 
     private func suggestedNickname() -> String {
@@ -464,6 +624,24 @@ struct ServiceAddVehicleView: View {
         isSyncingNickname = true
         nickname = suggested
         isSyncingNickname = false
+    }
+
+    private func applyORVScanResult(_ result: ORVScanReviewResult) {
+        appliedORVScan = result
+        if let value = result.vehicleFields.vin.nilIfBlank {
+            vin = VehicleInputValidator.normalizedVIN(value)
+        }
+        if let value = result.vehicleFields.plate.nilIfBlank {
+            plate = value.uppercased()
+        }
+        if let value = result.vehicleFields.brand.nilIfBlank {
+            brand = value
+        }
+        if let value = result.vehicleFields.model.nilIfBlank {
+            model = value
+        }
+        message = "Údaje z ORV byly převzaty do formuláře. Vozidlo klientovi přidáte až tlačítkem Přidat vozidlo klientovi."
+        syncNicknameIfNeeded()
     }
 
     private func parseDate(_ value: String) -> Date? {
@@ -509,5 +687,12 @@ struct ServiceAddVehicleView: View {
         formatter.numberStyle = .decimal
         formatter.groupingSeparator = " "
         return formatter.string(from: NSNumber(value: value)) ?? String(value)
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

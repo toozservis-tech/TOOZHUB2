@@ -214,6 +214,7 @@ struct StatCard: View {
 
 struct VehicleCard: View {
     let vehicle: Vehicle
+    var mode: VehicleCardMode = .grid
 
     private var yearText: String {
         vehicle.year.map(String.init) ?? "-"
@@ -229,7 +230,7 @@ struct VehicleCard: View {
     }
 
     private var mileageText: String {
-        guard let value = vehicle.currentMileageKm else { return "Nezadáno" }
+        guard let value = vehicle.preferredMileageKm else { return "Nezadáno" }
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "cs_CZ")
         formatter.numberStyle = .decimal
@@ -239,17 +240,41 @@ struct VehicleCard: View {
     }
 
     var body: some View {
+        Group {
+            switch mode {
+            case .grid:
+                gridCard
+            case .list:
+                listCard
+            case .compact:
+                compactCard
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var vehicleVisual: some View {
+        AuthenticatedVehiclePhotoView(vehicle: vehicle, height: 138, cornerRadius: 18) {
+            VehiclePhotoPlaceholderView(vehicle: vehicle)
+        }
+    }
+
+    private var gridCard: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            HStack(alignment: .top) {
+            vehicleVisual
+
+            HStack(alignment: .top, spacing: Theme.Spacing.sm) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(vehicle.displayName)
                         .font(Theme.Typography.headline)
                         .foregroundStyle(Theme.Colors.textOnLight)
+                        .lineLimit(2)
                     Text(vehicle.engine?.isEmpty == false ? vehicle.engine! : "Bez specifikace motoru")
                         .font(Theme.Typography.caption)
                         .foregroundStyle(Theme.Colors.textOnLightSecondary)
+                        .lineLimit(2)
                 }
-                Spacer()
+                Spacer(minLength: Theme.Spacing.sm)
                 PillBadge(title: plateText)
             }
 
@@ -268,6 +293,86 @@ struct VehicleCard: View {
             }
         }
         .hubLightCard()
+    }
+
+    private var listCard: some View {
+        HStack(alignment: .center, spacing: Theme.Spacing.md) {
+            AuthenticatedVehiclePhotoView(vehicle: vehicle, height: 84, cornerRadius: 16) {
+                VehiclePhotoPlaceholderView(vehicle: vehicle, compact: true)
+            }
+            .frame(width: 112)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: Theme.Spacing.xs) {
+                    VehicleBrandBadge(vehicle: vehicle, compact: true)
+                    Text(vehicle.displayName)
+                        .font(Theme.Typography.bodyStrong)
+                        .foregroundStyle(Theme.Colors.textOnLight)
+                        .lineLimit(2)
+                }
+
+                Text(vehicle.engine?.isEmpty == false ? vehicle.engine! : "Bez specifikace motoru")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Theme.Colors.textOnLightSecondary)
+                    .lineLimit(1)
+
+                HStack(spacing: Theme.Spacing.sm) {
+                    smallMeta(icon: "number", value: plateText)
+                    smallMeta(icon: "gauge.medium", value: stkText)
+                    smallMeta(icon: "speedometer", value: mileageText)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .hubLightCard()
+    }
+
+    private var compactCard: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            VehicleBrandBadge(vehicle: vehicle, compact: true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(vehicle.displayName)
+                    .font(Theme.Typography.captionStrong)
+                    .foregroundStyle(Theme.Colors.textOnLight)
+                    .lineLimit(1)
+                Text("\(plateText) • \(mileageText)")
+                    .font(Theme.Typography.tiny)
+                    .foregroundStyle(Theme.Colors.textOnLightSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            if vehicle.hasUserPhoto {
+                Image(systemName: "photo.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Colors.primary)
+            }
+        }
+        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.vertical, Theme.Spacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                .fill(Theme.Colors.lightCard)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                .stroke(Theme.Colors.cardHairline.opacity(0.6), lineWidth: 1)
+        )
+        .shadow(color: Theme.Shadow.soft, radius: 8, y: 4)
+    }
+
+    private func smallMeta(icon: String, value: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+            Text(value)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.Colors.textOnLightSecondary)
     }
 }
 

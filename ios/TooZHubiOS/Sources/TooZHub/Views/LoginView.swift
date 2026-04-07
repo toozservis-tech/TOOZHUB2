@@ -31,6 +31,7 @@ struct LoginView: View {
                         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
                             BrandBadge()
                                 .contentShape(Rectangle())
+#if DEBUG
                                 .onTapGesture(count: 7) {
                                     privilegedRoleUnlocked.toggle()
                                     env.authManager.setPrivilegedLoginEnabled(privilegedRoleUnlocked)
@@ -38,6 +39,7 @@ struct LoginView: View {
                                         viewModel.expectedRole = "user"
                                     }
                                 }
+#endif
                             Text("Přihlášení do účtu")
                                 .font(Theme.Typography.title)
                                 .foregroundStyle(.white)
@@ -80,15 +82,18 @@ struct LoginView: View {
                                 RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
                                     .stroke(.white.opacity(0.16), lineWidth: 1)
                             )
+                            #if DEBUG
                             if privilegedRoleUnlocked {
                                 Text("Skrytý režim aktivní")
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(.yellow)
                             }
+                            #endif
                         }
                         .frame(width: contentWidth, alignment: .leading)
 
                         VStack(spacing: Theme.Spacing.sm) {
+                            #if DEBUG
                             if privilegedRoleUnlocked {
                                 Picker("Role", selection: $viewModel.expectedRole) {
                                     Text("Uživatel").tag("user")
@@ -104,6 +109,13 @@ struct LoginView: View {
                                 }
                                 .pickerStyle(.segmented)
                             }
+                            #else
+                            Picker("Role", selection: $viewModel.expectedRole) {
+                                Text("Uživatel").tag("user")
+                                Text("Servis").tag("service")
+                            }
+                            .pickerStyle(.segmented)
+                            #endif
 
                             TextField("Email", text: $viewModel.email)
                                 .textContentType(.emailAddress)

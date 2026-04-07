@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, or_
 
+from src.core.branding import APP_DISPLAY_NAME, APP_EXPORT_DISPLAY_NAME
 from src.modules.vehicle_hub.models import (
     BotCommand,
     Customer,
@@ -37,8 +38,10 @@ from src.modules.vehicle_hub.models import (
     ServiceRecord as ServiceRecordModel,
     ServiceRegistrationRequest,
     Tenant,
+    VehicleOwnership,
     Vehicle as VehicleModel,
 )
+from src.modules.vehicle_hub.ownership import get_owned_vehicle_ids, get_owned_vehicle_rows
 from src.modules.vehicle_hub.account_state import ensure_customer_account_state_schema
 
 
@@ -393,7 +396,7 @@ def build_vehicle_export_pdf(
     owner_text = customer.name or customer.email
 
     story = [
-        Paragraph("TooZ Hub 2 • Export vozidla", title_style),
+        Paragraph(f"{APP_EXPORT_DISPLAY_NAME} • Export vozidla", title_style),
         Paragraph(
             f"Generováno {datetime.utcnow().strftime('%d.%m.%Y %H:%M UTC')} pro účet {customer.email}",
             subtitle_style,
@@ -559,6 +562,7 @@ def send_registration_alert_email(
             return result
 
         from src.modules.email_client.service import EmailMessage, EmailService
+        from src.modules.email_client.templates import render_email_layout, render_panel
 
         email_service = EmailService()
         if not email_service.is_configured():
@@ -578,8 +582,8 @@ def send_registration_alert_email(
             detail_lines.append(f"- {key}: {value}")
         detail_block = "\n".join(detail_lines) if detail_lines else "- bez doplňujících údajů"
 
-        subject = f"[TooZ Hub 2] Nová registrace ({safe_type})"
-        body = f"""Byla vytvořena nová registrace v TooZ Hub 2.
+        subject = f"[{APP_DISPLAY_NAME}] Nová registrace ({safe_type})"
+        body = f"""Byla vytvořena nová registrace v aplikaci {APP_DISPLAY_NAME}.
 
 Typ registrace: {safe_type}
 Email účtu: {account_email}
@@ -591,22 +595,33 @@ Detaily:
 {detail_block}
 """
 
-        html_body = f"""
-<html lang="cs">
-<body style="font-family: Arial, sans-serif; line-height: 1.55; color: #1e293b;">
-  <div style="max-width: 660px; margin: 0 auto; padding: 18px;">
-    <h2 style="margin: 0 0 10px; color: #1d4ed8;">Nová registrace v TooZ Hub 2</h2>
-    <p><strong>Typ registrace:</strong> {safe_type}</p>
-    <p><strong>Email účtu:</strong> {account_email}<br>
-       <strong>Název/Jméno:</strong> {safe_name}<br>
-       <strong>IČO:</strong> {safe_ico}<br>
-       <strong>Čas:</strong> {now_utc}</p>
-    <p><strong>Detaily:</strong></p>
-    <pre style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; white-space:pre-wrap;">{detail_block}</pre>
-  </div>
-</body>
-</html>
-"""
+        html_body = render_email_layout(
+            title="Nová registrace",
+            subtitle="Interní oznámení o novém účtu v aplikaci.",
+            intro=f"Byla vytvořena nová registrace v aplikaci {APP_DISPLAY_NAME}.",
+            panels=[
+                render_panel(
+                    title="Souhrn registrace",
+                    rows=[
+                        ("Typ registrace", safe_type),
+                        ("Email účtu", account_email),
+                        ("Název/Jméno", safe_name),
+                        ("IČO", safe_ico),
+                        ("Čas", now_utc),
+                    ],
+                    accent="#3b82f6",
+                    tone="#eff6ff",
+                ),
+                render_panel(
+                    title="Detaily",
+                    message=detail_block,
+                    accent="#64748b",
+                    tone="#f8fafc",
+                ),
+            ],
+            accent="#f59e0b",
+            footer_note="Interní oznámení pro tým Správa vozidel.",
+        )
 
         message = EmailMessage(
             to=recipients,
@@ -628,10 +643,7 @@ Detaily:
 
 def export_current_customer_bundle(customer: Customer, *, email: str, db, app_version: str) -> tuple[Path, Path, str, int]:
     normalized_email = normalize_email(customer.email or email)
-    vehicles_query = db.query(VehicleModel).filter(func.lower(VehicleModel.user_email) == normalized_email)
-    if customer.tenant_id:
-        vehicles_query = vehicles_query.filter(VehicleModel.tenant_id == customer.tenant_id)
-    vehicles = vehicles_query.order_by(VehicleModel.created_at.asc()).all()
+    vehicles = list(reversed(get_owned_vehicle_rows(db, customer, tenant_id=customer.tenant_id)))
     vehicle_ids = [v.id for v in vehicles]
     vehicle_record_condition = ServiceRecordModel.vehicle_id.in_(vehicle_ids) if vehicle_ids else (ServiceRecordModel.id == -1)
     vehicle_reminder_condition = ReminderModel.vehicle_id.in_(vehicle_ids) if vehicle_ids else (ReminderModel.id == -1)
@@ -738,7 +750,7 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
     export_payload = {
         "meta": {
             "generated_at_utc": datetime.utcnow().isoformat(),
-            "app": "TooZ Hub 2",
+            "app": APP_DISPLAY_NAME,
             "version": app_version,
             "customer_id": customer.id,
             "tenant_id": customer.tenant_id,
@@ -808,7 +820,7 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
 
     readme_path.write_text(
         (
-            "TooZ Hub 2 - Export dat\n"
+            f"{APP_EXPORT_DISPLAY_NAME} - Export dat\n"
             "\n"
             "Obsah archivu:\n"
             "- data/kompletni_export.json  (kompletní strojově čitelný export)\n"
@@ -863,11 +875,7 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
 
 def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
     normalized_email = normalize_email(customer.email or email)
-
-    vehicles_query = db.query(VehicleModel).filter(func.lower(VehicleModel.user_email) == normalized_email)
-    if customer.tenant_id:
-        vehicles_query = vehicles_query.filter(VehicleModel.tenant_id == customer.tenant_id)
-    vehicle_ids = [row.id for row in vehicles_query.with_entities(VehicleModel.id).all()]
+    vehicle_ids = sorted(get_owned_vehicle_ids(db, customer, tenant_id=customer.tenant_id))
 
     deleted_counts: dict[str, int] = {}
     tenant_id = customer.tenant_id
@@ -998,16 +1006,16 @@ def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
             func.lower(ServiceRegistrationRequest.email) == normalized_email
         )
     )
+    deleted_counts["vehicle_ownerships"] = bulk_delete(
+        db.query(VehicleOwnership).filter(
+            VehicleOwnership.customer_id == customer.id
+        )
+    )
     deleted_counts["security_settings"] = bulk_delete(
         db.query(CustomerSecuritySettings).filter(CustomerSecuritySettings.customer_id == customer.id)
     )
     deleted_counts["vehicles"] = bulk_delete(
-        db.query(VehicleModel).filter(
-            or_(
-                func.lower(VehicleModel.user_email) == normalized_email,
-                vehicle_self_condition,
-            )
-        )
+        db.query(VehicleModel).filter(vehicle_self_condition)
     )
     deleted_counts["customers"] = bulk_delete(
         db.query(Customer).filter(Customer.id == customer.id)
@@ -1033,6 +1041,9 @@ def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
             )
             deleted_counts["tenant_vehicles"] = bulk_delete(
                 db.query(VehicleModel).filter(VehicleModel.tenant_id == tenant_id)
+            )
+            deleted_counts["tenant_vehicle_ownerships"] = bulk_delete(
+                db.query(VehicleOwnership).filter(VehicleOwnership.tenant_id == tenant_id)
             )
             deleted_counts["tenant_push_subscriptions"] = bulk_delete(
                 db.query(PushSubscription).filter(PushSubscription.tenant_id == tenant_id)

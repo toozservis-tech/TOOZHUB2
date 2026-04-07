@@ -20,8 +20,12 @@ python -m alembic upgrade head
 
 ## 3. Založení čisté DB
 
-- Nastavte `DATABASE_URL` nebo `VEHICLE_DB_URL`.
-- Pokud není nastaveno nic, aplikace použije `data/vehicles.db`.
+- Canonical runtime source-of-truth je `src/core/config.py`.
+- Priorita DB URL je:
+  - `DATABASE_URL`
+  - legacy `VEHICLE_DB_URL`
+  - fallback `sqlite:///<workspace>/data/vehicles.db`
+- Pokud není nastaveno nic, backend i migrace použijí stejnou runtime DB v `source-mirror/data/vehicles.db`.
 - Pro čistou DB vytvořte prázdný soubor / nový PostgreSQL schema a spusťte migrace.
 
 ## 4. Ověření schématu

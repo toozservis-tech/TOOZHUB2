@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0505932CB5DD34EDD08F9AF0 /* AppLockManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B62FB363FA9B74FEE10A1B0A /* AppLockManager.swift */; };
 		0785127A8F053B534E04052C /* VehiclesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5367CE5F23D7E407DF7120E4 /* VehiclesViewModel.swift */; };
 		09187A97C352FDCEAA312046 /* VehicleService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7EE5F7C2140EAD537E6E9AD /* VehicleService.swift */; };
 		0AB9709271ACAB041CFABF6A /* AuthFeatureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11DA544484AF0FA791C4314C /* AuthFeatureService.swift */; };
@@ -14,7 +15,10 @@
 		1726616C7B63261C5EFC0854 /* AuthOnboardingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC27A69428E009DB1D9496D /* AuthOnboardingViews.swift */; };
 		179433062CC025019DE3C4A6 /* ForgotPasswordViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4864FA4FE53EF93112972F9 /* ForgotPasswordViewModel.swift */; };
 		17957731584865C598349BEA /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42D8257A464E50E02DD109B2 /* AuthManager.swift */; };
+		17FFDE1F4FB537525C86D63B /* RecordConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CDBDE4FFDB763CDAD6E5EEB /* RecordConfigurationStore.swift */; };
 		1A29177440CC324A058D816D /* VehicleDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D6CF95FA2FBFF7021A1EB06 /* VehicleDetailViewModel.swift */; };
+		1E9ABF0BA7DFD59ECC130E48 /* RecordConfigurationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A161CE8F663A1251B942236B /* RecordConfigurationModels.swift */; };
+		20BEA4A1C47886F7ACF13417 /* VehicleMediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CEA43C3BC515640B71F195E /* VehicleMediaViews.swift */; };
 		21C823E05E3899E5E659EE7F /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F21ED5D928E429C02AE9BCD /* APIClient.swift */; };
 		241E88FF64A987E1C0DAAC0A /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A3B22AFE386722783B59F6B /* MainTabView.swift */; };
 		2C893346ECD495120B3B3ECA /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B284136F19859083652A8F4 /* LoginView.swift */; };
@@ -22,14 +26,13 @@
 		2EE46843308B38B6E61DA542 /* NetworkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AC835EAC073BE3B318BB8DC /* NetworkService.swift */; };
 		3296AC953079DDB23DB499ED /* ServiceWorkspaceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3905715765E79D8EEA265D7B /* ServiceWorkspaceService.swift */; };
 		32D501AB88C2734E8E62D01F /* DashboardService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F65E5920E848C8E4238111A8 /* DashboardService.swift */; };
-		34A4C5C64A8B4D849F01A1B2 /* RecordConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34A4C5C54A8B4D849F01A1B2 /* RecordConfigurationStore.swift */; };
 		36471B893C5C18D58391DA3E /* ServiceRegistrationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6F40544CD459E0D6519A4C0 /* ServiceRegistrationViewModel.swift */; };
 		3883AB3E9740B9B9063EF0BD /* ServiceClientsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28361E64CB1C289660BEED37 /* ServiceClientsView.swift */; };
+		3D44DFAD6DBE9B719C9C3ECF /* VehicleReportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E092CEB5DED97A586CAC264C /* VehicleReportViews.swift */; };
 		458CCBD1D7ED621159212796 /* SecureTokenStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 942922E39F6F41BE7984404B /* SecureTokenStorage.swift */; };
 		52003DADC65264AFC15D435C /* VehicleDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55DED3A8BFCE36FA13395D0F /* VehicleDetailView.swift */; };
 		58F3EBFDF41C5557CEBFDDE8 /* ServiceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B679AA9CE207B9F82203E801 /* ServiceView.swift */; };
 		5931609FA31830C4BD74A2FE /* AccountViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC65831BDE9C9C4FD606E738 /* AccountViewModel.swift */; };
-		5B7D9E1A93F64FA2A61D8E73 /* RecordConfigurationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B7D9E1993F64FA2A61D8E73 /* RecordConfigurationModels.swift */; };
 		5DAA231CBDD3A5CDD24E4CDA /* ServiceViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E85B3C5345B0850A6BB170F /* ServiceViewModel.swift */; };
 		6993CB7565929948A705756A /* AuthFeatureModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178F19D8176EEADB2DE2BF10 /* AuthFeatureModels.swift */; };
 		6CDA448B39D820A60F9FEBA5 /* DashboardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEDF49992BDE66951203D53C /* DashboardViewModel.swift */; };
@@ -38,6 +41,7 @@
 		78BC633B60A59C0F42C3DD6C /* LoginViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66BAADBFD9047FDE9C8A4542 /* LoginViewModel.swift */; };
 		7B5918D872930D10A0C01A29 /* StateStyles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82B22A14B0A59AAE197F32C6 /* StateStyles.swift */; };
 		7D508F5A64D3A8F4BB675D07 /* UserFeatureModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE2DA55BC498CB1AC92735B1 /* UserFeatureModels.swift */; };
+		8C96D7EE3520E5D6B1606F8C /* ReminderCalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F3D3347E5F7090B1576AB7D /* ReminderCalendarView.swift */; };
 		901518AA56B701ED8D1793DE /* VehiclesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A99110E830BB9E8A39D5D84D /* VehiclesView.swift */; };
 		9099E4D63F1923546466A449 /* UserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 185144925546B34C13923847 /* UserModels.swift */; };
 		96B4D8F22C2DAE0DCEB6DC5E /* UserFeatureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEBB38762DD9DDB37DE10C14 /* UserFeatureService.swift */; };
@@ -80,15 +84,16 @@
 		28361E64CB1C289660BEED37 /* ServiceClientsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceClientsView.swift; sourceTree = "<group>"; };
 		2F21ED5D928E429C02AE9BCD /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		3905715765E79D8EEA265D7B /* ServiceWorkspaceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceWorkspaceService.swift; sourceTree = "<group>"; };
+		3CDBDE4FFDB763CDAD6E5EEB /* RecordConfigurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordConfigurationStore.swift; sourceTree = "<group>"; };
 		42D8257A464E50E02DD109B2 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		474ABDDF9FBFB5E80F7A8C1F /* CommonComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonComponents.swift; sourceTree = "<group>"; };
 		5367CE5F23D7E407DF7120E4 /* VehiclesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehiclesViewModel.swift; sourceTree = "<group>"; };
 		55DED3A8BFCE36FA13395D0F /* VehicleDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehicleDetailView.swift; sourceTree = "<group>"; };
 		5EA92CDF1DC4AD45970CD594 /* NewReservationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewReservationSheet.swift; sourceTree = "<group>"; };
-		5B7D9E1993F64FA2A61D8E73 /* RecordConfigurationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordConfigurationModels.swift; sourceTree = "<group>"; };
 		66BAADBFD9047FDE9C8A4542 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
 		71BE0A209E96F7125338A43A /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		756935BBA3EE9AC365014B08 /* ServiceAddVehicleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceAddVehicleView.swift; sourceTree = "<group>"; };
+		7F3D3347E5F7090B1576AB7D /* ReminderCalendarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderCalendarView.swift; sourceTree = "<group>"; };
 		82B22A14B0A59AAE197F32C6 /* StateStyles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StateStyles.swift; sourceTree = "<group>"; };
 		879F07CF521773339C2B9681 /* DeviceCapabilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceCapabilityService.swift; sourceTree = "<group>"; };
 		8E85B3C5345B0850A6BB170F /* ServiceViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceViewModel.swift; sourceTree = "<group>"; };
@@ -100,11 +105,13 @@
 		998305CF189A806484C64D3C /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
 		9AF99BAF0B26C9788336BB5A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		9B284136F19859083652A8F4 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
-		34A4C5C54A8B4D849F01A1B2 /* RecordConfigurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordConfigurationStore.swift; sourceTree = "<group>"; };
+		9CEA43C3BC515640B71F195E /* VehicleMediaViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehicleMediaViews.swift; sourceTree = "<group>"; };
+		A161CE8F663A1251B942236B /* RecordConfigurationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordConfigurationModels.swift; sourceTree = "<group>"; };
 		A7EE5F7C2140EAD537E6E9AD /* VehicleService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehicleService.swift; sourceTree = "<group>"; };
 		A8EE98BE1E28976BC064008F /* ReservationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservationService.swift; sourceTree = "<group>"; };
 		A99110E830BB9E8A39D5D84D /* VehiclesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehiclesView.swift; sourceTree = "<group>"; };
 		AE2DA55BC498CB1AC92735B1 /* UserFeatureModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserFeatureModels.swift; sourceTree = "<group>"; };
+		B62FB363FA9B74FEE10A1B0A /* AppLockManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockManager.swift; sourceTree = "<group>"; };
 		B679AA9CE207B9F82203E801 /* ServiceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceView.swift; sourceTree = "<group>"; };
 		BD390D671F1F4ADB88D8FCB0 /* ServiceRemindersViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceRemindersViewModel.swift; sourceTree = "<group>"; };
 		BE0FF7BD7B095A1DE81F9122 /* RegisterViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegisterViewModel.swift; sourceTree = "<group>"; };
@@ -114,6 +121,7 @@
 		C7FCD4E57C28354C58256E97 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CC0BFB9B2F5925ADD3C8B41B /* TooZHubiOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TooZHubiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D6F40544CD459E0D6519A4C0 /* ServiceRegistrationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceRegistrationViewModel.swift; sourceTree = "<group>"; };
+		E092CEB5DED97A586CAC264C /* VehicleReportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehicleReportViews.swift; sourceTree = "<group>"; };
 		E20FBF93EC607FA203120894 /* ReservationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservationsView.swift; sourceTree = "<group>"; };
 		E627A9E5011DC32AA4E838C5 /* ServiceClientsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceClientsViewModel.swift; sourceTree = "<group>"; };
 		E95B54EB714BF5E5B6347A31 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
@@ -223,6 +231,7 @@
 				9B284136F19859083652A8F4 /* LoginView.swift */,
 				0A3B22AFE386722783B59F6B /* MainTabView.swift */,
 				5EA92CDF1DC4AD45970CD594 /* NewReservationSheet.swift */,
+				7F3D3347E5F7090B1576AB7D /* ReminderCalendarView.swift */,
 				E20FBF93EC607FA203120894 /* ReservationsView.swift */,
 				9AF99BAF0B26C9788336BB5A /* RootView.swift */,
 				756935BBA3EE9AC365014B08 /* ServiceAddVehicleView.swift */,
@@ -230,6 +239,8 @@
 				993971345B7C0D8F31080B92 /* ServiceRemindersView.swift */,
 				B679AA9CE207B9F82203E801 /* ServiceView.swift */,
 				55DED3A8BFCE36FA13395D0F /* VehicleDetailView.swift */,
+				9CEA43C3BC515640B71F195E /* VehicleMediaViews.swift */,
+				E092CEB5DED97A586CAC264C /* VehicleReportViews.swift */,
 				A99110E830BB9E8A39D5D84D /* VehiclesView.swift */,
 			);
 			path = Views;
@@ -239,11 +250,12 @@
 			isa = PBXGroup;
 			children = (
 				22D37049B74737B70705D08B /* AccountService.swift */,
+				B62FB363FA9B74FEE10A1B0A /* AppLockManager.swift */,
 				11DA544484AF0FA791C4314C /* AuthFeatureService.swift */,
 				42D8257A464E50E02DD109B2 /* AuthManager.swift */,
 				F65E5920E848C8E4238111A8 /* DashboardService.swift */,
 				879F07CF521773339C2B9681 /* DeviceCapabilityService.swift */,
-				34A4C5C54A8B4D849F01A1B2 /* RecordConfigurationStore.swift */,
+				3CDBDE4FFDB763CDAD6E5EEB /* RecordConfigurationStore.swift */,
 				A8EE98BE1E28976BC064008F /* ReservationService.swift */,
 				942922E39F6F41BE7984404B /* SecureTokenStorage.swift */,
 				3905715765E79D8EEA265D7B /* ServiceWorkspaceService.swift */,
@@ -257,7 +269,7 @@
 			isa = PBXGroup;
 			children = (
 				178F19D8176EEADB2DE2BF10 /* AuthFeatureModels.swift */,
-				5B7D9E1993F64FA2A61D8E73 /* RecordConfigurationModels.swift */,
+				A161CE8F663A1251B942236B /* RecordConfigurationModels.swift */,
 				EEC3C328169144B4C0AF8EE5 /* ReservationModels.swift */,
 				F13BF649BBEDABF91B1CD1A1 /* ServiceModels.swift */,
 				12FC5AF6C5A3C5C4B7A730DD /* ServiceWorkspaceModels.swift */,
@@ -359,6 +371,7 @@
 				2D4816ABA9D0A50B22900E92 /* AccountView.swift in Sources */,
 				5931609FA31830C4BD74A2FE /* AccountViewModel.swift in Sources */,
 				D537DED1A2A947B5DBEF667A /* AppEnvironment.swift in Sources */,
+				0505932CB5DD34EDD08F9AF0 /* AppLockManager.swift in Sources */,
 				6993CB7565929948A705756A /* AuthFeatureModels.swift in Sources */,
 				0AB9709271ACAB041CFABF6A /* AuthFeatureService.swift in Sources */,
 				17957731584865C598349BEA /* AuthManager.swift in Sources */,
@@ -374,9 +387,10 @@
 				241E88FF64A987E1C0DAAC0A /* MainTabView.swift in Sources */,
 				2EE46843308B38B6E61DA542 /* NetworkService.swift in Sources */,
 				745DFBC499BFE9C7706AAAE0 /* NewReservationSheet.swift in Sources */,
-				5B7D9E1A93F64FA2A61D8E73 /* RecordConfigurationModels.swift in Sources */,
-				34A4C5C64A8B4D849F01A1B2 /* RecordConfigurationStore.swift in Sources */,
+				1E9ABF0BA7DFD59ECC130E48 /* RecordConfigurationModels.swift in Sources */,
+				17FFDE1F4FB537525C86D63B /* RecordConfigurationStore.swift in Sources */,
 				B1CA6F3F5A219649625B7B6C /* RegisterViewModel.swift in Sources */,
+				8C96D7EE3520E5D6B1606F8C /* ReminderCalendarView.swift in Sources */,
 				97A3621B17BA5C3E3F276CBB /* ReservationModels.swift in Sources */,
 				B278C2ECB3886067202038A9 /* ReservationService.swift in Sources */,
 				BDAE5DB094577DC462272239 /* ReservationsView.swift in Sources */,
@@ -402,7 +416,9 @@
 				9099E4D63F1923546466A449 /* UserModels.swift in Sources */,
 				52003DADC65264AFC15D435C /* VehicleDetailView.swift in Sources */,
 				1A29177440CC324A058D816D /* VehicleDetailViewModel.swift in Sources */,
+				20BEA4A1C47886F7ACF13417 /* VehicleMediaViews.swift in Sources */,
 				B7E72C326B4F447FC6897A2C /* VehicleModels.swift in Sources */,
+				3D44DFAD6DBE9B719C9C3ECF /* VehicleReportViews.swift in Sources */,
 				09187A97C352FDCEAA312046 /* VehicleService.swift in Sources */,
 				901518AA56B701ED8D1793DE /* VehiclesView.swift in Sources */,
 				0785127A8F053B534E04052C /* VehiclesViewModel.swift in Sources */,
@@ -417,7 +433,6 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = 5DATUX4X32;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -433,7 +448,6 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = 5DATUX4X32;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -479,6 +493,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 5DATUX4X32;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -499,7 +514,14 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDevelopmentRegion = cs;
 				INFOPLIST_KEY_CFBundleDisplayName = "Správa vozidel";
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_127.0.0.1_NSIncludesSubdomains = YES;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_127.0.0.1_NSTemporaryExceptionAllowsInsecureHTTPLoads = YES;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_localhost_NSIncludesSubdomains = YES;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_localhost_NSTemporaryExceptionAllowsInsecureHTTPLoads = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Správa vozidel potřebuje kameru pro focení vozidel a účtenek.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Správa vozidel používá Face ID jen pro lokální odemčení aplikace na tomto zařízení.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Správa vozidel používá polohu pro vyhledání blízkých servisů.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Správa vozidel ukládá vygenerované výstupy a snímky vozidel.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Správa vozidel potřebuje přístup k fotkám kvůli přílohám servisních záznamů.";
@@ -557,6 +579,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 5DATUX4X32;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -571,7 +594,13 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDevelopmentRegion = cs;
 				INFOPLIST_KEY_CFBundleDisplayName = "Správa vozidel";
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_127.0.0.1_NSIncludesSubdomains = YES;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_127.0.0.1_NSTemporaryExceptionAllowsInsecureHTTPLoads = YES;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_localhost_NSIncludesSubdomains = YES;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_localhost_NSTemporaryExceptionAllowsInsecureHTTPLoads = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Správa vozidel potřebuje kameru pro focení vozidel a účtenek.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Správa vozidel používá Face ID jen pro lokální odemčení aplikace na tomto zařízení.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Správa vozidel používá polohu pro vyhledání blízkých servisů.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Správa vozidel ukládá vygenerované výstupy a snímky vozidel.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Správa vozidel potřebuje přístup k fotkám kvůli přílohám servisních záznamů.";

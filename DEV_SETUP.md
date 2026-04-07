@@ -32,6 +32,13 @@ Alternativa:
 scripts/migrate_database.py
 ```
 
+Výchozí runtime databáze backendu i Alembicu je bez explicitního ENV:
+```bash
+source-mirror/data/vehicles.db
+```
+
+Přepsání je podporované přes `DATABASE_URL`; legacy `VEHICLE_DB_URL` zůstává jen jako compat alias.
+
 Další Alembic příkazy:
 ```bash
 scripts/migrate_database.py current

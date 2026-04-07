@@ -13,16 +13,15 @@ sys.path.insert(0, str(project_root))
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-import os
 
 def get_db_path():
     """Získá cestu k databázi"""
-    db_url = os.getenv("DATABASE_URL") or os.getenv("VEHICLE_DB_URL", "sqlite:///./vehicles.db")
+    from src.core.config import DATABASE_URL
+
+    db_url = DATABASE_URL
     
     if db_url.startswith("sqlite:///"):
         db_path = db_url.replace("sqlite:///", "")
-        if not os.path.isabs(db_path):
-            db_path = os.path.join(str(project_root), db_path)
         return db_path
     return None
 
@@ -56,7 +55,7 @@ def migrate():
         print("   Zkontrolujte DATABASE_URL nebo VEHICLE_DB_URL v .env")
         return False
     
-    if not os.path.exists(db_path):
+    if not Path(db_path).exists():
         print(f"❌ ERROR: Databáze neexistuje: {db_path}")
         return False
     

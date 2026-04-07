@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Customer, ServiceRecord as ServiceRecordModel, Vehicle as VehicleModel
+from ..ownership import get_owned_vehicle_ids
 from .auth import can_access_vehicle, get_current_user
 from .schemas import (
     AnalyticsCategoryBreakdownOutV1,
@@ -81,7 +82,10 @@ def _build_scoped_query(
         return query
 
     if role_key == "user":
-        query = query.filter(func.lower(VehicleModel.user_email) == _normalize_email(current_user.email))
+        owned_vehicle_ids = sorted(get_owned_vehicle_ids(db, current_user, tenant_id=tenant_id))
+        if not owned_vehicle_ids:
+            return query.filter(ServiceRecordModel.id == -1)
+        query = query.filter(VehicleModel.id.in_(owned_vehicle_ids))
         return query
 
     if role_key in {"service", "developer_admin"}:

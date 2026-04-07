@@ -1,4 +1,4 @@
-# Testy pro TooZ Hub 2
+# Testy pro Správa vozidel
 
 ## Instalace závislostí
 
@@ -34,7 +34,14 @@ npx playwright install chromium
 
 ### Manuální spuštění
 
-**API testy:**
+**Lokální izolovaný backend smoke:**
+
+```powershell
+# V root projektu
+.\scripts\backend_sanity_gate.sh
+```
+
+**API testy proti běžícímu backendu:**
 
 ```powershell
 # V root projektu
@@ -85,6 +92,12 @@ tests/
 - Python 3.10+
 - Node.js 16+
 - Backend server běžící na `http://127.0.0.1:8000` (nebo použijte `qa_run.ps1`)
+
+## Poznámka k DB realitě
+
+- Workflow a backend smoke mají mít vlastní testovací DB větev `test_vehicles.db`.
+- Pokud test nebo workflow ověřuje backend bootstrap/schema realitu, má používat Alembic migrace.
+- `Base.metadata.create_all(...)` je v pořádku jen u izolovaných unit-style testů s dočasnou SQLite databází, ne jako náhrada migrační reality projektu.
 
 ## Výstupy
 

@@ -39,9 +39,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Initialize database (create tables)
+      - name: Initialize database via Alembic migrations
         run: |
-          python -c "from src.modules.vehicle_hub.database import engine, Base; from src.modules.vehicle_hub.models import *; Base.metadata.create_all(bind=engine); print('Database tables created')"
+          rm -f test_vehicles.db
+          python scripts/migrate_database.py upgrade head
 
       - name: Create artifacts directory
         run: |

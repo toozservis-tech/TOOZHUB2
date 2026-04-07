@@ -40,11 +40,15 @@ try {
 
 # 3. Database initialization
 Write-Host ""
-Write-Host "3️⃣ Inicializace databáze..." -ForegroundColor Yellow
+Write-Host "3️⃣ Inicializace databáze přes Alembic..." -ForegroundColor Yellow
 try {
-    python -c "from src.modules.vehicle_hub.database import engine, Base; from src.modules.vehicle_hub.models import *; from src.modules.ai_features.models import *; Base.metadata.create_all(bind=engine); print('  ✅ Databázové tabulky vytvořeny')" 2>&1
+    if (Test-Path "test_vehicles.db") {
+        Remove-Item "test_vehicles.db" -Force
+    }
+    python scripts/migrate_database.py upgrade head 2>&1
+    Write-Host "  ✅ Databázové schema připraveno přes migrace" -ForegroundColor Green
 } catch {
-    Write-Host "  ❌ Chyba při vytváření tabulek!" -ForegroundColor Red
+    Write-Host "  ❌ Chyba při přípravě schématu přes migrace!" -ForegroundColor Red
     exit 1
 }
 
@@ -107,4 +111,3 @@ Write-Host ""
 Write-Host "Pro spuštění E2E testů použijte:" -ForegroundColor Cyan
 Write-Host "  cd tests/e2e" -ForegroundColor White
 Write-Host "  npx playwright test" -ForegroundColor White
-

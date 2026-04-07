@@ -134,7 +134,7 @@ def test_update_vehicle(api_url, authenticated_headers, cleanup_test_data):
 
 
 def test_delete_vehicle(api_url, authenticated_headers):
-    """Test smazání vozidla"""
+    """Test odebrání vozidla z profilu bez fyzického smazání historie"""
     if not authenticated_headers:
         pytest.skip("No auth token available")
     
@@ -164,12 +164,16 @@ def test_delete_vehicle(api_url, authenticated_headers):
         timeout=5
     )
     
-    assert response.status_code == 200 or response.status_code == 204
-    
-    # Ověřit, že bylo smazáno
-    get_response = requests.get(
-        f"{api_url}/api/v1/vehicles/{vehicle_id}",
+    assert response.status_code == 200
+    payload = response.json()
+    assert "odebráno z vašeho profilu" in payload["message"].lower()
+
+    # Ověřit, že už není v aktivním seznamu vozidel uživatele
+    list_response = requests.get(
+        f"{api_url}/api/v1/vehicles",
         headers=authenticated_headers,
         timeout=5
     )
-    assert get_response.status_code == 404
+    assert list_response.status_code == 200
+    vehicles = list_response.json()
+    assert all(int(item["id"]) != vehicle_id for item in vehicles)

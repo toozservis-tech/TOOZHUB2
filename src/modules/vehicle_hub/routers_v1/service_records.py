@@ -1,10 +1,13 @@
 """
 Service Records API v1.0 router
 """
+from __future__ import annotations
+
 from datetime import datetime
 import base64
 import binascii
 import hashlib
+from io import BytesIO
 import json
 import mimetypes
 from pathlib import Path
@@ -21,6 +24,7 @@ from sqlalchemy import desc, nullslast
 
 from src.core.config import DATA_DIR
 from ..database import get_db
+from ..mileage_reports import collect_vehicle_mileage_timeline_points, render_mileage_timeline_chart_png, summarize_mileage_timeline
 from ..models import (
     Customer,
     ServiceRecord as ServiceRecordModel,
@@ -28,6 +32,7 @@ from ..models import (
     Vehicle as VehicleModel,
 )
 from ..schema_management import assert_module_ready
+from ..service_access import attach_service_access_to_record, forbid_service_record_mutation, require_service_vehicle_link
 from .auth import get_current_user, can_access_vehicle
 from .schemas import ServiceRecordCreateV1, ServiceRecordUpdateV1, ServiceRecordOutV1
 from .service_workspace import (
@@ -741,6 +746,15 @@ def create_service_record(
         # Tenant kontext je povinný - primárně z vozidla, fallback z uživatele (legacy) a nakonec tenant 1
         tenant_id = vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1
 
+        access_link = None
+        if str(getattr(current_user, "role", "") or "").strip().lower() == "service":
+            access_link = require_service_vehicle_link(
+                db,
+                current_user=current_user,
+                vehicle_id=vehicle_id,
+                require_create_record=True,
+            )
+
         # Vytvořit záznam
         user_id = current_user.id
         record = ServiceRecordModel(
@@ -756,6 +770,7 @@ def create_service_record(
             attachments=record_data.attachments,
             next_service_due_date=record_data.next_service_due_date
         )
+        attach_service_access_to_record(record=record, current_user=current_user, access_link=access_link)
         
         db.add(record)
         db.flush()
@@ -893,6 +908,14 @@ def create_service_record_from_document(
     )
 
     tenant_id = vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1
+    access_link = None
+    if str(getattr(current_user, "role", "") or "").strip().lower() == "service":
+        access_link = require_service_vehicle_link(
+            db,
+            current_user=current_user,
+            vehicle_id=vehicle_id,
+            require_create_record=True,
+        )
     record = ServiceRecordModel(
         tenant_id=tenant_id,
         vehicle_id=vehicle_id,
@@ -905,6 +928,7 @@ def create_service_record_from_document(
         category=prefill["category"],
         attachments=attachments_payload,
     )
+    attach_service_access_to_record(record=record, current_user=current_user, access_link=access_link)
     db.add(record)
     db.commit()
     db.refresh(record)
@@ -1052,8 +1076,11 @@ def generate_service_records_pdf(
         
         # Načíst všechny záznamy - řadit podle data (nejstarší první pro PDF)
         records = db.query(ServiceRecordModel).filter(
-            ServiceRecordModel.vehicle_id == vehicle_id
+            ServiceRecordModel.vehicle_id == vehicle_id,
+            ServiceRecordModel.is_deleted.is_(False),
         ).order_by(nullslast(ServiceRecordModel.performed_at.asc())).all()
+        mileage_timeline_points = collect_vehicle_mileage_timeline_points(db, vehicle_id)
+        mileage_timeline_summary = summarize_mileage_timeline(mileage_timeline_points)
         
         # Zkontrolovat, zda je dostupný ReportLab
         try:
@@ -1062,7 +1089,7 @@ def generate_service_records_pdf(
             from reportlab.lib.units import mm
             from reportlab.lib import colors
             from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.platypus import Image as ReportLabImage, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
             from reportlab.lib.enums import TA_LEFT, TA_CENTER
             REPORTLAB_AVAILABLE = True
         except ImportError:
@@ -1239,6 +1266,16 @@ def generate_service_records_pdf(
             fontName='Helvetica-Bold',
             leading=14
         )
+
+        body_small_style = ParagraphStyle(
+            'BodySmall',
+            parent=styles['Normal'],
+            fontSize=9,
+            textColor=muted_text,
+            spaceAfter=8,
+            leading=12,
+            fontName='Helvetica'
+        )
         
         # Hlavička s dekorativním pruhem
         header_table_data = [
@@ -1330,6 +1367,66 @@ def generate_service_records_pdf(
             ]))
             story.append(summary_table)
             story.append(Spacer(1, 20))
+
+        story.append(Paragraph("VÝVOJ STAVU KM", heading_style))
+        story.append(Paragraph(
+            "Časová osa z evidovaných servisních, ručních a STK záznamů",
+            subtitle_style,
+        ))
+
+        if not mileage_timeline_points:
+            story.append(Paragraph(
+                "Pro graf nejsou k dispozici žádné body s datem a stavem km.",
+                body_small_style,
+            ))
+        else:
+            chart_png = render_mileage_timeline_chart_png(mileage_timeline_points)
+            chart_buffer = BytesIO(chart_png)
+            chart_buffer.name = "mileage_timeline.png"
+            chart = ReportLabImage(chart_buffer, width=170 * mm, height=96 * mm)
+            story.append(chart)
+            story.append(Spacer(1, 12))
+
+            first_point = mileage_timeline_summary["first_point"]
+            last_point = mileage_timeline_summary["last_point"]
+            summary_table_data = [
+                ["První známý stav km", f"{format_number(first_point.mileage_km)} km ({escape_html(first_point.date.strftime('%d.%m.%Y'))})"],
+                ["Poslední známý stav km", f"{format_number(last_point.mileage_km)} km ({escape_html(last_point.date.strftime('%d.%m.%Y'))})"],
+                ["Počet použitých bodů", str(mileage_timeline_summary["point_count"])],
+                ["Počet detekovaných anomálií", str(mileage_timeline_summary["anomaly_point_count"])],
+            ]
+            mileage_summary_table = Table(summary_table_data, colWidths=[60 * mm, 110 * mm])
+            mileage_summary_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (0, -1), light_gray),
+                ('TEXTCOLOR', (0, 0), (0, -1), primary_color),
+                ('TEXTCOLOR', (1, 0), (1, -1), text_color),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 0.5, border_color),
+            ]))
+            story.append(mileage_summary_table)
+            story.append(Spacer(1, 10))
+
+            anomaly_counts = mileage_timeline_summary["anomaly_counts"]
+            if anomaly_counts:
+                anomaly_parts = []
+                if anomaly_counts.get("rollback"):
+                    anomaly_parts.append(f"poklesy: {anomaly_counts['rollback']}")
+                if anomaly_counts.get("suspicious_jump"):
+                    anomaly_parts.append(f"velké skoky: {anomaly_counts['suspicious_jump']}")
+                if anomaly_counts.get("duplicate"):
+                    anomaly_parts.append(f"duplicity: {anomaly_counts['duplicate']}")
+                anomaly_summary_text = "Detekované odchylky: " + ", ".join(anomaly_parts) + "."
+                story.append(Paragraph(anomaly_summary_text, body_small_style))
+
+            story.append(Paragraph("Graf vychází z dostupných evidovaných hodnot km.", body_small_style))
+            story.append(Paragraph("Podezřelé odchylky v časové ose jsou v reportu označeny.", body_small_style))
+            story.append(Spacer(1, 12))
         
         # Seznam záznamů
         story.append(Paragraph("SERVISNÍ ZÁZNAMY", heading_style))
@@ -1524,6 +1621,7 @@ def get_service_record(
         # Kontrola přístupu k vozidlu
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+        forbid_service_record_mutation(current_user)
         
         record = db.query(ServiceRecordModel).filter(
             ServiceRecordModel.id == record_id,
@@ -1647,6 +1745,7 @@ def delete_service_record(
         # Kontrola přístupu k vozidlu
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+        forbid_service_record_mutation(current_user)
 
         record = db.query(ServiceRecordModel).filter(
             ServiceRecordModel.id == record_id,

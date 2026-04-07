@@ -10,7 +10,8 @@ enum Theme {
 
         static let background = Color(red: 0.11, green: 0.14, blue: 0.20)
         static let surface = Color(red: 0.18, green: 0.22, blue: 0.31)
-        static let elevated = Color(red: 0.24, green: 0.29, blue: 0.40)
+        static let elevated = Color(red: 0.27, green: 0.32, blue: 0.44)
+        static let inputSurface = Color(red: 0.31, green: 0.36, blue: 0.49)
 
         static let lightCard = Color(red: 0.98, green: 0.98, blue: 0.99)
         static let lightMuted = Color(red: 0.92, green: 0.93, blue: 0.96)
@@ -23,9 +24,9 @@ enum Theme {
         static let danger = Color(red: 0.89, green: 0.36, blue: 0.38)
 
         static let textPrimary = Color.white
-        static let textSecondary = Color(red: 0.76, green: 0.80, blue: 0.89)
+        static let textSecondary = Color(red: 0.86, green: 0.89, blue: 0.95)
         static let textOnLight = Color(red: 0.16, green: 0.18, blue: 0.23)
-        static let textOnLightSecondary = Color(red: 0.40, green: 0.45, blue: 0.56)
+        static let textOnLightSecondary = Color(red: 0.31, green: 0.36, blue: 0.46)
 
         static let hairline = Color.white.opacity(0.13)
         static let cardHairline = Color(red: 0.84, green: 0.87, blue: 0.93)

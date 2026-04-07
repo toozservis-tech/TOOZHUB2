@@ -12,20 +12,21 @@ struct APIEndpoint {
     let method: HTTPMethod
     var queryItems: [URLQueryItem] = []
     var body: Data? = nil
+    var timeoutInterval: TimeInterval? = nil
 
-    static func get(_ path: String, queryItems: [URLQueryItem] = []) -> APIEndpoint {
-        APIEndpoint(path: path, method: .get, queryItems: queryItems)
+    static func get(_ path: String, queryItems: [URLQueryItem] = [], timeoutInterval: TimeInterval? = nil) -> APIEndpoint {
+        APIEndpoint(path: path, method: .get, queryItems: queryItems, timeoutInterval: timeoutInterval)
     }
 
-    static func post(_ path: String, body: Data? = nil) -> APIEndpoint {
-        APIEndpoint(path: path, method: .post, body: body)
+    static func post(_ path: String, body: Data? = nil, timeoutInterval: TimeInterval? = nil) -> APIEndpoint {
+        APIEndpoint(path: path, method: .post, body: body, timeoutInterval: timeoutInterval)
     }
 
-    static func put(_ path: String, body: Data? = nil) -> APIEndpoint {
-        APIEndpoint(path: path, method: .put, body: body)
+    static func put(_ path: String, body: Data? = nil, timeoutInterval: TimeInterval? = nil) -> APIEndpoint {
+        APIEndpoint(path: path, method: .put, body: body, timeoutInterval: timeoutInterval)
     }
 
-    static func delete(_ path: String, body: Data? = nil) -> APIEndpoint {
-        APIEndpoint(path: path, method: .delete, body: body)
+    static func delete(_ path: String, body: Data? = nil, timeoutInterval: TimeInterval? = nil) -> APIEndpoint {
+        APIEndpoint(path: path, method: .delete, body: body, timeoutInterval: timeoutInterval)
     }
 }

@@ -5,12 +5,14 @@ import os
 import logging
 from typing import Optional
 from datetime import datetime
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 
 from ..vehicle_hub.models import License, Vehicle, Tenant
 from ..vehicle_hub.database import Base
+from ..vehicle_hub.ownership import get_customer_by_email, get_owned_vehicle_ids
 
 logger = logging.getLogger(__name__)
 
@@ -197,13 +199,20 @@ def get_vehicle_count_for_user(db: Session, tenant_id: int, user_email: Optional
 
     Pokud user_email není dostupný, vrací tenant-wide počet.
     """
-    if not user_email:
+    normalized_email = str(user_email or "").strip().lower()
+    if not normalized_email:
         return get_vehicle_count(db, tenant_id)
 
-    return db.query(Vehicle).filter(
-        Vehicle.tenant_id == tenant_id,
-        Vehicle.user_email == user_email,
-    ).count()
+    customer = get_customer_by_email(db, normalized_email)
+    if customer is None:
+        # Deprecated compat fallback for users/customers that ještě nemají
+        # explicitní ownership/customer vazbu. Nesmí být hlavní autoritou.
+        return db.query(Vehicle).filter(
+            Vehicle.tenant_id == tenant_id,
+            func.lower(Vehicle.user_email) == normalized_email,
+        ).count()
+
+    return len(get_owned_vehicle_ids(db, customer, tenant_id=tenant_id))
 
 
 def is_unlimited(license_obj: License) -> bool:

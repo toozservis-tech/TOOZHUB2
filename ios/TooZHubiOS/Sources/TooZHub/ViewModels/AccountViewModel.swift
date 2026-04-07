@@ -13,10 +13,23 @@ final class AccountViewModel: ObservableObject {
 
     private let service: AccountService
     private let featureService: UserFeatureService
+    private var hasLoadedOnce = false
+    private var lastLoadedAt: Date?
+    private let reloadTTL: TimeInterval = 60
 
     init(service: AccountService, featureService: UserFeatureService) {
         self.service = service
         self.featureService = featureService
+    }
+
+    func loadIfNeeded(token: String, force: Bool = false) async {
+        if !force,
+           hasLoadedOnce,
+           let lastLoadedAt,
+           Date().timeIntervalSince(lastLoadedAt) < reloadTTL {
+            return
+        }
+        await load(token: token)
     }
 
     func load(token: String) async {
@@ -32,8 +45,10 @@ final class AccountViewModel: ObservableObject {
             self.profile = try await profile
             self.security = try await security
             self.license = try await license
+            hasLoadedOnce = true
+            lastLoadedAt = Date()
         } catch {
-            self.error = error.localizedDescription
+            self.error = userFacingMessage(for: error, fallback: "Nepodařilo se načíst profil a bezpečnostní nastavení.")
         }
     }
 
@@ -46,7 +61,7 @@ final class AccountViewModel: ObservableObject {
             securityActionMessage = payload.message
             await load(token: token)
         } catch {
-            self.error = error.localizedDescription
+            self.error = userFacingMessage(for: error, fallback: "Nepodařilo se připravit 2FA klíč.")
         }
     }
 
@@ -58,7 +73,7 @@ final class AccountViewModel: ObservableObject {
             securityActionMessage = response.message
             await load(token: token)
         } catch {
-            self.error = error.localizedDescription
+            self.error = userFacingMessage(for: error, fallback: "2FA se nepodařilo aktivovat. Zkontrolujte ověřovací kód.")
         }
     }
 
@@ -71,7 +86,7 @@ final class AccountViewModel: ObservableObject {
             totpSetup = nil
             await load(token: token)
         } catch {
-            self.error = error.localizedDescription
+            self.error = userFacingMessage(for: error, fallback: "2FA se nepodařilo vypnout. Zkontrolujte heslo a ověřovací kód.")
         }
     }
 
@@ -83,7 +98,7 @@ final class AccountViewModel: ObservableObject {
             securityActionMessage = response.message
             await load(token: token)
         } catch {
-            self.error = error.localizedDescription
+            self.error = userFacingMessage(for: error, fallback: "Nastavení biometrie se nepodařilo uložit.")
         }
     }
 
@@ -94,7 +109,7 @@ final class AccountViewModel: ObservableObject {
                 token: token
             )
         } catch {
-            self.error = error.localizedDescription
+            self.error = userFacingMessage(for: error, fallback: "Profil se nepodařilo uložit.")
         }
     }
 
@@ -102,7 +117,7 @@ final class AccountViewModel: ObservableObject {
         do {
             try await featureService.changePassword(ChangePasswordRequest(currentPassword: current, newPassword: new), token: token)
         } catch {
-            self.error = error.localizedDescription
+            self.error = userFacingMessage(for: error, fallback: "Heslo se nepodařilo změnit.")
         }
     }
 
@@ -121,7 +136,7 @@ final class AccountViewModel: ObservableObject {
                 token: token
             )
         } catch {
-            self.error = error.localizedDescription
+            self.error = userFacingMessage(for: error, fallback: "Zprávu podpoře se nepodařilo odeslat.")
         }
     }
 
@@ -129,7 +144,7 @@ final class AccountViewModel: ObservableObject {
         do {
             exportURL = try await featureService.downloadExport(token: token)
         } catch {
-            self.error = error.localizedDescription
+            self.error = userFacingMessage(for: error, fallback: "Export dat se nepodařilo připravit.")
         }
     }
 
@@ -140,7 +155,14 @@ final class AccountViewModel: ObservableObject {
                 token: token
             )
         } catch {
-            self.error = error.localizedDescription
+            self.error = userFacingMessage(for: error, fallback: "Účet se nepodařilo smazat.")
         }
+    }
+
+    private func userFacingMessage(for error: Error, fallback: String) -> String {
+#if DEBUG
+        print("[AccountViewModel] \(error.localizedDescription)")
+#endif
+        return UserFacingErrorMapper.message(for: error, context: .account, fallback: fallback)
     }
 }

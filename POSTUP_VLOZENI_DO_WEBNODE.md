@@ -6,6 +6,8 @@ Zpřístupnit TooZ Hub 2 aplikaci na stránce **https://www.toozservis.cz/sprava
 
 **https://hub.toozservis.cz/web/index.html**
 
+Canonical mapa aktivních a legacy větví je v `PRODUCT_ENTRYPOINTS_STATUS.md`.
+
 ---
 
 ## ✅ Předpoklady
@@ -141,6 +143,15 @@ Pokud z nějakého důvodu nemůžete použít přesměrování, můžete použ�
 **Nebo použijte podrobný návod v souboru:** `WEBNODE_IFRAME_VARIANTA_DEV.md`
 
 > **Důležité:** Tato varianta má omezení a není doporučena pro produkci. Preferujte přesměrování.
+
+## 🤖 Automatické helpery
+
+- `scripts/webnode_auto_upload.py`
+  - aktivní helper pro automatický upload do Webnode editoru
+  - pro běžný upload má používat `web/index.html`
+- `scripts/webnode_auto_watcher.py`
+  - sleduje změny v `web/index.html` a spouští upload helper
+- legacy iframe/minimal soubory nejsou canonical produktová větev a helpery je mají použít jen jako compat fallback
 
 ---
 

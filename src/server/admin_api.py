@@ -1,5 +1,5 @@
 """
-Admin API router pro TooZ Hub 2
+Admin API router pro Správa vozidel
 Přístupné pouze pro developer_admin/admin role
 """
 from fastapi import APIRouter, Depends, HTTPException, Request as FastAPIRequest
@@ -69,6 +69,7 @@ from src.modules.vehicle_hub.tenant_provisioning import (
     create_dedicated_tenant,
     ensure_default_license_for_tenant,
 )
+from src.modules.vehicle_hub.routers_v1.reminders import apply_reminder_completion_update
 from src.server.runtime_settings import ADMIN_SETTINGS_FILE
 from src.server.control_center_jobs import (
     is_job_paused,
@@ -599,6 +600,82 @@ def _attached_sqlite_has_table(conn: sqlite3.Connection, schema_name: str, table
     return row is not None
 
 
+def _legacy_backup_vehicle_ids_by_email(conn: sqlite3.Connection, *, owner_email: str) -> List[int]:
+    normalized_email = str(owner_email or "").strip().lower()
+    if not normalized_email:
+        return []
+    vehicle_rows = conn.execute(
+        "SELECT id FROM backupdb.vehicles WHERE lower(user_email) = lower(?)",
+        (normalized_email,),
+    ).fetchall()
+    return [int(row["id"]) for row in vehicle_rows if row["id"] is not None]
+
+
+def _backup_vehicle_ids_for_customer_scope(
+    conn: sqlite3.Connection,
+    *,
+    customer_id: int,
+    owner_email: str,
+) -> List[int]:
+    """
+    Ownership-first restore helper.
+
+    Primárně používá explicitní vehicle_ownerships ze snapshotu. Pokud jsou
+    ownership tabulky v záloze chybějící nebo prázdné, použije legacy emailový
+    bridge jen jako compat fallback pro staré / napůl migrované snapshoty.
+    """
+    if _attached_sqlite_has_table(conn, "backupdb", "vehicle_ownerships"):
+        ownership_rows = conn.execute(
+            """
+            SELECT DISTINCT vehicle_id
+            FROM backupdb.vehicle_ownerships
+            WHERE customer_id = ?
+              AND COALESCE(is_active, 1) = 1
+            """,
+            (customer_id,),
+        ).fetchall()
+        vehicle_ids = [int(row["vehicle_id"]) for row in ownership_rows if row["vehicle_id"] is not None]
+        if vehicle_ids:
+            return vehicle_ids
+    return _legacy_backup_vehicle_ids_by_email(conn, owner_email=owner_email)
+
+
+def _backup_owner_ids_for_vehicle_scope(
+    conn: sqlite3.Connection,
+    *,
+    vehicle_id: int,
+    owner_email: str,
+) -> List[int]:
+    """
+    Ownership-first restore helper for vehicle scope.
+
+    Pokud snapshot obsahuje ownership rows, bere je jako autoritu. Legacy email
+    bridge použije jen jako fallback pro staré snapshoty nebo snapshoty bez
+    backfillnutých ownership vazeb.
+    """
+    if _attached_sqlite_has_table(conn, "backupdb", "vehicle_ownerships"):
+        owner_rows = conn.execute(
+            """
+            SELECT DISTINCT customer_id
+            FROM backupdb.vehicle_ownerships
+            WHERE vehicle_id = ?
+            """,
+            (vehicle_id,),
+        ).fetchall()
+        owner_ids = [int(row["customer_id"]) for row in owner_rows if row["customer_id"] is not None]
+        if owner_ids:
+            return owner_ids
+
+    normalized_email = str(owner_email or "").strip().lower()
+    if not normalized_email:
+        return []
+    customer_rows = conn.execute(
+        "SELECT id FROM backupdb.customers WHERE lower(email) = lower(?)",
+        (normalized_email,),
+    ).fetchall()
+    return [int(row["id"]) for row in customer_rows if row["id"] is not None]
+
+
 def _restore_user_scope_from_backup(
     *,
     backup_db_file: Path,
@@ -627,16 +704,11 @@ def _restore_user_scope_from_backup(
 
             vehicle_ids: List[int] = []
             if _attached_sqlite_has_table(conn, "backupdb", "vehicle_ownerships"):
-                ownership_rows = conn.execute(
-                    """
-                    SELECT DISTINCT vehicle_id
-                    FROM backupdb.vehicle_ownerships
-                    WHERE customer_id = ?
-                      AND COALESCE(is_active, 1) = 1
-                    """,
-                    (user_id,),
-                ).fetchall()
-                vehicle_ids = [int(row["vehicle_id"]) for row in ownership_rows if row["vehicle_id"] is not None]
+                vehicle_ids = _backup_vehicle_ids_for_customer_scope(
+                    conn,
+                    customer_id=user_id,
+                    owner_email=user_email,
+                )
                 restored["vehicle_ownerships"] = _upsert_rows_from_backup(
                     conn,
                     table_name="vehicle_ownerships",
@@ -645,11 +717,7 @@ def _restore_user_scope_from_backup(
                 )
             else:
                 # Deprecated fallback for snapshots from legacy user_email ownership era.
-                vehicle_rows = conn.execute(
-                    "SELECT id FROM backupdb.vehicles WHERE lower(user_email) = lower(?)",
-                    (user_email,),
-                ).fetchall()
-                vehicle_ids = [int(row["id"]) for row in vehicle_rows]
+                vehicle_ids = _legacy_backup_vehicle_ids_by_email(conn, owner_email=user_email)
                 restored["vehicle_ownerships"] = 0
 
             if vehicle_ids:
@@ -729,15 +797,11 @@ def _restore_vehicle_scope_from_backup(
                 raise ValueError(f"Vozidlo {vehicle_id} v záloze neexistuje")
 
             if _attached_sqlite_has_table(conn, "backupdb", "vehicle_ownerships"):
-                owner_rows = conn.execute(
-                    """
-                    SELECT DISTINCT customer_id
-                    FROM backupdb.vehicle_ownerships
-                    WHERE vehicle_id = ?
-                    """,
-                    (vehicle_id,),
-                ).fetchall()
-                owner_ids = [int(row["customer_id"]) for row in owner_rows if row["customer_id"] is not None]
+                owner_ids = _backup_owner_ids_for_vehicle_scope(
+                    conn,
+                    vehicle_id=vehicle_id,
+                    owner_email=str(vehicle_row["user_email"] or ""),
+                )
                 if owner_ids:
                     placeholders = ", ".join(["?"] * len(owner_ids))
                     restored["customers"] = _upsert_rows_from_backup(
@@ -758,12 +822,21 @@ def _restore_vehicle_scope_from_backup(
                 # Deprecated fallback for snapshots from legacy user_email ownership era.
                 owner_email = str(vehicle_row["user_email"] or "").strip().lower()
                 if owner_email:
-                    restored["customers"] = _upsert_rows_from_backup(
+                    owner_ids = _backup_owner_ids_for_vehicle_scope(
                         conn,
-                        table_name="customers",
-                        where_sql="lower(email) = lower(?)",
-                        params=(owner_email,),
+                        vehicle_id=vehicle_id,
+                        owner_email=owner_email,
                     )
+                    if owner_ids:
+                        placeholders = ", ".join(["?"] * len(owner_ids))
+                        restored["customers"] = _upsert_rows_from_backup(
+                            conn,
+                            table_name="customers",
+                            where_sql=f"id IN ({placeholders})",
+                            params=tuple(owner_ids),
+                        )
+                    else:
+                        restored["customers"] = 0
                 else:
                     restored["customers"] = 0
                 restored["vehicle_ownerships"] = 0
@@ -1169,7 +1242,7 @@ def get_default_admin_settings() -> Dict[str, Dict[str, Dict[str, Any]]]:
 
     return {
         "general": {
-            "app_name": {"value": "TooZ Hub 2", "value_type": "string", "description": "Název aplikace"},
+            "app_name": {"value": "Správa vozidel", "value_type": "string", "description": "Název aplikace"},
             "app_version": {"value": "2.2.0", "value_type": "string", "description": "Verze aplikace"},
             "app_description": {"value": "Správa vozidel a servisních záznamů", "value_type": "string", "description": "Popis aplikace"},
             "maintenance_mode": {"value": False, "value_type": "boolean", "description": "Zapnout režim údržby"},
@@ -3713,7 +3786,7 @@ def update_reminder_admin(
         if reminder_data.is_manual is not None:
             reminder.is_manual = reminder_data.is_manual
         if reminder_data.is_completed is not None:
-            reminder.is_completed = reminder_data.is_completed
+            apply_reminder_completion_update(reminder, reminder_data.is_completed)
 
         db.commit()
         return {"message": "Připomínka byla upravena adminem"}

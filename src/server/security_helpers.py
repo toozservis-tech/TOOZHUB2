@@ -11,6 +11,7 @@ import struct
 import time
 from urllib.parse import quote
 
+from src.core.branding import APP_DISPLAY_NAME
 from src.modules.vehicle_hub.models import Customer, CustomerSecuritySettings
 
 
@@ -19,7 +20,7 @@ TOTP_PERIOD_SECONDS = 30
 TOTP_DIGITS = 6
 TOTP_VERIFY_WINDOW_STEPS = 1
 TOTP_LOGIN_CHALLENGE_TTL_SECONDS = 5 * 60
-TOTP_ISSUER_NAME = "TooZ Hub 2"
+TOTP_ISSUER_NAME = APP_DISPLAY_NAME
 
 
 def cleanup_expired_2fa_challenges() -> None:

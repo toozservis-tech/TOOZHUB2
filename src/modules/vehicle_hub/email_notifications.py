@@ -10,6 +10,9 @@ from typing import Optional, Tuple
 from datetime import date, datetime
 from sqlalchemy.orm import Session
 
+from src.core.branding import APP_DISPLAY_NAME
+from src.modules.email_client.templates import build_app_url, render_email_layout, render_panel
+
 # Import přímo z service.py, aby se zabránilo importu GUI komponenty
 from src.modules.email_client.service import EmailService, EmailMessage
 from src.modules.vehicle_hub.models import (
@@ -53,6 +56,10 @@ def _add_email_log(
         error_message=error_message,
     )
     db.add(entry)
+
+
+def _app_index_url() -> str:
+    return build_app_url("/web/index.html")
 
 
 def send_reminder_email(
@@ -121,46 +128,29 @@ def send_reminder_email(
         subject = f"📅 Připomínka: {reminder_type_display} - {vehicle_name}"
         urgency = "brzy"
     
-    # HTML obsah
-    html_body = f"""
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }}
-        .container {{ background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; margin: -30px -30px 20px -30px; }}
-        .reminder-box {{ background: #f8f9fa; border-left: 4px solid #667eea; padding: 15px; border-radius: 4px; margin: 20px 0; }}
-        .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
-        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚗 TooZ Hub 2</h1>
-            <p>Připomínka pro Vaše vozidlo</p>
-        </div>
-        <p>Dobrý den,</p>
-        <p>připomínáme Vám, že {urgency} máte naplánovanou připomínku:</p>
-        <div class="reminder-box">
-            <strong>Vozidlo:</strong> {vehicle_name}<br>
-            <strong>Typ:</strong> {reminder_type_display}<br>
-            <strong>Datum:</strong> {due_date_str}<br>
-            <strong>Popis:</strong> {reminder.text}
-        </div>
-        <p>Nezapomeňte včas zajistit potřebné úkony.</p>
-        <div style="text-align: center;">
-            <a href="https://hub.toozservis.cz/web/index.html" class="button">Otevřít TooZ Hub 2</a>
-        </div>
-        <div class="footer">
-            <p>S pozdravem,<br><strong>TooZ Hub 2</strong></p>
-        </div>
-    </div>
-</body>
-</html>
-"""
+    html_body = render_email_layout(
+        title="Připomínka k vozidlu",
+        subtitle=f"Naplánovaný termín {urgency}.",
+        intro="Dobrý den,",
+        paragraphs=[
+            f"připomínáme Vám, že {urgency} máte naplánovanou připomínku.",
+            "Nezapomeňte si včas zajistit potřebné úkony, aby vozidlo zůstalo bez omezení v provozu.",
+        ],
+        panels=[
+            render_panel(
+                title="Přehled připomínky",
+                rows=[
+                    ("Vozidlo", vehicle_name),
+                    ("Typ", reminder_type_display),
+                    ("Datum", due_date_str),
+                    ("Popis", reminder.text),
+                ],
+            )
+        ],
+        cta_label="Otevřít aplikaci",
+        cta_url=_app_index_url(),
+        accent="#f59e0b",
+    )
     
     text_body = f"""Dobrý den,
 
@@ -174,9 +164,9 @@ Popis: {reminder.text}
 Nezapomeňte včas zajistit potřebné úkony.
 
 S pozdravem,
-TooZ Hub 2
+{APP_DISPLAY_NAME}
 
-Otevřít aplikaci: https://hub.toozservis.cz/web/index.html
+Otevřít aplikaci: {_app_index_url()}
 """
     
     try:
@@ -285,51 +275,32 @@ def send_reminder_created_email(
     
     subject = f"✅ Připomínka vytvořena: {reminder_type_display} - {vehicle_name}"
     
-    # HTML obsah
-    html_body = f"""
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }}
-        .container {{ background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        .header {{ background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; margin: -30px -30px 20px -30px; }}
-        .reminder-box {{ background: #f0fdf4; border-left: 4px solid #10b981; padding: 15px; border-radius: 4px; margin: 20px 0; }}
-        .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
-        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; }}
-        .info-box {{ background: #eff6ff; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 4px; margin: 20px 0; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>✅ TooZ Hub 2</h1>
-            <p>Připomínka byla vytvořena</p>
-        </div>
-        <p>Dobrý den,</p>
-        <p>potvrzujeme Vám, že byla vytvořena nová připomínka:</p>
-        <div class="reminder-box">
-            <strong>Vozidlo:</strong> {vehicle_name}<br>
-            <strong>Typ:</strong> {reminder_type_display}<br>
-            <strong>Datum:</strong> {due_date_str}<br>
-            <strong>Popis:</strong> {reminder.text}<br>
-            <strong>Termín:</strong> {urgency_text}
-        </div>
-        <div class="info-box">
-            <strong>ℹ️ Upozornění:</strong><br>
-            Budete automaticky upozorněni předem podle Vašeho nastavení. Můžete si nastavit, kolik dní předem chcete být upozorněni v nastavení připomínek.
-        </div>
-        <div style="text-align: center;">
-            <a href="https://hub.toozservis.cz/web/index.html" class="button">Otevřít TooZ Hub 2</a>
-        </div>
-        <div class="footer">
-            <p>S pozdravem,<br><strong>TooZ Hub 2</strong></p>
-        </div>
-    </div>
-</body>
-</html>
-"""
+    html_body = render_email_layout(
+        title="Připomínka byla vytvořena",
+        subtitle="Nová položka je uložená a aktivní.",
+        intro="Dobrý den,",
+        paragraphs=[
+            "potvrzujeme Vám, že byla vytvořena nová připomínka.",
+            "Budete upozorněni předem podle svého nastavení v aplikaci.",
+        ],
+        panels=[
+            render_panel(
+                title="Přehled připomínky",
+                rows=[
+                    ("Vozidlo", vehicle_name),
+                    ("Typ", reminder_type_display),
+                    ("Datum", due_date_str),
+                    ("Popis", reminder.text),
+                    ("Termín", urgency_text),
+                ],
+                accent="#10b981",
+                tone="#f0fdf4",
+            )
+        ],
+        cta_label="Otevřít aplikaci",
+        cta_url=_app_index_url(),
+        accent="#f59e0b",
+    )
     
     text_body = f"""Dobrý den,
 
@@ -345,9 +316,9 @@ Upozornění:
 Budete automaticky upozorněni předem podle Vašeho nastavení. Můžete si nastavit, kolik dní předem chcete být upozorněni v nastavení připomínek.
 
 S pozdravem,
-TooZ Hub 2
+{APP_DISPLAY_NAME}
 
-Otevřít aplikaci: https://hub.toozservis.cz/web/index.html
+Otevřít aplikaci: {_app_index_url()}
 """
     
     try:
@@ -448,48 +419,30 @@ def send_reservation_created_email(
     if customer.notify_email:
         subject = f"✅ Rezervace vytvořena - {vehicle_name}"
         
-        html_body = f"""
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }}
-        .container {{ background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; margin: -30px -30px 20px -30px; }}
-        .reservation-box {{ background: #f8f9fa; border-left: 4px solid #10b981; padding: 15px; border-radius: 4px; margin: 20px 0; }}
-        .status-badge {{ display: inline-block; background: #fef3c7; color: #92400e; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }}
-        .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
-        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚗 TooZ Hub 2</h1>
-            <p>Rezervace vytvořena</p>
-        </div>
-        <p>Dobrý den,</p>
-        <p>Vaše rezervace byla úspěšně vytvořena:</p>
-        <div class="reservation-box">
-            <strong>Vozidlo:</strong> {vehicle_name}<br>
-            <strong>Servis:</strong> {service.name or service.email}<br>
-            <strong>Typ servisu:</strong> {reservation.service_type or 'Neuvedeno'}<br>
-            <strong>Datum a čas:</strong> {start_datetime_str}<br>
-            <strong>Status:</strong> <span class="status-badge">Čeká na potvrzení</span>
-            {f'<br><strong>Poznámka:</strong> {reservation.note}' if reservation.note else ''}
-        </div>
-        <p>{customer_waiting_text}</p>
-        <div style="text-align: center;">
-            <a href="https://hub.toozservis.cz/web/index.html" class="button">Zobrazit rezervaci</a>
-        </div>
-        <div class="footer">
-            <p>S pozdravem,<br><strong>TooZ Hub 2</strong></p>
-        </div>
-    </div>
-</body>
-</html>
-"""
+        html_body = render_email_layout(
+            title="Rezervace vytvořena",
+            subtitle="Žádost byla uložena a čeká na další krok.",
+            intro="Dobrý den,",
+            paragraphs=[customer_waiting_text],
+            panels=[
+                render_panel(
+                    title="Detaily rezervace",
+                    rows=[
+                        ("Vozidlo", vehicle_name),
+                        ("Servis", service.name or service.email),
+                        ("Typ servisu", reservation.service_type or "Neuvedeno"),
+                        ("Datum a čas", start_datetime_str),
+                        ("Stav", "Čeká na potvrzení"),
+                        ("Poznámka", reservation.note or "Bez poznámky"),
+                    ],
+                    accent="#10b981",
+                    tone="#f0fdf4",
+                )
+            ],
+            cta_label="Zobrazit rezervaci",
+            cta_url=_app_index_url(),
+            accent="#f59e0b",
+        )
         
         text_body = f"""Dobrý den,
 
@@ -505,9 +458,9 @@ Status: Čeká na potvrzení
 {customer_waiting_text}
 
 S pozdravem,
-TooZ Hub 2
+{APP_DISPLAY_NAME}
 
-Zobrazit rezervaci: https://hub.toozservis.cz/web/index.html
+Zobrazit rezervaci: {_app_index_url()}
 """
         
         try:
@@ -574,47 +527,48 @@ Zobrazit rezervaci: https://hub.toozservis.cz/web/index.html
             else "Prosím potvrďte nebo zrušte rezervaci v administračním panelu."
         )
         
-        html_body = f"""
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }}
-        .container {{ background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; margin: -30px -30px 20px -30px; }}
-        .reservation-box {{ background: #f8f9fa; border-left: 4px solid #667eea; padding: 15px; border-radius: 4px; margin: 20px 0; }}
-        .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
-        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🔔 TooZ Hub 2</h1>
-            <p>Nová rezervace</p>
-        </div>
-        <p>Dobrý den,</p>
-        <p>{service_intro}</p>
-        <div class="reservation-box">
-            <strong>Zákazník:</strong> {customer.name or customer.email}<br>
-            <strong>Vozidlo:</strong> {vehicle_name}<br>
-            <strong>Typ servisu:</strong> {reservation.service_type or 'Neuvedeno'}<br>
-            <strong>Datum a čas:</strong> {start_datetime_str}<br>
-            {f'<br><strong>Poznámka:</strong> {reservation.note}' if reservation.note else ''}
-        </div>
-        <p>{'Po potvrzení propojení bude rezervace viditelná v servisním přehledu.' if requires_service_link_confirmation and service_link_claim_url else 'Prosím potvrďte nebo zrušte rezervaci v administračním panelu.'}</p>
-        {service_action_html}
-        <div style="text-align: center;">
-            <a href="https://admin.toozservis.cz" class="button">Otevřít admin panel</a>
-        </div>
-        <div class="footer">
-            <p>S pozdravem,<br><strong>TooZ Hub 2</strong></p>
-        </div>
-    </div>
-</body>
-</html>
-"""
+        html_body = render_email_layout(
+            title="Nová rezervace",
+            subtitle="Oznámení pro servisní účet.",
+            intro="Dobrý den,",
+            paragraphs=[
+                service_intro,
+                (
+                    "Po potvrzení propojení bude rezervace viditelná v servisním přehledu."
+                    if requires_service_link_confirmation and service_link_claim_url
+                    else "Prosím potvrďte nebo zrušte rezervaci v administračním panelu."
+                ),
+            ],
+            panels=[
+                render_panel(
+                    title="Detaily rezervace",
+                    rows=[
+                        ("Zákazník", customer.name or customer.email),
+                        ("Vozidlo", vehicle_name),
+                        ("Typ servisu", reservation.service_type or "Neuvedeno"),
+                        ("Datum a čas", start_datetime_str),
+                        ("Poznámka", reservation.note or "Bez poznámky"),
+                    ],
+                    accent="#3b82f6",
+                    tone="#eff6ff",
+                ),
+                *(
+                    [
+                        render_panel(
+                            title="Potvrzení propojení",
+                            message=f"Odkaz pro rychlé přiřazení klienta:\n{service_link_claim_url}",
+                            accent="#f59e0b",
+                            tone="#fff7ed",
+                        )
+                    ]
+                    if requires_service_link_confirmation and service_link_claim_url
+                    else []
+                ),
+            ],
+            cta_label="Otevřít admin panel",
+            cta_url=build_app_url("/web_admin/"),
+            accent="#f59e0b",
+        )
         
         text_body = f"""Dobrý den,
 
@@ -629,7 +583,7 @@ Datum a čas: {start_datetime_str}
 {service_action_text}
 
 S pozdravem,
-TooZ Hub 2
+{APP_DISPLAY_NAME}
 """
         
         try:
@@ -724,48 +678,37 @@ def send_reservation_status_email(
         status_color = "#ef4444"
         status_emoji = "❌"
     
-    html_body = f"""
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }}
-        .container {{ background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; margin: -30px -30px 20px -30px; }}
-        .reservation-box {{ background: #f8f9fa; border-left: 4px solid {status_color}; padding: 15px; border-radius: 4px; margin: 20px 0; }}
-        .status-badge {{ display: inline-block; background: {'#d1fae5' if reservation.status == 'CONFIRMED' else '#fee2e2'}; color: {'#065f46' if reservation.status == 'CONFIRMED' else '#991b1b'}; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }}
-        .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
-        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚗 TooZ Hub 2</h1>
-            <p>Rezervace {status_text}</p>
-        </div>
-        <p>Dobrý den,</p>
-        <p>Vaše rezervace byla {status_text}:</p>
-        <div class="reservation-box">
-            <strong>Vozidlo:</strong> {vehicle_name}<br>
-            <strong>Servis:</strong> {service.name or service.email}<br>
-            <strong>Typ servisu:</strong> {reservation.service_type or 'Neuvedeno'}<br>
-            <strong>Datum a čas:</strong> {start_datetime_str}<br>
-            <strong>Status:</strong> <span class="status-badge">{status_emoji} {status_text.upper()}</span>
-            {f'<br><strong>Poznámka:</strong> {reservation.note}' if reservation.note else ''}
-        </div>
-        {f'<p>Rezervace byla {status_text} servisem. Těšíme se na Vás!</p>' if reservation.status == 'CONFIRMED' else '<p>Rezervace byla zrušena. Pokud potřebujete, můžete vytvořit novou rezervaci.</p>'}
-        <div style="text-align: center;">
-            <a href="https://hub.toozservis.cz/web/index.html" class="button">Zobrazit rezervaci</a>
-        </div>
-        <div class="footer">
-            <p>S pozdravem,<br><strong>TooZ Hub 2</strong></p>
-        </div>
-    </div>
-</body>
-</html>
-"""
+    html_body = render_email_layout(
+        title=f"Rezervace {status_text}",
+        subtitle=f"Aktuální stav: {status_emoji} {status_text.upper()}",
+        intro="Dobrý den,",
+        paragraphs=[
+            f"Vaše rezervace byla {status_text}.",
+            (
+                f"Rezervace byla {status_text} servisem. Těšíme se na Vás!"
+                if reservation.status == "CONFIRMED"
+                else "Rezervace byla zrušena. Pokud potřebujete, můžete vytvořit novou rezervaci."
+            ),
+        ],
+        panels=[
+            render_panel(
+                title="Detaily rezervace",
+                rows=[
+                    ("Vozidlo", vehicle_name),
+                    ("Servis", service.name or service.email),
+                    ("Typ servisu", reservation.service_type or "Neuvedeno"),
+                    ("Datum a čas", start_datetime_str),
+                    ("Stav", f"{status_emoji} {status_text.upper()}"),
+                    ("Poznámka", reservation.note or "Bez poznámky"),
+                ],
+                accent=status_color,
+                tone="#f8fafc",
+            )
+        ],
+        cta_label="Zobrazit rezervaci",
+        cta_url=_app_index_url(),
+        accent="#f59e0b",
+    )
     
     text_body = f"""Dobrý den,
 
@@ -781,9 +724,9 @@ Status: {status_text.upper()}
 {f'Rezervace byla {status_text} servisem. Těšíme se na Vás!' if reservation.status == 'CONFIRMED' else 'Rezervace byla zrušena. Pokud potřebujete, můžete vytvořit novou rezervaci.'}
 
 S pozdravem,
-TooZ Hub 2
+{APP_DISPLAY_NAME}
 
-Zobrazit rezervaci: https://hub.toozservis.cz/web/index.html
+Zobrazit rezervaci: {_app_index_url()}
 """
     
     try:
@@ -896,48 +839,34 @@ def send_reservation_rescheduled_email(
 
     subject = f"🔄 Změna termínu rezervace - {vehicle_name}"
 
-    html_body = f"""
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }}
-        .container {{ background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        .header {{ background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; margin: -30px -30px 20px -30px; }}
-        .reservation-box {{ background: #f8f9fa; border-left: 4px solid #4f46e5; padding: 15px; border-radius: 4px; margin: 20px 0; }}
-        .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
-        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🔄 TooZ Hub 2</h1>
-            <p>Změna termínu rezervace</p>
-        </div>
-        <p>Dobrý den,</p>
-        <p>{actor_label.capitalize()} upravil termín Vaší rezervace.</p>
-        <div class="reservation-box">
-            <strong>Vozidlo:</strong> {vehicle_name}<br>
-            <strong>Servis:</strong> {service.name or service.email}<br>
-            <strong>Typ servisu:</strong> {reservation.service_type or 'Neuvedeno'}<br>
-            <strong>Původní termín:</strong> {old_range}<br>
-            <strong>Nový termín:</strong> {new_range}<br>
-            <strong>Stav rezervace:</strong> {status_label}
-            {f'<br><strong>Poznámka:</strong> {reservation.note}' if reservation.note else ''}
-        </div>
-        <p>Pokud Vám nový termín nevyhovuje, můžete rezervaci v aplikaci zrušit a vytvořit novou.</p>
-        <div style="text-align: center;">
-            <a href="https://hub.toozservis.cz/web/index.html" class="button">Otevřít rezervace</a>
-        </div>
-        <div class="footer">
-            <p>S pozdravem,<br><strong>TooZ Hub 2</strong></p>
-        </div>
-    </div>
-</body>
-</html>
-"""
+    html_body = render_email_layout(
+        title="Změna termínu rezervace",
+        subtitle=f"{actor_label.capitalize()} upravil termín rezervace.",
+        intro="Dobrý den,",
+        paragraphs=[
+            f"{actor_label.capitalize()} upravil termín Vaší rezervace.",
+            "Pokud Vám nový termín nevyhovuje, můžete rezervaci v aplikaci zrušit a vytvořit novou.",
+        ],
+        panels=[
+            render_panel(
+                title="Přehled změny",
+                rows=[
+                    ("Vozidlo", vehicle_name),
+                    ("Servis", service.name or service.email),
+                    ("Typ servisu", reservation.service_type or "Neuvedeno"),
+                    ("Původní termín", old_range),
+                    ("Nový termín", new_range),
+                    ("Stav rezervace", status_label),
+                    ("Poznámka", reservation.note or "Bez poznámky"),
+                ],
+                accent="#4f46e5",
+                tone="#eef2ff",
+            )
+        ],
+        cta_label="Otevřít rezervace",
+        cta_url=_app_index_url(),
+        accent="#f59e0b",
+    )
 
     text_body = f"""Dobrý den,
 
@@ -954,9 +883,9 @@ Stav rezervace: {status_label}
 Pokud Vám nový termín nevyhovuje, můžete rezervaci v aplikaci zrušit a vytvořit novou.
 
 S pozdravem,
-TooZ Hub 2
+{APP_DISPLAY_NAME}
 
-Otevřít rezervace: https://hub.toozservis.cz/web/index.html
+Otevřít rezervace: {_app_index_url()}
 """
 
     try:

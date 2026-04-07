@@ -7,7 +7,9 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from src.core.auth import get_current_user_email
+from src.core.branding import APP_DISPLAY_NAME
 from src.core.security import hash_password, verify_password
+from src.modules.email_client.templates import render_email_layout, render_panel
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer
 from src.server.main_helpers import (
@@ -206,36 +208,37 @@ def change_password(
             email_body = f"""
 Dobrý den {user_name},
 
-vaše heslo k účtu v TooZ Hub 2 bylo úspěšně změněno.
+vaše heslo k účtu v aplikaci {APP_DISPLAY_NAME} bylo úspěšně změněno.
 
 Změna byla provedena: {change_time} UTC
 
 Pokud jste tuto změnu neprovedli, okamžitě kontaktujte podporu.
 
 S pozdravem,
-TooZ Hub 2
+{APP_DISPLAY_NAME}
 """
-            html_body = f"""
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #6366f1;">Potvrzení změny hesla - TooZ Hub 2</h2>
-        <p>Dobrý den {user_name},</p>
-        <p>vaše heslo k účtu v <strong>TooZ Hub 2</strong> bylo úspěšně změněno.</p>
-        <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0;"><strong>Datum změny:</strong> {change_time} UTC</p>
-        </div>
-        <p style="color: #ef4444; font-weight: bold;">Pokud jste tuto změnu neprovedli, okamžitě kontaktujte podporu.</p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="color: #666; font-size: 0.9em;">S pozdravem,<br>TooZ Hub 2</p>
-    </div>
-</body>
-</html>
-"""
+            html_body = render_email_layout(
+                title="Heslo bylo změněno",
+                subtitle="Bezpečnostní potvrzení změny hesla.",
+                intro=f"Dobrý den {user_name},",
+                paragraphs=[
+                    f"vaše heslo k účtu v aplikaci {APP_DISPLAY_NAME} bylo úspěšně změněno.",
+                    "Pokud jste tuto změnu neprovedli, okamžitě kontaktujte podporu a změňte přístupové údaje.",
+                ],
+                panels=[
+                    render_panel(
+                        title="Detaily změny",
+                        rows=[("Datum změny", f"{change_time} UTC"), ("Účet", email)],
+                        accent="#ef4444",
+                        tone="#fef2f2",
+                    )
+                ],
+                accent="#f59e0b",
+            )
             try:
                 email_service.send_simple_email(
                     to=email,
-                    subject="Potvrzení změny hesla - TooZ Hub 2",
+                    subject=f"Potvrzení změny hesla - {APP_DISPLAY_NAME}",
                     body=email_body,
                     html_body=html_body,
                 )

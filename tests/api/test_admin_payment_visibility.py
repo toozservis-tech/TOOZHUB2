@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
@@ -389,3 +391,94 @@ def test_admin_update_vehicle_reassigns_primary_owner_via_ownership(db_session):
         .one()
     )
     assert active_owner.customer_id == new_owner.id
+
+
+def _init_sqlite_schema(path: Path) -> None:
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(bind=engine)
+    engine.dispose()
+
+
+def test_restore_user_scope_uses_legacy_email_bridge_when_backup_ownership_rows_are_missing(tmp_path: Path):
+    target_db = tmp_path / "target.sqlite"
+    backup_db = tmp_path / "backup.sqlite"
+    _init_sqlite_schema(target_db)
+    _init_sqlite_schema(backup_db)
+
+    with sqlite3.connect(str(backup_db)) as conn:
+        conn.execute(
+            """
+            INSERT INTO customers (
+                id, tenant_id, email, password_hash, role, name,
+                is_disabled, is_deleted, session_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, 1, "restore@example.com", "hash", "user", "Restore User", 0, 0, 0, datetime.utcnow().isoformat()),
+        )
+        conn.execute(
+            """
+            INSERT INTO vehicles (
+                id, tenant_id, user_email, nickname, brand, model, vin, plate, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (10, 1, "restore@example.com", "Legacy Car", "Skoda", "Fabia", "TMBARESTORE123456", "1AB2345", datetime.utcnow().isoformat()),
+        )
+        conn.execute(
+            """
+            INSERT INTO service_records (
+                id, tenant_id, vehicle_id, user_id, performed_at, description, price,
+                created_by_ai, is_deleted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (100, 1, 10, 1, datetime.utcnow().isoformat(), "Legacy restore record", 1500.0, 0, 0),
+        )
+        conn.execute("DELETE FROM vehicle_ownerships")
+        conn.commit()
+
+    restored = admin_api._restore_user_scope_from_backup(
+        backup_db_file=backup_db,
+        target_db_file=target_db,
+        user_id=1,
+    )
+
+    assert restored["vehicle_ownerships"] == 0
+    assert restored["vehicles"] == 1
+    assert restored["service_records"] == 1
+
+
+def test_restore_vehicle_scope_uses_legacy_email_bridge_when_backup_ownership_rows_are_missing(tmp_path: Path):
+    target_db = tmp_path / "target_vehicle.sqlite"
+    backup_db = tmp_path / "backup_vehicle.sqlite"
+    _init_sqlite_schema(target_db)
+    _init_sqlite_schema(backup_db)
+
+    with sqlite3.connect(str(backup_db)) as conn:
+        conn.execute(
+            """
+            INSERT INTO customers (
+                id, tenant_id, email, password_hash, role, name,
+                is_disabled, is_deleted, session_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (7, 1, "vehicle-owner@example.com", "hash", "user", "Vehicle Owner", 0, 0, 0, datetime.utcnow().isoformat()),
+        )
+        conn.execute(
+            """
+            INSERT INTO vehicles (
+                id, tenant_id, user_email, nickname, brand, model, vin, plate, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (11, 1, "vehicle-owner@example.com", "Legacy Vehicle", "VW", "Golf", "WVWRESTORE1234567", "2BC3456", datetime.utcnow().isoformat()),
+        )
+        conn.execute("DELETE FROM vehicle_ownerships")
+        conn.commit()
+
+    restored = admin_api._restore_vehicle_scope_from_backup(
+        backup_db_file=backup_db,
+        target_db_file=target_db,
+        vehicle_id=11,
+    )
+
+    assert restored["vehicle_ownerships"] == 0
+    assert restored["customers"] == 1
+    assert restored["vehicles"] == 1

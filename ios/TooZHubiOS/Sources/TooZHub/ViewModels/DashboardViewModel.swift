@@ -11,9 +11,22 @@ final class DashboardViewModel: ObservableObject {
     @Published var notifications: [SystemNotification] = []
 
     private let service: DashboardService
+    private var hasLoadedOnce = false
+    private var lastLoadedAt: Date?
+    private let reloadTTL: TimeInterval = 60
 
     init(service: DashboardService) {
         self.service = service
+    }
+
+    func loadIfNeeded(token: String, force: Bool = false) async {
+        if !force,
+           hasLoadedOnce,
+           let lastLoadedAt,
+           Date().timeIntervalSince(lastLoadedAt) < reloadTTL {
+            return
+        }
+        await load(token: token)
     }
 
     func load(token: String) async {
@@ -22,12 +35,23 @@ final class DashboardViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let payload = try await service.loadDashboard(token: token)
-            vehicles = payload.vehicles
-            reminders = payload.reminders
-            analytics = payload.analytics
-            monthlyCosts = payload.monthlyCosts.entries
-            notifications = payload.notifications
+            let corePayload = try await service.loadDashboardCore(token: token)
+            vehicles = corePayload.vehicles
+            reminders = corePayload.reminders
+            analytics = corePayload.analytics
+            hasLoadedOnce = true
+            lastLoadedAt = Date()
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let secondaryPayload = try await self.service.loadDashboardSecondary(token: token)
+                    await MainActor.run {
+                        self.monthlyCosts = secondaryPayload.monthlyCosts.entries
+                        self.notifications = secondaryPayload.notifications
+                    }
+                } catch {
+                }
+            }
         } catch {
             self.error = error.localizedDescription
         }

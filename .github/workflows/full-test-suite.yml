@@ -55,9 +55,10 @@ jobs:
           python -c "from src.modules.ai_features.routers import *; print('✅ Routers imports OK')"
           echo "✅ All imports OK"
       
-      - name: Initialize database
+      - name: Initialize database via Alembic migrations
         run: |
-          python -c "from src.modules.vehicle_hub.database import engine, Base; from src.modules.vehicle_hub.models import *; from src.modules.ai_features.models import *; Base.metadata.create_all(bind=engine); print('✅ Database tables created')"
+          rm -f test_vehicles.db
+          python scripts/migrate_database.py upgrade head
       
       - name: Run Python linter (flake8)
         run: |
@@ -169,7 +170,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ Python syntax check: PASSED" >> $GITHUB_STEP_SUMMARY
           echo "✅ Import check: PASSED" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Database initialization: PASSED" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Database initialization via Alembic: PASSED" >> $GITHUB_STEP_SUMMARY
           echo "✅ Health endpoints: PASSED" >> $GITHUB_STEP_SUMMARY
           echo "✅ Security check (sensitive files): PASSED" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

@@ -4,8 +4,8 @@
 
 1. ✅ Konfigurace v `src/core/config.py` - podpora `PUBLIC_API_BASE_URL` a produkčních CORS
 2. ✅ Dokumentace v `NASAZENI_HUB_TOOZSERVIS.md`
-3. ✅ Produkční iframe verze v `web/index_iframe_production.html`
-4. ✅ Skript pro aktualizaci iframe: `scripts/update_production_iframe.sh`
+3. ✅ Hlavní produkční webová cesta je `web/index.html`
+4. ✅ Iframe/Webnode materiály zůstávají jen jako legacy/compat varianta
 5. ✅ Příklad `.env` souboru v `.env.example`
 
 ---
@@ -63,10 +63,12 @@ Generování JWT secret:
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-### 4. Aktualizace iframe pro Webnode (1 minuta)
+### 4. Webnode napojení (1 minuta)
 
 ```bash
-bash scripts/update_production_iframe.sh
+# Doporučená produkční varianta:
+# ve Webnode nastavit přesměrování na:
+# https://hub.toozservis.cz/web/index.html
 ```
 
 ### 5. Restart serveru (1 minuta)
@@ -91,12 +93,9 @@ curl -I https://hub.toozservis.cz/web/index.html
 1. Otevřít Webnode editor
 2. Otevřít stránku "TOOZHUB APLIKACE" nebo vytvořit novou
 3. Přidat HTML blok
-4. Zkopírovat obsah:
-   ```bash
-   cat web/index_iframe.html
-   ```
-5. Vložit do Webnode editoru
-6. Uložit a publikovat
+4. Nastavit přesměrování na:
+   `https://hub.toozservis.cz/web/index.html`
+5. Uložit a publikovat
 
 ---
 
@@ -108,7 +107,8 @@ curl -I https://hub.toozservis.cz/web/index.html
 **Po nasazení:**
 - ✅ API běží na `https://hub.toozservis.cz`
 - ✅ Web UI dostupný na `https://hub.toozservis.cz/web/index.html`
-- ✅ Webnode iframe připraven k použití
+- ✅ Hlavní produktová cesta je `https://hub.toozservis.cz/web/index.html`
+- ✅ Iframe varianta je pouze legacy/compat
 - ✅ CORS správně nastaven
 - ✅ Bezpečnostní klíče generovány
 
@@ -125,8 +125,8 @@ curl -I https://hub.toozservis.cz/web/index.html
 2. **Web UI v prohlížeči:**
    Otevřít: `https://hub.toozservis.cz/web/index.html`
 
-3. **Webnode iframe:**
-   Otevřít stránku v Webnode s vloženým iframe
+3. **Webnode redirect / compat varianta:**
+   Ověřit, že stránka na Webnode vede na `https://hub.toozservis.cz/web/index.html`
 
 ---
 
@@ -147,7 +147,10 @@ Po úspěšném nasazení můžete:
 
 ---
 
-**Hotovo!** 🎉
+## ℹ️ Canonical mapa aktivních větví
 
+Viz `PRODUCT_ENTRYPOINTS_STATUS.md`.
+
+**Hotovo!** 🎉
 
 

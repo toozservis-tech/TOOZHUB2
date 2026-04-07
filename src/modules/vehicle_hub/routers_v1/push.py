@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from src.core.branding import APP_DISPLAY_NAME
 from ..database import get_db
 from ..models import Customer, PushSubscription
 from ..push_notifications import push_status, send_push_to_customer
@@ -264,7 +265,7 @@ def send_push_test(
     tenant_id = _require_tenant_id(current_user)
     _ensure_push_schema(db)
 
-    title = (payload.title if payload else None) or "TooZ Hub 2"
+    title = (payload.title if payload else None) or APP_DISPLAY_NAME
     body = (payload.body if payload else None) or "Test push notifikace proběhl úspěšně."
 
     result = send_push_to_customer(

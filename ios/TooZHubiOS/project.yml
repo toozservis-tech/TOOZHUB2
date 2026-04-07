@@ -18,9 +18,18 @@ settings:
     INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Správa vozidel potřebuje přístup k fotkám kvůli přílohám servisních záznamů.
     INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Správa vozidel ukládá vygenerované výstupy a snímky vozidel.
     INFOPLIST_KEY_NSCameraUsageDescription: Správa vozidel potřebuje kameru pro focení vozidel a účtenek.
+    INFOPLIST_KEY_NSFaceIDUsageDescription: Správa vozidel používá Face ID jen pro lokální odemčení aplikace na tomto zařízení.
     INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: Správa vozidel používá polohu pro vyhledání blízkých servisů.
     INFOPLIST_KEY_CFBundleDevelopmentRegion: cs
+    INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
+    INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_localhost_NSTemporaryExceptionAllowsInsecureHTTPLoads: YES
+    INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_localhost_NSIncludesSubdomains: YES
+    INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_127.0.0.1_NSTemporaryExceptionAllowsInsecureHTTPLoads: YES
+    INFOPLIST_KEY_NSAppTransportSecurity_NSExceptionDomains_127.0.0.1_NSIncludesSubdomains: YES
     TARGETED_DEVICE_FAMILY: 1,2
+  configs:
+    Debug:
+      INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads: YES
 targets:
   TooZHubiOS:
     type: application

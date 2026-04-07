@@ -1,4 +1,4 @@
-# 🚗 TooZ Hub 2
+# 🚗 Správa vozidel
 
 Komplexní desktop a web aplikace pro správu vozidel, dokumentů a dalších nástrojů.
 
@@ -294,7 +294,7 @@ TOOZHUB2/
 
 ## 🔐 Registrace instalace (instance) přes API
 
-TOOZHUB2 podporuje multi-tenant architekturu, kde každá instalace aplikace (instance) je registrována pod licenčním klíčem (tenant).
+Správa vozidel podporuje multi-tenant architekturu, kde každá instalace aplikace (instance) je registrována pod licenčním klíčem (tenant).
 
 ### Registrace nové instance
 
@@ -496,4 +496,3 @@ MIT License
 3. Commit změn (`git commit -am 'Přidána nová funkce'`)
 4. Push do branch (`git push origin feature/nova-funkce`)
 5. Vytvořte Pull Request
-

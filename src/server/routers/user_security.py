@@ -6,7 +6,9 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.core.auth import get_current_user_email
+from src.core.branding import APP_DISPLAY_NAME, APP_SUPPORT_DISPLAY_NAME
 from src.core.security import verify_password
+from src.modules.email_client.templates import render_email_layout, render_list, render_panel
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer
 from src.server.main_helpers import (
@@ -260,7 +262,7 @@ def contact_support(
             diagnostic_lines.append(f"User-Agent: {user_agent}")
 
     diagnostics_text = "\n".join(diagnostic_lines) if diagnostic_lines else "Nezahrnuto"
-    subject_line = f"[TooZ Hub Podpora] [{category}] {subject}"
+    subject_line = f"[{APP_SUPPORT_DISPLAY_NAME}] [{category}] {subject}"
     body = (
         f"Nová zpráva z panelu podpory\n\n"
         f"Datum: {created_at}\n"
@@ -273,35 +275,38 @@ def contact_support(
         f"Diagnostika:\n{diagnostics_text}\n"
     )
 
-    html_lines = "".join(
-        f"<li><strong>{line.split(':', 1)[0]}:</strong> {line.split(':', 1)[1].strip() if ':' in line else line}</li>"
-        for line in diagnostic_lines
-    ) or "<li>Nezahrnuto</li>"
-    html_body = f"""
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #1f2937;">
-  <div style="max-width: 760px; margin: 0 auto; padding: 20px;">
-    <h2 style="margin: 0 0 16px; color: #312e81;">Nová zpráva na podporu</h2>
-    <p><strong>Datum:</strong> {created_at}</p>
-    <p><strong>Uživatel:</strong> {customer.name or '-'}</p>
-    <p><strong>Email:</strong> {customer.email}</p>
-    <p><strong>Telefon:</strong> {phone or customer.phone or '-'}</p>
-    <p><strong>Kategorie:</strong> {category}</p>
-    <p><strong>Předmět:</strong> {subject}</p>
-    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin: 14px 0;">
-      <strong>Zpráva:</strong>
-      <p style="white-space: pre-wrap; margin: 8px 0 0;">{message}</p>
-    </div>
-    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px;">
-      <strong>Diagnostika</strong>
-      <ul style="margin: 8px 0 0 18px; padding: 0;">
-        {html_lines}
-      </ul>
-    </div>
-  </div>
-</body>
-</html>
-"""
+    html_body = render_email_layout(
+        title="Nová zpráva na podporu",
+        subtitle="Požadavek odeslaný z klientské aplikace.",
+        intro="Do podpory přišla nová zpráva.",
+        panels=[
+            render_panel(
+                title="Odesílatel",
+                rows=[
+                    ("Datum", created_at),
+                    ("Uživatel", customer.name or "-"),
+                    ("Email", customer.email),
+                    ("Telefon", phone or customer.phone or "-"),
+                    ("Kategorie", category),
+                    ("Předmět", subject),
+                ],
+                accent="#3b82f6",
+                tone="#eff6ff",
+            ),
+            render_panel(
+                title="Zpráva",
+                message=message,
+            ),
+            render_panel(
+                title="Diagnostika",
+                raw_html=render_list(diagnostic_lines or ["Nezahrnuto"]),
+                accent="#64748b",
+                tone="#f8fafc",
+            ),
+        ],
+        accent="#f59e0b",
+        footer_note=f"Interní e-mail podpory · {APP_SUPPORT_DISPLAY_NAME}",
+    )
 
     email_service = EmailService()
     if not email_service.is_configured():

@@ -9,8 +9,53 @@ import ImageIO
 import UIKit
 import AVFoundation
 
+private struct VehicleRecordSummary {
+    static let empty = VehicleRecordSummary(totalCount: 0, pricedCount: 0, totalCost: 0, latestRecord: nil)
+
+    let totalCount: Int
+    let pricedCount: Int
+    let totalCost: Double
+    let latestRecord: ServiceRecord?
+
+    init(records: [ServiceRecord]) {
+        totalCount = records.count
+        pricedCount = records.reduce(into: 0) { partial, record in
+            if record.price != nil {
+                partial += 1
+            }
+        }
+        totalCost = records.reduce(0) { partial, record in
+            partial + (record.price ?? 0)
+        }
+        latestRecord = records.max { lhs, rhs in
+            (lhs.performedAt ?? .distantPast) < (rhs.performedAt ?? .distantPast)
+        }
+    }
+
+    private init(totalCount: Int, pricedCount: Int, totalCost: Double, latestRecord: ServiceRecord?) {
+        self.totalCount = totalCount
+        self.pricedCount = pricedCount
+        self.totalCost = totalCost
+        self.latestRecord = latestRecord
+    }
+}
+
+private enum VehicleDetailPerformanceLog {
+    static func mark(_ message: String) {
+#if DEBUG
+        print("[VehicleDetailPerformance] \(message)")
+#endif
+    }
+}
+
+private struct MileageEntryDraft {
+    let mileageKm: Int
+    let note: String?
+}
+
 struct VehicleDetailView: View {
     @EnvironmentObject private var env: AppEnvironment
+    @Environment(\.openURL) private var openURL
     @StateObject private var viewModel: VehicleDetailViewModel
     let vehicleId: Int
 
@@ -18,6 +63,31 @@ struct VehicleDetailView: View {
     @State private var editingRecord: ServiceRecord?
     @State private var recordSearchText = ""
     @State private var selectedRecordFilter: RecordListFilter = .all
+    @State private var hasActivatedSecondarySections = false
+    @State private var visibleRecordLimit = 8
+    @State private var recordSummary = VehicleRecordSummary.empty
+    @State private var filteredRecordsCache: [ServiceRecord] = []
+    @State private var detailOpenStartedAt = Date().timeIntervalSinceReferenceDate
+    @State private var didLogDetailOpenStart = false
+    @State private var didLogFirstVisibleRender = false
+    @State private var didLogServiceHistoryRender = false
+    @State private var showVehicleInfoSheet = false
+    @State private var showMileageEntrySheet = false
+    @State private var pendingMileageConfirmation: MileageEntryDraft?
+    @State private var mileageFeedbackMessage: String?
+    @State private var mileageEntryErrorMessage: String?
+    @State private var showTachometerCaptchaSheet = false
+    @State private var tachometerChallenge: VehicleTachometerInitResponse?
+    @State private var isLookingUpTachometer = false
+    @State private var tachometerErrorMessage: String?
+    @State private var vehiclePhotoFeedbackMessage: String?
+    @State private var selectedVehiclePhotoItem: PhotosPickerItem?
+    @State private var pendingVehiclePhotoImage: UIImage?
+    @State private var showVehiclePhotoCropper = false
+    @State private var showVehiclePhotoCamera = false
+    @State private var showVehicleReportSheet = false
+    @State private var isTachometerHistoryExpanded = false
+    @State private var selectedTachometerHistoryEntryId: Int?
 
     init(vehicleId: Int) {
         self.vehicleId = vehicleId
@@ -27,17 +97,17 @@ struct VehicleDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
-                if viewModel.isLoading {
+            LazyVStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                if viewModel.vehicle == nil && viewModel.isLoading {
                     ProgressView()
                         .tint(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 60)
-                } else if let error = viewModel.error {
+                } else if let error = viewModel.error, viewModel.vehicle == nil {
                     ErrorStateView(message: error) { Task { await reload() } }
                 } else {
                     detailHero
-                    recordsSection
+                    secondaryContent
                 }
             }
             .padding(Theme.Spacing.md)
@@ -52,6 +122,62 @@ struct VehicleDetailView: View {
             AddServiceRecordSheet(vehicleId: vehicleId) { request in
                 guard let token = env.authManager.token else { return }
                 Task { await viewModel.addRecord(vehicleId: vehicleId, request: request, token: token) }
+            }
+        }
+        .sheet(isPresented: $showVehicleInfoSheet) {
+            if let vehicle = viewModel.vehicle {
+                VehicleInfoSheet(
+                    vehicle: vehicle,
+                    onRecordMileage: {
+                        showVehicleInfoSheet = false
+                        mileageEntryErrorMessage = nil
+                        showMileageEntrySheet = true
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showMileageEntrySheet) {
+            MileageEntrySheet(
+                currentMileageKm: viewModel.vehicle?.currentMileageKm,
+                lastStkMileageKm: viewModel.vehicle?.lastStkMileageKm,
+                isSaving: viewModel.isSavingMileage,
+                errorMessage: mileageEntryErrorMessage
+            ) { draft in
+                handleMileageSubmission(draft)
+            }
+        }
+        .sheet(isPresented: $showTachometerCaptchaSheet) {
+            if let challenge = tachometerChallenge {
+                VehicleTachometerCaptchaSheet(
+                    challenge: challenge,
+                    isSubmitting: isLookingUpTachometer,
+                    errorMessage: tachometerErrorMessage,
+                    onSubmit: { code in
+                        Task { await submitTachometerLookup(captchaCode: code) }
+                    },
+                    onCancel: {
+                        showTachometerCaptchaSheet = false
+                        tachometerChallenge = nil
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showVehiclePhotoCropper) {
+            if let pendingVehiclePhotoImage {
+                VehiclePhotoCropperSheet(
+                    image: pendingVehiclePhotoImage,
+                    onCommit: { cropped in
+                        Task { await uploadVehiclePhoto(cropped) }
+                    },
+                    onFallback: { fallback in
+                        Task { await uploadVehiclePhoto(fallback) }
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showVehicleReportSheet) {
+            if let vehicle = viewModel.vehicle {
+                VehicleReportSheet(vehicleId: vehicle.id, vehicleName: vehicle.displayName)
             }
         }
         .sheet(item: $editingRecord) { record in
@@ -76,13 +202,133 @@ struct VehicleDetailView: View {
                 }
             }
         }
-        .task { await reload() }
+        .fullScreenCover(isPresented: $showVehiclePhotoCamera) {
+            VehiclePhotoCameraPicker { image in
+                pendingVehiclePhotoImage = image.normalizedForUpload()
+                showVehiclePhotoCamera = false
+                showVehiclePhotoCropper = true
+            } onCancel: {
+                showVehiclePhotoCamera = false
+            }
+        }
+        .onChange(of: selectedVehiclePhotoItem) { _, newValue in
+            guard let newValue else { return }
+            Task { await handleVehiclePhotoPickerItem(newValue) }
+        }
+        .alert("Potvrdit nižší stav km?", isPresented: Binding(
+            get: { pendingMileageConfirmation != nil },
+            set: { isPresented in
+                if !isPresented {
+                    pendingMileageConfirmation = nil
+                }
+            }
+        )) {
+            Button("Zrušit", role: .cancel) {
+                pendingMileageConfirmation = nil
+            }
+            Button("Potvrdit zápis") {
+                guard let draft = pendingMileageConfirmation else { return }
+                pendingMileageConfirmation = nil
+                saveMileage(draft, confirmLowerThanCurrent: true)
+            }
+        } message: {
+            let current = formatMileageValue(viewModel.vehicle?.currentMileageKm) ?? "Nezadáno"
+            let draft = formatMileageValue(pendingMileageConfirmation?.mileageKm) ?? "Nezadáno"
+            Text("Nový stav \(draft) je nižší než poslední evidovaný stav \(current). Pokud jde o opravu nebo zpřesnění údajů, potvrďte zápis.")
+        }
+        .task(id: vehicleId) {
+            logDetailOpenStartIfNeeded()
+            await reload()
+        }
+        .onChange(of: viewModel.vehicle?.id) { _, _ in
+            scheduleSecondarySectionsActivationIfNeeded()
+            logFirstVisibleRenderIfNeeded()
+        }
+        .onChange(of: viewModel.records) { _, _ in
+            rebuildDerivedRecordState()
+            logServiceHistoryRenderIfNeeded()
+        }
+        .onChange(of: recordSearchText) { _, _ in
+            rebuildDerivedRecordState()
+            if isFilteringRecords {
+                visibleRecordLimit = max(visibleRecordLimit, filteredRecordsCache.count)
+            }
+        }
+        .onChange(of: selectedRecordFilter) { _, _ in
+            rebuildDerivedRecordState()
+            if isFilteringRecords {
+                visibleRecordLimit = max(visibleRecordLimit, filteredRecordsCache.count)
+            }
+        }
     }
 
     private var detailHero: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             if let vehicle = viewModel.vehicle {
-                VehicleCard(vehicle: vehicle)
+                VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                    ZStack(alignment: .topTrailing) {
+                        AuthenticatedVehiclePhotoView(
+                            vehicle: vehicle,
+                            height: 210,
+                            cornerRadius: 22,
+                            imageHorizontalOffset: -10
+                        ) {
+                            VehiclePhotoPlaceholderView(vehicle: vehicle)
+                        }
+
+                        HStack(spacing: Theme.Spacing.xs) {
+                            compactPhotoActionButton(icon: "camera.fill", tint: Theme.Colors.accent) {
+                                showVehiclePhotoCamera = true
+                            }
+
+                            PhotosPicker(selection: $selectedVehiclePhotoItem, matching: .images) {
+                                photoActionIcon(symbol: "photo.on.rectangle.angled", tint: Theme.Colors.primary)
+                            }
+                            .buttonStyle(.plain)
+
+                            compactPhotoActionButton(icon: "trash.fill", tint: Theme.Colors.danger) {
+                                Task { await deleteVehiclePhoto() }
+                            }
+                            .disabled(!vehicle.hasUserPhoto || viewModel.isUpdatingVehiclePhoto)
+                        }
+                        .padding(Theme.Spacing.sm)
+                    }
+
+                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                        Text(vehicle.displayName)
+                            .font(Theme.Typography.sectionTitle)
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text(vehicleHeroSubtitle(vehicle))
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: Theme.Spacing.xs) {
+                                heroIdentityPill(title: "SPZ", value: trimmedNonEmpty(vehicle.plate) ?? "Neuvedena")
+                                heroIdentityPill(title: "VIN", value: formattedVIN(vehicle.vin))
+                                heroIdentityPill(title: "Rok", value: vehicle.year.map(String.init) ?? "Neuveden")
+                            }
+                        }
+                    }
+
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Theme.Spacing.sm) {
+                        heroMetric(title: "Aktuální km", value: formatMileageValue(vehicle.preferredMileageKm) ?? "Nezadáno", tint: Theme.Colors.primary)
+                        heroMetric(title: "STK do", value: vehicle.stkValidUntil?.formatted(date: .abbreviated, time: .omitted) ?? "Nezadáno", tint: Theme.Colors.accent)
+                        heroMetric(title: "Motor", value: formattedEngineValue(vehicle), tint: Theme.Colors.warning)
+                        heroMetric(title: "Servisní záznamy", value: "\(recordSummary.totalCount)", tint: Theme.Colors.primaryDark)
+                    }
+
+                    Button("Technické údaje a detail") {
+                        showVehicleInfoSheet = true
+                    }
+                    .buttonStyle(InlineChipButtonStyle(isSelected: false))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .hubDarkCard()
             } else {
                 EmptyStateView(
                     icon: "car.fill",
@@ -91,22 +337,378 @@ struct VehicleDetailView: View {
                 )
             }
 
-            HStack(spacing: Theme.Spacing.sm) {
-                StatCard(
-                    title: "Servisních záznamů",
-                    value: "\(viewModel.records.count)",
-                    subtitle: "Celkem",
-                    icon: "wrench.and.screwdriver.fill"
-                )
+            if let mileageFeedbackMessage {
+                statusMessageCard(text: mileageFeedbackMessage, tint: Theme.Colors.primary)
+            }
 
-                StatCard(
-                    title: "Náklady",
-                    value: "\(Int(viewModel.records.compactMap { $0.price }.reduce(0, +))) Kč",
-                    subtitle: "Dle historie",
-                    icon: "banknote.fill"
-                )
+            if let vehiclePhotoFeedbackMessage, !vehiclePhotoFeedbackMessage.isEmpty {
+                statusMessageCard(text: vehiclePhotoFeedbackMessage, tint: Theme.Colors.accent)
+            }
+
+            if let tachometerErrorMessage, !tachometerErrorMessage.isEmpty {
+                statusMessageCard(text: tachometerErrorMessage, tint: Theme.Colors.danger)
+            }
+
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                Text("Akce")
+                    .font(Theme.Typography.bodyStrong)
+                    .foregroundStyle(.white)
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Theme.Spacing.sm) {
+                    Button("Zapsat aktuální km") {
+                        showMileageEntrySheet = true
+                    }
+                    .buttonStyle(InlineChipButtonStyle(isSelected: true))
+
+                    Button {
+                        Task { await startTachometerLookup() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isLookingUpTachometer {
+                                ProgressView()
+                                    .tint(.white)
+                            }
+                            Text("Načíst km ze STK")
+                        }
+                    }
+                    .buttonStyle(InlineChipButtonStyle(isSelected: true))
+                    .disabled(isLookingUpTachometer)
+
+                    Button("PDF report") {
+                        showVehicleReportSheet = true
+                    }
+                    .buttonStyle(InlineChipButtonStyle(isSelected: false))
+
+                    Button("Přidat servisní záznam") {
+                        showAddRecord = true
+                    }
+                    .buttonStyle(InlineChipButtonStyle(isSelected: false))
+                }
             }
         }
+        .onAppear {
+            logFirstVisibleRenderIfNeeded()
+            scheduleSecondarySectionsActivationIfNeeded()
+        }
+    }
+
+    @ViewBuilder
+    private var secondaryContent: some View {
+        if !hasActivatedSecondarySections {
+            deferredSectionPlaceholder
+        } else {
+            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                recordsSection
+                tachometerHistorySection
+            }
+        }
+    }
+
+    private var tachometerHistorySection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            SectionHeader(
+                title: "Historie STK / tachometru",
+                subtitle: "Sekundární importovaná evidence z kontrolatachometru.cz"
+            )
+
+            DisclosureGroup(isExpanded: $isTachometerHistoryExpanded) {
+                VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                    if let message = viewModel.tachometerHistoryErrorMessage {
+                        statusMessageCard(text: message, tint: Theme.Colors.danger)
+                    } else if viewModel.tachometerHistory.isEmpty {
+                        Text("Historie STK / tachometru zatím není k dispozici.")
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .padding(Theme.Spacing.md)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                                    .fill(Color.white.opacity(0.05))
+                            )
+                    } else {
+                        ForEach(viewModel.tachometerHistory) { item in
+                            tachometerHistoryRow(item)
+                        }
+                    }
+                }
+                .padding(.top, Theme.Spacing.xs)
+            } label: {
+                tachometerHistoryAccordionLabel
+            }
+            .padding(Theme.Spacing.md)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+            )
+        }
+    }
+
+    private var tachometerHistoryAccordionLabel: some View {
+        HStack(alignment: .center, spacing: Theme.Spacing.sm) {
+            VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
+                Text("Důkazní vrstva STK / tachometru")
+                    .font(Theme.Typography.bodyStrong)
+                    .foregroundStyle(.white)
+                Text("Počet záznamů \(viewModel.tachometerHistory.count)")
+                    .font(Theme.Typography.tiny)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: Theme.Spacing.xs) {
+                if let lastDate = viewModel.tachometerHistory.first?.checkDate {
+                    PillBadge(title: lastDate.formatted(date: .numeric, time: .omitted), style: .neutral)
+                }
+                if let lastMileage = viewModel.tachometerHistory.first?.mileageKm {
+                    PillBadge(title: formatMileageValue(lastMileage) ?? "\(lastMileage) km", style: .success)
+                }
+            }
+        }
+    }
+
+    private func tachometerHistoryRow(_ item: VehicleInspectionHistoryEntry) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    selectedTachometerHistoryEntryId = selectedTachometerHistoryEntryId == item.id ? nil : item.id
+                }
+            } label: {
+                HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                    VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
+                        Text(formatMileageValue(item.mileageKm) ?? "Bez km")
+                            .font(Theme.Typography.bodyStrong)
+                            .foregroundStyle(.white)
+                        Text(item.checkDate?.formatted(date: .abbreviated, time: .omitted) ?? "Bez data")
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        if let summary = item.summary, !summary.isEmpty {
+                            Text(summary)
+                                .font(Theme.Typography.tiny)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                                .multilineTextAlignment(.leading)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+
+                    VStack(alignment: .trailing, spacing: Theme.Spacing.xxs) {
+                        Text(selectedTachometerHistoryEntryId == item.id ? "Skrýt detail" : "Zobrazit detail kontroly")
+                            .font(Theme.Typography.captionStrong)
+                            .foregroundStyle(Theme.Colors.primary)
+                        Text(tachometerDocumentStatusLabel(for: item))
+                            .font(Theme.Typography.tiny)
+                            .foregroundStyle(tachometerDocumentStatusTint(for: item))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            if selectedTachometerHistoryEntryId == item.id {
+                VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: Theme.Spacing.xs) {
+                        tachometerMetaCell(title: "Datum kontroly", value: item.checkDate?.formatted(date: .abbreviated, time: .omitted) ?? "Neuvedeno")
+                        tachometerMetaCell(title: "KM", value: formatMileageValue(item.mileageKm) ?? "Neuvedeno")
+                        tachometerMetaCell(title: "Typ kontroly", value: item.inspectionType ?? "Neuvedeno")
+                        tachometerMetaCell(title: "Protokol", value: item.protocolNumber ?? "Neuveden")
+                        tachometerMetaCell(title: "Zdroj", value: item.source ?? "Neznámý")
+                        tachometerMetaCell(title: "Stav", value: item.status ?? "Neznámý")
+                    }
+
+                    if let summary = item.summary, !summary.isEmpty {
+                        VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
+                            Text("Shrnutí kontroly")
+                                .font(Theme.Typography.tiny)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            Text(summary)
+                                .font(Theme.Typography.caption)
+                                .foregroundStyle(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(Theme.Spacing.sm)
+                        .background(Theme.Colors.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                    }
+
+                    VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                        Text("Protokoly a dokumenty")
+                            .font(Theme.Typography.captionStrong)
+                            .foregroundStyle(.white)
+                        if item.documents.isEmpty {
+                            unavailableTachometerDocumentRow(title: item.protocolNumber.map { "Protokol \($0)" } ?? "Dokument", reason: "Dokument není dostupný v uložených datech.")
+                        } else {
+                            ForEach(item.documents) { document in
+                                if let url = tachometerDocumentURL(document) {
+                                    Button {
+                                        openURL(url)
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Otevřít protokol")
+                                            Text(document.title)
+                                                .font(Theme.Typography.tiny)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .buttonStyle(InlineChipButtonStyle(isSelected: false))
+                                } else {
+                                    unavailableTachometerDocumentRow(title: document.title, reason: document.reason ?? "Dokument není dostupný.")
+                                }
+                            }
+                        }
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(Theme.Spacing.md)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                .fill(Theme.Colors.elevated)
+        )
+    }
+
+    private func unavailableTachometerDocumentRow(title: String, reason: String) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
+            Text(title)
+                .font(Theme.Typography.captionStrong)
+                .foregroundStyle(.white)
+            Text(reason)
+                .font(Theme.Typography.tiny)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            Text("Dokument není dostupný")
+                .font(Theme.Typography.tiny)
+                .foregroundStyle(Theme.Colors.warning)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Spacing.sm)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+    }
+
+    private func tachometerDocumentStatusLabel(for item: VehicleInspectionHistoryEntry) -> String {
+        if item.documentsCount > 0 {
+            return "\(item.documentsCount)x dokument"
+        }
+        if item.documents.contains(where: { !$0.id.isEmpty }) {
+            return "Dokument nedostupný"
+        }
+        return "Bez dokumentu"
+    }
+
+    private func tachometerDocumentStatusTint(for item: VehicleInspectionHistoryEntry) -> Color {
+        if item.documentsCount > 0 {
+            return Theme.Colors.accent
+        }
+        if item.documents.contains(where: { !$0.id.isEmpty }) {
+            return Theme.Colors.warning
+        }
+        return Theme.Colors.textSecondary
+    }
+
+    private func tachometerDocumentURL(_ document: VehicleInspectionHistoryDocument) -> URL? {
+        guard document.available else { return nil }
+        if let externalURL = document.externalURL, let url = URL(string: externalURL) {
+            return url
+        }
+        if let internalProxyURL = document.internalProxyURL, let url = URL(string: internalProxyURL) {
+            return url
+        }
+        return nil
+    }
+
+    private func heroMetric(title: String, value: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(Theme.Typography.tiny)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            Text(value)
+                .font(Theme.Typography.bodyStrong)
+                .foregroundStyle(.white)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Spacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .fill(tint.opacity(0.16))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .stroke(tint.opacity(0.28), lineWidth: 1)
+        )
+    }
+
+    private func heroIdentityPill(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(Theme.Typography.tiny)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            Text(value)
+                .font(Theme.Typography.captionStrong)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, Theme.Spacing.sm)
+        .padding(.vertical, Theme.Spacing.xs)
+        .background(Theme.Colors.elevated, in: Capsule())
+    }
+
+    private func tachometerMetaCell(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(Theme.Typography.tiny)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            Text(value)
+                .font(Theme.Typography.captionStrong)
+                .foregroundStyle(.white)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Spacing.sm)
+        .background(Theme.Colors.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+    }
+
+    private func vehicleHeroSubtitle(_ vehicle: Vehicle) -> String {
+        let parts = [
+            trimmedNonEmpty(vehicle.brand),
+            trimmedNonEmpty(vehicle.model),
+            formattedEngineValue(vehicle) == "Neuveden" ? nil : formattedEngineValue(vehicle)
+        ]
+        let result = parts.compactMap { $0 }.joined(separator: " • ")
+        return result.isEmpty ? "Technické údaje budou dostupné po doplnění vozidla." : result
+    }
+
+    private func formattedEngineValue(_ vehicle: Vehicle) -> String {
+        let engine = vehicle.engine?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return engine.isEmpty ? "Neuveden" : engine
+    }
+
+    private func formattedVIN(_ value: String?) -> String {
+        let vin = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !vin.isEmpty else { return "Neuveden" }
+        if vin.count <= 10 {
+            return vin
+        }
+        return "\(vin.prefix(3))•••\(vin.suffix(4))"
+    }
+
+    private func trimmedNonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func photoActionIcon(symbol: String, tint: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 34, height: 34)
+            .background(tint, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    private func compactPhotoActionButton(icon: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            photoActionIcon(symbol: icon, tint: tint)
+        }
+        .buttonStyle(.plain)
     }
 
     private var recordsSection: some View {
@@ -128,7 +730,9 @@ struct VehicleDetailView: View {
                 )
             )
 
-            if viewModel.records.isEmpty {
+            if let error = viewModel.error, viewModel.records.isEmpty {
+                ErrorStateView(message: error) { Task { await reload() } }
+            } else if viewModel.records.isEmpty {
                 EmptyStateView(
                     icon: "wrench.and.screwdriver",
                     title: "Bez servisních záznamů",
@@ -139,25 +743,103 @@ struct VehicleDetailView: View {
                 }
             } else {
                 recordOverviewCard
+                if let currentOwnershipStartDate, !isFilteringRecords {
+                    ownershipHistoryInfoCard(currentOwnershipStartDate: currentOwnershipStartDate)
+                }
 
-                VStack(spacing: Theme.Spacing.sm) {
-                    if filteredRecords.isEmpty {
+                LazyVStack(spacing: Theme.Spacing.sm) {
+                    if filteredRecordsCache.isEmpty {
                         emptyFilteredRecordsCard
                     } else {
-                        ForEach(filteredRecords) { record in
-                            recordCard(record)
+                        if let currentOwnershipStartDate, !isFilteringRecords {
+                            if !currentOwnershipDisplayedRecords.isEmpty {
+                                ownershipHistorySection(
+                                    title: "Od převzetí vozidla",
+                                    subtitle: "Záznamy od \(currentOwnershipStartDate.formatted(date: .abbreviated, time: .omitted))",
+                                    records: currentOwnershipDisplayedRecords
+                                )
+                            }
+                            if !previousOwnershipDisplayedRecords.isEmpty {
+                                ownershipHistorySection(
+                                    title: "Starší historie před převzetím",
+                                    subtitle: "Tyto záznamy patří ke stejnému VIN, ale vznikly před aktuálním obdobím vlastnictví.",
+                                    records: previousOwnershipDisplayedRecords
+                                )
+                            }
+                        } else {
+                            ForEach(displayedRecords) { record in
+                                recordCard(record)
+                            }
+                        }
+                        if canExpandRecordList {
+                            Button("Zobrazit dalších \(filteredRecordsCache.count - displayedRecords.count)") {
+                                visibleRecordLimit = min(filteredRecordsCache.count, visibleRecordLimit + 12)
+                            }
+                            .buttonStyle(InlineChipButtonStyle(isSelected: true))
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        }
+                        if canCollapseRecordList {
+                            Button("Zobrazit méně") {
+                                visibleRecordLimit = 8
+                            }
+                            .buttonStyle(InlineChipButtonStyle(isSelected: false))
+                            .frame(maxWidth: .infinity, alignment: .center)
                         }
                     }
+                }
+                .onAppear {
+                    logServiceHistoryRenderIfNeeded()
                 }
             }
         }
     }
 
-    private var filteredRecords: [ServiceRecord] {
-        viewModel.records.filter { record in
-            guard selectedRecordFilter.matches(record) else { return false }
+    private var isFilteringRecords: Bool {
+        !normalizedRecordSearchText.isEmpty || selectedRecordFilter != .all
+    }
 
-            let query = recordSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var normalizedRecordSearchText: String {
+        recordSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var displayedRecords: [ServiceRecord] {
+        guard !isFilteringRecords else { return filteredRecordsCache }
+        return Array(filteredRecordsCache.prefix(visibleRecordLimit))
+    }
+
+    private var currentOwnershipStartDate: Date? {
+        viewModel.vehicle?.currentOwnerSince
+    }
+
+    private var currentOwnershipDisplayedRecords: [ServiceRecord] {
+        guard let currentOwnershipStartDate, !isFilteringRecords else { return displayedRecords }
+        return displayedRecords.filter { record in
+            guard let performedAt = record.performedAt else { return true }
+            return performedAt >= currentOwnershipStartDate
+        }
+    }
+
+    private var previousOwnershipDisplayedRecords: [ServiceRecord] {
+        guard let currentOwnershipStartDate, !isFilteringRecords else { return [] }
+        return displayedRecords.filter { record in
+            guard let performedAt = record.performedAt else { return false }
+            return performedAt < currentOwnershipStartDate
+        }
+    }
+
+    private var canExpandRecordList: Bool {
+        !isFilteringRecords && displayedRecords.count < filteredRecordsCache.count
+    }
+
+    private var canCollapseRecordList: Bool {
+        !isFilteringRecords && filteredRecordsCache.count > 8 && visibleRecordLimit > 8
+    }
+
+    private func computeFilteredRecords() -> [ServiceRecord] {
+        let query = normalizedRecordSearchText
+
+        return viewModel.records.filter { record in
+            guard selectedRecordFilter.matches(record) else { return false }
             guard !query.isEmpty else { return true }
 
             let haystack = [
@@ -179,25 +861,25 @@ struct VehicleDetailView: View {
             HStack(spacing: Theme.Spacing.sm) {
                 compactRecordMetric(
                     title: "Celkem",
-                    value: "\(viewModel.records.count)",
+                    value: "\(recordSummary.totalCount)",
                     subtitle: "záznamů",
                     tint: Theme.Colors.primary
                 )
                 compactRecordMetric(
                     title: "S cenou",
-                    value: "\(viewModel.records.filter { $0.price != nil }.count)",
+                    value: "\(recordSummary.pricedCount)",
                     subtitle: "položek",
                     tint: Theme.Colors.warning
                 )
                 compactRecordMetric(
                     title: "Náklady",
-                    value: formatCompactCost(viewModel.records.compactMap(\.price).reduce(0, +)),
+                    value: formatCompactCost(recordSummary.totalCost),
                     subtitle: "součet",
                     tint: Theme.Colors.accent
                 )
             }
 
-            if let latestRecord = viewModel.records.sorted(by: { ($0.performedAt ?? .distantPast) > ($1.performedAt ?? .distantPast) }).first {
+            if let latestRecord = recordSummary.latestRecord {
                 HStack(spacing: Theme.Spacing.sm) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 14, weight: .semibold))
@@ -320,6 +1002,32 @@ struct VehicleDetailView: View {
         .hubLightCard()
     }
 
+    private func ownershipHistoryInfoCard(currentOwnershipStartDate: Date) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("Rozdělení historie podle vlastnictví")
+                .font(Theme.Typography.bodyStrong)
+                .foregroundStyle(Theme.Colors.textOnLight)
+            Text("Vozidlo zůstává v systému jako jedna entita podle VIN. Starší servisní záznamy proto zůstávají zachované, ale aplikace je odděluje od období od \(currentOwnershipStartDate.formatted(date: .abbreviated, time: .omitted)), kdy je vozidlo vedené ve vašem profilu.")
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.Colors.textOnLightSecondary)
+        }
+        .hubLightCard()
+    }
+
+    private func ownershipHistorySection(title: String, subtitle: String, records: [ServiceRecord]) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text(title)
+                .font(Theme.Typography.bodyStrong)
+                .foregroundStyle(.white)
+            Text(subtitle)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            ForEach(records) { record in
+                recordCard(record)
+            }
+        }
+    }
+
     private func recordCard(_ record: ServiceRecord) -> some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             HStack(alignment: .top, spacing: Theme.Spacing.sm) {
@@ -332,6 +1040,9 @@ struct VehicleDetailView: View {
                             PillBadge(title: "AI", style: .warning)
                         }
                     }
+                    Text(record.performedAt?.formatted(date: .abbreviated, time: .omitted) ?? "Bez data")
+                        .font(Theme.Typography.tiny)
+                        .foregroundStyle(Theme.Colors.textOnLightSecondary)
                     Text(record.description)
                         .font(Theme.Typography.bodyStrong)
                         .foregroundStyle(Theme.Colors.textOnLight)
@@ -341,27 +1052,40 @@ struct VehicleDetailView: View {
                 Spacer(minLength: Theme.Spacing.sm)
 
                 VStack(alignment: .trailing, spacing: Theme.Spacing.xxs) {
-                    Text(record.price.map(formatCompactCost) ?? "Bez ceny")
-                        .font(Theme.Typography.captionStrong)
-                        .foregroundStyle(Theme.Colors.textOnLight)
-                    Text(record.performedAt?.formatted(date: .abbreviated, time: .omitted) ?? "Bez data")
-                        .font(Theme.Typography.tiny)
-                        .foregroundStyle(Theme.Colors.textOnLightSecondary)
+                    if let price = record.price {
+                        Text(formatCompactCost(price))
+                            .font(Theme.Typography.captionStrong)
+                            .foregroundStyle(Theme.Colors.textOnLight)
+                    } else {
+                        Text("Bez ceny")
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.Colors.textOnLightSecondary)
+                    }
                 }
             }
 
-            HStack(spacing: Theme.Spacing.xs) {
-                miniMetaPill(icon: "gauge.with.dots.needle.33percent", text: record.mileage.map { "\($0) km" } ?? "Nájezd neuveden")
+            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                HStack(spacing: Theme.Spacing.xs) {
+                    miniMetaPill(icon: "gauge.with.dots.needle.33percent", text: record.mileage.map { "\($0) km" } ?? "Nájezd neuveden")
+                    if let price = record.price {
+                        miniMetaPill(icon: "banknote", text: formatCompactCost(price))
+                    }
+                }
                 if let nextServiceDueDate = record.nextServiceDueDate {
                     miniMetaPill(icon: "calendar", text: "Další servis \(nextServiceDueDate.formatted(date: .numeric, time: .omitted))")
                 }
             }
 
             if let note = record.note, !note.isEmpty {
-                Text(note)
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(Theme.Colors.textOnLightSecondary)
-                    .lineLimit(2)
+                VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
+                    Text("Poznámka")
+                        .font(Theme.Typography.tiny)
+                        .foregroundStyle(Theme.Colors.textOnLightSecondary)
+                    Text(note)
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.Colors.textOnLightSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             HStack(spacing: Theme.Spacing.sm) {
@@ -396,9 +1120,726 @@ struct VehicleDetailView: View {
         "\(Int(value.rounded())) Kč"
     }
 
+    private var deferredSectionPlaceholder: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            HStack(spacing: Theme.Spacing.sm) {
+                ProgressView()
+                    .tint(.white)
+                VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
+                    Text("Připravuji servisní historii")
+                        .font(Theme.Typography.bodyStrong)
+                        .foregroundStyle(.white)
+                    Text("Karta vozidla je k dispozici hned po klepnutí na horní panel, historii dotáhneme hned poté.")
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            }
+        }
+        .hubDarkCard()
+    }
+
+    private func rebuildDerivedRecordState() {
+        recordSummary = VehicleRecordSummary(records: viewModel.records)
+        filteredRecordsCache = computeFilteredRecords()
+        if !isFilteringRecords {
+            visibleRecordLimit = min(max(visibleRecordLimit, 8), max(filteredRecordsCache.count, 8))
+        }
+    }
+
+    private func scheduleSecondarySectionsActivationIfNeeded() {
+        guard viewModel.vehicle != nil, !hasActivatedSecondarySections else { return }
+        DispatchQueue.main.async {
+            hasActivatedSecondarySections = true
+            rebuildDerivedRecordState()
+        }
+    }
+
+    private func logDetailOpenStartIfNeeded() {
+        guard !didLogDetailOpenStart else { return }
+        didLogDetailOpenStart = true
+        detailOpenStartedAt = Date().timeIntervalSinceReferenceDate
+        VehicleDetailPerformanceLog.mark("open detail start vehicleId=\(vehicleId)")
+    }
+
+    private func logFirstVisibleRenderIfNeeded() {
+        guard viewModel.vehicle != nil, !didLogFirstVisibleRender else { return }
+        didLogFirstVisibleRender = true
+        let elapsedMs = Int((Date().timeIntervalSinceReferenceDate - detailOpenStartedAt) * 1000)
+        VehicleDetailPerformanceLog.mark("first visible render vehicleId=\(vehicleId) after \(elapsedMs)ms")
+    }
+
+    private func logServiceHistoryRenderIfNeeded() {
+        guard hasActivatedSecondarySections, !filteredRecordsCache.isEmpty, !didLogServiceHistoryRender else { return }
+        didLogServiceHistoryRender = true
+        let elapsedMs = Int((Date().timeIntervalSinceReferenceDate - detailOpenStartedAt) * 1000)
+        VehicleDetailPerformanceLog.mark("service history render vehicleId=\(vehicleId) records=\(filteredRecordsCache.count) after \(elapsedMs)ms")
+    }
+
+    private func groupedDetailCard(title: String, rows: [(String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text(title)
+                .font(Theme.Typography.captionStrong)
+                .foregroundStyle(.white)
+
+            detailInfoCard(rows: rows)
+        }
+    }
+
+    private func detailInfoCard(rows: [(String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                    Text(row.0)
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .frame(width: 132, alignment: .leading)
+                    Text(row.1)
+                        .font(Theme.Typography.captionStrong)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if index < rows.count - 1 {
+                    Divider()
+                        .overlay(Theme.Colors.hairline.opacity(0.45))
+                }
+            }
+        }
+        .padding(Theme.Spacing.sm)
+        .background(Theme.Colors.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+    }
+
+    private func statusMessageCard(text: String, tint: Color) -> some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(tint)
+            Text(text)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.Colors.textPrimary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.Spacing.sm)
+        .padding(.vertical, Theme.Spacing.sm)
+        .background(Theme.Colors.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+    }
+
+    @MainActor
+    private func handleVehiclePhotoPickerItem(_ item: PhotosPickerItem) async {
+        defer { selectedVehiclePhotoItem = nil }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+                vehiclePhotoFeedbackMessage = "Vybranou fotku se nepodařilo načíst."
+                return
+            }
+            pendingVehiclePhotoImage = image.normalizedForUpload()
+            showVehiclePhotoCropper = true
+        } catch {
+            vehiclePhotoFeedbackMessage = error.localizedDescription
+        }
+    }
+
+    private func uploadVehiclePhoto(_ image: UIImage) async {
+        guard let token = env.authManager.token else {
+            vehiclePhotoFeedbackMessage = "Přihlášení vypršelo. Přihlaste se prosím znovu."
+            return
+        }
+        do {
+            let prepared = try prepareVehiclePhotoPayload(from: image)
+            try await viewModel.uploadVehiclePhoto(
+                vehicleId: vehicleId,
+                imageData: prepared.data,
+                fileName: prepared.fileName,
+                mimeType: prepared.mimeType,
+                token: token
+            )
+            pendingVehiclePhotoImage = nil
+            showVehiclePhotoCropper = false
+            vehiclePhotoFeedbackMessage = "Fotka vozidla byla nahrána."
+        } catch {
+            vehiclePhotoFeedbackMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteVehiclePhoto() async {
+        guard let token = env.authManager.token else {
+            vehiclePhotoFeedbackMessage = "Přihlášení vypršelo. Přihlaste se prosím znovu."
+            return
+        }
+        do {
+            try await viewModel.deleteVehiclePhoto(vehicleId: vehicleId, token: token)
+            vehiclePhotoFeedbackMessage = "Fotka vozidla byla smazána."
+        } catch {
+            vehiclePhotoFeedbackMessage = error.localizedDescription
+        }
+    }
+
+    private func prepareVehiclePhotoPayload(from image: UIImage) throws -> (data: Data, fileName: String, mimeType: String) {
+        let normalized = image.normalizedForUpload()
+        guard var data = normalized.jpegData(compressionQuality: 0.86) else {
+            throw APIError.serverError("Fotku vozidla se nepodařilo připravit pro upload.")
+        }
+
+        let rawUploadLimit = 40 * 1024 * 1024
+        let compressedLimit = 10 * 1024 * 1024
+        guard data.count <= rawUploadLimit else {
+            throw APIError.serverError("Fotka je příliš velká pro upload (max 40 MB).")
+        }
+
+        var quality: CGFloat = 0.82
+        while data.count > compressedLimit, quality >= 0.50 {
+            if let recompressed = normalized.jpegData(compressionQuality: quality) {
+                data = recompressed
+            }
+            quality -= 0.08
+        }
+
+        if data.count > compressedLimit {
+            throw APIError.serverError("Fotku se nepodařilo zkomprimovat pod limit 10 MB.")
+        }
+
+        return (
+            data: data,
+            fileName: "vehicle_photo_\(vehicleId)_\(Int(Date().timeIntervalSince1970)).jpg",
+            mimeType: "image/jpeg"
+        )
+    }
+
+    private func handleMileageSubmission(_ draft: MileageEntryDraft) {
+        let currentMileage = viewModel.vehicle?.currentMileageKm
+        if let currentMileage, draft.mileageKm < currentMileage {
+            pendingMileageConfirmation = draft
+            return
+        }
+        saveMileage(draft, confirmLowerThanCurrent: false)
+    }
+
+    private func saveMileage(_ draft: MileageEntryDraft, confirmLowerThanCurrent: Bool) {
+        guard let token = env.authManager.token else {
+            mileageEntryErrorMessage = "Přihlášení vypršelo. Přihlaste se prosím znovu."
+            return
+        }
+        mileageEntryErrorMessage = nil
+        Task {
+            do {
+                try await viewModel.recordMileage(
+                    vehicleId: vehicleId,
+                    mileageKm: draft.mileageKm,
+                    note: draft.note,
+                    confirmLowerThanCurrent: confirmLowerThanCurrent,
+                    token: token
+                )
+                await MainActor.run {
+                    mileageFeedbackMessage = "Aktuální stav tachometru byl uložen."
+                    mileageEntryErrorMessage = nil
+                    showMileageEntrySheet = false
+                }
+            } catch {
+                await MainActor.run {
+                    mileageFeedbackMessage = nil
+                    mileageEntryErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func startTachometerLookup() async {
+        guard let token = env.authManager.token else {
+            tachometerErrorMessage = "Přihlášení vypršelo. Přihlaste se prosím znovu."
+            return
+        }
+        isLookingUpTachometer = true
+        tachometerErrorMessage = nil
+        mileageFeedbackMessage = nil
+        defer { isLookingUpTachometer = false }
+
+        do {
+            tachometerChallenge = try await viewModel.initVehicleTachometer(vehicleId: vehicleId, token: token)
+            showTachometerCaptchaSheet = true
+        } catch {
+            tachometerErrorMessage = friendlyTachometerError(from: error)
+        }
+    }
+
+    private func submitTachometerLookup(captchaCode: String) async {
+        guard let token = env.authManager.token else {
+            tachometerErrorMessage = "Přihlášení vypršelo. Přihlaste se prosím znovu."
+            return
+        }
+        guard let challenge = tachometerChallenge else {
+            tachometerErrorMessage = "Captcha challenge vypršel. Načtěte nový obrázek."
+            return
+        }
+
+        isLookingUpTachometer = true
+        tachometerErrorMessage = nil
+        mileageFeedbackMessage = nil
+        defer { isLookingUpTachometer = false }
+
+        do {
+            let response = try await viewModel.submitVehicleTachometer(
+                vehicleId: vehicleId,
+                sessionId: challenge.sessionId,
+                captchaCode: captchaCode,
+                token: token
+            )
+            showTachometerCaptchaSheet = false
+            tachometerChallenge = nil
+            mileageFeedbackMessage = "Načten a uložen poslední údaj ze STK/emisí: \(formatMileageValue(response.latestMileageKm) ?? "\(response.latestMileageKm) km")."
+        } catch {
+            tachometerErrorMessage = friendlyTachometerError(from: error)
+            if shouldResetTachometerChallenge(after: error) {
+                showTachometerCaptchaSheet = false
+                tachometerChallenge = nil
+            }
+        }
+    }
+
+    private func shouldResetTachometerChallenge(after error: Error) -> Bool {
+        let lowered = error.localizedDescription.lowercased()
+        return lowered.contains("vypršel")
+            || lowered.contains("neplatný")
+            || lowered.contains("jinému vozidlu")
+    }
+
+    private func friendlyTachometerError(from error: Error) -> String {
+        let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = message.lowercased()
+        if lowered.contains("špatně opsaný kód") {
+            return "Špatně opsaný kód z obrázku."
+        }
+        if lowered.contains("vypršela") || lowered.contains("neplatná") || lowered.contains("jinému vozidlu") {
+            return "Captcha session vypršela nebo je neplatná. Načtěte nový obrázek."
+        }
+        if lowered.contains("nebyly nalezeny žádné údaje") {
+            return "Pro toto vozidlo nebyly na Kontrole tachometru nalezeny žádné údaje."
+        }
+        if lowered.contains("dočasně nedostupný") || lowered.contains("nevrátil použitelnou odpověď") {
+            return "Portál kontrolatachometru.cz je dočasně nedostupný. Zkuste to prosím znovu později."
+        }
+        return message
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func formattedDate(_ value: Date?) -> String? {
+        value?.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func formattedDateTime(_ value: Date?) -> String? {
+        value?.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func formatMileageValue(_ value: Int?, fallback: String? = "Nezadáno") -> String? {
+        guard let value else { return fallback }
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "cs_CZ")
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = " "
+        let formatted = formatter.string(from: NSNumber(value: value)) ?? String(value)
+        return "\(formatted) km"
+    }
+
     private func reload() async {
         guard let token = env.authManager.token else { return }
         await viewModel.load(vehicleId: vehicleId, token: token)
+        rebuildDerivedRecordState()
+        logServiceHistoryRenderIfNeeded()
+    }
+}
+
+private struct VehicleTachometerCaptchaSheet: View {
+    let challenge: VehicleTachometerInitResponse
+    let isSubmitting: Bool
+    let errorMessage: String?
+    let onSubmit: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var captchaCode = ""
+
+    private var captchaImage: UIImage? {
+        guard let data = Data(base64Encoded: challenge.captchaImageBase64) else { return nil }
+        return UIImage(data: data)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                Text("Opište kód z obrázku pro ověření na Kontrole tachometru.")
+                    .font(Theme.Typography.body)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+
+                if let captchaImage {
+                    Image(uiImage: captchaImage)
+                        .resizable()
+                        .interpolation(.none)
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 92)
+                        .padding(Theme.Spacing.sm)
+                        .background(Theme.Colors.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                } else {
+                    Text("Captcha obrázek se nepodařilo načíst.")
+                        .font(Theme.Typography.body)
+                        .foregroundStyle(.red)
+                }
+
+                TextField("Kód z obrázku", text: $captchaCode)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled(true)
+                    .font(Theme.Typography.body)
+                    .foregroundStyle(.white)
+                    .tint(.white)
+                    .padding(.horizontal, Theme.Spacing.md)
+                    .padding(.vertical, Theme.Spacing.sm)
+                    .background(Theme.Colors.inputSurface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+
+                if let errorMessage, !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.red)
+                }
+
+                if isSubmitting {
+                    HStack(spacing: Theme.Spacing.sm) {
+                        ProgressView()
+                        Text("Ověřuji…")
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(Theme.Spacing.md)
+            .background(Theme.Colors.background.ignoresSafeArea())
+            .navigationTitle("Ověření captchy")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Zavřít") { onCancel() }
+                        .disabled(isSubmitting)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Potvrdit") {
+                        onSubmit(captchaCode.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    .disabled(isSubmitting || captchaCode.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.visible)
+    }
+}
+
+private struct MileageEntrySheet: View {
+    let currentMileageKm: Int?
+    let lastStkMileageKm: Int?
+    let isSaving: Bool
+    let errorMessage: String?
+    let onSubmit: (MileageEntryDraft) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var mileageText = ""
+    @State private var note = ""
+
+    private var parsedMileage: Int? {
+        let normalized = mileageText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .replacingOccurrences(of: " ", with: "")
+        guard !normalized.isEmpty else { return nil }
+        guard normalized.range(of: #"^\d+$"#, options: .regularExpression) != nil else { return nil }
+        return Int(normalized)
+    }
+
+    private var validationMessage: String? {
+        if !mileageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && parsedMileage == nil {
+            return "Stav km musí být celé kladné číslo."
+        }
+        return nil
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Aktuální stav") {
+                    LabeledContent("Poslední evidovaný stav") {
+                        Text(formatMileage(currentMileageKm))
+                    }
+                    if let lastStkMileageKm {
+                        LabeledContent("Poslední údaj STK/emisí") {
+                            Text(formatMileage(lastStkMileageKm))
+                        }
+                    }
+                }
+
+                Section("Nový zápis") {
+                    TextField("Aktuální stav km", text: $mileageText)
+                        .keyboardType(.numberPad)
+                    TextField("Poznámka (volitelně)", text: $note, axis: .vertical)
+                        .lineLimit(2...4)
+
+                    if let errorMessage, !errorMessage.isEmpty {
+                        Text(errorMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    } else if let validationMessage {
+                        Text(validationMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    } else if let parsedMileage, let currentMileageKm, parsedMileage < currentMileageKm {
+                        Text("Nový stav je nižší než poslední evidovaný. Zápis půjde potvrdit jako opravu údajů.")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.Colors.warning)
+                    }
+                }
+            }
+            .navigationTitle("Zapsat aktuální km")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Zavřít") {
+                        dismiss()
+                    }
+                    .disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Uložit") {
+                        guard let parsedMileage else { return }
+                        onSubmit(MileageEntryDraft(
+                            mileageKm: parsedMileage,
+                            note: note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : note.trimmingCharacters(in: .whitespacesAndNewlines)
+                        ))
+                    }
+                    .disabled(isSaving || parsedMileage == nil)
+                }
+            }
+            .task {
+                if mileageText.isEmpty, let currentMileageKm {
+                    mileageText = String(currentMileageKm)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func formatMileage(_ value: Int?) -> String {
+        guard let value else { return "Nezadáno" }
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "cs_CZ")
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = " "
+        let formatted = formatter.string(from: NSNumber(value: value)) ?? String(value)
+        return "\(formatted) km"
+    }
+}
+
+private struct VehicleInfoSheet: View {
+    let vehicle: Vehicle
+    let onRecordMileage: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var basicOverviewRows: [(String, String)] {
+        [
+            ("Značka", nonEmpty(vehicle.brand)),
+            ("Model", nonEmpty(vehicle.model)),
+            ("VIN", nonEmpty(vehicle.vin)),
+            ("SPZ", nonEmpty(vehicle.plate)),
+            ("Rok", vehicle.year.map(String.init)),
+            ("STK", formattedDate(vehicle.stkValidUntil)),
+            ("Poslední známý stav km", formatMileageValue(vehicle.currentMileageKm))
+        ]
+        .compactMap { title, value in
+            guard let value else { return nil }
+            return (title, value)
+        }
+    }
+
+    private var technicalRows: [(String, String)] {
+        [
+            ("Motor", nonEmpty(vehicle.engine)),
+            ("Pneumatiky", nonEmpty(vehicle.tyresInfo))
+        ]
+        .compactMap { title, value in
+            guard let value else { return nil }
+            return (title, value)
+        }
+    }
+
+    private var operationRows: [(String, String)] {
+        [
+            ("Pojišťovna", nonEmpty(vehicle.insuranceProvider)),
+            ("Pojištění do", formattedDate(vehicle.insuranceValidUntil)),
+            ("Poslední údaj ze STK/emisí", formatMileageValue(vehicle.preferredStkMileageKm, fallback: nil)),
+            ("Datum STK odometru", formattedDateTime(vehicle.latestStkOdometerDate)),
+            ("STK sync", formattedDateTime(vehicle.latestStkSyncAt) ?? formattedDateTime(vehicle.mileageCheckedAt)),
+            ("Zdroj STK", nonEmpty(vehicle.latestStkSource)),
+            ("Import STK", nonEmpty(vehicle.latestStkImportStatus))
+        ]
+        .compactMap { title, value in
+            guard let value else { return nil }
+            return (title, value)
+        }
+    }
+
+    private var mileageRows: [(String, String)] {
+        let currentMileage = formatMileageValue(vehicle.currentMileageKm) ?? "Nezadáno"
+        var rows: [(String, String)] = [("Poslední evidovaný stav", currentMileage)]
+        if let stkMileage = formatMileageValue(vehicle.preferredStkMileageKm, fallback: nil) {
+            rows.append(("Poslední údaj STK/emisí", stkMileage))
+        }
+        if let latestDate = formattedDateTime(vehicle.latestStkOdometerDate) {
+            rows.append(("Datum poslední STK kontroly", latestDate))
+        }
+        if let checkedAt = formattedDateTime(vehicle.mileageCheckedAt) {
+            rows.append(("Kontrola STK km", checkedAt))
+        }
+        return rows
+    }
+
+    private var notesValue: String? {
+        nonEmpty(vehicle.notes)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                    VehicleCard(vehicle: vehicle)
+
+                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                        SectionHeader(
+                            title: "Základní přehled",
+                            subtitle: "To nejdůležitější o vozidle na jednom místě",
+                            tone: .light
+                        )
+                        detailInfoCard(rows: basicOverviewRows)
+                    }
+
+                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                        SectionHeader(
+                            title: "Podrobné údaje",
+                            subtitle: "Technické a provozní informace přehledně po skupinách",
+                            tone: .light
+                        )
+                        if technicalRows.isEmpty && operationRows.isEmpty && notesValue == nil {
+                            EmptyStateView(
+                                icon: "list.bullet.rectangle",
+                                title: "Podrobné údaje zatím chybí",
+                                subtitle: "Jakmile doplníte motor, pojištění, poznámku nebo další údaje, objeví se zde."
+                            )
+                        } else {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                                if !technicalRows.isEmpty {
+                                    groupedDetailCard(title: "Technika", rows: technicalRows)
+                                }
+                                if !operationRows.isEmpty {
+                                    groupedDetailCard(title: "Provoz a termíny", rows: operationRows)
+                                }
+                                if let notesValue {
+                                    groupedDetailCard(title: "Poznámka", rows: [("Poznámka", notesValue)])
+                                }
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                        SectionHeader(
+                            title: "Kilometry",
+                            subtitle: "Poslední známý stav a rychlý zápis tachometru",
+                            trailing: AnyView(
+                                Button(vehicle.currentMileageKm == nil ? "Zapsat km" : "Upravit km") {
+                                    dismiss()
+                                    onRecordMileage()
+                                }
+                                .buttonStyle(InlineChipButtonStyle(isSelected: true))
+                            ),
+                            tone: .light
+                        )
+                        groupedDetailCard(title: "Stav tachometru", rows: mileageRows)
+                    }
+                }
+                .padding(Theme.Spacing.md)
+                .padding(.bottom, Theme.Spacing.xl)
+            }
+            .background(Theme.Colors.background.ignoresSafeArea())
+            .navigationTitle("Karta vozidla")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Zavřít") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func groupedDetailCard(title: String, rows: [(String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text(title)
+                .font(Theme.Typography.captionStrong)
+                .foregroundStyle(Theme.Colors.textOnLight)
+            detailInfoCard(rows: rows)
+        }
+    }
+
+    private func detailInfoCard(rows: [(String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                    Text(row.0)
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.Colors.textOnLightSecondary)
+                        .frame(width: 132, alignment: .leading)
+                    Text(row.1)
+                        .font(Theme.Typography.captionStrong)
+                        .foregroundStyle(Theme.Colors.textOnLight)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if index < rows.count - 1 {
+                    Divider()
+                        .overlay(Theme.Colors.cardHairline.opacity(0.6))
+                }
+            }
+        }
+        .padding(Theme.Spacing.sm)
+        .background(Theme.Colors.lightCard, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .stroke(Theme.Colors.cardHairline.opacity(0.8), lineWidth: 1)
+        )
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func formattedDate(_ value: Date?) -> String? {
+        value?.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func formattedDateTime(_ value: Date?) -> String? {
+        value?.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func formatMileageValue(_ value: Int?, fallback: String? = "Nezadáno") -> String? {
+        guard let value else { return fallback }
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "cs_CZ")
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = " "
+        let formatted = formatter.string(from: NSNumber(value: value)) ?? String(value)
+        return "\(formatted) km"
     }
 }
 
@@ -1700,11 +3141,17 @@ struct AddServiceRecordSheet: View {
                 .textInputAutocapitalization(textInputAutocapitalization)
                 .autocorrectionDisabled(disableAutocorrection)
                 .font(Theme.Typography.body)
-                .foregroundStyle(Theme.Colors.textPrimary)
+                .foregroundColor(.white)
+                .tint(.white)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Spacing.sm)
-        .background(Theme.Colors.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .background(Theme.Colors.inputSurface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .stroke(Theme.Colors.textSecondary.opacity(0.18), lineWidth: 1)
+        )
+        .environment(\.colorScheme, .dark)
     }
 
     private func cardPickerRow<Content: View>(
@@ -1721,12 +3168,17 @@ struct AddServiceRecordSheet: View {
                     content()
                 }
                 .pickerStyle(.menu)
-                .tint(Theme.Colors.textPrimary)
+                .tint(.white)
             }
             Spacer(minLength: 0)
         }
         .padding(Theme.Spacing.sm)
-        .background(Theme.Colors.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .background(Theme.Colors.inputSurface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .stroke(Theme.Colors.textSecondary.opacity(0.18), lineWidth: 1)
+        )
+        .environment(\.colorScheme, .dark)
     }
 
     private func labeledCompactDate(_ title: String, selection: Binding<Date>, components: DatePickerComponents) -> some View {
@@ -4511,6 +5963,18 @@ private struct ServiceRecordCameraCapture: UIViewControllerRepresentable {
                     self.focusRing.alpha = 0
                 }
             }
+        }
+    }
+}
+
+private extension UIImage {
+    func normalizedForUpload() -> UIImage {
+        if imageOrientation == .up {
+            return self
+        }
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: size))
         }
     }
 }

@@ -2,6 +2,8 @@ import Foundation
 
 final class APIClient: NetworkService {
     private static let defaultBaseURLString = "https://hub.toozservis.cz"
+    private static let configurationStorageKey = "sprava_vozidel_api_base_url"
+    private static let configurationEnvironmentKey = "SPRAVA_VOZIDEL_API_BASE_URL"
 
     private static let fallbackBaseURLStrings = [
         "https://hub.toozservis.cz",
@@ -9,11 +11,37 @@ final class APIClient: NetworkService {
     ]
 
     static func configuredBaseURLString() -> String {
-        defaultBaseURLString
+        if let environmentOverride = ProcessInfo.processInfo.environment[configurationEnvironmentKey]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !environmentOverride.isEmpty
+        {
+            return environmentOverride
+        }
+
+        if let infoOverride = Bundle.main.object(forInfoDictionaryKey: configurationEnvironmentKey) as? String {
+            let trimmed = infoOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+
+        if let persistedOverride = UserDefaults.standard.string(forKey: configurationStorageKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !persistedOverride.isEmpty
+        {
+            return persistedOverride
+        }
+
+        return defaultBaseURLString
     }
 
     static func setConfiguredBaseURLString(_ value: String) {
-        _ = value
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: configurationStorageKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: configurationStorageKey)
+        }
     }
 
     private static func normalizedURL(from raw: String) -> URL? {
@@ -162,7 +190,7 @@ final class APIClient: NetworkService {
 
         var request = URLRequest(url: url)
         request.httpMethod = endpoint.method.rawValue
-        request.timeoutInterval = 20
+        request.timeoutInterval = endpoint.timeoutInterval ?? 20
         request.httpBody = endpoint.body
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if endpoint.body != nil {
@@ -201,18 +229,15 @@ final class APIClient: NetworkService {
         case 200 ... 299:
             return
         case 401:
-            if let serverMessage, !serverMessage.isEmpty {
-                throw APIError.serverError(serverMessage)
-            }
             let path = http.url?.path ?? ""
             if path.contains("/user/login") {
+                if let serverMessage, !serverMessage.isEmpty {
+                    throw APIError.serverError(serverMessage)
+                }
                 throw APIError.serverError("Neplatný email nebo heslo")
             }
             throw APIError.unauthorized
         case 403:
-            if let serverMessage, !serverMessage.isEmpty {
-                throw APIError.serverError(serverMessage)
-            }
             throw APIError.forbidden
         default:
             let message = serverMessage ?? String(data: data, encoding: .utf8) ?? "Chyba API \(http.statusCode)"

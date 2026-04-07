@@ -169,18 +169,44 @@ struct VehicleAccessGrantRequest: Encodable {
     let conflictStrategy: String
 }
 
-struct VehicleAccessGrant: Codable, Identifiable {
+struct VehicleAccessGrant: Codable, Identifiable, Hashable {
     var id: String { "\(serviceId)-\(vehicleId)" }
     let serviceId: Int
     let vehicleId: Int
     let customerId: Int
     let serviceName: String
     let serviceEmail: String
+    let vehicleName: String?
+    let vehiclePlate: String?
+    let status: String?
     let updatedAt: String?
 }
 
 struct VehicleAccessGrantListResponse: Codable {
     let grants: [VehicleAccessGrant]
+}
+
+struct ServiceAccessRequest: Codable, Identifiable, Hashable {
+    let id: Int
+    let vehicleId: Int
+    let serviceId: Int
+    let serviceName: String
+    let serviceEmail: String?
+    let vehicleName: String?
+    let vehiclePlate: String?
+    let requestedAt: String?
+    let status: String
+    let note: String?
+    let scopeSummary: String?
+}
+
+struct ServiceAccessRequestListResponse: Codable {
+    let requests: [ServiceAccessRequest]
+}
+
+struct ServiceAccessRequestDecisionRequest: Encodable {
+    let decision: String
+    let note: String?
 }
 
 struct ServiceContactsResponse: Decodable {

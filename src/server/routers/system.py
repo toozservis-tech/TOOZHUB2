@@ -9,7 +9,8 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy import func
 
 from src.core.auth import get_current_user_email
-from src.core.config import ENABLE_AI_FEATURES, ENABLE_AUTOPILOT_API, ENABLE_CUSTOMER_COMMANDS, ENVIRONMENT
+from src.core.branding import APP_API_DISPLAY_NAME, APP_DISPLAY_NAME
+from src.core.config import DATABASE_URL, ENABLE_AI_FEATURES, ENABLE_AUTOPILOT_API, ENABLE_CUSTOMER_COMMANDS, ENVIRONMENT
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer, Vehicle as VehicleModel, VehicleOwnership
 from src.server.main_helpers import APP_VERSION, APP_VERSION_NAME, BUILD_DATE, UPDATE_INFO
@@ -94,7 +95,7 @@ def public_file_list(path: str = ""):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Veřejné soubory - TooZ Hub 2</title>
+        <title>Veřejné soubory - {APP_DISPLAY_NAME}</title>
         <style>
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
             body {{
@@ -195,7 +196,7 @@ def public_file_list(path: str = ""):
         <div class="container">
             <div class="header">
                 <h1>📁 Veřejné soubory</h1>
-                <p>TooZ Hub 2 - Public File Server</p>
+                <p>{APP_DISPLAY_NAME} - Veřejné soubory</p>
             </div>
             <div class="breadcrumb">
                 {breadcrumb}
@@ -266,7 +267,7 @@ def root():
 def api_root():
     version, version_name, build_date, update_info = _version_context()
     return {
-        "message": "TooZ Hub 2 API",
+        "message": APP_API_DISPLAY_NAME,
         "version": version,
         "version_name": version_name,
         "build_date": build_date,
@@ -304,7 +305,7 @@ def health_check():
     return {
         "status": "ok",
         "project": "TOOZHUB2",
-        "service": "TooZ Hub 2 API",
+        "service": APP_API_DISPLAY_NAME,
         "version": version,
         "version_name": version_name,
         "build_date": build_date,
@@ -350,7 +351,7 @@ def get_version():
     except Exception:
         version, _, _, _ = _version_context()
         return {
-            "project": "TooZ Hub 2",
+            "project": APP_DISPLAY_NAME,
             "version": version,
             "build_time": datetime.now().isoformat(),
         }
@@ -380,7 +381,7 @@ def debug_db_stats(
     current_user_email: str = Depends(get_current_user_email),
     db=Depends(get_db),
 ):
-    db_url = os.getenv("DATABASE_URL") or os.getenv("VEHICLE_DB_URL", "sqlite:///./vehicles.db")
+    db_url = DATABASE_URL
     cwd = str(Path.cwd())
 
     if db_url.startswith("sqlite"):

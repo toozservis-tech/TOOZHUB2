@@ -9,22 +9,45 @@ final class AppEnvironment: ObservableObject {
     let vehicleService: VehicleService
     let reservationService: ReservationService
     let accountService: AccountService
+    let userFeatureService: UserFeatureService
     let deviceCapabilityService = DeviceCapabilityService()
+    let appLockManager = AppLockManager()
     let serverStatusMonitor = ServerStatusMonitor()
     let recordConfigurationStore = RecordConfigurationStore()
     let authManager: AuthManager
+    let dashboardViewModel: DashboardViewModel
+    let vehiclesViewModel: VehiclesViewModel
+    let reservationsViewModel: ReservationsViewModel
+    let serviceViewModel: ServiceViewModel
+    let accountViewModel: AccountViewModel
     @Published var requestedUserTab: String?
     @Published var requestedServiceTab: String?
     private var cancellables: Set<AnyCancellable> = []
 
     init() {
+        let configuredBaseURL = APIClient.configuredBaseURLString()
+#if DEBUG
+        print("[API] Configured base URL: \(configuredBaseURL)")
+#endif
         dashboardService = DashboardService(api: apiClient)
         vehicleService = VehicleService(api: apiClient)
         reservationService = ReservationService(api: apiClient)
         accountService = AccountService(api: apiClient)
+        userFeatureService = UserFeatureService(api: apiClient)
         authManager = AuthManager(api: apiClient)
+        dashboardViewModel = DashboardViewModel(service: dashboardService)
+        vehiclesViewModel = VehiclesViewModel(service: vehicleService, featureService: userFeatureService)
+        reservationsViewModel = ReservationsViewModel(service: reservationService, featureService: userFeatureService)
+        serviceViewModel = ServiceViewModel(api: apiClient, featureService: userFeatureService)
+        accountViewModel = AccountViewModel(service: accountService, featureService: userFeatureService)
 
         authManager.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
+        appLockManager.objectWillChange
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
@@ -157,7 +180,7 @@ final class ServerStatusMonitor: ObservableObject {
         for rawBase in baseCandidates {
             guard let base = normalizedURL(from: rawBase) else { continue }
 
-            let endpoints = ["api/health", "health", "api/v1/health"]
+            let endpoints = ["health", "api/health", "api/v1/health"]
             for endpoint in endpoints {
                 let full = base.appendingPathComponent(endpoint)
                 if !urls.contains(where: { $0.absoluteString == full.absoluteString }) {
@@ -166,7 +189,7 @@ final class ServerStatusMonitor: ObservableObject {
             }
         }
 
-        return Array(urls.prefix(2))
+        return Array(urls.prefix(3))
     }
 
     private func normalizedURL(from raw: String) -> URL? {

@@ -1,5 +1,5 @@
 """
-Thin FastAPI entrypoint for TooZ Hub 2.
+Thin FastAPI entrypoint for Správa vozidel.
 """
 from __future__ import annotations
 

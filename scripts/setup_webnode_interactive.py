@@ -72,6 +72,7 @@ def main():
         print()
         print("📝 Co dál:")
         print("1. Spusťte: python3 scripts/webnode_auto_upload.py")
+        print("   Tento helper má pro běžný upload používat canonical větev web/index.html")
         print("2. Nebo použijte API endpoint: curl -X POST http://localhost:8000/webnode/update")
         print()
         print("⚠️  DŮLEŽITÉ: Tento soubor obsahuje citlivé údaje a NENÍ v Gitu!")
@@ -81,4 +82,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

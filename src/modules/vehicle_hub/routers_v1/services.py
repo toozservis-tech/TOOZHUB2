@@ -17,9 +17,12 @@ from sqlalchemy.orm import Session
 
 from src.core.rbac import is_admin
 from ..database import get_db
-from ..models import Customer, ServiceCustomerLink, ServiceVehicleAccess, Vehicle
+from ..models import Customer, ServiceAccessRequest, ServiceCustomerLink, ServiceVehicleAccess, Vehicle, VehicleServiceLink
+from ..ownership import get_owned_vehicle, get_owned_vehicle_ids
 from ..schema_management import assert_module_ready
+from ..service_access import create_or_update_vehicle_service_link, revoke_vehicle_service_link, vehicle_label
 from .auth import get_current_user
+from .schemas import ServiceAccessRequestDecisionV1, ServiceAccessRequestListOutV1, VehicleServiceLinkListOutV1
 
 router = APIRouter(prefix="/services", tags=["services-v1"])
 
@@ -50,6 +53,10 @@ def _is_admin_role(role: Optional[str]) -> bool:
 
 def _ensure_services_schema(db: Session) -> None:
     assert_module_ready(db, "service_workspace", detail_prefix="Servisní propojení není připravené")
+
+
+def _access_scope_summary() -> str:
+    return "Čtení historie vozidla a možnost vytvářet nové servisní záznamy bez úprav starších cizích záznamů."
 
 
 def _upsert_service_customer_link(
@@ -89,6 +96,22 @@ def _upsert_service_customer_link(
     db.add(link)
     db.flush()
     return link, True
+
+
+def _serialize_access_request_row(request_row: ServiceAccessRequest, service: Customer, vehicle: Vehicle) -> dict[str, Any]:
+    return {
+        "id": int(request_row.id),
+        "vehicle_id": int(request_row.vehicle_id),
+        "service_id": int(request_row.service_customer_id),
+        "service_name": service.name or service.email,
+        "service_email": service.email,
+        "vehicle_name": vehicle_label(vehicle),
+        "vehicle_plate": vehicle.plate,
+        "requested_at": request_row.requested_at.isoformat() if request_row.requested_at else None,
+        "status": str(request_row.status or "pending"),
+        "note": request_row.request_message,
+        "scope_summary": _access_scope_summary(),
+    }
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -301,7 +324,131 @@ def get_my_service_contacts(
     }
 
 
-@router.get("/vehicle-access")
+@router.get("/access-requests", response_model=ServiceAccessRequestListOutV1)
+def get_service_access_requests(
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Vrátí čekající žádosti servisů o přístup k vozidlům aktuálního uživatele.
+    """
+    _ensure_services_schema(db)
+    role_key = str(getattr(current_user, "role", "") or "").strip().lower()
+    if role_key in {"service"}:
+        raise HTTPException(status_code=403, detail="Endpoint je dostupný pouze v uživatelském režimu.")
+
+    owned_vehicle_ids = sorted(get_owned_vehicle_ids(db, current_user, tenant_id=getattr(current_user, "tenant_id", None)))
+    if not owned_vehicle_ids:
+        return {"requests": []}
+
+    rows = (
+        db.query(ServiceAccessRequest, Customer, Vehicle)
+        .join(Customer, ServiceAccessRequest.service_customer_id == Customer.id)
+        .join(Vehicle, ServiceAccessRequest.vehicle_id == Vehicle.id)
+        .filter(
+            ServiceAccessRequest.owner_customer_id == current_user.id,
+            ServiceAccessRequest.vehicle_id.in_(owned_vehicle_ids),
+            ServiceAccessRequest.status == "pending",
+        )
+        .order_by(ServiceAccessRequest.requested_at.desc(), ServiceAccessRequest.id.desc())
+        .all()
+    )
+    return {"requests": [_serialize_access_request_row(request_row, service, vehicle) for request_row, service, vehicle in rows]}
+
+
+@router.put("/access-requests/{request_id}")
+def resolve_service_access_request(
+    request_id: int,
+    payload: ServiceAccessRequestDecisionV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Uživatel schválí nebo zamítne pending žádost servisu o přístup k vozidlu.
+    """
+    _ensure_services_schema(db)
+    role_key = str(getattr(current_user, "role", "") or "").strip().lower()
+    if role_key in {"service"}:
+        raise HTTPException(status_code=403, detail="Servisní účet nemůže rozhodovat o zákaznických žádostech.")
+
+    request_row = (
+        db.query(ServiceAccessRequest)
+        .filter(
+            ServiceAccessRequest.id == request_id,
+            ServiceAccessRequest.owner_customer_id == current_user.id,
+        )
+        .first()
+    )
+    if not request_row:
+        raise HTTPException(status_code=404, detail="Žádost o přístup nebyla nalezena.")
+    if str(request_row.status or "") != "pending":
+        raise HTTPException(status_code=409, detail="Žádost už byla vyřízena.")
+
+    vehicle = get_owned_vehicle(db, current_user, int(request_row.vehicle_id), tenant_id=getattr(current_user, "tenant_id", None))
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo už není dostupné pro rozhodnutí o přístupu.")
+
+    service = (
+        db.query(Customer)
+        .filter(
+            Customer.id == request_row.service_customer_id,
+            Customer.role.in_(["service", "developer_admin"]),
+        )
+        .first()
+    )
+    if not service:
+        raise HTTPException(status_code=404, detail="Servis spojený se žádostí nebyl nalezen.")
+
+    decision = str(payload.decision or "").strip().lower()
+    if decision not in {"approved", "rejected"}:
+        raise HTTPException(status_code=422, detail="Rozhodnutí musí být approved nebo rejected.")
+
+    try:
+        request_row.decided_at = datetime.utcnow()
+        request_row.decided_by_customer_id = current_user.id
+        request_row.decision_note = (payload.note or "").strip() or None
+
+        if decision == "approved":
+            link = create_or_update_vehicle_service_link(
+                db,
+                tenant_id=vehicle.tenant_id or current_user.tenant_id or service.tenant_id,
+                service_customer_id=service.id,
+                owner_customer_id=current_user.id,
+                vehicle_id=vehicle.id,
+                approved_by_customer_id=current_user.id,
+                source_type="request_approved",
+                source_request_id=request_row.id,
+                note=(request_row.request_message or "").strip() or None,
+            )
+            request_row.status = "approved"
+            request_row.approved_link_id = link.id
+            _upsert_service_customer_link(
+                db,
+                service_customer_id=service.id,
+                service_tenant_id=service.tenant_id,
+                target_customer=current_user,
+                note="Propojeno přes schválenou žádost o přístup k vozidlu",
+            )
+        else:
+            request_row.status = "rejected"
+
+        request_row.updated_at = datetime.utcnow()
+        db.commit()
+        return {
+            "resolved": True,
+            "request_id": int(request_row.id),
+            "decision": decision,
+            "vehicle_id": int(request_row.vehicle_id),
+            "service_id": int(request_row.service_customer_id),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Nepodařilo se uložit rozhodnutí o žádosti: {exc}") from exc
+
+
+@router.get("/vehicle-access", response_model=VehicleServiceLinkListOutV1)
 def get_vehicle_access_grants(
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -314,41 +461,36 @@ def get_vehicle_access_grants(
     if role_key in {"service"}:
         raise HTTPException(status_code=403, detail="Endpoint je dostupný pouze v uživatelském režimu.")
 
-    owner_email = _normalize_email(current_user.email)
-    owned_vehicle_ids = [
-        int(vehicle_id)
-        for (vehicle_id,) in (
-            db.query(Vehicle.id)
-            .filter(func.lower(Vehicle.user_email) == owner_email)
-            .all()
-        )
-        if vehicle_id is not None
-    ]
+    owned_vehicle_ids = sorted(get_owned_vehicle_ids(db, current_user, tenant_id=getattr(current_user, "tenant_id", None)))
     if not owned_vehicle_ids:
         return {"grants": [], "meta": {"total": 0}}
 
     rows = (
-        db.query(ServiceVehicleAccess, Customer)
-        .join(Customer, ServiceVehicleAccess.service_customer_id == Customer.id)
+        db.query(VehicleServiceLink, Customer, Vehicle)
+        .join(Customer, VehicleServiceLink.service_customer_id == Customer.id)
+        .join(Vehicle, VehicleServiceLink.vehicle_id == Vehicle.id)
         .filter(
-            ServiceVehicleAccess.customer_id == current_user.id,
-            ServiceVehicleAccess.vehicle_id.in_(owned_vehicle_ids),
-            ServiceVehicleAccess.status == "active",
+            VehicleServiceLink.owner_customer_id == current_user.id,
+            VehicleServiceLink.vehicle_id.in_(owned_vehicle_ids),
+            VehicleServiceLink.status == "approved",
             Customer.role.in_(["service", "developer_admin"]),
         )
-        .order_by(ServiceVehicleAccess.updated_at.desc())
+        .order_by(VehicleServiceLink.updated_at.desc())
         .all()
     )
 
     grants = []
-    for access_row, service in rows:
+    for access_row, service, vehicle in rows:
         grants.append(
             {
                 "service_id": int(access_row.service_customer_id),
                 "vehicle_id": int(access_row.vehicle_id),
-                "customer_id": int(access_row.customer_id),
+                "customer_id": int(access_row.owner_customer_id),
                 "service_name": service.name or service.email,
                 "service_email": service.email,
+                "vehicle_name": vehicle_label(vehicle),
+                "vehicle_plate": vehicle.plate,
+                "status": access_row.status,
                 "updated_at": access_row.updated_at.isoformat() if access_row.updated_at else None,
             }
         )
@@ -375,15 +517,7 @@ def grant_vehicle_access_to_service(
     if role_key in {"service"}:
         raise HTTPException(status_code=403, detail="Servisní účet nemůže měnit oprávnění zákaznického vozidla.")
 
-    owner_email = _normalize_email(current_user.email)
-    vehicle = (
-        db.query(Vehicle)
-        .filter(
-            Vehicle.id == payload.vehicle_id,
-            func.lower(Vehicle.user_email) == owner_email,
-        )
-        .first()
-    )
+    vehicle = get_owned_vehicle(db, current_user, int(payload.vehicle_id), tenant_id=getattr(current_user, "tenant_id", None))
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nebylo nalezeno nebo vám nepatří.")
 
@@ -460,33 +594,16 @@ def grant_vehicle_access_to_service(
             target_customer=current_user,
             note="Propojeno přes explicitní povolení vozidla",
         )
-
-        existing = (
-            db.query(ServiceVehicleAccess)
-            .filter(
-                ServiceVehicleAccess.service_customer_id == service.id,
-                ServiceVehicleAccess.customer_id == current_user.id,
-                ServiceVehicleAccess.vehicle_id == vehicle.id,
-            )
-            .first()
+        create_or_update_vehicle_service_link(
+            db,
+            tenant_id=vehicle.tenant_id or current_user.tenant_id or service.tenant_id,
+            service_customer_id=service.id,
+            owner_customer_id=current_user.id,
+            vehicle_id=vehicle.id,
+            approved_by_customer_id=current_user.id,
+            source_type="direct_user_grant",
+            note=(payload.note or "").strip() or None,
         )
-        if existing:
-            existing.status = "active"
-            existing.granted_by_customer_id = current_user.id
-            existing.note = (payload.note or "").strip() or existing.note
-            existing.revoked_at = None
-            existing.updated_at = datetime.utcnow()
-        else:
-            existing = ServiceVehicleAccess(
-                service_customer_id=service.id,
-                customer_id=current_user.id,
-                vehicle_id=vehicle.id,
-                status="active",
-                granted_by_customer_id=current_user.id,
-                note=(payload.note or "").strip() or None,
-                revoked_at=None,
-            )
-            db.add(existing)
 
         db.commit()
         return {
@@ -525,29 +642,21 @@ def revoke_vehicle_access_for_service(
     if role_key in {"service"}:
         raise HTTPException(status_code=403, detail="Servisní účet nemůže měnit oprávnění zákaznického vozidla.")
 
-    owner_email = _normalize_email(current_user.email)
-    vehicle = (
-        db.query(Vehicle)
-        .filter(
-            Vehicle.id == vehicle_id,
-            func.lower(Vehicle.user_email) == owner_email,
-        )
-        .first()
-    )
+    vehicle = get_owned_vehicle(db, current_user, int(vehicle_id), tenant_id=getattr(current_user, "tenant_id", None))
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nebylo nalezeno nebo vám nepatří.")
 
-    access_row = (
-        db.query(ServiceVehicleAccess)
+    link_row = (
+        db.query(VehicleServiceLink)
         .filter(
-            ServiceVehicleAccess.service_customer_id == service_id,
-            ServiceVehicleAccess.customer_id == current_user.id,
-            ServiceVehicleAccess.vehicle_id == vehicle_id,
-            ServiceVehicleAccess.status == "active",
+            VehicleServiceLink.service_customer_id == service_id,
+            VehicleServiceLink.owner_customer_id == current_user.id,
+            VehicleServiceLink.vehicle_id == vehicle_id,
+            VehicleServiceLink.status == "approved",
         )
         .first()
     )
-    if not access_row:
+    if not link_row:
         return {
             "revoked": False,
             "service_id": int(service_id),
@@ -556,9 +665,13 @@ def revoke_vehicle_access_for_service(
         }
 
     try:
-        access_row.status = "revoked"
-        access_row.revoked_at = datetime.utcnow()
-        access_row.updated_at = datetime.utcnow()
+        revoke_vehicle_service_link(
+            db,
+            service_customer_id=service_id,
+            vehicle_id=vehicle_id,
+            revoked_by_customer_id=current_user.id,
+            reason="user_revoke",
+        )
         db.commit()
         return {
             "revoked": True,

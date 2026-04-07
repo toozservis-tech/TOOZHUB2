@@ -23,6 +23,7 @@ from ..models import (
     ServiceCustomerLink,
     ServiceCustomerInvite,
     ServiceVehicleAccess,
+    VehicleOwnership,
 )
 from ..schema_management import assert_module_ready
 from .auth import get_current_user
@@ -37,6 +38,7 @@ from ..email_notifications import (
     send_reservation_status_email,
     send_reservation_rescheduled_email,
 )
+from ..ownership import get_owned_vehicle, get_owned_vehicle_rows, get_primary_vehicle_owner
 
 router = APIRouter(prefix="/reservations", tags=["reservations-v1"])
 
@@ -326,34 +328,13 @@ def get_reservation_vehicle_options(
     tenant_id = getattr(current_user, "tenant_id", None)
 
     if role_key == "user":
-        owner_email = _normalize_email(current_user.email)
-        base_query = db.query(VehicleModel).filter(func.lower(VehicleModel.user_email) == owner_email)
-        if tenant_id is not None:
-            vehicles = (
-                base_query
-                .filter(VehicleModel.tenant_id == tenant_id)
-                .order_by(VehicleModel.created_at.desc(), VehicleModel.id.desc())
-                .all()
-            )
-            # Fallback pro starší/nekonzistentní tenant data: držíme se stejného vlastníka (email).
-            if not vehicles:
-                vehicles = (
-                    base_query
-                    .order_by(VehicleModel.created_at.desc(), VehicleModel.id.desc())
-                    .all()
-                )
-        else:
-            vehicles = (
-                base_query
-                .order_by(VehicleModel.created_at.desc(), VehicleModel.id.desc())
-                .all()
-            )
+        vehicles = get_owned_vehicle_rows(db, current_user, tenant_id=tenant_id)
         return [
             {
                 "id": int(vehicle.id),
                 "name": _reservation_vehicle_label(vehicle),
                 "plate": getattr(vehicle, "plate", None),
-                "owner_email": getattr(vehicle, "user_email", None),
+                "owner_email": getattr(get_primary_vehicle_owner(db, vehicle), "email", None) or getattr(vehicle, "user_email", None),
                 "is_shared": False,
                 "source": "owner",
             }
@@ -392,13 +373,13 @@ def get_reservation_vehicle_options(
             source_by_vehicle.setdefault(int(vehicle_id), "reservation_history")
 
         linked_vehicle_rows = (
-            db.query(VehicleModel.id)
-            .join(Customer, func.lower(Customer.email) == func.lower(VehicleModel.user_email))
+            db.query(VehicleOwnership.vehicle_id)
             .join(
                 ServiceCustomerLink,
-                ServiceCustomerLink.customer_id == Customer.id,
+                ServiceCustomerLink.customer_id == VehicleOwnership.customer_id,
             )
             .filter(
+                VehicleOwnership.is_active.is_(True),
                 ServiceCustomerLink.service_customer_id == service_id,
                 ServiceCustomerLink.status == "active",
             )
@@ -421,7 +402,7 @@ def get_reservation_vehicle_options(
                 "id": int(vehicle.id),
                 "name": _reservation_vehicle_label(vehicle),
                 "plate": getattr(vehicle, "plate", None),
-                "owner_email": getattr(vehicle, "user_email", None),
+                "owner_email": getattr(get_primary_vehicle_owner(db, vehicle), "email", None) or getattr(vehicle, "user_email", None),
                 "is_shared": True,
                 "source": source_by_vehicle.get(int(vehicle.id), "service_access"),
             }
@@ -438,7 +419,7 @@ def get_reservation_vehicle_options(
                 "id": int(vehicle.id),
                 "name": _reservation_vehicle_label(vehicle),
                 "plate": getattr(vehicle, "plate", None),
-                "owner_email": getattr(vehicle, "user_email", None),
+                "owner_email": getattr(get_primary_vehicle_owner(db, vehicle), "email", None) or getattr(vehicle, "user_email", None),
                 "is_shared": True,
                 "source": "tenant_admin",
             }
@@ -483,7 +464,7 @@ def create_reservation(
     
     # Pro uživatele (role user) - rezervace musí být pro jeho vozidlo
     if current_user.role == "user":
-        if _normalize_email(vehicle.user_email) != _normalize_email(current_user.email):
+        if get_owned_vehicle(db, current_user, int(vehicle.id), tenant_id=getattr(current_user, "tenant_id", None)) is None:
             raise HTTPException(status_code=403, detail="Nemůžete vytvořit rezervaci pro cizí vozidlo")
         customer = current_user
         customer_id = current_user.id
@@ -491,9 +472,7 @@ def create_reservation(
         if str(current_user.role or "").strip().lower() == "service" and reservation_data.service_id != current_user.id:
             raise HTTPException(status_code=403, detail="Servis může vytvářet rezervace pouze pro sebe")
         # Pro service/admin - použít customer_id z vlastníka vozidla
-        customer = db.query(Customer).filter(
-            Customer.email == vehicle.user_email,
-        ).first()
+        customer = get_primary_vehicle_owner(db, vehicle)
         if not customer:
             raise HTTPException(status_code=404, detail="Zákazník nenalezen")
         customer_id = customer.id

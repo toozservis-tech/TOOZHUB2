@@ -27,12 +27,13 @@ Workflow `.github/workflows/qa.yml` provádí následující kroky:
 4. **Setup Node.js 20** - `actions/setup-node@v4` s npm cache
 5. **Install E2E dependencies** - `npm ci` v `tests/e2e/` + `npx playwright install --with-deps chromium`
 6. **Create artifacts directory** - `mkdir -p artifacts/qa`
-7. **Start backend server** - `python -m uvicorn src.server.main:app --host 127.0.0.1 --port 8000 &`
-8. **Wait for backend** - Polling `GET /health` endpoint (timeout 60s)
-9. **Run API tests** - `python -m pytest tests/api -v --tb=short --junit-xml=artifacts/qa/pytest-report.xml`
-10. **Run E2E tests** - `cd tests/e2e && npx playwright test --reporter=list,html --project=chromium`
-11. **Upload artifacts** - Upload `artifacts/qa/**`, `tests/e2e/playwright-report/**`, `tests/e2e/test-results/**`
-12. **Stop backend** - Kill backend process pomocí PID a cleanup uvicorn procesů
+7. **Initialize database via Alembic** - `rm -f test_vehicles.db && python scripts/migrate_database.py upgrade head`
+8. **Start backend server** - `python -m uvicorn src.server.main:app --host 127.0.0.1 --port 8000 &`
+9. **Wait for backend** - Polling `GET /health` endpoint (timeout 60s)
+10. **Run API tests** - `python -m pytest tests/api -v --tb=short --junit-xml=artifacts/qa/pytest-report.xml`
+11. **Run E2E tests** - `cd tests/e2e && npx playwright test --reporter=list,html --project=chromium`
+12. **Upload artifacts** - Upload `artifacts/qa/**`, `tests/e2e/playwright-report/**`, `tests/e2e/test-results/**`
+13. **Stop backend** - Kill backend process pomocí PID a cleanup uvicorn procesů
 
 ## Environment proměnné
 
@@ -53,11 +54,12 @@ Workflow nastavuje následující env proměnné:
 
 ## Test DB izolace
 
-✅ **Test DB je izolovaná:**
+✅ **Test DB je izolovaná a vědomě oddělená od runtime DB:**
 - Používá `test_vehicles.db` (nastaveno přes `DATABASE_URL` a `VEHICLE_DB_URL` env proměnné)
 - Produkční DB (`vehicles.db`) není použita v testech
 - Test DB je v `.gitignore`
 - Backend automaticky použije test DB díky env proměnným
+- Schema se připravuje přes Alembic migrace, ne přes `Base.metadata.create_all`
 
 ## E2E credentials
 
@@ -176,4 +178,3 @@ Artefakty z production smoke testů:
 - Obsahuje:
   - `playwright-report/` - HTML report z E2E testů
   - `test-results/` - Screenshoty a videa z failed testů
-

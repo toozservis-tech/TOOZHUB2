@@ -25,6 +25,14 @@ struct ServiceRemindersView: View {
                             .tint(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 60)
+                    } else if viewModel.loadState == .backendUnavailable {
+                        EmptyStateView(
+                            icon: "clock.badge.exclamationmark",
+                            title: "Servisní připomínky čekají na nasazení",
+                            subtitle: "Workspace routy pro připomínky a klienty zatím na tomto serveru nejsou k dispozici."
+                        ) {
+                            Task { await reload() }
+                        }
                     } else if let error = viewModel.error {
                         ErrorStateView(message: error) { Task { await reload() } }
                     } else if viewModel.reminders.isEmpty {

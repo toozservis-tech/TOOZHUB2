@@ -14,6 +14,7 @@ from ..account_state import (
     customer_is_disabled,
     customer_session_version,
 )
+from ..service_access import service_can_read_vehicle
 from ..ownership import user_owns_vehicle
 from src.core.auth import get_current_user_email
 from src.core.rbac import is_admin, is_service, normalize_role, service_record_write_policy, vehicle_read_policy
@@ -158,13 +159,7 @@ def can_access_vehicle(
     Returns:
         True pokud má přístup
     """
-    from ..models import (
-        Vehicle,
-        ServiceIntake,
-        Reservation,
-        ServiceVehicleAccess,
-        ServiceRecord as ServiceRecordModel,
-    )
+    from ..models import Vehicle
     
     # Admin má přístup ke všemu
     if is_admin(current_user.role):
@@ -182,45 +177,10 @@ def can_access_vehicle(
     # Service role - přístup pouze k explicitně sdíleným vozidlům
     role_key = normalize_role(current_user.role)
     if is_service(role_key):
-        # Kontrola přes ServiceIntake
-        intake_exists = db.query(ServiceIntake).filter(
-            ServiceIntake.vehicle_id == vehicle_id,
-            ServiceIntake.service_id == current_user.id
-        ).first()
-        if intake_exists:
-            return True
-        
-        # Kontrola přes Reservation
-        reservation_exists = db.query(Reservation).filter(
-            Reservation.vehicle_id == vehicle_id,
-            Reservation.service_id == current_user.id,
-            Reservation.status != "CANCELLED",
-        ).first()
-        if reservation_exists:
+        if service_can_read_vehicle(db, current_user, vehicle_id):
             return True
 
-        # Kontrola přes existující servisní záznam, který servis dříve vytvořil
-        service_record_exists = db.query(ServiceRecordModel).filter(
-            ServiceRecordModel.vehicle_id == vehicle_id,
-            ServiceRecordModel.user_id == current_user.id,
-        ).first()
-        if service_record_exists:
-            return True
-
-        # Kontrola přes explicitní povolení vozidla od zákazníka
-        explicit_vehicle_access_exists = (
-            db.query(ServiceVehicleAccess.id)
-            .filter(
-                ServiceVehicleAccess.service_customer_id == current_user.id,
-                ServiceVehicleAccess.vehicle_id == vehicle_id,
-                ServiceVehicleAccess.status == "active",
-            )
-            .first()
-        )
-        if explicit_vehicle_access_exists:
-            return True
-
-        decision = vehicle_read_policy(role=role_key, is_owner=False, has_service_access=True)
+        decision = vehicle_read_policy(role=role_key, is_owner=False, has_service_access=False)
         return decision.allowed
 
     return vehicle_read_policy(role=role_key, is_owner=False, has_service_access=False).allowed

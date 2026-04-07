@@ -140,7 +140,7 @@ private enum UserTab: String, CaseIterable {
         case .vehicles:
             return "Vozidla"
         case .service:
-            return "Servis"
+            return "Servisy"
         case .reservations:
             return "Rezervace"
         case .account:

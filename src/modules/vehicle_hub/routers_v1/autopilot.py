@@ -9,8 +9,10 @@ from datetime import datetime
 import hashlib
 import hmac
 
+from src.core.branding import APP_DISPLAY_NAME
 from ..database import get_db
 from ..models import Vehicle as VehicleModel, ServiceRecord as ServiceRecordModel, Customer
+from ..ownership import get_owned_vehicle_rows, get_primary_vehicle_owner
 from src.core.config import AUTOPILOT_SHARED_SECRET
 
 
@@ -49,7 +51,7 @@ def autopilot_health():
     """Health check pro Autopilot API (nevyžaduje autentizaci)"""
     return {
         "status": "online",
-        "service": "TooZ Hub 2 Autopilot API",
+        "service": f"{APP_DISPLAY_NAME} Autopilot API",
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -68,9 +70,7 @@ def get_user_vehicles(
     if not user:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
     
-    vehicles = db.query(VehicleModel).filter(
-        VehicleModel.user_email == user.email
-    ).all()
+    vehicles = get_owned_vehicle_rows(db, user, tenant_id=getattr(user, "tenant_id", None))
     
     return {
         "user_id": user_id,
@@ -145,7 +145,7 @@ def create_quick_record(
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
     
     # Získat ID uživatele z vozidla
-    user = db.query(Customer).filter(Customer.email == vehicle.user_email).first()
+    user = get_primary_vehicle_owner(db, vehicle)
     user_id = user.id if user else None
     
     record = ServiceRecordModel(
@@ -170,8 +170,6 @@ def create_quick_record(
         "vehicle_id": vehicle_id,
         "message": "Servisní záznam vytvořen"
     }
-
-
 
 
 

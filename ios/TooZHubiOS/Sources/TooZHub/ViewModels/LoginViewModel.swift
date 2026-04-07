@@ -31,7 +31,11 @@ final class LoginViewModel: ObservableObject {
                 challengeToken = nil
             }
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = UserFacingErrorMapper.message(
+                for: error,
+                context: .login,
+                fallback: "Přihlášení se nepodařilo. Zkontrolujte e-mail, heslo a zkuste to znovu."
+            )
         }
     }
 
@@ -51,7 +55,11 @@ final class LoginViewModel: ObservableObject {
             self.twoFactorCode = ""
             self.errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = UserFacingErrorMapper.message(
+                for: error,
+                context: .twoFactor,
+                fallback: "Ověření 2FA se nepodařilo. Zkontrolujte kód a zkuste to znovu."
+            )
         }
     }
 }

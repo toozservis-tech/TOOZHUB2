@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from src.core.branding import APP_API_DISPLAY_NAME, APP_DISPLAY_NAME
 from src.core.config import (
     ALLOWED_ORIGINS,
     ENABLE_AI_FEATURES,
@@ -227,7 +228,7 @@ def _register_middlewares(app: FastAPI) -> None:
                 content=(
                     "<!doctype html><html lang='cs'><head><meta charset='utf-8'>"
                     "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-                    "<title>TooZ Hub 2 - Údržba</title>"
+                    f"<title>{APP_DISPLAY_NAME} - Údržba</title>"
                     "<style>body{font-family:Arial,sans-serif;margin:0;background:#0f172a;color:#e2e8f0;}"
                     ".wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}"
                     ".card{max-width:680px;background:#1e293b;border:1px solid #334155;border-radius:16px;padding:28px;}"
@@ -468,7 +469,7 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="TooZ Hub 2 API", version=APP_VERSION)
+    app = FastAPI(title=APP_API_DISPLAY_NAME, version=APP_VERSION)
     _register_exception_handler(app)
     _register_middlewares(app)
     _include_feature_routers(app)
@@ -545,7 +546,7 @@ def run_server(app: FastAPI) -> None:
     update_info = UPDATE_INFO
 
     print("=" * 60)
-    print("[SERVER] 🚀 TooZ Hub 2 API Server")
+    print(f"[SERVER] 🚀 {APP_API_DISPLAY_NAME}")
     print(f"[SERVER] 📦 Verze: {version} ({version_name})")
     print(f"[SERVER] 📅 Datum buildu: {build_date}")
     print(f"[SERVER] 🔄 Aktualizace: {update_info}")

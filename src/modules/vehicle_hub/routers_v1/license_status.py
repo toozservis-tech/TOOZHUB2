@@ -19,6 +19,7 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
+from src.core.branding import APP_DISPLAY_NAME
 from ..database import get_db
 from ..models import (
     Customer,
@@ -35,6 +36,7 @@ from src.server.runtime_settings import (
 from .auth import get_current_user
 from ...licensing.service import get_license_status, upgrade_license_plan, ADMIN_TENANT_ID
 from ...email_client.service import EmailService, EmailMessage
+from ...email_client.templates import build_app_url, render_email_layout, render_panel
 from ..push_notifications import send_push_to_customer
 
 router = APIRouter(prefix="/license", tags=["license"])
@@ -948,10 +950,28 @@ def _send_subscription_notification(
     for target in targets:
         if email_ready:
             try:
+                html_body = render_email_layout(
+                    title=email_subject,
+                    subtitle="Informace o stavu předplatného a licence.",
+                    intro="Dobrý den,",
+                    paragraphs=[email_text],
+                    panels=[
+                        render_panel(
+                            title="Účet",
+                            rows=[("Příjemce", target.email)],
+                            accent="#3b82f6",
+                            tone="#eff6ff",
+                        )
+                    ],
+                    cta_label="Otevřít licenci",
+                    cta_url=build_app_url(),
+                    accent="#f59e0b",
+                )
                 message = EmailMessage(
                     to=[target.email],
                     subject=email_subject,
                     body=email_text,
+                    html_body=html_body,
                 )
                 email_service.send_email(message)
                 email_sent += 1
@@ -1226,7 +1246,7 @@ def _charge_subscription_recurring(
         "initRecurringId": init_recurring_id,
         "price": str(price),
         "curr": str(cfg["currency"]),
-        "label": f"TooZ Hub 2 {plan.upper()} {'MĚSÍČNĚ' if billing_period == 'monthly' else 'ROČNĚ'}",
+        "label": f"{APP_DISPLAY_NAME} {plan.upper()} {'MĚSÍČNĚ' if billing_period == 'monthly' else 'ROČNĚ'}",
         "refId": _build_renewal_ref_id(tenant_id, plan, billing_period),
         "test": "1" if bool(cfg["test_mode"]) else "0",
     }
@@ -1327,7 +1347,7 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                             payload = _send_subscription_notification(
                                 db,
                                 tenant_id=tenant_id,
-                                email_subject="TooZ Hub 2: blíží se konec předplatného",
+                                email_subject=f"{APP_DISPLAY_NAME}: blíží se konec předplatného",
                                 email_text=(
                                     f"Vaše předplatné {plan.upper()} končí za {notify_day} dní. "
                                     "V aplikaci můžete předplatné obnovit, změnit plán nebo zrušit automatické prodloužení."
@@ -1372,7 +1392,7 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     payload = _send_subscription_notification(
                         db,
                         tenant_id=tenant_id,
-                        email_subject="TooZ Hub 2: předplatné bylo ukončeno",
+                        email_subject=f"{APP_DISPLAY_NAME}: předplatné bylo ukončeno",
                         email_text=(
                             "Vaše předplatné nebylo úspěšně obnoveno ani v ochranné lhůtě. "
                             "Plán byl převeden na FREE. V aplikaci můžete předplatné kdykoli obnovit."
@@ -1474,7 +1494,7 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     payload = _send_subscription_notification(
                         db,
                         tenant_id=tenant_id,
-                        email_subject="TooZ Hub 2: obnova předplatného se nepovedla",
+                        email_subject=f"{APP_DISPLAY_NAME}: obnova předplatného se nepovedla",
                         email_text=(
                             "Nepodařilo se provést automatickou obnovu předplatného. "
                             f"Běží ochranná lhůta {runtime_cfg['grace_days']} dní, během které můžete platbu obnovit v sekci Licence."
@@ -1795,7 +1815,7 @@ def create_comgate_checkout(
         "prepareOnly": "true",
         "price": str(price),
         "curr": str(cfg["currency"]),
-        "label": f"TooZ Hub 2 {plan.upper()} {'MĚSÍČNĚ' if effective_billing_period == 'monthly' else 'ROČNĚ'}",
+        "label": f"{APP_DISPLAY_NAME} {plan.upper()} {'MĚSÍČNĚ' if effective_billing_period == 'monthly' else 'ROČNĚ'}",
         "refId": ref_id,
         "method": str(cfg.get("subscription_method") or "CARD"),
         "country": str(cfg["country"]),
@@ -2120,7 +2140,7 @@ async def comgate_result(
             note = _send_subscription_notification(
                 db,
                 tenant_id=tenant_id,
-                email_subject="TooZ Hub 2: předplatné aktivní",
+                email_subject=f"{APP_DISPLAY_NAME}: předplatné aktivní",
                 email_text=(
                     (
                         f"Platba byla potvrzena a plán {resolved_plan.upper()} je aktivní. "

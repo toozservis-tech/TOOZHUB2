@@ -60,21 +60,30 @@ def load_config():
 def read_html():
     """Načte HTML z projektu - celý obsah souboru"""
     project_root = Path(__file__).parent.parent
-    # Použít iframe verzi pro Webnode (nejmenší - jen 1KB!)
-    # Tato verze načte aplikaci z API serveru přes iframe
-    html_file = project_root / "web" / "index_iframe.html"
-    # Pokud iframe verze neexistuje, použít minimální verzi
+    # Canonical produktová větev je web/index.html.
+    # Legacy/minimal/iframe soubory zůstávají jen jako compat fallback pro
+    # historické scénáře a nemají být preferovaným zdrojem pro běžný upload.
+    html_file = project_root / "web" / "index.html"
+    fallback_reason = None
+
+    # Pokud hlavní větev neexistuje, použít minimální compat variantu.
     if not html_file.exists():
         html_file = project_root / "web" / "index_minimal.html"
-    # Pokud ani minimální neexistuje, použít původní
+        fallback_reason = "legacy minimal compat varianta"
+
+    # Pokud ani minimální neexistuje, použít iframe compat variantu.
     if not html_file.exists():
-        html_file = project_root / "web" / "index.html"
+        html_file = project_root / "web" / "index_iframe.html"
+        fallback_reason = "legacy iframe compat varianta"
     
     if not html_file.exists():
         print(f"❌ HTML soubor neexistuje: {html_file}")
         sys.exit(1)
     
     print(f"📄 Načítám HTML z: {html_file}")
+    if fallback_reason:
+        print(f"⚠️  Používám fallback: {fallback_reason}")
+        print("⚠️  Canonical produktová větev pro běžný upload je web/index.html")
     with open(html_file, 'r', encoding='utf-8') as f:
         content = f.read()
     print(f"✓ HTML načteno ({len(content)} znaků)")
@@ -1341,4 +1350,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

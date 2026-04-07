@@ -1,5 +1,5 @@
 """
-Version management pro TooZ Hub 2
+Version management pro Správa vozidel
 Funkce pro správu verzí a historie verzí
 """
 from pathlib import Path
@@ -32,7 +32,7 @@ def get_version_info() -> dict:
     build_time = datetime.now().isoformat()
     
     return {
-        "project": "TooZ Hub 2",
+        "project": APP_DISPLAY_NAME,
         "version": version,
         "build_time": build_time
     }
@@ -67,3 +67,4 @@ def log_version_update(db: Session, version: str, description: Optional[str] = N
         traceback.print_exc()
         db.rollback()
         return False
+from src.core.branding import APP_DISPLAY_NAME

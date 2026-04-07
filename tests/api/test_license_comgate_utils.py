@@ -126,13 +126,13 @@ def test_detects_recurring_not_enabled_message():
 
 def test_resolve_plan_from_status_payload_prefers_refid():
     ref_id = license_status._build_comgate_ref_id(42, "basic")
-    payload = {"refId": ref_id, "label": "TooZ Hub 2 PREMIUM"}
+    payload = {"refId": ref_id, "label": "Správa vozidel PREMIUM"}
     assert license_status._resolve_plan_from_status_payload(payload) == "basic"
 
 
 def test_resolve_billing_period_from_status_payload_prefers_refid():
     ref_id = license_status._build_comgate_ref_id(77, "premium", "yearly")
-    payload = {"refId": ref_id, "label": "TooZ Hub 2 PREMIUM MĚSÍČNĚ"}
+    payload = {"refId": ref_id, "label": "Správa vozidel PREMIUM MĚSÍČNĚ"}
     assert license_status._resolve_billing_period_from_status_payload(payload) == "yearly"
 
 

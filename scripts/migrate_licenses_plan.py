@@ -17,19 +17,14 @@ from sqlalchemy import create_engine, text, inspect
 
 def get_db_path():
     """Získá cestu k databázi z ENV nebo default"""
-    db_url = os.getenv("DATABASE_URL") or os.getenv("VEHICLE_DB_URL")
+    from src.core.config import DATABASE_URL
+
+    db_url = DATABASE_URL
     
     if db_url and db_url.startswith("sqlite:///"):
         db_path = db_url.replace("sqlite:///", "")
-        if not os.path.isabs(db_path):
-            db_path = os.path.join(str(project_root), db_path)
         return db_path
-    
-    # Default: použít stejnou logiku jako database.py
-    from src.modules.vehicle_hub.database import engine
-    if hasattr(engine.url, 'database'):
-        return engine.url.database
-    
+
     return None
 
 def check_schema(db_path):

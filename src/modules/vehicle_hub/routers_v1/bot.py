@@ -31,6 +31,7 @@ import re
 
 from ..database import get_db
 from ..models import BotCommand, Customer, Vehicle, ServiceRecord, Reminder
+from ..ownership import get_customer_by_email, get_owned_vehicle_rows
 from .auth import get_current_user, get_current_user_optional
 
 router = APIRouter(prefix="/bot", tags=["bot"])
@@ -100,20 +101,21 @@ def extract_vehicle_info(message: str, db: Session, user_email: str) -> Optional
     Returns:
         Vehicle nebo None
     """
+    customer = get_customer_by_email(db, user_email)
+    if customer is None:
+        return None
+    vehicles = get_owned_vehicle_rows(db, customer, tenant_id=getattr(customer, "tenant_id", None))
+
     # Hledání SPZ v textu (český formát: 1A2 3456 nebo 1A23456)
     spz_pattern = r'\b[A-Z0-9]{1,3}\s?[0-9]{4}\b'
     spz_match = re.search(spz_pattern, message.upper())
     if spz_match:
         spz = spz_match.group().replace(" ", "")
-        vehicle = db.query(Vehicle).filter(
-            Vehicle.user_email == user_email,
-            Vehicle.plate == spz
-        ).first()
-        if vehicle:
-            return vehicle
+        for vehicle in vehicles:
+            if str(getattr(vehicle, "plate", "") or "").strip().upper() == spz:
+                return vehicle
     
     # Hledání podle názvu vozidla (nickname)
-    vehicles = db.query(Vehicle).filter(Vehicle.user_email == user_email).all()
     for vehicle in vehicles:
         if vehicle.nickname and vehicle.nickname.lower() in message.lower():
             return vehicle
@@ -232,7 +234,7 @@ def execute_action(
         elif intent_type in ["create_reminder", "create_service_reminder", "create_stk_reminder", "create_oil_reminder"]:
             # Vytvoření připomínky
             vehicle = extract_vehicle_info(message, db, user_email)
-            customer = db.query(Customer).filter(Customer.email == user_email).first()
+            customer = get_customer_by_email(db, user_email)
             
             if not customer:
                 return "Uživatel nebyl nalezen.", False
@@ -439,7 +441,6 @@ def get_bot_history(
             for cmd in commands
         ]
     }
-
 
 
 

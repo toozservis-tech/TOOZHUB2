@@ -5,6 +5,11 @@ Podporuje načítání z environment variables a .env souboru
 import os
 from pathlib import Path
 
+APP_ROOT = Path(__file__).resolve().parent.parent.parent
+WORKSPACE_ROOT = APP_ROOT.parent
+DEFAULT_RUNTIME_DB_PATH = WORKSPACE_ROOT / "data" / "vehicles.db"
+DEFAULT_RUNTIME_DB_URL = f"sqlite:///{DEFAULT_RUNTIME_DB_PATH}"
+
 # Pokusit se načíst .env soubor
 _env_loaded = False
 _env_source = None
@@ -85,8 +90,12 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development"))  # d
 # DATABASE
 # =============================================================================
 
-# Databázová URL - podpora DATABASE_URL i VEHICLE_DB_URL (zpětná kompatibilita)
-DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("VEHICLE_DB_URL", "sqlite:///./vehicles.db")
+# Databázová URL - source-of-truth pro backend runtime.
+# Priorita:
+# 1) explicitní DATABASE_URL
+# 2) legacy VEHICLE_DB_URL
+# 3) canonical runtime SQLite v ../data/vehicles.db
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("VEHICLE_DB_URL") or DEFAULT_RUNTIME_DB_URL
 VEHICLE_DB_URL = DATABASE_URL  # Alias pro zpětnou kompatibilitu
 
 # =============================================================================
@@ -210,7 +219,7 @@ EU_VEHICLE_API_TOKEN = os.getenv("EU_VEHICLE_API_TOKEN", "")
 # FILE PATHS
 # =============================================================================
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT = APP_ROOT
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 LOCAL_FALLBACK_DATA_DIR = PROJECT_ROOT / ".local_data"
 

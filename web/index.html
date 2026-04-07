@@ -4562,6 +4562,203 @@
             font-size: 16px;
         }
 
+        .vehicle-tachometer-history-shell {
+            margin-top: 20px;
+        }
+
+        .vehicle-tachometer-accordion,
+        .vehicle-tachometer-row {
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 14px;
+            background: rgba(15, 23, 42, 0.38);
+        }
+
+        .vehicle-tachometer-accordion > summary,
+        .vehicle-tachometer-row > summary {
+            list-style: none;
+            cursor: pointer;
+        }
+
+        .vehicle-tachometer-accordion > summary::-webkit-details-marker,
+        .vehicle-tachometer-row > summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .vehicle-tachometer-accordion > summary {
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+        }
+
+        .vehicle-tachometer-summary-title {
+            color: #e2e8f0;
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .vehicle-tachometer-summary-subtitle {
+            color: #94a3b8;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        .vehicle-tachometer-summary-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .vehicle-tachometer-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #e2e8f0;
+            background: rgba(99, 102, 241, 0.18);
+            border: 1px solid rgba(129, 140, 248, 0.25);
+        }
+
+        .vehicle-tachometer-list {
+            padding: 0 16px 16px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .vehicle-tachometer-row > summary {
+            padding: 14px 16px;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .vehicle-tachometer-row-title {
+            color: #e2e8f0;
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        .vehicle-tachometer-row-subtitle,
+        .vehicle-tachometer-row-meta {
+            color: #94a3b8;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        .vehicle-tachometer-row-action {
+            color: #a5b4fc;
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .vehicle-tachometer-detail {
+            padding: 0 16px 16px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .vehicle-tachometer-detail-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .vehicle-tachometer-detail-card {
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: rgba(30, 41, 59, 0.88);
+            border: 1px solid rgba(148, 163, 184, 0.14);
+        }
+
+        .vehicle-tachometer-detail-card strong {
+            display: block;
+            font-size: 11px;
+            color: #94a3b8;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .vehicle-tachometer-detail-card span {
+            color: #e2e8f0;
+            font-size: 13px;
+            line-height: 1.35;
+        }
+
+        .vehicle-tachometer-summary-box {
+            padding: 12px;
+            border-radius: 10px;
+            background: rgba(30, 41, 59, 0.88);
+            color: #e2e8f0;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .vehicle-tachometer-summary-box strong {
+            display: block;
+            color: #f8fafc;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .vehicle-tachometer-documents {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .vehicle-tachometer-document-link,
+        .vehicle-tachometer-document-unavailable {
+            display: block;
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 13px;
+            text-decoration: none;
+            border: 1px solid rgba(148, 163, 184, 0.14);
+        }
+
+        .vehicle-tachometer-document-link {
+            color: #e2e8f0;
+            background: rgba(79, 70, 229, 0.18);
+        }
+
+        .vehicle-tachometer-document-unavailable {
+            color: #cbd5e1;
+            background: rgba(30, 41, 59, 0.7);
+        }
+
+        .vehicle-tachometer-document-unavailable small {
+            display: block;
+            color: #fbbf24;
+            margin-top: 4px;
+        }
+
+        .vehicle-tachometer-empty,
+        .vehicle-tachometer-error {
+            margin-top: 14px;
+            padding: 14px 16px;
+            border-radius: 14px;
+            color: #cbd5e1;
+            background: rgba(15, 23, 42, 0.38);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            font-size: 13px;
+        }
+
+        .vehicle-tachometer-error {
+            border-color: rgba(248, 113, 113, 0.35);
+            color: #fecaca;
+        }
+
         /* Rozbalovací panel pro výběr kategorie */
         .category-selector {
             position: relative;
@@ -6058,6 +6255,20 @@
             }
 
             .vehicle-modal-section-service .service-records-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .vehicle-tachometer-accordion > summary,
+            .vehicle-tachometer-row > summary {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .vehicle-tachometer-summary-badges {
+                justify-content: flex-start;
+            }
+
+            .vehicle-tachometer-detail-grid {
                 grid-template-columns: 1fr;
             }
         }
@@ -9197,7 +9408,7 @@
                         <div class="form-group full-width">
                             <label for="vehiclePhotoInput">Fotka vozidla (volitelné):</label>
                             <input type="file" id="vehiclePhotoInput" accept="image/*" onchange="previewAddVehiclePhoto(this)">
-                            <p class="form-hint">Můžete nahrát fotku z galerie (JPG/PNG/WEBP, max 10 MB).</p>
+                            <p class="form-hint">Můžete nahrát fotku z galerie. Server ji sjednotí na 1280x720 JPEG, vstupní limit je 40 MB.</p>
                             <div id="vehiclePhotoPreviewWrap" class="vehicle-photo-preview-wrap hidden">
                                 <img id="vehiclePhotoPreview" alt="Náhled fotky vozidla">
                             </div>
@@ -9403,7 +9614,25 @@
             viewMode: 'month',
             calendarAnchorDateKey: '',
             calendarMonthKey: '',
-            selectedDateKey: ''
+            selectedDateKey: '',
+            loadedAt: 0,
+            loadingPromise: null,
+            ownerKey: ''
+        };
+        var profileUiState = {
+            loadedAt: 0,
+            loadingPromise: null,
+            ownerKey: ''
+        };
+        var supportUiState = {
+            loadedAt: 0,
+            loadingPromise: null,
+            ownerKey: ''
+        };
+        var systemCapabilitiesState = {
+            loadedAt: 0,
+            loadingPromise: null,
+            ownerKey: ''
         };
         var servicesDirectoryState = {
             loadedAt: 0,
@@ -13122,6 +13351,7 @@
         
         // Zobrazení dashboardu (skrýt login)
         function showDashboard() {
+            const dashboardStartTs = performance.now();
             // Kontrola auth stavu
             if (!isAuthenticated()) {
                 console.warn('[DASHBOARD] Uživatel není přihlášen - zobrazuji login');
@@ -13170,67 +13400,58 @@
                 logoutBtn.classList.remove('hidden');
             }
             updateRoleBasedDashboardTabs();
-            loadSystemCapabilities();
             
             // Spustit sledování aktivity při přihlášení
             resetInactivityTimer();
             startClientGeoRefresh();
             startReminderNotificationHeartbeat();
             startSystemNotificationsPolling();
-            
-            // LICENSE_UI_START: Načíst licenční informace (2. místo - po vykreslení dashboard HTML)
-            setTimeout(() => {
+
+            if (isServiceWorkspaceRole()) {
+                if (typeof loadServiceWorkspace === 'function') {
+                    loadServiceWorkspace();
+                }
+            } else {
+                loadVehicles(false);
+            }
+            console.debug(`[PERF] dashboard primary view scheduled in ${Math.round(performance.now() - dashboardStartTs)}ms`);
+
+            deferNonCriticalUiTask('system-capabilities', () => loadSystemCapabilities(false));
+            deferNonCriticalUiTask('license-ui-init', async () => {
                 if (typeof initLicenseDropdownHandlers === 'function') {
                     initLicenseDropdownHandlers();
                 }
                 if (typeof startLicenseRefresh === 'function') {
                     startLicenseRefresh();
                 }
-                if (typeof loadLicenseStatus === 'function') {
-                    if (!licenseLastFetch || (Date.now() - licenseLastFetch > 5000)) {
-                        loadLicenseStatus();
-                    }
+                if (typeof loadLicenseStatus === 'function' && (!licenseLastFetch || (Date.now() - licenseLastFetch > 5000))) {
+                    await loadLicenseStatus();
                 }
                 if (typeof loadComgateLicenseConfig === 'function') {
-                    loadComgateLicenseConfig().catch((error) => {
-                        console.warn('[LICENSE] Comgate UI config skipped:', error?.message || error);
-                    });
+                    await loadComgateLicenseConfig();
                 }
+            }, 180);
+            deferNonCriticalUiTask('payment-return-info', async () => {
                 if (typeof handlePendingPaymentReturnInfo === 'function') {
-                    setTimeout(() => {
-                        handlePendingPaymentReturnInfo().catch((error) => {
-                            console.warn('[LICENSE] Payment return handling failed:', error?.message || error);
-                        });
-                    }, 700);
+                    await handlePendingPaymentReturnInfo();
                 }
-            }, 200);
+            }, 700);
+            deferNonCriticalUiTask('service-add-vehicle-init', () => {
+                if (typeof ensureServiceAddVehicleSection === 'function') {
+                    ensureServiceAddVehicleSection();
+                }
+            }, 220);
+            deferNonCriticalUiTask('managed-service-contacts', () => loadManagedServiceContacts(false), 260);
+            deferNonCriticalUiTask('pending-service-invite', () => acceptPendingServiceInviteToken(), 300);
+            deferNonCriticalUiTask('pending-reservation-claim', () => acceptPendingReservationClaimToken(), 340);
+            deferNonCriticalUiTask('push-subscription-sync', async () => {
+                await ensurePushSubscribed({ interactive: false });
+            }, 800);
 
             if (isServiceWorkspaceRole()) {
-                if (typeof loadServiceWorkspace === 'function') {
-                    loadServiceWorkspace();
-                }
-                if (typeof loadReservations === 'function') {
-                    loadReservations();
-                }
-                if (typeof loadServiceWorkspaceReminders === 'function') {
-                    loadServiceWorkspaceReminders();
-                }
-            } else {
-                loadVehicles();
+                deferNonCriticalUiTask('service-reservations-prefetch', () => loadReservations(false), 200);
+                deferNonCriticalUiTask('service-reminders-prefetch', () => loadServiceWorkspaceReminders(false), 240);
             }
-            if (typeof ensureServiceAddVehicleSection === 'function') {
-                ensureServiceAddVehicleSection();
-            }
-            loadManagedServiceContacts();
-            acceptPendingServiceInviteToken();
-            acceptPendingReservationClaimToken();
-
-            // Neinteraktivní sync push subskripce (bez vynuceného dialogu).
-            setTimeout(() => {
-                ensurePushSubscribed({ interactive: false }).catch((error) => {
-                    console.warn('[PUSH] Silent subscribe skipped:', error?.message || error);
-                });
-            }, 800);
         }
         
         // LICENSE_UI_START: Načtení licenčního statusu a renderování do TopBar
@@ -14769,11 +14990,64 @@
         const REMINDER_VIEW_STORAGE_KEY = 'toozhub_reminder_view_mode';
         const REMINDER_FILTER_STORAGE_KEY = 'toozhub_reminder_filter_mode';
         const REMINDER_CALENDAR_MONTH_STORAGE_KEY = 'toozhub_reminder_calendar_month';
+        const UI_SECTION_CACHE_TTL_MS = 60 * 1000;
         let reminderNotificationHeartbeatTimer = null;
+        const vehiclesUiState = {
+            loadedAt: 0,
+            loadingPromise: null,
+            ownerKey: ''
+        };
         const remindersUiState = {
             items: [],
             filteredItems: [],
+            loadedAt: 0,
+            loadingPromise: null,
+            ownerKey: ''
         };
+
+        function getUiCacheOwnerKey() {
+            if (!isAuthenticated()) return 'anonymous';
+            return `${currentUser?.id || 0}:${currentUser?.email || ''}:${currentUser?.role || ''}`;
+        }
+
+        function isUiSectionCacheFresh(state, ttlMs = UI_SECTION_CACHE_TTL_MS) {
+            const loadedAt = Number(state?.loadedAt || 0);
+            return loadedAt > 0
+                && state?.ownerKey === getUiCacheOwnerKey()
+                && (Date.now() - loadedAt) < ttlMs;
+        }
+
+        function markUiSectionLoaded(state) {
+            state.loadedAt = Date.now();
+            state.ownerKey = getUiCacheOwnerKey();
+        }
+
+        function deferNonCriticalUiTask(label, task, delayMs = 0) {
+            const run = () => {
+                const start = performance.now();
+                Promise.resolve()
+                    .then(task)
+                    .catch((error) => {
+                        console.warn(`[PERF][${label}]`, error?.message || error);
+                    })
+                    .finally(() => {
+                        const duration = Math.round(performance.now() - start);
+                        console.debug(`[PERF] ${label} completed in ${duration}ms`);
+                    });
+            };
+
+            if (delayMs > 0) {
+                window.setTimeout(run, delayMs);
+                return;
+            }
+
+            if (typeof window.requestIdleCallback === 'function') {
+                window.requestIdleCallback(run, { timeout: 1200 });
+                return;
+            }
+
+            window.setTimeout(run, 32);
+        }
 
         function getDefaultVehicleViewMode() {
             try {
@@ -14860,7 +15134,7 @@
             // Re-render je nutný, protože každý režim má odlišné HTML karty.
             // Pouhé přepnutí CSS třídy nestačí (hlavně mezi compact a list/grid).
             applyVehicleViewModeUI();
-            loadVehicles();
+            loadVehicles(false);
         }
 
         function getDefaultReminderViewMode() {
@@ -14897,7 +15171,7 @@
             }
             if (normalized === getReminderFilterMode()) return;
             localStorage.setItem(REMINDER_FILTER_STORAGE_KEY, normalized);
-            loadReminders();
+            loadReminders(false);
         }
 
         function getReminderCalendarMonthDate() {
@@ -14926,7 +15200,7 @@
             base.setMonth(base.getMonth() + Number(deltaMonths || 0));
             base.setDate(1);
             persistReminderCalendarMonth(base);
-            loadReminders();
+            loadReminders(false);
         }
 
         function parseReminderDateValue(rawValue, endOfDay = false) {
@@ -15114,7 +15388,7 @@
             }
 
             localStorage.setItem(REMINDER_VIEW_STORAGE_KEY, mode);
-            loadReminders();
+            loadReminders(false);
         }
 
         async function openVehicleFromShortcut(vehicleId, source = '') {
@@ -15137,7 +15411,8 @@
         }
         
         // Načtení vozidel
-        async function loadVehicles() {
+        async function loadVehicles(force = true) {
+            const renderStartTs = performance.now();
             const container = document.getElementById('vehiclesContainer');
             if (!container) {
                 console.error('[VEHICLES] Container not found - dashboard možná není zobrazen');
@@ -15147,6 +15422,15 @@
             // Kontrola auth stavu
             if (!isAuthenticated()) {
                 console.warn('[VEHICLES] Uživatel není přihlášen');
+                return;
+            }
+
+            const cacheOwnerKey = getUiCacheOwnerKey();
+            if (!force
+                && isUiSectionCacheFresh(vehiclesUiState)
+                && container.dataset.renderedFor === cacheOwnerKey
+                && container.innerHTML.trim()) {
+                applyVehicleViewModeUI();
                 return;
             }
             
@@ -15398,8 +15682,12 @@
                 });
                 html += '</div>';
                 container.innerHTML = html;
+                container.dataset.renderedFor = cacheOwnerKey;
+                markUiSectionLoaded(vehiclesUiState);
                 applyVehicleViewModeUI();
+                console.debug(`[PERF] vehicles rendered in ${Math.round(performance.now() - renderStartTs)}ms`);
             } catch (error) {
+                vehiclesUiState.loadedAt = 0;
                 console.error('[VEHICLES] Error loading vehicles:', error);
                 let errorMessage = error.message || 'Neznámá chyba';
                 
@@ -16675,6 +16963,7 @@
                             <div id="ai-service-records-modal-${vehicleId}" class="ai-service-records-list" style="margin-bottom: 20px;"></div>
                             <!-- Běžné servisní záznamy - dlaždice -->
                             <div id="service-records-modal-${vehicleId}" class="service-records-grid"></div>
+                            <div id="tachometer-history-modal-${vehicleId}" class="vehicle-tachometer-history-shell"></div>
                         </div>
                     </div>
                 `;
@@ -16695,6 +16984,7 @@
 
                 // Načíst servisní záznamy
                 await loadServiceRecordsModal(vehicleId);
+                await loadVehicleTachometerHistorySection(vehicleId);
                 
             } catch (error) {
                 console.error('Error loading vehicle detail:', error);
@@ -18397,6 +18687,143 @@
             }
         }
 
+        async function loadVehicleTachometerHistorySection(vehicleId) {
+            const container = document.getElementById(`tachometer-history-modal-${vehicleId}`);
+            if (!container) return;
+
+            container.innerHTML = '<div class="loading">Načítám historii STK / tachometru...</div>';
+
+            try {
+                const history = await apiCall(`/api/v1/vehicles/${vehicleId}/tachometer/history`, 'GET');
+                const items = Array.isArray(history) ? history : [];
+
+                if (items.length === 0) {
+                    container.innerHTML = `
+                        <div class="vehicle-tachometer-empty">
+                            Historie STK / tachometru zatím není k dispozici.
+                        </div>
+                    `;
+                    return;
+                }
+
+                const latest = items[0] || {};
+                const latestDate = latest.check_date ? formatDateCZ(latest.check_date) : 'Bez data';
+                const latestMileage = Number.isFinite(Number(latest.mileage_km))
+                    ? `${Number(latest.mileage_km).toLocaleString('cs-CZ')} km`
+                    : 'Bez km';
+
+                container.innerHTML = `
+                    <details class="vehicle-tachometer-accordion">
+                        <summary>
+                            <div>
+                                <div class="vehicle-tachometer-summary-title">Historie STK / tachometru</div>
+                                <div class="vehicle-tachometer-summary-subtitle">Sekundární importovaná evidence z kontrolatachometru.cz</div>
+                            </div>
+                            <div class="vehicle-tachometer-summary-badges">
+                                <span class="vehicle-tachometer-badge">${items.length} záznamů</span>
+                                <span class="vehicle-tachometer-badge">${escapeHtml(latestMileage)}</span>
+                                <span class="vehicle-tachometer-badge">${escapeHtml(latestDate)}</span>
+                            </div>
+                        </summary>
+                        <div class="vehicle-tachometer-list">
+                            ${items.map((item, index) => renderVehicleTachometerHistoryRow(item, index)).join('')}
+                        </div>
+                    </details>
+                `;
+            } catch (error) {
+                console.error('Error loading tachometer history:', error);
+                container.innerHTML = `
+                    <div class="vehicle-tachometer-error">
+                        Historii STK se nepodařilo načíst.
+                    </div>
+                `;
+            }
+        }
+
+        function renderVehicleTachometerHistoryRow(item, index) {
+            const entry = item && typeof item === 'object' ? item : {};
+            const documents = Array.isArray(entry.documents) ? entry.documents : [];
+            const availableDocuments = documents.filter((doc) => doc && doc.available);
+            const dateLabel = entry.check_date ? formatDateCZ(entry.check_date) : 'Bez data';
+            const mileageLabel = Number.isFinite(Number(entry.mileage_km))
+                ? `${Number(entry.mileage_km).toLocaleString('cs-CZ')} km`
+                : 'Bez km';
+            const summary = String(entry.summary || '').trim();
+            const protocol = String(entry.protocol_number || '').trim();
+            const inspectionType = String(entry.inspection_type || '').trim();
+            const source = String(entry.source || '').trim() || 'kontrolatachometru.cz';
+            const status = String(entry.status || '').trim() || 'imported';
+            const documentsCount = Number.isFinite(Number(entry.documents_count)) ? Number(entry.documents_count) : availableDocuments.length;
+
+            const documentsHtml = (documents.length > 0 ? documents : [null]).map((document, docIndex) => {
+                const doc = document && typeof document === 'object' ? document : null;
+                const title = doc && doc.title ? String(doc.title) : (protocol ? `Protokol ${protocol}` : `Dokument ${docIndex + 1}`);
+                const reason = doc && doc.reason ? String(doc.reason) : 'Dokument není dostupný v uložených datech.';
+                const openMode = doc && doc.open_mode ? String(doc.open_mode) : 'unavailable';
+                const externalUrl = doc && doc.external_url ? String(doc.external_url) : '';
+                const internalProxyUrl = doc && doc.internal_proxy_url ? String(doc.internal_proxy_url) : '';
+                const href = openMode === 'external_url' ? externalUrl : internalProxyUrl;
+
+                if (doc && doc.available && href) {
+                    return `
+                        <a class="vehicle-tachometer-document-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">
+                            Otevřít protokol: ${escapeHtml(title)}
+                        </a>
+                    `;
+                }
+
+                return `
+                    <div class="vehicle-tachometer-document-unavailable">
+                        ${escapeHtml(title)}
+                        <small>${escapeHtml(reason || 'Dokument není dostupný')}</small>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <details class="vehicle-tachometer-row" ${index === 0 ? 'open' : ''}>
+                    <summary>
+                        <div>
+                            <div class="vehicle-tachometer-row-title">${escapeHtml(mileageLabel)}</div>
+                            <div class="vehicle-tachometer-row-subtitle">${escapeHtml(dateLabel)}</div>
+                            <div class="vehicle-tachometer-row-meta">${escapeHtml(summary || inspectionType || source)}</div>
+                        </div>
+                        <div class="vehicle-tachometer-row-action">
+                            Zobrazit detail kontroly
+                            <div class="vehicle-tachometer-row-meta">${documentsCount > 0 ? `${documentsCount} dokumentů` : 'Bez dokumentu'}</div>
+                        </div>
+                    </summary>
+                    <div class="vehicle-tachometer-detail">
+                        <div class="vehicle-tachometer-detail-grid">
+                            ${renderVehicleTachometerDetailCard('Datum kontroly', dateLabel)}
+                            ${renderVehicleTachometerDetailCard('KM', mileageLabel)}
+                            ${renderVehicleTachometerDetailCard('Typ kontroly', inspectionType || 'Neuvedeno')}
+                            ${renderVehicleTachometerDetailCard('Protokol', protocol || 'Neuveden')}
+                            ${renderVehicleTachometerDetailCard('Zdroj', source)}
+                            ${renderVehicleTachometerDetailCard('Stav', status)}
+                        </div>
+                        <div class="vehicle-tachometer-summary-box">
+                            <strong>Stručný výsledek</strong>
+                            ${escapeHtml(summary || 'K detailu kontroly nemáme uložený rozšířený výsledek. K dispozici je pouze importovaná evidence z portálu.')}
+                        </div>
+                        <div class="vehicle-tachometer-documents">
+                            <div class="vehicle-tachometer-row-title" style="font-size:13px;">Protokoly a dokumenty</div>
+                            ${documentsHtml}
+                        </div>
+                    </div>
+                </details>
+            `;
+        }
+
+        function renderVehicleTachometerDetailCard(label, value) {
+            return `
+                <div class="vehicle-tachometer-detail-card">
+                    <strong>${escapeHtml(label)}</strong>
+                    <span>${escapeHtml(value || 'Neuvedeno')}</span>
+                </div>
+            `;
+        }
+
         // Zobrazení/skrytí formuláře pro přidání servisního záznamu
         function toggleAddServiceForm(vehicleId) {
             const formContainer = document.getElementById(`add-service-form-container-${vehicleId}`);
@@ -19649,23 +20076,23 @@
 
             if (tab === 'vehicles') {
                 applyVehicleViewModeUI();
-                loadVehicles();
+                loadVehicles(false);
             } else if (tab === 'addVehicle') {
                 if (typeof ensureServiceAddVehicleSection === 'function') {
                     ensureServiceAddVehicleSection(true);
                 }
             } else if (tab === 'reminders') {
-                loadReminders();
+                loadReminders(false);
             } else if (tab === 'reservations') {
-                loadReservations();
+                loadReservations(false);
             } else if (tab === 'servicesDirectory') {
                 loadServicesDirectory();
             } else if (tab === 'serviceWorkspace') {
                 loadServiceWorkspace();
             } else if (tab === 'profile') {
-                loadProfile();
+                loadProfile(false);
             } else if (tab === 'support') {
-                loadSupportPanel();
+                loadSupportPanel(false);
             }
         }
 
@@ -19928,9 +20355,6 @@
                 showApiUrlConfig();
             }
             
-            // Kontrola stavu serveru při načtení
-            checkServerStatus();
-            
             // Pravidelná kontrola stavu serveru každých 30 sekund
             serverStatusCheckInterval = setInterval(checkServerStatus, 30000);
             
@@ -19986,7 +20410,6 @@
                 }
             }
             
-            // Kontrola health check
             checkServerStatus().then(() => {
                 console.log('[APP] Health check dokončen');
             }).catch(err => {
@@ -20031,10 +20454,16 @@
                 showAlert('Přechod na web byl zrušen. Nejprve uložte nebo vyčistěte rozpracované vozidlo.', 'warning');
             });
 
+            let resizeDebounceTimer = null;
             window.addEventListener('resize', () => {
-                if (!window.matchMedia || !window.matchMedia('(max-width: 768px)').matches) {
-                    closeMobileNavbarMenu();
+                if (resizeDebounceTimer) {
+                    clearTimeout(resizeDebounceTimer);
                 }
+                resizeDebounceTimer = setTimeout(() => {
+                    if (!window.matchMedia || !window.matchMedia('(max-width: 768px)').matches) {
+                        closeMobileNavbarMenu();
+                    }
+                }, 120);
             });
 
             if ('serviceWorker' in navigator) {
@@ -21107,7 +21536,8 @@
         }
 
         // Načítání připomínek (v1.0)
-        async function loadReminders() {
+        async function loadReminders(force = true) {
+            const renderStartTs = performance.now();
             unmountFloatingModal();
             if (isServiceWorkspaceRole()) {
                 return loadServiceWorkspaceReminders();
@@ -21126,6 +21556,15 @@
             // Kontrola auth stavu
             if (!isAuthenticated()) {
                 console.warn('[REMINDERS] Uživatel není přihlášen');
+                return;
+            }
+
+            const cacheOwnerKey = getUiCacheOwnerKey();
+            if (!force
+                && isUiSectionCacheFresh(remindersUiState)
+                && container.dataset.renderedFor === cacheOwnerKey
+                && container.innerHTML.trim()) {
+                applyReminderViewModeUI();
                 return;
             }
 
@@ -21302,10 +21741,13 @@
                     `;
                     html += '</div></div></div>';
                     container.innerHTML = html;
+                    container.dataset.renderedFor = cacheOwnerKey;
+                    markUiSectionLoaded(remindersUiState);
                     applyReminderViewModeUI();
-                    setTimeout(() => {
+                    console.debug(`[PERF] reminders rendered in ${Math.round(performance.now() - renderStartTs)}ms`);
+                    requestAnimationFrame(() => {
                         setupReminderSettingsEventListeners();
-                    }, 100);
+                    });
                     return;
                 }
                 
@@ -21351,14 +21793,18 @@
 
                 html += '</div></div></div></div>';
                 container.innerHTML = html;
+                container.dataset.renderedFor = cacheOwnerKey;
+                markUiSectionLoaded(remindersUiState);
                 applyReminderViewModeUI();
+                console.debug(`[PERF] reminders rendered in ${Math.round(performance.now() - renderStartTs)}ms`);
                 
                 // Nastavit event listenery pro tlačítka nastavení připomínek po vložení HTML
-                setTimeout(() => {
+                requestAnimationFrame(() => {
                     setupReminderSettingsEventListeners();
-                }, 100);
+                });
             
         } catch (error) {
+                remindersUiState.loadedAt = 0;
                 console.error('[REMINDERS] Error loading reminders:', error);
                 const errorMessage = error.message || 'Neznámá chyba';
                 showErrorWithRetry('remindersContainer', `Nepodařilo se načíst připomínky: ${errorMessage}`, loadReminders);
@@ -23468,7 +23914,8 @@
         }
 
         // Načítání rezervací (v1.0)
-        async function loadReservations() {
+        async function loadReservations(force = true) {
+            const renderStartTs = performance.now();
             unmountFloatingModal();
             const container = document.getElementById('reservationsContainer');
             if (!container) return;
@@ -23476,6 +23923,15 @@
             // Kontrola auth stavu
             if (!isAuthenticated()) {
                 console.warn('[RESERVATIONS] Uživatel není přihlášen');
+                return;
+            }
+
+            const cacheOwnerKey = getUiCacheOwnerKey();
+            if (!force
+                && isUiSectionCacheFresh(reservationsUiState)
+                && container.dataset.renderedFor === cacheOwnerKey
+                && container.innerHTML.trim()) {
+                renderReservationsFromState();
                 return;
             }
             
@@ -23508,8 +23964,12 @@
                     reservationsUiState.calendarMonthKey = '';
                     reservationsUiState.selectedDateKey = '';
                 }
+                container.dataset.renderedFor = cacheOwnerKey;
+                markUiSectionLoaded(reservationsUiState);
                 renderReservationsFromState();
+                console.debug(`[PERF] reservations rendered in ${Math.round(performance.now() - renderStartTs)}ms`);
             } catch (error) {
+                reservationsUiState.loadedAt = 0;
                 console.error('[RESERVATIONS] Error loading reservations:', error);
                 const errorMessage = error.message || 'Neznámá chyba';
                 const canCreate = canCreateReservationFromUi();
@@ -25739,7 +26199,7 @@
         // ============= PROFIL =============
         
         // Načtení profilu
-        async function loadProfile() {
+        async function loadProfile(force = true) {
             const container = document.getElementById('profileContainer');
             if (!container) {
                 console.error('[PROFILE] Kontejner profileContainer nenalezen!');
@@ -25749,6 +26209,14 @@
             // Kontrola auth stavu
             if (!isAuthenticated()) {
                 console.warn('[PROFILE] Uživatel není přihlášen');
+                return;
+            }
+
+            const cacheOwnerKey = getUiCacheOwnerKey();
+            if (!force
+                && isUiSectionCacheFresh(profileUiState)
+                && container.dataset.renderedFor === cacheOwnerKey
+                && container.innerHTML.trim()) {
                 return;
             }
             
@@ -26050,10 +26518,13 @@
                     </div>
                 `;
                 container.classList.remove('loading');
+                container.dataset.renderedFor = cacheOwnerKey;
+                markUiSectionLoaded(profileUiState);
                 setSettingsPanel('account');
                 initProfileAresAutofill();
                 refreshProfileSecuritySettings();
             } catch (error) {
+                profileUiState.loadedAt = 0;
                 console.error('[PROFILE] Chyba při načítání profilu:', error);
                 const errorMessage = error.message || 'Neznámá chyba';
                 container.classList.remove('loading');
@@ -26619,12 +27090,20 @@
             }
         }
 
-        async function loadSupportPanel() {
+        async function loadSupportPanel(force = true) {
             const container = document.getElementById('supportContainer');
             if (!container) return;
 
             if (!isAuthenticated()) {
                 container.innerHTML = '<div class="alert alert-error">Pro kontakt podpory se nejprve přihlaste.</div>';
+                return;
+            }
+
+            const cacheOwnerKey = getUiCacheOwnerKey();
+            if (!force
+                && isUiSectionCacheFresh(supportUiState)
+                && container.dataset.renderedFor === cacheOwnerKey
+                && container.innerHTML.trim()) {
                 return;
             }
 
@@ -26696,6 +27175,8 @@
                     </div>
                 </div>
             `;
+            container.dataset.renderedFor = cacheOwnerKey;
+            markUiSectionLoaded(supportUiState);
         }
 
         async function handleSendSupportRequest(event) {
@@ -27728,14 +28209,20 @@
             });
         }
 
-        async function loadSystemCapabilities() {
+        async function loadSystemCapabilities(force = true) {
             if (!isAuthenticated()) return;
+            if (!force && isUiSectionCacheFresh(systemCapabilitiesState)) {
+                applySystemCapabilitiesUi();
+                return;
+            }
             try {
                 const response = await apiRequest('GET', '/api/v1/system/capabilities');
                 moduleCapabilities = (response && response.modules) || {};
+                markUiSectionLoaded(systemCapabilitiesState);
             } catch (error) {
                 console.warn('[CAPABILITIES] Unable to load capabilities:', error?.message || error);
                 moduleCapabilities = {};
+                systemCapabilitiesState.loadedAt = 0;
             }
             applySystemCapabilitiesUi();
         }

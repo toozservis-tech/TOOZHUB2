@@ -1,6 +1,6 @@
 # 🤖 AI Feature Suggestion System
 
-Automatický systém pro navrhování a správu nových funkcí v aplikaci TooZ Hub 2.
+Automatický systém pro navrhování a správu nových funkcí v aplikaci Správa vozidel.
 
 ## 📋 Přehled
 
@@ -215,4 +215,3 @@ Navrhuje zcela nové funkce na základě vzorců použití
 ## 🤝 Přispívání
 
 Pokud máte nápad na vylepšení systému, vytvořte návrh pomocí samotného systému! 😊
-

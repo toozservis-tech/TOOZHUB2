@@ -23,7 +23,11 @@ final class AuthManager: ObservableObject {
     }
 
     func setPrivilegedLoginEnabled(_ enabled: Bool) {
+#if DEBUG
         privilegedLoginEnabled = enabled
+#else
+        privilegedLoginEnabled = false
+#endif
     }
 
     func bootstrap() async {
@@ -136,6 +140,10 @@ final class AuthManager: ObservableObject {
     }
 
     private func shouldBlockPrivileged(_ role: String) -> Bool {
+#if DEBUG
         (role == "developer_admin" || role == "admin") && !privilegedLoginEnabled
+#else
+        role == "developer_admin" || role == "admin"
+#endif
     }
 }
