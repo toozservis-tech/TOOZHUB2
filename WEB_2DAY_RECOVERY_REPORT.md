@@ -98,5 +98,29 @@ Předchozí významná změna `web/index.html` v historii: `776fd79` (2026-03-27
 
 ## 8. Shrnutí pro release engineera
 
-**Správná verze je v Gitu na `main` (HEAD `e4aa067`).**  
+**Správná verze je v Gitu na `main` (aktuální tip včetně `2c74412` a novějších).**  
 Problém na produkci je téměř jistě **nesprávný nasazený artefakt nebo stará kopie**, nikoli chybějící historie v tomto repozitáři. Obnova = **znovu nasadit kompletní `web/` z `main`** a ověřit výše uvedený checklist.
+
+---
+
+## 9. Po odeslání na GitHub – co vždy dodělat (aby se stav nerozjel)
+
+Tento blok shrnuje kroky z vývoje 2026-04-07 (technický rename fáze 2, QA, oprava capabilities, forenzní report).
+
+**Lokální vývojář (po `git reset` / starém klonu):**
+
+```bash
+git fetch origin
+git switch main
+git reset --hard origin/main
+```
+
+**Server / Webnode / ruční kopírování po `git pull`:**
+
+1. Aktualizovat **celý** adresář `web/` z repa (ne jen jeden soubor z mailu / zálohy).
+2. Zkontrolovat, že na serveru existuje **`web/storage_migration.js`** (fáze 2 rename ho načítá z `index.html`).
+3. Nepoužívat jako produkční `index.html` soubory `index.html.backup_now` ani `index_minimal.html`.
+4. Ověřit velikost: plný `index.html` má řádově **28k+ řádků** (viz sekce 6).
+5. Po deployi: konzole bez `ReferenceError` na `getCapabilityModuleForTab` / `loadSystemCapabilities`.
+
+**Záložní větev na GitHubu:** `backup-pred-rollback-20260407-1236` ukazuje na stav `main` před případným lokálním experimentem s rollbackem (shodný s obsahem `main` v době vytvoření tagu/větve).
