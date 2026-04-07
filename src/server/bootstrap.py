@@ -82,7 +82,7 @@ _MAINTENANCE_BYPASS_RUNTIME_PREFIXES = (
 
 
 if ENVIRONMENT == "production":
-    default_secret = "toozhub2-dev-secret-key-change-in-production"
+    default_secret = "sprava-vozidel-dev-secret-change-in-production"
     if JWT_SECRET_KEY == default_secret:
         print("[SERVER] ERROR: KRITICKA CHYBA BEZPECNOSTI!")
         print("[SERVER] V produkci musí být nastaven JWT_SECRET_KEY v .env souboru!")

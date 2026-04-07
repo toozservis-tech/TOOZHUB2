@@ -19,7 +19,7 @@ from src.core.config import (
 )
 
 # Výchozí hodnoty pro detekci, zda je klíč nastaven
-DEFAULT_JWT_SECRET = "toozhub2-dev-secret-key-change-in-production"
+DEFAULT_JWT_SECRET = "sprava-vozidel-dev-secret-change-in-production"
 DEFAULT_SMTP_HOST = "smtp.mail.webnode.com"
 
 

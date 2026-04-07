@@ -31,6 +31,11 @@ PROJECT_ROOT = Path(__file__).parent.parent
 HTML_FILE = PROJECT_ROOT / "web" / "index.html"
 UPDATE_SCRIPT = PROJECT_ROOT / "scripts" / "webnode_auto_upload.py"
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+from webnode_paths import WEBNODE_LOCK_CANON, WEBNODE_LOCK_LEGACY
+
 class HTMLChangeHandler(FileSystemEventHandler):
     """Handler pro změny v HTML souboru"""
     
@@ -76,25 +81,23 @@ class HTMLChangeHandler(FileSystemEventHandler):
         print("🚀 Spouštím automatickou aktualizaci a publikaci Webnode...")
         print("="*60)
         
-        # Zkontrolovat, zda už proces běží
-        lock_file = Path("/tmp/toozhub_webnode_upload.lock")
-        if lock_file.exists():
+        # Zkontrolovat, zda už proces běží (legacy i kanonický lock)
+        for lock_file in (WEBNODE_LOCK_LEGACY, WEBNODE_LOCK_CANON):
+            if not lock_file.exists():
+                continue
             try:
-                # Zkusit přečíst PID z lock file
                 with open(lock_file, 'r', encoding='utf-8') as f:
                     pid = int(f.read().strip())
-                # Zkontrolovat, zda proces stále běží
                 try:
-                    os.kill(pid, 0)  # Nezabije proces, jen zkontroluje existenci
+                    os.kill(pid, 0)
                     print("⚠️  Aktualizace už běží (PID: {}) - přeskočeno".format(pid))
                     self.update_timer = None
                     return
                 except (OSError, ProcessLookupError):
-                    # Proces už neběží, smazat starý lock file
-                    print("🧹 Odstraňuji starý lock file...")
+                    print(f"🧹 Odstraňuji starý lock file ({lock_file.name})...")
                     lock_file.unlink()
             except (OSError, ValueError) as e:
-                print(f"⚠️  Chyba při kontrole lock file: {e}")
+                print(f"⚠️  Chyba při kontrole lock file {lock_file}: {e}")
         
         print(f"📄 Spouštím: {sys.executable} {UPDATE_SCRIPT.name}")
         

@@ -46,6 +46,7 @@ self.addEventListener('notificationclick', (event) => {
       for (const client of clients) {
         if (client.url && client.url.includes('/web/')) {
           client.focus();
+          // Kanonický typ; stránka akceptuje i legacy TOOZHUB_NOTIFICATION_CLICK (starý SW) – viz index.html
           client.postMessage({ type: 'SPRAVA_VOZIDEL_NOTIFICATION_CLICK', url: targetUrl });
           return client.navigate(targetUrl);
         }

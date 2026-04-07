@@ -9561,6 +9561,7 @@
     </div>
     -->
 
+    <script src="storage_migration.js"></script>
     <script>
         // Globální proměnné
         var API_URL = null; // Bude inicializována po načtení DOM pomocí getApiBaseUrl()
@@ -10302,8 +10303,10 @@
                 }
             }
             
-            // DEV/LOKÁL – nejdřív zkusíme localStorage, pak fallback na localhost
-            const stored = localStorage.getItem("toozhub_api_url");
+            // DEV/LOKÁL – nejdřív zkusíme localStorage (nový klíč + legacy), pak fallback na localhost
+            const stored = (typeof SpravaVozidelStorage !== 'undefined')
+                ? SpravaVozidelStorage.getLocal('apiUrl')
+                : localStorage.getItem('toozhub_api_url');
             if (stored && stored.trim() !== "") {
                 const storedUrl = stored.trim();
                 // Validace: musí být http(s) URL a nesmí končit /web ani mít path
@@ -10313,11 +10316,21 @@
                         return storedUrl;
                     } else {
                         console.warn('[API] Uložená URL obsahuje /web nebo path - ignoruji:', storedUrl);
-                        localStorage.removeItem("toozhub_api_url");
+                        if (typeof SpravaVozidelStorage !== 'undefined') {
+                            SpravaVozidelStorage.removeLocal('apiUrl');
+                        } else {
+                            localStorage.removeItem('toozhub_api_url');
+                            localStorage.removeItem('sprava_vozidel_api_url');
+                        }
                     }
                 } else {
                     console.warn('[API] Neplatná uložená URL - ignoruji:', storedUrl);
-                    localStorage.removeItem("toozhub_api_url");
+                    if (typeof SpravaVozidelStorage !== 'undefined') {
+                        SpravaVozidelStorage.removeLocal('apiUrl');
+                    } else {
+                        localStorage.removeItem('toozhub_api_url');
+                        localStorage.removeItem('sprava_vozidel_api_url');
+                    }
                 }
             }
             
@@ -11390,7 +11403,9 @@
             
             if (configPanel) {
                 configPanel.classList.remove('hidden');
-                const savedUrl = localStorage.getItem('toozhub_api_url');
+                const savedUrl = (typeof SpravaVozidelStorage !== 'undefined')
+                    ? SpravaVozidelStorage.getLocal('apiUrl')
+                    : localStorage.getItem('toozhub_api_url');
                 if (savedUrl) {
                     input.value = savedUrl;
                     currentUrl.textContent = `Aktuální URL: ${savedUrl}`;
@@ -11415,7 +11430,12 @@
             
             if (!url) {
                 // Pokud je prázdné, smazat uloženou URL (použije se výchozí)
-                localStorage.removeItem('toozhub_api_url');
+                if (typeof SpravaVozidelStorage !== 'undefined') {
+                    SpravaVozidelStorage.removeLocal('apiUrl');
+                } else {
+                    localStorage.removeItem('toozhub_api_url');
+                    localStorage.removeItem('sprava_vozidel_api_url');
+                }
                 API_URL = getApiBaseUrl();
                 showAlert('API URL byla vymazána. Použije se výchozí URL.', 'success');
                 setTimeout(() => {
@@ -11442,8 +11462,13 @@
                 return;
             }
             
-            // Uložit do localStorage s novým klíčem
-            localStorage.setItem('toozhub_api_url', url);
+            // Uložit do localStorage (kanonický klíč; legacy se odstraní)
+            if (typeof SpravaVozidelStorage !== 'undefined') {
+                SpravaVozidelStorage.setLocal('apiUrl', url);
+            } else {
+                localStorage.setItem('sprava_vozidel_api_url', url);
+                localStorage.removeItem('toozhub_api_url');
+            }
             API_URL = url;
             
             // Aktualizovat input pole
@@ -14986,10 +15011,7 @@
             `;
         }
 
-        const VEHICLE_VIEW_STORAGE_KEY = 'toozhub_vehicle_view_mode';
-        const REMINDER_VIEW_STORAGE_KEY = 'toozhub_reminder_view_mode';
-        const REMINDER_FILTER_STORAGE_KEY = 'toozhub_reminder_filter_mode';
-        const REMINDER_CALENDAR_MONTH_STORAGE_KEY = 'toozhub_reminder_calendar_month';
+        // UI preference keys: sprava_vozidel_* (legacy toozhub_* čte SpravaVozidelStorage)
         const UI_SECTION_CACHE_TTL_MS = 60 * 1000;
         let reminderNotificationHeartbeatTimer = null;
         const vehiclesUiState = {
@@ -15061,7 +15083,9 @@
         }
 
         function getVehicleViewMode() {
-            const mode = localStorage.getItem(VEHICLE_VIEW_STORAGE_KEY) || getDefaultVehicleViewMode();
+            const mode = (typeof SpravaVozidelStorage !== 'undefined'
+                ? SpravaVozidelStorage.getLocal('vehicleViewMode')
+                : localStorage.getItem('toozhub_vehicle_view_mode')) || getDefaultVehicleViewMode();
             if (mode === 'grid' || mode === 'list' || mode === 'compact') {
                 return mode;
             }
@@ -15130,7 +15154,12 @@
                 return;
             }
 
-            localStorage.setItem(VEHICLE_VIEW_STORAGE_KEY, mode);
+            if (typeof SpravaVozidelStorage !== 'undefined') {
+                SpravaVozidelStorage.setLocal('vehicleViewMode', mode);
+            } else {
+                localStorage.setItem('sprava_vozidel_vehicle_view_mode', mode);
+                localStorage.removeItem('toozhub_vehicle_view_mode');
+            }
             // Re-render je nutný, protože každý režim má odlišné HTML karty.
             // Pouhé přepnutí CSS třídy nestačí (hlavně mezi compact a list/grid).
             applyVehicleViewModeUI();
@@ -15149,7 +15178,9 @@
         }
 
         function getReminderViewMode() {
-            const mode = localStorage.getItem(REMINDER_VIEW_STORAGE_KEY) || getDefaultReminderViewMode();
+            const mode = (typeof SpravaVozidelStorage !== 'undefined'
+                ? SpravaVozidelStorage.getLocal('reminderViewMode')
+                : localStorage.getItem('toozhub_reminder_view_mode')) || getDefaultReminderViewMode();
             if (mode === 'grid' || mode === 'list' || mode === 'compact' || mode === 'calendar') {
                 return mode;
             }
@@ -15157,7 +15188,9 @@
         }
 
         function getReminderFilterMode() {
-            const mode = String(localStorage.getItem(REMINDER_FILTER_STORAGE_KEY) || 'active').toLowerCase();
+            const mode = String((typeof SpravaVozidelStorage !== 'undefined'
+                ? SpravaVozidelStorage.getLocal('reminderFilterMode')
+                : localStorage.getItem('toozhub_reminder_filter_mode')) || 'active').toLowerCase();
             if (mode === 'all' || mode === 'active' || mode === 'expired' || mode === 'completed') {
                 return mode;
             }
@@ -15170,12 +15203,19 @@
                 return;
             }
             if (normalized === getReminderFilterMode()) return;
-            localStorage.setItem(REMINDER_FILTER_STORAGE_KEY, normalized);
+            if (typeof SpravaVozidelStorage !== 'undefined') {
+                SpravaVozidelStorage.setLocal('reminderFilterMode', normalized);
+            } else {
+                localStorage.setItem('sprava_vozidel_reminder_filter_mode', normalized);
+                localStorage.removeItem('toozhub_reminder_filter_mode');
+            }
             loadReminders(false);
         }
 
         function getReminderCalendarMonthDate() {
-            const stored = String(localStorage.getItem(REMINDER_CALENDAR_MONTH_STORAGE_KEY) || '').trim();
+            const stored = String((typeof SpravaVozidelStorage !== 'undefined'
+                ? SpravaVozidelStorage.getLocal('reminderCalendarMonth')
+                : localStorage.getItem('toozhub_reminder_calendar_month')) || '').trim();
             const match = stored.match(/^(\d{4})-(\d{2})$/);
             if (match) {
                 const year = Number(match[1]);
@@ -15192,7 +15232,12 @@
             if (!(dateObj instanceof Date) || Number.isNaN(dateObj.getTime())) return;
             const year = dateObj.getFullYear();
             const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-            localStorage.setItem(REMINDER_CALENDAR_MONTH_STORAGE_KEY, `${year}-${month}`);
+            if (typeof SpravaVozidelStorage !== 'undefined') {
+                SpravaVozidelStorage.setLocal('reminderCalendarMonth', `${year}-${month}`);
+            } else {
+                localStorage.setItem('sprava_vozidel_reminder_calendar_month', `${year}-${month}`);
+                localStorage.removeItem('toozhub_reminder_calendar_month');
+            }
         }
 
         function shiftReminderCalendarMonth(deltaMonths) {
@@ -15387,7 +15432,12 @@
                 return;
             }
 
-            localStorage.setItem(REMINDER_VIEW_STORAGE_KEY, mode);
+            if (typeof SpravaVozidelStorage !== 'undefined') {
+                SpravaVozidelStorage.setLocal('reminderViewMode', mode);
+            } else {
+                localStorage.setItem('sprava_vozidel_reminder_view_mode', mode);
+                localStorage.removeItem('toozhub_reminder_view_mode');
+            }
             loadReminders(false);
         }
 
@@ -20469,6 +20519,7 @@
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.addEventListener('message', (event) => {
                     const payload = event && event.data ? event.data : null;
+                    // Kanonický typ + legacy (starý service worker) – deprecated odstraní fáze 3
                     const _pushClickTypes = ['SPRAVA_VOZIDEL_NOTIFICATION_CLICK', 'TOOZHUB_NOTIFICATION_CLICK'];
                     if (!payload || !_pushClickTypes.includes(payload.type) || !payload.url) return;
                     try {
@@ -20603,13 +20654,14 @@
             }
         });
 
-        const REMINDER_NOTIFICATION_CHECK_STORAGE_KEY = 'toozhub_reminder_notification_check_at';
         const REMINDER_NOTIFICATION_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 
         async function triggerReminderNotificationCheck(force = false) {
             try {
                 const now = Date.now();
-                const lastRaw = localStorage.getItem(REMINDER_NOTIFICATION_CHECK_STORAGE_KEY);
+                const lastRaw = (typeof SpravaVozidelStorage !== 'undefined'
+                    ? SpravaVozidelStorage.getLocal('reminderNotificationCheckAt')
+                    : localStorage.getItem('toozhub_reminder_notification_check_at'));
                 const last = lastRaw ? Number.parseInt(lastRaw, 10) : 0;
                 const shouldSkip = !force
                     && Number.isFinite(last)
@@ -20621,7 +20673,12 @@
                 }
 
                 await apiCall('/api/v1/reminders/check-and-send-notifications', 'POST', {});
-                localStorage.setItem(REMINDER_NOTIFICATION_CHECK_STORAGE_KEY, String(now));
+                if (typeof SpravaVozidelStorage !== 'undefined') {
+                    SpravaVozidelStorage.setLocal('reminderNotificationCheckAt', String(now));
+                } else {
+                    localStorage.setItem('sprava_vozidel_reminder_notification_check_at', String(now));
+                    localStorage.removeItem('toozhub_reminder_notification_check_at');
+                }
             } catch (error) {
                 console.warn('[REMINDERS] Notification check skipped:', error?.message || error);
             }
@@ -26685,7 +26742,7 @@
                 }
 
                 const contentDisposition = response.headers.get('Content-Disposition') || '';
-                let filename = `toozhub_export_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.zip`;
+                let filename = `sprava_vozidel_export_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.zip`;
                 const match = contentDisposition.match(/filename="?([^"]+)"?/i);
                 if (match && match[1]) {
                     filename = match[1];
@@ -27748,7 +27805,12 @@
         }
         
         function resetApiUrl() {
-            localStorage.removeItem('toozhub_api_url');
+            if (typeof SpravaVozidelStorage !== 'undefined') {
+                SpravaVozidelStorage.removeLocal('apiUrl');
+            } else {
+                localStorage.removeItem('toozhub_api_url');
+                localStorage.removeItem('sprava_vozidel_api_url');
+            }
             API_URL = getApiBaseUrl();
             updateDebugPanel();
             showAlert('API URL resetována', 'success');

@@ -9,6 +9,12 @@ import json
 import time
 import sys
 from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from webnode_paths import load_webnode_config_dict, webnode_config_help_lines
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -17,18 +23,15 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
-# Konfigurace - stejná cesta jako hlavní skript
-CONFIG_FILE = Path.home() / ".toozhub_webnode_config.json"
-
 def load_config():
-    """Načte konfiguraci z JSON souboru"""
-    try:
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        return config
-    except Exception as e:
-        print(f"❌ Chyba při načítání konfigurace: {e}")
+    """Načte konfiguraci (kanonický nebo legacy soubor)."""
+    config = load_webnode_config_dict()
+    if not config:
+        print("❌ Konfigurační soubor neexistuje!")
+        for line in webnode_config_help_lines():
+            print(line)
         sys.exit(1)
+    return config
 
 def setup_driver():
     """Nastaví Chrome driver"""

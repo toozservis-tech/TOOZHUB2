@@ -1,7 +1,6 @@
 """
 License Service - produkční licencování pro Správu vozidel
 """
-import os
 import logging
 from typing import Optional
 from datetime import datetime
@@ -10,24 +9,31 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 
+from src.core.env_aliases import env_prefer_new
+
 from ..vehicle_hub.models import License, Vehicle, Tenant
 from ..vehicle_hub.database import Base
 from ..vehicle_hub.ownership import get_customer_by_email, get_owned_vehicle_ids
 
 logger = logging.getLogger(__name__)
 
-# Admin bypass - ENV proměnná
-ADMIN_TENANT_ID = os.getenv("TOOZHUB_ADMIN_TENANT_ID")
+# Admin bypass – prefer SPRAVA_VOZIDEL_*, fallback TOOZHUB_* (deprecated)
+_admin_tenant_raw = env_prefer_new("SPRAVA_VOZIDEL_ADMIN_TENANT_ID", "TOOZHUB_ADMIN_TENANT_ID")
+ADMIN_TENANT_ID = _admin_tenant_raw
 if ADMIN_TENANT_ID:
     try:
         ADMIN_TENANT_ID = int(ADMIN_TENANT_ID)
     except ValueError:
         ADMIN_TENANT_ID = None
-        logger.warning(f"[LICENSE] Invalid TOOZHUB_ADMIN_TENANT_ID: {os.getenv('TOOZHUB_ADMIN_TENANT_ID')}")
+        logger.warning(
+            "[LICENSE] Invalid admin tenant id (SPRAVA_VOZIDEL_ADMIN_TENANT_ID / TOOZHUB_ADMIN_TENANT_ID): %s",
+            _admin_tenant_raw,
+        )
 
 # Volitelný "legacy" režim: admin tenant je vždy premium a obchází limity.
 # Výchozí je vypnuto, aby se plán dal reálně měnit (nutné např. pro platby).
-ADMIN_FORCE_PREMIUM = os.getenv("TOOZHUB_ADMIN_FORCE_PREMIUM", "0").strip().lower() in (
+_admin_force_raw = env_prefer_new("SPRAVA_VOZIDEL_ADMIN_FORCE_PREMIUM", "TOOZHUB_ADMIN_FORCE_PREMIUM") or "0"
+ADMIN_FORCE_PREMIUM = _admin_force_raw.strip().lower() in (
     "1",
     "true",
     "yes",

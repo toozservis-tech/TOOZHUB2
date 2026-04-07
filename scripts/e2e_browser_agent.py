@@ -329,10 +329,10 @@ def run_ui_flow(base_url: str, email: str, password: str, rec: Recorder) -> Tupl
 
         except PWTimeout as exc:
             rec.add("ui_flow_timeout", False, str(exc))
-            page.screenshot(path="/tmp/toozhub2_ui_flow_timeout.png", full_page=True)
+            page.screenshot(path="/tmp/sprava_vozidel_ui_flow_timeout.png", full_page=True)
         except Exception as exc:  # pragma: no cover - runtime safety
             rec.add("ui_flow_exception", False, repr(exc))
-            page.screenshot(path="/tmp/toozhub2_ui_flow_exception.png", full_page=True)
+            page.screenshot(path="/tmp/sprava_vozidel_ui_flow_exception.png", full_page=True)
         finally:
             browser.close()
 

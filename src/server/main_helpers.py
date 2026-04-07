@@ -790,7 +790,7 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
         "customer_commands": [model_to_export_dict(v) for v in customer_commands],
     }
 
-    tmp_dir_path = Path(tempfile.mkdtemp(prefix="toozhub_export_"))
+    tmp_dir_path = Path(tempfile.mkdtemp(prefix="sprava_vozidel_export_"))
     data_dir = tmp_dir_path / "data"
     pdf_dir = tmp_dir_path / "vozidla_pdf"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -861,7 +861,7 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
             reservations=reservations_by_vehicle.get(vehicle.id, []),
         )
 
-    export_file_name = f"toozhub_export_{customer.id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
+    export_file_name = f"sprava_vozidel_export_{customer.id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
     zip_path = tmp_dir_path / export_file_name
     with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_file:
         for file_path in sorted(tmp_dir_path.rglob("*")):

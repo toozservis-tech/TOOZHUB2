@@ -5260,7 +5260,7 @@ def download_control_center_backup(
     return FileResponse(
         path=str(zip_path),
         media_type="application/zip",
-        filename=f"toozhub2-backup-{backup_id}.zip",
+        filename=f"sprava-vozidel-backup-{backup_id}.zip",
     )
 
 

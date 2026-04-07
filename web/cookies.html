@@ -156,9 +156,9 @@
             <td>Ano</td>
           </tr>
           <tr>
-            <td><span class="mono">toozhub_api_url</span></td>
+            <td><span class="mono">sprava_vozidel_api_url</span> <span class="small">(legacy: toozhub_api_url)</span></td>
             <td>TooZ Servis</td>
-            <td>Technická adresa API pro klienta.</td>
+            <td>Technická adresa API pro klienta; nový klíč se používá při zápisu, starý se při čtení migruje.</td>
             <td>Do změny nastavení nebo vymazání úložiště.</td>
             <td>localStorage</td>
             <td>Ano</td>
@@ -180,15 +180,15 @@
             <td>Ano</td>
           </tr>
           <tr>
-            <td><span class="mono">toozhub_vehicle_view_mode</span>, <span class="mono">toozhub_reminder_view_mode</span></td>
+            <td><span class="mono">sprava_vozidel_*_view_mode</span> <span class="small">(legacy toozhub_*)</span></td>
             <td>TooZ Servis</td>
-            <td>Uložení preferovaného zobrazení v UI.</td>
+            <td>Uložení preferovaného zobrazení v UI (včetně filtru/kalendáře připomínek).</td>
             <td>Do změny volby nebo vymazání úložiště.</td>
             <td>localStorage</td>
             <td>Ano</td>
           </tr>
           <tr>
-            <td><span class="mono">toozhub_reminder_notification_check_at</span></td>
+            <td><span class="mono">sprava_vozidel_reminder_notification_check_at</span> <span class="small">(legacy toozhub_*)</span></td>
             <td>TooZ Servis</td>
             <td>Technická deduplikace kontroly připomínek/notifikací.</td>
             <td>Do vymazání úložiště.</td>

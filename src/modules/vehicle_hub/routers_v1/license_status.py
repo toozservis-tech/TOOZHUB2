@@ -404,17 +404,21 @@ def _parse_comgate_response_text(raw: str) -> Dict[str, str]:
 
 
 def _request_frontend_base_url() -> str:
+    from src.core.env_aliases import env_prefer_new
+
     configured = (
         os.getenv("FRONTEND_BASE_URL")
         or os.getenv("PUBLIC_API_BASE_URL")
-        or os.getenv("TOOZHUB_API_URL")
+        or env_prefer_new("SPRAVA_VOZIDEL_API_URL", "TOOZHUB_API_URL")
         or "http://127.0.0.1:8000"
     )
     return str(configured).strip().rstrip("/")
 
 
 def _request_backend_public_url(request: Request) -> str:
-    configured = os.getenv("PUBLIC_API_BASE_URL") or os.getenv("TOOZHUB_API_URL")
+    from src.core.env_aliases import env_prefer_new
+
+    configured = os.getenv("PUBLIC_API_BASE_URL") or env_prefer_new("SPRAVA_VOZIDEL_API_URL", "TOOZHUB_API_URL")
     if configured and str(configured).strip():
         return str(configured).strip().rstrip("/")
     return str(request.base_url).rstrip("/")

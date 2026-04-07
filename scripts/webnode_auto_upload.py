@@ -10,6 +10,17 @@ import time
 import os
 import fcntl
 from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from webnode_paths import (
+    acquire_webnode_lock_dual,
+    load_webnode_config_dict,
+    release_webnode_lock_dual,
+    webnode_config_help_lines,
+)
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -28,18 +39,14 @@ except ImportError:
     USE_WEBDRIVER_MANAGER = False
     ChromeDriverManager = None
 
-# Cesta k konfiguračnímu souboru (NENÍ v Gitu!)
-CONFIG_FILE = Path.home() / ".toozhub_webnode_config.json"
-
-# Lock file pro zajištění, že běží jen jedna instance
-LOCK_FILE = Path("/tmp/toozhub_webnode_upload.lock")
-
 def load_config():
-    """Načte konfiguraci z lokálního souboru"""
-    if not CONFIG_FILE.exists():
+    """Načte konfiguraci z kanonického nebo legacy souboru (viz webnode_paths)."""
+    config = load_webnode_config_dict()
+    if not config:
         print("❌ Konfigurační soubor neexistuje!")
-        print(f"\nVytvořte soubor: {CONFIG_FILE}")
-        print("\nObsah souboru:")
+        for line in webnode_config_help_lines():
+            print(line)
+        print("\nObsah souboru (JSON):")
         print("""
 {
     "email": "vas@email.cz",
@@ -48,14 +55,7 @@ def load_config():
 }
         """)
         sys.exit(1)
-    
-    try:
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        return config
-    except Exception as e:
-        print(f"❌ Chyba při načítání konfigurace: {e}")
-        sys.exit(1)
+    return config
 
 def read_html():
     """Načte HTML z projektu - celý obsah souboru"""
@@ -90,28 +90,16 @@ def read_html():
     return content
 
 def acquire_lock():
-    """Získá lock pro zajištění, že běží jen jedna instance"""
-    try:
-        lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Zapsat PID do lock file
-        os.write(lock_fd, str(os.getpid()).encode())
-        os.fsync(lock_fd)
-        return lock_fd
-    except (IOError, OSError):
+    """Získá lock (legacy + kanonický soubor) – kompatibilita se starými instancemi skriptu."""
+    fds = acquire_webnode_lock_dual()
+    if fds is None:
         print("⚠️  Jiná instance skriptu už běží. Čekám na dokončení...")
         return None
+    return fds
 
-def release_lock(lock_fd):
-    """Uvolní lock"""
-    if lock_fd:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            os.close(lock_fd)
-            if LOCK_FILE.exists():
-                LOCK_FILE.unlink()
-        except:
-            pass
+def release_lock(lock_fds):
+    """Uvolní lock(y) z acquire_webnode_lock_dual."""
+    release_webnode_lock_dual(lock_fds)
 
 def setup_driver():
     """Nastaví Selenium WebDriver"""

@@ -6,9 +6,18 @@ Lepší než bash skript, protože funguje i v různých terminálech
 
 import json
 import getpass
+import sys
 from pathlib import Path
 
-CONFIG_FILE = Path.home() / ".toozhub_webnode_config.json"
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from webnode_paths import (
+    WEBNODE_CONFIG_CANON,
+    WEBNODE_CONFIG_LEGACY,
+    save_webnode_config_dict,
+)
 
 def main():
     print("🔐 Nastavení Webnode přihlašovacích údajů")
@@ -17,9 +26,10 @@ def main():
     print("Tyto údaje budou uloženy lokálně a použity pro automatické aktualizace.")
     print()
     
-    # Zkontrolovat, zda soubor už existuje
-    if CONFIG_FILE.exists():
-        print(f"⚠️  Konfigurační soubor už existuje: {CONFIG_FILE}")
+    # Zkontrolovat, zda soubor už existuje (kanonický nebo legacy)
+    if WEBNODE_CONFIG_CANON.exists() or WEBNODE_CONFIG_LEGACY.exists():
+        existing = WEBNODE_CONFIG_CANON if WEBNODE_CONFIG_CANON.exists() else WEBNODE_CONFIG_LEGACY
+        print(f"⚠️  Konfigurační soubor už existuje: {existing}")
         response = input("Chcete ho přepsat? (y/n): ").strip().lower()
         if response != 'y':
             print("Zrušeno.")
@@ -57,17 +67,13 @@ def main():
         "api_key": api_key if api_key else None
     }
     
-    # Uložit
+    # Uložit (vždy kanonická cesta; legacy lze smazat ručně po migraci)
     try:
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=4, ensure_ascii=False)
-        
-        # Nastavit oprávnění (pouze pro vlastníka)
-        import os
-        os.chmod(CONFIG_FILE, 0o600)
+        target = save_webnode_config_dict(config)
         
         print()
-        print("✅ Konfigurace uložena do:", CONFIG_FILE)
+        print("✅ Konfigurace uložena do:", target)
+        print("ℹ️  Zastaralý soubor ~/.toozhub_webnode_config.json (pokud existuje) můžete po ověření smazat.")
         print("🔒 Soubor má oprávnění pouze pro vás (600)")
         print()
         print("📝 Co dál:")

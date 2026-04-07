@@ -1,26 +1,31 @@
 """
 License Service - tenant-based licencování s quota a feature flags
 """
-import os
 import logging
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 
+from src.core.env_aliases import env_prefer_new
+
 from ..vehicle_hub.models import License, Vehicle, Tenant
 from ..vehicle_hub.database import Base
 
 logger = logging.getLogger(__name__)
 
-# Admin bypass - ENV proměnná
-ADMIN_TENANT_ID = os.getenv("TOOZHUB_ADMIN_TENANT_ID")
+# Admin bypass – prefer SPRAVA_VOZIDEL_*, fallback TOOZHUB_* (deprecated)
+_admin_tenant_raw = env_prefer_new("SPRAVA_VOZIDEL_ADMIN_TENANT_ID", "TOOZHUB_ADMIN_TENANT_ID")
+ADMIN_TENANT_ID = _admin_tenant_raw
 if ADMIN_TENANT_ID:
     try:
         ADMIN_TENANT_ID = int(ADMIN_TENANT_ID)
     except ValueError:
         ADMIN_TENANT_ID = None
-        logger.warning(f"[LICENSE] Invalid TOOZHUB_ADMIN_TENANT_ID: {os.getenv('TOOZHUB_ADMIN_TENANT_ID')}")
+        logger.warning(
+            "[LICENSE] Invalid admin tenant id (SPRAVA_VOZIDEL_ADMIN_TENANT_ID / TOOZHUB_ADMIN_TENANT_ID): %s",
+            _admin_tenant_raw,
+        )
 
 
 class LicenseError(HTTPException):

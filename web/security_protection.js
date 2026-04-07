@@ -141,7 +141,7 @@
     
     function addWatermark() {
         const watermark = document.createElement('div');
-        watermark.id = 'toozhub-watermark';
+        watermark.id = 'sprava-vozidel-watermark';
         watermark.style.cssText = `
             position: fixed;
             bottom: 10px;
@@ -324,7 +324,7 @@
     
     function addWatermark() {
         const watermark = document.createElement('div');
-        watermark.id = 'toozhub-watermark';
+        watermark.id = 'sprava-vozidel-watermark';
         watermark.style.cssText = `
             position: fixed;
             bottom: 10px;

@@ -275,7 +275,7 @@ def send_push_test(
         title=title,
         body=body,
         url="/web/index.html",
-        tag="toozhub-test",
+        tag="sprava-vozidel-test",
     )
 
     return {

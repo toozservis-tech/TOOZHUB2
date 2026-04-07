@@ -44,7 +44,7 @@ def test_smtp_config():
         print("  SMTP_FROM=info@toozservis.cz")
         print()
         print("Po přidání proměnných restartujte backend:")
-        print("  sudo systemctl restart toozhub-server")
+        print("  sudo systemctl restart <název-backend-systemd-jednotky>")
         return False
     
     print("✓ SMTP je nakonfigurován")

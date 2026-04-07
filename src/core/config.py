@@ -5,6 +5,8 @@ Podporuje načítání z environment variables a .env souboru
 import os
 from pathlib import Path
 
+from src.core.env_aliases import env_prefer_new
+
 APP_ROOT = Path(__file__).resolve().parent.parent.parent
 WORKSPACE_ROOT = APP_ROOT.parent
 DEFAULT_RUNTIME_DB_PATH = WORKSPACE_ROOT / "data" / "vehicles.db"
@@ -102,7 +104,7 @@ VEHICLE_DB_URL = DATABASE_URL  # Alias pro zpětnou kompatibilitu
 # JWT CONFIGURATION
 # =============================================================================
 
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "toozhub2-dev-secret-key-change-in-production")
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "sprava-vozidel-dev-secret-change-in-production")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "1440"))  # 24 hours
 
@@ -112,7 +114,8 @@ JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "1440"))  # 24 hours
 
 # Dynamicky vytvořit BASE_API_URL z HOST a PORT, pokud není explicitně zadáno
 _default_api_url = f"http://{HOST}:{PORT}"
-BASE_API_URL = os.getenv("TOOZHUB_API_URL", _default_api_url)
+_api_url_env = env_prefer_new("SPRAVA_VOZIDEL_API_URL", "TOOZHUB_API_URL")
+BASE_API_URL = _api_url_env if _api_url_env is not None else _default_api_url
 
 # Veřejná API URL (pro produkci: https://hub.toozservis.cz)
 PUBLIC_API_BASE_URL = os.getenv("PUBLIC_API_BASE_URL", BASE_API_URL)
