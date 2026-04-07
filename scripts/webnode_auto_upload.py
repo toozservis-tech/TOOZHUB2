@@ -8,7 +8,6 @@ import sys
 import json
 import time
 import os
-import fcntl
 from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent

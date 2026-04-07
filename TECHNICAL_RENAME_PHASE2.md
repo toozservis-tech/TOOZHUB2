@@ -141,3 +141,32 @@ python3 -m compileall -q src
 - `PROJECT_RENAME_STATUS.md` – stav brandu a fází
 - `TECHNICAL_RENAME_BACKLOG.md` – backlog + co zbývá
 - `TECHNICAL_RENAME_PHASE1.md` – audit fáze 1 a kontext skupin A/B/C
+
+---
+
+## 8. Manuální QA checklist (finální kontrola před nasazením)
+
+Krátký seznam pro release engineer po deployi nového frontendu + backendu z větve obsahující fázi 2.
+
+### Web storage migrace
+
+- [ ] V DevTools → Application → Local Storage nastavit pouze legacy `toozhub_api_url` (a případně `toozhub_vehicle_view_mode`), kanonické `sprava_vozidel_*` smazat nebo nepoužívat.
+- [ ] Obnovit `/web/`, přihlásit se: aplikace se připojí ke správnému API.
+- [ ] Po uložení URL nebo přepnutí zobrazení vozidel zkontrolovat, že vznikl / doplnil se `sprava_vozidel_*` a při zápisu mizí odpovídající `toozhub_*`.
+
+### Env aliasy
+
+- [ ] Na stagingu nastavit jen `SPRAVA_VOZIDEL_API_URL` (bez `TOOZHUB_API_URL`) a ověřit start aplikace a licence/redirect URL dle potřeby.
+- [ ] Stejný host s pouze `TOOZHUB_API_URL` (bez nového klíče): aplikace stále naběhne a čte URL správně.
+- [ ] Admin bypass: ověřit kombinaci `SPRAVA_VOZIDEL_ADMIN_*` resp. fallback `TOOZHUB_ADMIN_*` podle interního postupu (ne na produkci bez schválení).
+
+### Push compatibility
+
+- [ ] Registrovat SW, povolit notifikace, vyvolat notifikaci (test nebo reálná připomínka).
+- [ ] Klik z notifikace otevře očekávanou stránku (handler akceptuje `SPRAVA_VOZIDEL_NOTIFICATION_CLICK` i legacy `TOOZHUB_NOTIFICATION_CLICK`).
+
+### Webnode legacy config fallback
+
+- [ ] Ponechat jen `~/.toozhub_webnode_config.json`, dočasně odstranit `~/.sprava_vozidel_webnode_config.json` (záloha!).
+- [ ] Spustit `scripts/webnode_auto_upload.py` (nebo interaktivní setup načítající config): skript načte legacy soubor a vytvoří / doplní kanonický `~/.sprava_vozidel_webnode_config.json`.
+- [ ] Ověřit, že druhá souběžná instance uploadu je odmítnuta (dual lock na obou cestách v `/tmp`).
