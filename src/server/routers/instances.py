@@ -127,6 +127,19 @@ def register_instance(payload: RegisterInstanceRequest, db: Session = Depends(ge
         db.add(tenant)
         db.commit()
         db.refresh(tenant)
+        try:
+            from src.modules.vehicle_hub.workspace_routing import ensure_tenant_workspace_slug
+
+            ensure_tenant_workspace_slug(
+                db,
+                tenant,
+                seed_label=tenant.name,
+                route_kind="user",
+            )
+            db.commit()
+            db.refresh(tenant)
+        except Exception:
+            db.rollback()
 
     # Vytvořit instanci
     device_id = (

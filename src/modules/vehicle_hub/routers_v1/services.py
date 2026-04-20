@@ -23,7 +23,15 @@ from ..ownership import get_owned_vehicle, get_owned_vehicle_ids
 from ..schema_management import assert_module_ready
 from ..service_access import create_or_update_vehicle_service_link, revoke_vehicle_service_link, vehicle_label
 from .auth import get_current_user
-from .schemas import ServiceAccessRequestDecisionV1, ServiceAccessRequestListOutV1, VehicleServiceLinkListOutV1
+from .schemas import (
+    ServiceAccessRequestCreateV1,
+    ServiceAccessRequestDecisionV1,
+    ServiceAccessRequestListOutV1,
+    ServiceApprovedVehicleListOutV1,
+    ServiceVehicleLookupRequestV1,
+    ServiceVehicleLookupResponseV1,
+    VehicleServiceLinkListOutV1,
+)
 
 router = APIRouter(prefix="/services", tags=["services-v1"])
 
@@ -900,3 +908,43 @@ def get_services_discovery(
         },
         "services": rows,
     }
+
+
+# -----------------------------------------------------------------------------
+# Propojení servis–vozidlo: kanonické cesty (stejná logika jako /services/workspace/*)
+# -----------------------------------------------------------------------------
+
+
+@router.post("/vehicle-lookup", response_model=ServiceVehicleLookupResponseV1)
+def vehicle_lookup_for_service_product_path(
+    payload: ServiceVehicleLookupRequestV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """SPZ/VIN lookup bez historie + audit; viz ``service_workspace.lookup_vehicle_for_service``."""
+    from . import service_workspace as _service_workspace
+
+    return _service_workspace.lookup_vehicle_for_service(payload, current_user, db)
+
+
+@router.post("/access-requests")
+def create_service_access_request_product_path(
+    payload: ServiceAccessRequestCreateV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Servis odešle žádost o přístup; viz ``service_workspace.create_service_access_request``."""
+    from . import service_workspace as _service_workspace
+
+    return _service_workspace.create_service_access_request(payload, current_user, db)
+
+
+@router.get("/approved-vehicles", response_model=ServiceApprovedVehicleListOutV1)
+def list_approved_service_vehicles_product_path(
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Schválená vozidla servisu; viz ``service_workspace.list_approved_service_vehicles``."""
+    from . import service_workspace as _service_workspace
+
+    return _service_workspace.list_approved_service_vehicles(current_user, db)

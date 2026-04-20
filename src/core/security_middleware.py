@@ -78,13 +78,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+PUBLIC_API_RATE_LIMIT_PREFIX = "/api/public/"
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Middleware pro rate limiting"""
     
-    def __init__(self, app, calls: int = 100, period: int = 60):
+    def __init__(
+        self,
+        app,
+        calls: int = 100,
+        period: int = 60,
+        *,
+        public_calls: int = 30,
+        public_period: int = 60,
+    ):
         super().__init__(app)
-        self.calls = calls  # Počet požadavků
+        self.calls = calls  # Počet požadavků (běžné API)
         self.period = period  # Období v sekundách
+        self.public_calls = public_calls  # Společný bucket pro /api/public/*
+        self.public_period = public_period
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # OPTIONS requests (CORS preflight) nejsou rate-limited
@@ -99,21 +112,27 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Získat IP adresu
         client_ip = request.client.host if request.client else "unknown"
         
-        # Získat endpoint
-        endpoint = request.url.path
-        
-        # Vytvořit klíč pro rate limiting
-        key = f"{client_ip}:{endpoint}"
+        path = request.url.path or ""
+        if path.startswith(PUBLIC_API_RATE_LIMIT_PREFIX):
+            # Jedna IP nesmí paralelně „probíhat“ stovkami různých tokenů v cestě —
+            # sdílený bucket místo client_ip:full_path.
+            key = f"{client_ip}:public_api"
+            limit = self.public_calls
+            period = self.public_period
+        else:
+            key = f"{client_ip}:{path}"
+            limit = self.calls
+            period = self.period
         
         # Vyčistit staré záznamy
         now = time.time()
         rate_limit_store[key] = [
             timestamp for timestamp in rate_limit_store[key]
-            if now - timestamp < self.period
+            if now - timestamp < period
         ]
         
         # Kontrola limitu
-        if len(rate_limit_store[key]) >= self.calls:
+        if len(rate_limit_store[key]) >= limit:
             return Response(
                 content='{"detail":"Rate limit exceeded. Please try again later."}',
                 status_code=429,
@@ -127,10 +146,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         
         # Přidat rate limit headers
-        remaining = self.calls - len(rate_limit_store[key])
-        response.headers["X-RateLimit-Limit"] = str(self.calls)
+        remaining = limit - len(rate_limit_store[key])
+        response.headers["X-RateLimit-Limit"] = str(limit)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
-        response.headers["X-RateLimit-Reset"] = str(int(now + self.period))
+        response.headers["X-RateLimit-Reset"] = str(int(now + period))
         
         return response
 

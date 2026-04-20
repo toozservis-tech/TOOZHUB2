@@ -56,7 +56,7 @@ class LicenseError(HTTPException):
 # Mapování plánů na limity
 PLAN_LIMITS = {
     "free": 1,
-    "basic": 5,
+    "basic": 3,
     "premium": 0  # 0 = unlimited
 }
 
@@ -295,7 +295,7 @@ def assert_feature(db: Session, tenant_id: int, feature_name: str) -> None:
     Args:
         db: Databázová session
         tenant_id: ID tenanta
-        feature_name: Název feature ("vin_decode", "ares", "reminders")
+        feature_name: Název feature ("vin_decode", "ares", "reminders", "documents")
         
     Raises:
         LicenseError: Pokud je feature zakázáno
@@ -304,6 +304,24 @@ def assert_feature(db: Session, tenant_id: int, feature_name: str) -> None:
     
     # Legacy admin bypass - aktivní jen při explicitním zapnutí.
     if ADMIN_FORCE_PREMIUM and is_admin_tenant(tenant_id):
+        return
+
+    if feature_name == "documents":
+        features = PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"])
+        if not bool(features.get("documents_enabled", False)):
+            raise LicenseError(
+                code="FEATURE_DISABLED",
+                message=(
+                    "Export dokumentů a PDF není ve vašem tarifu povolen. "
+                    "Upgradujte na BASIC nebo PREMIUM."
+                ),
+                details={
+                    "feature_name": "documents",
+                    "plan": license_obj.plan,
+                    "tenant_id": tenant_id,
+                },
+                status_code=403,
+            )
         return
     
     # Mapování feature name na sloupec
@@ -356,6 +374,7 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
     
     features = PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"])
 
+    over_limit = (not is_unl) and tenant_vehicle_count > int(license_obj.vehicles_limit or 0)
     status = {
         "tenant_id": str(tenant_id),
         "plan": license_obj.plan,
@@ -367,6 +386,10 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
         "vehicles_current_user": user_vehicle_count,
         "vehicles_remaining": vehicles_remaining,
         "is_unlimited": is_unl,
+        # Aliasy pro klientské UI (dashboard)
+        "vehicles_count": tenant_vehicle_count,
+        "license_limit": None if is_unl else int(license_obj.vehicles_limit or 0),
+        "is_over_limit": bool(over_limit),
         "vin_decode_enabled": license_obj.vin_decode_enabled,
         "ares_enabled": license_obj.ares_enabled,
         "reminders_enabled": license_obj.reminders_enabled,

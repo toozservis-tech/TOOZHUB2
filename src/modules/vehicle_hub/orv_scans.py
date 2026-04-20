@@ -777,6 +777,147 @@ def serialize_orv_scan(scan: VehicleORVScan) -> dict[str, Any]:
     }
 
 
+def _parsed_year_from_vehicle_fields(vf: dict[str, Any]) -> int | None:
+    raw = str(vf.get("first_registration_cz_date") or vf.get("first_registration_date") or "").strip()
+    if len(raw) >= 4:
+        try:
+            y = int(raw[:4])
+            if 1900 <= y <= 2100:
+                return y
+        except ValueError:
+            return None
+    return None
+
+
+def _parsed_engine_hint(vf: dict[str, Any]) -> str | None:
+    parts: list[str] = []
+    if vf.get("fuel"):
+        parts.append(str(vf.get("fuel")).strip())
+    if vf.get("engine_power_kw"):
+        parts.append(f"{vf.get('engine_power_kw')} kW")
+    if vf.get("engine_displacement_cc"):
+        parts.append(f"{vf.get('engine_displacement_cc')} cm³")
+    return " · ".join(parts) if parts else None
+
+
+def _parsed_nickname_hint(vf: dict[str, Any]) -> str | None:
+    for key in ("commercial_name", "type_label", "variant", "model"):
+        v = vf.get(key)
+        if v and str(v).strip():
+            return str(v).strip()
+    return None
+
+
+def _norm_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s or None
+
+
+def apply_orv_review_audit(
+    *,
+    db: Session,
+    scan_id: int,
+    current_user: Customer,
+    nickname: str | None,
+    brand: str | None,
+    model: str | None,
+    year: int | None,
+    engine: str | None,
+    vin: str,
+    plate: str | None,
+    orv_number: str | None,
+) -> dict[str, Any]:
+    """Uloží audit kontroly ORV před uložením vozidla (OCR + hash už jsou ve scanu)."""
+    from .orv_parser import _normalize_vin_candidate
+
+    scan = db.query(VehicleORVScan).filter(VehicleORVScan.id == int(scan_id)).first()
+    if scan is None:
+        raise HTTPException(status_code=404, detail="ORV scan nebyl nalezen.")
+    if getattr(scan, "tenant_id", None) != getattr(current_user, "tenant_id", None):
+        raise HTTPException(status_code=403, detail="ORV scan nepatří k vašemu účtu.")
+    if getattr(scan, "initiated_by_customer_id", None) != getattr(current_user, "id", None):
+        raise HTTPException(status_code=403, detail="ORV scan založil jiný uživatel.")
+    if str(scan.status or "") != "review":
+        raise HTTPException(status_code=409, detail="ORV scan už není ve stavu kontroly.")
+    if scan.vehicle_id is not None:
+        raise HTTPException(status_code=409, detail="ORV scan je už navázaný na vozidlo.")
+
+    normalized_vin, vin_errors = _normalize_vin_candidate(str(vin or "").strip())
+    if normalized_vin is None:
+        raise HTTPException(
+            status_code=422,
+            detail="; ".join(vin_errors) if vin_errors else "Neplatný VIN.",
+        )
+    vin_validation: dict[str, Any] = {
+        "valid": True,
+        "normalized": normalized_vin,
+        "errors": [],
+        "warnings": list(vin_errors or []),
+    }
+
+    parsed_vehicle = json.loads(scan.parsed_vehicle_json or "{}")
+    parsed_year = _parsed_year_from_vehicle_fields(parsed_vehicle)
+
+    reviewed_vehicle: dict[str, Any] = {
+        "nickname": _norm_optional_str(nickname),
+        "brand": _norm_optional_str(brand),
+        "model": _norm_optional_str(model),
+        "year": year,
+        "engine": _norm_optional_str(engine),
+        "vin": normalized_vin,
+        "plate": _norm_optional_str(plate),
+        "orv_number": _norm_optional_str(orv_number),
+    }
+
+    field_diffs: dict[str, Any] = {}
+
+    def add_diff_str(key: str, parsed_val: Any, reviewed_val: Any) -> None:
+        ps = None if parsed_val is None else str(parsed_val).strip() or None
+        rs = None if reviewed_val is None else str(reviewed_val).strip() or None
+        if (ps or None) == (rs or None):
+            return
+        field_diffs[key] = {"parsed": parsed_val, "reviewed": reviewed_val}
+
+    if (parsed_year is None and year is not None) or (parsed_year is not None and year is None) or (
+        parsed_year is not None and year is not None and int(parsed_year) != int(year)
+    ):
+        field_diffs["year"] = {"parsed": parsed_year, "reviewed": year}
+
+    add_diff_str("nickname", _parsed_nickname_hint(parsed_vehicle), reviewed_vehicle["nickname"])
+    add_diff_str("brand", parsed_vehicle.get("brand"), reviewed_vehicle["brand"])
+    add_diff_str("model", parsed_vehicle.get("model"), reviewed_vehicle["model"])
+    add_diff_str("engine", _parsed_engine_hint(parsed_vehicle), reviewed_vehicle["engine"])
+
+    pv_raw = re.sub(r"[^A-Za-z0-9]", "", str(parsed_vehicle.get("vin") or "")).upper()
+    if pv_raw != normalized_vin:
+        field_diffs["vin"] = {"parsed": parsed_vehicle.get("vin"), "reviewed": normalized_vin}
+
+    add_diff_str("plate", parsed_vehicle.get("plate"), reviewed_vehicle["plate"])
+    add_diff_str("orv_number", parsed_vehicle.get("orv_number"), reviewed_vehicle["orv_number"])
+
+    audit_payload = {
+        "reviewed_vehicle": reviewed_vehicle,
+        "field_diffs": field_diffs,
+        "vin_validation": vin_validation,
+        "ocr_front_sha256": scan.front_image_hash,
+        "ocr_back_sha256": scan.back_image_hash,
+        "confirmed_at": datetime.utcnow().isoformat() + "Z",
+    }
+    scan.orv_review_audit_json = json.dumps(audit_payload, ensure_ascii=False)
+    scan.updated_at = datetime.utcnow()
+    db.add(scan)
+    db.commit()
+    db.refresh(scan)
+
+    return {
+        "scan_id": int(scan.id),
+        "field_diffs": field_diffs,
+        "vin_validation": vin_validation,
+    }
+
+
 def apply_orv_scan_to_vehicle(
     *,
     db: Session,

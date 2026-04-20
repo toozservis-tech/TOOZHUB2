@@ -9,6 +9,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from .models import Tenant
+from .workspace_routing import ensure_tenant_workspace_slug
 
 
 def _build_tenant_name(owner_email: str, owner_name: Optional[str] = None) -> str:
@@ -39,6 +40,8 @@ def create_dedicated_tenant(
     db: Session,
     owner_email: str,
     owner_name: Optional[str] = None,
+    *,
+    workspace_route_kind: str = "user",
 ) -> Tenant:
     """
     Vytvoří nový tenant určený pro jediného uživatele.
@@ -50,6 +53,13 @@ def create_dedicated_tenant(
     )
     db.add(tenant)
     db.flush()
+    seed = (owner_name or "").strip() or owner_email
+    ensure_tenant_workspace_slug(
+        db,
+        tenant,
+        seed_label=seed,
+        route_kind=workspace_route_kind,
+    )
     return tenant
 
 

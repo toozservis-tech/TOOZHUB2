@@ -2,7 +2,7 @@
 Pydantic schémata pro API v1.0
 """
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List, Dict
+from typing import Any, Dict, List, Optional
 from datetime import datetime, date
 
 
@@ -72,6 +72,7 @@ class VehicleOutV1(BaseModel):
     orv_confidence_json: Optional[str] = None
     data_trust_state: Optional[str] = None
     notes: Optional[str]
+    primary_photo: Optional[Dict[str, Any]] = None
     photo_path: Optional[str] = None
     stk_valid_until: Optional[date]
     current_mileage_km: Optional[int] = None
@@ -81,6 +82,11 @@ class VehicleOutV1(BaseModel):
     insurance_provider: Optional[str] = None
     insurance_valid_until: Optional[date] = None
     current_owner_since: Optional[datetime] = None
+    has_qr_token: bool = False
+    qr_public_mode: Optional[str] = None
+    qr_last_access_at: Optional[datetime] = None
+    public_history_url: Optional[str] = None
+    qr_svg: Optional[str] = None
     # assigned_service_id: Optional[int] = None  # DOČASNĚ ZAKÁZÁNO
     tenant_id: Optional[int] = None  # Multi-tenant podpora
     created_at: datetime
@@ -93,11 +99,13 @@ class VehicleMileageRecordV1(BaseModel):
     mileage_km: int = Field(..., ge=0)
     note: Optional[str] = Field(default=None, max_length=1000)
     confirm_lower_than_current: bool = False
+    source: Optional[str] = Field(default="manual", max_length=32)
 
 
 class VehicleMileageRecordResultV1(BaseModel):
     vehicle: VehicleOutV1
-    created_record_id: int
+    created_record_id: Optional[int] = None
+    created_vehicle_mileage_id: Optional[int] = None
 
 
 class ORVParsedVehicleFieldsV1(BaseModel):
@@ -157,6 +165,25 @@ class ORVParseResponseV1(BaseModel):
     missing_fields: List[str] = []
 
 
+class ORVReviewAuditRequestV1(BaseModel):
+    """Údaje z kontrolní obrazovky před přenosem do formuláře vozidla (vozidlo se ještě neukládá)."""
+
+    nickname: Optional[str] = Field(default=None, max_length=200)
+    brand: Optional[str] = Field(default=None, max_length=120)
+    model: Optional[str] = Field(default=None, max_length=120)
+    year: Optional[int] = Field(default=None, ge=1900, le=2100)
+    engine: Optional[str] = Field(default=None, max_length=500)
+    vin: str = Field(..., min_length=5, max_length=32)
+    plate: Optional[str] = Field(default=None, max_length=32)
+    orv_number: Optional[str] = Field(default=None, max_length=64)
+
+
+class ORVReviewAuditResponseV1(BaseModel):
+    scan_id: int
+    field_diffs: Dict[str, Any] = Field(default_factory=dict)
+    vin_validation: Dict[str, Any] = Field(default_factory=dict)
+
+
 # ==========================
 #   SERVISNÍ PŘÍSTUPY
 # ==========================
@@ -168,6 +195,7 @@ class ServiceVehicleLookupRequestV1(BaseModel):
 class ServiceVehicleLookupCandidateOutV1(BaseModel):
     id: str
     vehicle_id: Optional[int] = None
+    owner_customer_id: Optional[int] = None
     nickname: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
@@ -177,6 +205,11 @@ class ServiceVehicleLookupCandidateOutV1(BaseModel):
     owner_label: Optional[str] = None
     status: str
     can_request_access: bool = True
+    can_open_detail: bool = False
+    can_create_work_order: bool = False
+    match_score: Optional[float] = None
+    match_type: Optional[str] = None
+    blocking_reason: Optional[str] = None
 
 
 class ServiceVehicleLookupResponseV1(BaseModel):
@@ -254,6 +287,16 @@ class ServiceRecordCreateV1(BaseModel):
     category: str = Field(..., min_length=1)  # OLEJ, BRZDY, PNEU, STK, DIAGNOSTIKA, ...
     attachments: Optional[str] = None  # JSON string nebo text
     next_service_due_date: Optional[date] = None
+    customer_id: Optional[int] = Field(default=None, gt=0)
+    service_id: Optional[int] = Field(default=None, gt=0)
+    work_order_id: Optional[int] = Field(default=None, gt=0)
+    quote_id: Optional[int] = Field(default=None, gt=0)
+    record_status: str = Field(default="draft", min_length=5, max_length=32)
+    service_type: Optional[str] = Field(default=None, max_length=64)
+    recommended_next_service_text: Optional[str] = Field(default=None, max_length=2000)
+    recommended_next_service_date: Optional[date] = None
+    notes_customer_visible: Optional[str] = None
+    total_price: Optional[float] = Field(default=None, ge=0)
 
 
 class ServiceRecordUpdateV1(BaseModel):
@@ -265,12 +308,26 @@ class ServiceRecordUpdateV1(BaseModel):
     category: Optional[str] = Field(default=None, min_length=1)
     attachments: Optional[str] = None
     next_service_due_date: Optional[date] = None
+    customer_id: Optional[int] = Field(default=None, gt=0)
+    service_id: Optional[int] = Field(default=None, gt=0)
+    work_order_id: Optional[int] = Field(default=None, gt=0)
+    quote_id: Optional[int] = Field(default=None, gt=0)
+    record_status: Optional[str] = Field(default=None, min_length=5, max_length=32)
+    service_type: Optional[str] = Field(default=None, max_length=64)
+    recommended_next_service_text: Optional[str] = Field(default=None, max_length=2000)
+    recommended_next_service_date: Optional[date] = None
+    notes_customer_visible: Optional[str] = None
+    total_price: Optional[float] = Field(default=None, ge=0)
 
 
 class ServiceRecordOutV1(BaseModel):
     id: int
     vehicle_id: int
     user_id: Optional[int]
+    customer_id: Optional[int] = None
+    service_id: Optional[int] = None
+    work_order_id: Optional[int] = None
+    quote_id: Optional[int] = None
     performed_at: Optional[datetime]  # Může být None
     mileage: Optional[int]
     description: str
@@ -279,11 +336,19 @@ class ServiceRecordOutV1(BaseModel):
     category: Optional[str]
     attachments: Optional[str]
     next_service_due_date: Optional[date]
+    record_status: str = "draft"
+    service_type: Optional[str] = None
+    recommended_next_service_text: Optional[str] = None
+    recommended_next_service_date: Optional[date] = None
+    notes_customer_visible: Optional[str] = None
+    total_price: Optional[float] = None
     created_by_ai: bool = False  # True pokud byl záznam vytvořen AI asistentem
+    created_by_service_customer_id: Optional[int] = None
     is_deleted: bool = False
     deleted_at: Optional[datetime] = None
     deletion_reason: Optional[str] = None
     snapshot_hash: Optional[str] = None
+    updated_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -373,6 +438,62 @@ class ReservationVehicleOptionOutV1(BaseModel):
     owner_email: Optional[str] = None
     is_shared: bool = False
     source: Optional[str] = None
+
+
+class VehicleQrTokenCreateV1(BaseModel):
+    public_mode: str = Field(default="basic", min_length=5, max_length=32)
+    explicit_full_consent: bool = False
+
+
+class VehicleQrTokenOutV1(BaseModel):
+    id: int
+    vehicle_id: int
+    token: str
+    public_mode: str
+    explicit_full_consent: bool
+    issued_at: datetime
+    revoked_at: Optional[datetime] = None
+    last_access_at: Optional[datetime] = None
+    signature_hash: str
+    active: bool = True
+    public_history_url: Optional[str] = None
+    qr_svg: Optional[str] = None
+
+
+class PublicServiceIdentityOutV1(BaseModel):
+    name: Optional[str] = None
+    ico: Optional[str] = None
+    verified_status: bool = False
+
+
+class PublicServiceRecordHistoryItemOutV1(BaseModel):
+    id: int
+    performed_at: Optional[datetime] = None
+    mileage: Optional[int] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    record_status: str = "draft"
+    service_type: Optional[str] = None
+    recommended_next_service_text: Optional[str] = None
+    recommended_next_service_date: Optional[date] = None
+    notes_customer_visible: Optional[str] = None
+    total_price: Optional[float] = None
+    quote_id: Optional[int] = None
+    quote_status: Optional[str] = None
+    service_identity: PublicServiceIdentityOutV1 = PublicServiceIdentityOutV1()
+
+
+class VehiclePublicHistoryOutV1(BaseModel):
+    vehicle_id: int
+    token_status: str
+    public_mode: str
+    vin: Optional[str] = None
+    vehicle_label: Optional[str] = None
+    year: Optional[int] = None
+    engine: Optional[str] = None
+    records: List[PublicServiceRecordHistoryItemOutV1] = []
+    recommended_next_service_text: Optional[str] = None
+    recommended_next_service_date: Optional[date] = None
 
 
 # ==========================

@@ -21,6 +21,7 @@ from src.modules.vehicle_hub.account_state import (
 
 # HTTPBearer pro získání tokenu z Authorization headeru
 security = HTTPBearer()
+security_optional = HTTPBearer(auto_error=False)
 
 
 def get_current_user_email(
@@ -82,3 +83,40 @@ def get_current_user_email(
         )
 
     return email
+
+
+def get_current_customer_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_optional),
+    db: Session = Depends(get_db),
+) -> Optional[Customer]:
+    """
+    Vrátí Customer pro platný Bearer token, jinak None (pro veřejné endpointy jako GET /api/me).
+    """
+    if credentials is None or not getattr(credentials, "credentials", None):
+        return None
+    token = credentials.credentials
+    payload = decode_access_token_payload(token)
+    email = (payload or {}).get("sub")
+    if email is None:
+        return None
+
+    ensure_customer_account_state_schema(db)
+
+    normalized_email = str(email).strip().lower()
+    customer = db.query(Customer).filter(func.lower(Customer.email) == normalized_email).first()
+    if not customer:
+        return None
+
+    if customer_is_deleted(customer) or customer_is_disabled(customer):
+        return None
+
+    token_session_version = payload.get("sv")
+    try:
+        token_session_version_int = int(token_session_version if token_session_version is not None else 0)
+    except (TypeError, ValueError):
+        token_session_version_int = 0
+
+    if token_session_version_int != customer_session_version(customer):
+        return None
+
+    return customer

@@ -13,26 +13,45 @@ import mimetypes
 from pathlib import Path
 import re
 import secrets
+import unicodedata
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Depends, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import Any, List, Optional
 from sqlalchemy import desc, nullslast
 
 from src.core.config import DATA_DIR
+from src.core.rbac import is_admin, is_service
+from src.server.security_tracking import log_security_event
 from ..database import get_db
-from ..mileage_reports import collect_vehicle_mileage_timeline_points, render_mileage_timeline_chart_png, summarize_mileage_timeline
+from ..mileage_reports import (
+    build_mileage_timeline_payload,
+    collect_vehicle_mileage_timeline_points,
+    render_mileage_timeline_chart_png,
+    summarize_mileage_timeline,
+)
+from ..audit_log import write_global_audit_log
+from ..ownership import get_primary_vehicle_owner
 from ..models import (
     Customer,
     ServiceRecord as ServiceRecordModel,
     ServiceRecordAuditLog,
+    ServiceVehicleAccess,
     Vehicle as VehicleModel,
+    VehicleOwnership,
+    VehicleReportDocument,
+    VehicleServiceLink,
+    VehicleTachometerHistoryEntry,
 )
 from ..schema_management import assert_module_ready
 from ..service_access import attach_service_access_to_record, forbid_service_record_mutation, require_service_vehicle_link
+from ..reports.vehicle_report_access import resolve_report_mode
+from ..reports.vehicle_report_builder import build_vehicle_service_report_payload
+from ..reports.vehicle_report_pdf import render_vehicle_service_report_pdf
+from ..reports.vehicle_report_verification import finalize_vehicle_report_document
 from .auth import get_current_user, can_access_vehicle
 from .schemas import ServiceRecordCreateV1, ServiceRecordUpdateV1, ServiceRecordOutV1
 from .service_workspace import (
@@ -79,6 +98,10 @@ CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("OSVETLENI", ("svetl", "žárov", "zarov", "xenon", "led")),
     ("OPRAVA", ("oprava", "servis", "repair")),
 ]
+
+
+class VehicleReportExportQuery(BaseModel):
+    mode: Optional[str] = Field(default=None, max_length=32)
 SUSPICIOUS_SUMMARY_PATTERNS = [
     re.compile(r"\b\d{1,5}\s*/\s*\d{1,5}[A-Za-z]?\b", re.IGNORECASE),
     re.compile(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b.*\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", re.IGNORECASE),
@@ -87,6 +110,8 @@ SUSPICIOUS_SUMMARY_PATTERNS = [
         re.IGNORECASE,
     ),
 ]
+SERVICE_RECORD_STATUSES = {"draft", "submitted", "approved", "locked"}
+SERVICE_RECORD_IMMUTABLE_STATUSES = {"approved", "locked"}
 
 
 def _service_record_snapshot(record: ServiceRecordModel) -> dict[str, Any]:
@@ -95,6 +120,10 @@ def _service_record_snapshot(record: ServiceRecordModel) -> dict[str, Any]:
         "tenant_id": record.tenant_id,
         "vehicle_id": record.vehicle_id,
         "user_id": record.user_id,
+        "customer_id": getattr(record, "customer_id", None),
+        "service_id": getattr(record, "service_id", None),
+        "work_order_id": getattr(record, "work_order_id", None),
+        "quote_id": getattr(record, "quote_id", None),
         "performed_at": record.performed_at.isoformat() if record.performed_at else None,
         "mileage": record.mileage,
         "description": record.description,
@@ -105,6 +134,16 @@ def _service_record_snapshot(record: ServiceRecordModel) -> dict[str, Any]:
         "next_service_due_date": (
             record.next_service_due_date.isoformat() if record.next_service_due_date else None
         ),
+        "record_status": getattr(record, "record_status", "draft"),
+        "service_type": getattr(record, "service_type", None),
+        "recommended_next_service_text": getattr(record, "recommended_next_service_text", None),
+        "recommended_next_service_date": (
+            record.recommended_next_service_date.isoformat()
+            if getattr(record, "recommended_next_service_date", None)
+            else None
+        ),
+        "notes_customer_visible": getattr(record, "notes_customer_visible", None),
+        "total_price": getattr(record, "total_price", None),
         "created_by_ai": bool(record.created_by_ai),
         "is_deleted": bool(getattr(record, "is_deleted", False)),
         "deleted_at": record.deleted_at.isoformat() if getattr(record, "deleted_at", None) else None,
@@ -117,6 +156,48 @@ def _snapshot_json_and_hash(snapshot: dict[str, Any]) -> tuple[str, str]:
     snapshot_json = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
     snapshot_hash = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
     return snapshot_json, snapshot_hash
+
+
+def _normalize_record_status(raw_value: Optional[str], *, default: str = "draft") -> str:
+    value = str(raw_value or default).strip().lower()
+    if value not in SERVICE_RECORD_STATUSES:
+        raise HTTPException(status_code=422, detail="Neplatný stav servisního záznamu.")
+    return value
+
+
+def _require_documents_plan(db: Session, *, tenant_id: Optional[int]) -> None:
+    """Vynutí tarifní příznak documents_enabled (FREE vypnuto, BASIC/PREMIUM zapnuto)."""
+    from ...licensing.service import LicenseError, assert_feature
+
+    tid = int(tenant_id or 0)
+    if tid <= 0:
+        raise HTTPException(
+            status_code=403,
+            detail="Export dokumentů nelze ověřit: chybí tenant kontext.",
+        )
+    try:
+        assert_feature(db, tid, "documents")
+    except LicenseError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+def _assert_record_is_mutable(record: ServiceRecordModel) -> None:
+    current_status = _normalize_record_status(getattr(record, "record_status", None), default="draft")
+    if current_status in SERVICE_RECORD_IMMUTABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="Schválený nebo uzamčený servisní záznam už nelze upravovat.",
+        )
+
+
+def _assert_current_user_can_edit_record(current_user: Customer, record: ServiceRecordModel) -> None:
+    if not is_service(getattr(current_user, "role", None)):
+        return
+    if int(getattr(record, "created_by_service_customer_id", 0) or 0) != int(getattr(current_user, "id", 0) or 0):
+        raise HTTPException(
+            status_code=403,
+            detail="Servis smí upravit jen vlastní servisní záznamy vytvořené v tomto workflow.",
+        )
 
 
 class ServiceRecordAttachmentUploadRequest(BaseModel):
@@ -143,10 +224,119 @@ class ServiceRecordDocumentPrefillRequest(ServiceRecordAutoFromDocumentRequest):
     pass
 
 
+class DocumentsHubAttachmentItemV1(BaseModel):
+    vehicle_id: int
+    vehicle_name: str
+    record_id: int
+    performed_at: Optional[datetime] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    file_name: str
+    mime_type: Optional[str] = None
+    download_url: str
+    source_type: Optional[str] = None
+
+
+class DocumentsHubReportItemV1(BaseModel):
+    vehicle_id: int
+    vehicle_name: str
+    document_id: str
+    document_type: str
+    export_mode: str
+    status: str
+    finalized_at: Optional[datetime] = None
+    verification_code: Optional[str] = None
+    verify_url: Optional[str] = None
+    classic_pdf_url: str
+    verified_pdf_url: Optional[str] = None
+    has_verified_report: bool = False
+
+
+class DocumentsHubTachometerItemV1(BaseModel):
+    vehicle_id: int
+    vehicle_name: str
+    history_entry_id: int
+    check_date: Optional[datetime] = None
+    protocol_number: Optional[str] = None
+    mileage_km: Optional[int] = None
+    available_documents_count: int = 0
+    detail_url: str
+
+
+class DocumentsHubSummaryOutV1(BaseModel):
+    scope: str
+    vehicles_total: int
+    attachments_total: int
+    reports_total: int
+    tachometer_documents_total: int
+    attachments: list[DocumentsHubAttachmentItemV1] = []
+    reports: list[DocumentsHubReportItemV1] = []
+    tachometer_documents: list[DocumentsHubTachometerItemV1] = []
+
+
 def _sanitize_file_stem(filename: str) -> str:
     stem = Path(filename or "doklad").stem
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-")
     return cleaned[:64] or "doklad"
+
+
+def _ascii_slug(value: str, *, fallback: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "").strip())
+    ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", ascii_value).strip("-")
+    return (cleaned or fallback).upper()
+
+
+def _normalize_role(value: Optional[str]) -> str:
+    return str(value or "").strip().lower()
+
+
+def _vehicle_display_name(vehicle: VehicleModel | None) -> str:
+    if vehicle is None:
+        return "Vozidlo"
+    return str(getattr(vehicle, "nickname", None) or getattr(vehicle, "plate", None) or f"Vozidlo #{getattr(vehicle, 'id', '?')}")
+
+
+def _visible_vehicle_ids_for_documents(db: Session, *, current_user: Customer) -> list[int]:
+    role_key = _normalize_role(getattr(current_user, "role", None))
+    tenant_id = getattr(current_user, "tenant_id", None)
+
+    if is_admin(role_key):
+        query = db.query(VehicleModel.id)
+        if tenant_id is not None:
+            query = query.filter(VehicleModel.tenant_id == tenant_id)
+        return [int(row[0]) for row in query.all() if row and row[0] is not None]
+
+    if is_service(role_key):
+        approved_ids = (
+            db.query(VehicleServiceLink.vehicle_id)
+            .filter(
+                VehicleServiceLink.service_customer_id == current_user.id,
+                VehicleServiceLink.status == "approved",
+            )
+            .all()
+        )
+        legacy_ids = (
+            db.query(ServiceVehicleAccess.vehicle_id)
+            .filter(
+                ServiceVehicleAccess.service_customer_id == current_user.id,
+                ServiceVehicleAccess.status == "active",
+            )
+            .all()
+        )
+        merged = {int(row[0]) for row in approved_ids + legacy_ids if row and row[0] is not None}
+        return sorted(merged)
+
+    owned_ids = (
+        db.query(VehicleOwnership.vehicle_id)
+        .filter(
+            VehicleOwnership.customer_id == current_user.id,
+            VehicleOwnership.tenant_id == tenant_id,
+            VehicleOwnership.is_active.is_(True),
+        )
+        .all()
+    )
+    return sorted({int(row[0]) for row in owned_ids if row and row[0] is not None})
 
 
 def _resolve_attachment_file(relative_key: str) -> Path | None:
@@ -193,6 +383,11 @@ def _parse_attachments_payload(attachments_raw: str | None) -> list[dict[str, An
     if not isinstance(payload, list):
         return []
     return [item for item in payload if isinstance(item, dict)]
+
+
+def _count_available_tachometer_documents(documents_raw: str | None) -> int:
+    payload = _parse_attachments_payload(documents_raw)
+    return sum(1 for item in payload if bool(item.get("available")))
 
 
 def _parsed_summary_needs_refresh(summary: Any) -> bool:
@@ -747,6 +942,7 @@ def create_service_record(
         tenant_id = vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1
 
         access_link = None
+        owner_customer = get_primary_vehicle_owner(db, vehicle)
         if str(getattr(current_user, "role", "") or "").strip().lower() == "service":
             access_link = require_service_vehicle_link(
                 db,
@@ -755,12 +951,18 @@ def create_service_record(
                 require_create_record=True,
             )
 
+        record_status = _normalize_record_status(getattr(record_data, "record_status", None), default="draft")
+
         # Vytvořit záznam
         user_id = current_user.id
         record = ServiceRecordModel(
             tenant_id=tenant_id,
             vehicle_id=vehicle_id,
             user_id=user_id,
+            customer_id=int(getattr(record_data, "customer_id", None) or getattr(owner_customer, "id", 0) or 0) or None,
+            service_id=int(getattr(record_data, "service_id", None) or (current_user.id if is_service(getattr(current_user, "role", None)) else 0) or 0) or None,
+            work_order_id=getattr(record_data, "work_order_id", None),
+            quote_id=getattr(record_data, "quote_id", None),
             performed_at=record_data.performed_at,
             mileage=record_data.mileage,
             description=record_data.description,
@@ -768,7 +970,13 @@ def create_service_record(
             note=record_data.note,
             category=record_data.category,
             attachments=record_data.attachments,
-            next_service_due_date=record_data.next_service_due_date
+            next_service_due_date=record_data.next_service_due_date,
+            record_status=record_status,
+            service_type=getattr(record_data, "service_type", None),
+            recommended_next_service_text=getattr(record_data, "recommended_next_service_text", None),
+            recommended_next_service_date=getattr(record_data, "recommended_next_service_date", None),
+            notes_customer_visible=getattr(record_data, "notes_customer_visible", None),
+            total_price=getattr(record_data, "total_price", None) if getattr(record_data, "total_price", None) is not None else record_data.price,
         )
         attach_service_access_to_record(record=record, current_user=current_user, access_link=access_link)
         
@@ -777,6 +985,20 @@ def create_service_record(
         snapshot = _service_record_snapshot(record)
         _, snapshot_hash = _snapshot_json_and_hash(snapshot)
         record.snapshot_hash = snapshot_hash
+        write_global_audit_log(
+            db,
+            entity_type="service_record",
+            entity_id=int(record.id),
+            action="service_record_create",
+            actor_user_id=user_id,
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=tenant_id,
+            metadata={
+                "vehicle_id": int(vehicle_id),
+                "record_status": record_status,
+                "service_id": getattr(record, "service_id", None),
+            },
+        )
         db.commit()
         db.refresh(record)
         
@@ -805,6 +1027,7 @@ def upload_service_record_attachment(
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+    _require_documents_plan(db, tenant_id=vehicle.tenant_id)
 
     content = _decode_base64_payload(payload.file_content_base64)
     attachment_meta = _store_attachment_for_vehicle(
@@ -841,6 +1064,7 @@ def create_service_record_from_document(
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+    _require_documents_plan(db, tenant_id=vehicle.tenant_id)
 
     source_type = str(payload.source_type or "invoice").strip().lower()
     if source_type not in ALLOWED_SOURCE_TYPES:
@@ -909,6 +1133,7 @@ def create_service_record_from_document(
 
     tenant_id = vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1
     access_link = None
+    owner_customer = get_primary_vehicle_owner(db, vehicle)
     if str(getattr(current_user, "role", "") or "").strip().lower() == "service":
         access_link = require_service_vehicle_link(
             db,
@@ -920,6 +1145,9 @@ def create_service_record_from_document(
         tenant_id=tenant_id,
         vehicle_id=vehicle_id,
         user_id=current_user.id,
+        customer_id=int(getattr(owner_customer, "id", 0) or 0) or None,
+        service_id=int(current_user.id or 0) or None,
+        quote_id=None,
         performed_at=prefill["performed_at"],
         mileage=prefill["mileage"],
         description=prefill["description"],
@@ -927,9 +1155,29 @@ def create_service_record_from_document(
         note=prefill["note"],
         category=prefill["category"],
         attachments=attachments_payload,
+        record_status="draft",
+        total_price=prefill["price"],
     )
     attach_service_access_to_record(record=record, current_user=current_user, access_link=access_link)
     db.add(record)
+    db.flush()
+    snapshot = _service_record_snapshot(record)
+    _, snapshot_hash = _snapshot_json_and_hash(snapshot)
+    record.snapshot_hash = snapshot_hash
+    write_global_audit_log(
+        db,
+        entity_type="service_record",
+        entity_id=int(record.id),
+        action="service_record_create_from_document",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=tenant_id,
+        metadata={
+            "vehicle_id": int(vehicle_id),
+            "record_status": "draft",
+            "source_type": source_type,
+        },
+    )
     db.commit()
     db.refresh(record)
 
@@ -961,6 +1209,7 @@ def preview_service_record_from_document(
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+    _require_documents_plan(db, tenant_id=vehicle.tenant_id)
 
     source_type = str(payload.source_type or "invoice").strip().lower()
     if source_type not in ALLOWED_SOURCE_TYPES:
@@ -1025,6 +1274,7 @@ def download_service_record_attachment(
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+    _require_documents_plan(db, tenant_id=vehicle.tenant_id)
 
     expected_segment = f"/vehicle_{vehicle_id}/"
     normalized_key = str(key or "").replace("\\", "/")
@@ -1042,6 +1292,246 @@ def download_service_record_attachment(
     return FileResponse(
         path=str(attachment_file),
         media_type=media_type,
+        headers={"Content-Disposition": content_disposition},
+    )
+
+
+@router.get("/documents/hub", response_model=DocumentsHubSummaryOutV1)
+def get_documents_hub_summary(
+    attachments_limit: int = Query(default=30, ge=1, le=100),
+    reports_limit: int = Query(default=20, ge=1, le=100),
+    tachometer_limit: int = Query(default=20, ge=1, le=100),
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_documents_plan(db, tenant_id=getattr(current_user, "tenant_id", None))
+    vehicle_ids = _visible_vehicle_ids_for_documents(db, current_user=current_user)
+    role_key = _normalize_role(getattr(current_user, "role", None))
+    scope = "tenant" if is_admin(role_key) else ("service" if is_service(role_key) else "user")
+
+    if not vehicle_ids:
+        return DocumentsHubSummaryOutV1(
+            scope=scope,
+            vehicles_total=0,
+            attachments_total=0,
+            reports_total=0,
+            tachometer_documents_total=0,
+        )
+
+    vehicles = (
+        db.query(VehicleModel)
+        .filter(VehicleModel.id.in_(vehicle_ids))
+        .all()
+    )
+    vehicle_by_id = {int(vehicle.id): vehicle for vehicle in vehicles}
+
+    attachment_records = (
+        db.query(ServiceRecordModel)
+        .filter(
+            ServiceRecordModel.vehicle_id.in_(vehicle_ids),
+            ServiceRecordModel.is_deleted.is_(False),
+            ServiceRecordModel.attachments.isnot(None),
+        )
+        .order_by(desc(ServiceRecordModel.performed_at), desc(ServiceRecordModel.id))
+        .limit(max(attachments_limit * 3, attachments_limit))
+        .all()
+    )
+    attachment_items: list[DocumentsHubAttachmentItemV1] = []
+    for record in attachment_records:
+        vehicle = vehicle_by_id.get(int(record.vehicle_id))
+        for attachment in _parse_attachments_payload(record.attachments):
+            download_url = str(
+                attachment.get("download_url")
+                or (
+                    f"/api/v1/vehicles/{int(record.vehicle_id)}/records/attachments/download"
+                    f"?key={quote(str(attachment.get('storage_key') or ''), safe='')}"
+                    if attachment.get("storage_key")
+                    else ""
+                )
+            ).strip()
+            if not download_url:
+                continue
+            file_name = str(attachment.get("file_name") or "").strip() or "Doklad"
+            attachment_items.append(
+                DocumentsHubAttachmentItemV1(
+                    vehicle_id=int(record.vehicle_id),
+                    vehicle_name=_vehicle_display_name(vehicle),
+                    record_id=int(record.id),
+                    performed_at=getattr(record, "performed_at", None),
+                    description=getattr(record, "description", None),
+                    category=getattr(record, "category", None),
+                    file_name=file_name,
+                    mime_type=(str(attachment.get("mime_type")).strip() if attachment.get("mime_type") else None),
+                    download_url=download_url,
+                    source_type=(str(attachment.get("source_type")).strip() if attachment.get("source_type") else None),
+                )
+            )
+            if len(attachment_items) >= attachments_limit:
+                break
+        if len(attachment_items) >= attachments_limit:
+            break
+
+    report_rows = (
+        db.query(VehicleReportDocument)
+        .filter(VehicleReportDocument.vehicle_id.in_(vehicle_ids))
+        .order_by(desc(VehicleReportDocument.finalized_at), desc(VehicleReportDocument.id))
+        .all()
+    )
+    latest_report_by_vehicle: dict[int, VehicleReportDocument] = {}
+    for row in report_rows:
+        vehicle_key = int(row.vehicle_id)
+        if vehicle_key not in latest_report_by_vehicle:
+            latest_report_by_vehicle[vehicle_key] = row
+
+    def _report_sort_key(vehicle: VehicleModel) -> datetime:
+        row = latest_report_by_vehicle.get(int(vehicle.id))
+        value = (
+            getattr(row, "finalized_at", None)
+            or getattr(vehicle, "updated_at", None)
+            or getattr(vehicle, "created_at", None)
+        )
+        if isinstance(value, datetime):
+            return value
+        return datetime.min
+
+    sorted_report_vehicles = sorted(
+        vehicles,
+        key=_report_sort_key,
+        reverse=True,
+    )[:reports_limit]
+
+    report_items = []
+    for vehicle in sorted_report_vehicles:
+        row = latest_report_by_vehicle.get(int(vehicle.id))
+        report_items.append(
+            DocumentsHubReportItemV1(
+                vehicle_id=int(vehicle.id),
+                vehicle_name=_vehicle_display_name(vehicle),
+                document_id=str(getattr(row, "document_id", None) or f"CLASSIC-PDF-{int(vehicle.id)}"),
+                document_type=str(getattr(row, "document_type", None) or "service_records_pdf"),
+                export_mode=str(getattr(row, "export_mode", None) or "classic"),
+                status=str(getattr(row, "status", None) or "ready"),
+                finalized_at=getattr(row, "finalized_at", None),
+                verification_code=(str(row.verification_code).strip() if row and row.verification_code else None),
+                verify_url=(f"/verify/{row.public_token}" if row and getattr(row, "public_token", None) else None),
+                classic_pdf_url=f"/api/v1/vehicles/{int(vehicle.id)}/export/pdf",
+                verified_pdf_url=(f"/api/v1/vehicles/{int(vehicle.id)}/report.pdf" if row else None),
+                has_verified_report=bool(row),
+            )
+        )
+
+    tachometer_rows = (
+        db.query(VehicleTachometerHistoryEntry)
+        .filter(VehicleTachometerHistoryEntry.vehicle_id.in_(vehicle_ids))
+        .order_by(desc(VehicleTachometerHistoryEntry.check_date), desc(VehicleTachometerHistoryEntry.id))
+        .limit(max(tachometer_limit * 2, tachometer_limit))
+        .all()
+    )
+    tachometer_items: list[DocumentsHubTachometerItemV1] = []
+    for row in tachometer_rows:
+        available_count = _count_available_tachometer_documents(getattr(row, "documents_json", None))
+        if available_count <= 0:
+            continue
+        tachometer_items.append(
+            DocumentsHubTachometerItemV1(
+                vehicle_id=int(row.vehicle_id),
+                vehicle_name=_vehicle_display_name(vehicle_by_id.get(int(row.vehicle_id))),
+                history_entry_id=int(row.id),
+                check_date=getattr(row, "check_date", None),
+                protocol_number=getattr(row, "protocol_number", None),
+                mileage_km=getattr(row, "mileage_km", None),
+                available_documents_count=available_count,
+                detail_url=f"/api/v1/vehicles/{int(row.vehicle_id)}/tachometer/history/{int(row.id)}",
+            )
+        )
+        if len(tachometer_items) >= tachometer_limit:
+            break
+
+    return DocumentsHubSummaryOutV1(
+        scope=scope,
+        vehicles_total=len(vehicle_ids),
+        attachments_total=len(attachment_items),
+        reports_total=len(vehicle_ids),
+        tachometer_documents_total=len(tachometer_items),
+        attachments=attachment_items,
+        reports=report_items,
+        tachometer_documents=tachometer_items,
+    )
+
+
+@router.get("/{vehicle_id}/mileage-timeline")
+def get_vehicle_mileage_timeline(
+    vehicle_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Sloučená časová osa km pro audit a náhled: servisní záznamy, servisní příjmy, STK/tachometr.
+    Stejná logika jako graf v PDF reportu servisní historie.
+    """
+    assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+    _require_documents_plan(db, tenant_id=vehicle.tenant_id)
+    return build_mileage_timeline_payload(db, vehicle_id)
+
+
+@router.get("/{vehicle_id}/report.pdf")
+def export_vehicle_report_pdf(
+    vehicle_id: int,
+    mode: Optional[str] = Query(default=None),
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Nový export digitálního servisního výpisu vozidla včetně veřejného ověření.
+    """
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+    _require_documents_plan(db, tenant_id=vehicle.tenant_id)
+
+    try:
+        resolved_mode = resolve_report_mode(
+            db=db,
+            vehicle=vehicle,
+            current_user=current_user,
+            requested_mode=mode,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    payload = build_vehicle_service_report_payload(
+        db=db,
+        vehicle=vehicle,
+        current_user=current_user,
+        mode=resolved_mode,
+    )
+    payload, _document_row = finalize_vehicle_report_document(
+        db=db,
+        vehicle=vehicle,
+        current_user=current_user,
+        payload=payload,
+    )
+    pdf_content = render_vehicle_service_report_pdf(payload)
+
+    brand = _ascii_slug(str(vehicle.brand or ""), fallback="VOZIDLO")
+    model_name = _ascii_slug(str(vehicle.model or ""), fallback="DETAIL")
+    vin = re.sub(r"[^A-Za-z0-9._-]+", "", str(vehicle.vin or "").strip()) or f"id-{vehicle.id}"
+    filename = f"toozservis-vypis-vozidla-{brand}-{model_name}-{vin}.pdf"
+    safe_filename_ascii = filename.encode("ascii", "ignore").decode("ascii") or f"vehicle-report-{vehicle.id}.pdf"
+    safe_filename_utf8 = quote(filename, safe="")
+    content_disposition = f'inline; filename="{safe_filename_ascii}"; filename*=UTF-8\'\'{safe_filename_utf8}'
+
+    return Response(
+        content=pdf_content,
+        media_type="application/pdf",
         headers={"Content-Disposition": content_disposition},
     )
 
@@ -1073,6 +1563,19 @@ def generate_service_records_pdf(
         vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+        _require_documents_plan(db, tenant_id=vehicle.tenant_id)
+
+        write_global_audit_log(
+            db,
+            entity_type="vehicle",
+            entity_id=int(vehicle_id),
+            action="pdf_export",
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=getattr(vehicle, "tenant_id", None),
+            metadata={"endpoint": "vehicles_pdf"},
+        )
+        db.commit()
         
         # Načíst všechny záznamy - řadit podle data (nejstarší první pro PDF)
         records = db.query(ServiceRecordModel).filter(
@@ -1368,9 +1871,9 @@ def generate_service_records_pdf(
             story.append(summary_table)
             story.append(Spacer(1, 20))
 
-        story.append(Paragraph("VÝVOJ STAVU KM", heading_style))
+        story.append(Paragraph("Vývoj stavu km", heading_style))
         story.append(Paragraph(
-            "Časová osa z evidovaných servisních, ručních a STK záznamů",
+            "Časová osa z tabulky vehicle_mileage (ruční/STK zápisy km), servisních záznamů (performed_at + km), servisních příjmů a historie STK / tachometru. Body jsou seřazeny vzestupně podle data; anomálie jsou auditně označeny, bez úpravy hodnot.",
             subtitle_style,
         ))
 
@@ -1575,6 +2078,16 @@ def generate_service_records_pdf(
         raise HTTPException(status_code=500, detail=f"Chyba při generování PDF: {error_msg}")
 
 
+@router.get("/{vehicle_id}/export/pdf")
+def export_vehicle_pdf_alias(
+    vehicle_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stejný výstup jako ``GET /vehicles/{vehicle_id}/pdf`` (ReportLab)."""
+    return generate_service_records_pdf(vehicle_id, current_user, db)
+
+
 @router.get("/{vehicle_id}/records", response_model=List[ServiceRecordOutV1])
 def get_service_records(
     vehicle_id: int,
@@ -1621,8 +2134,6 @@ def get_service_record(
         # Kontrola přístupu k vozidlu
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
-        forbid_service_record_mutation(current_user)
-        
         record = db.query(ServiceRecordModel).filter(
             ServiceRecordModel.id == record_id,
             ServiceRecordModel.vehicle_id == vehicle_id
@@ -1676,8 +2187,11 @@ def update_service_record(
             raise HTTPException(status_code=404, detail="Servisní záznam nenalezen")
         if bool(getattr(record, "is_deleted", False)):
             raise HTTPException(status_code=409, detail="Archivovaný servisní záznam nelze upravovat")
+        _assert_record_is_mutable(record)
+        _assert_current_user_can_edit_record(current_user, record)
 
         previous_snapshot = _service_record_snapshot(record)
+        previous_status = _normalize_record_status(getattr(record, "record_status", None), default="draft")
         
         # Aktualizace polí
         if record_data.performed_at is not None:
@@ -1696,23 +2210,59 @@ def update_service_record(
             record.attachments = record_data.attachments
         if record_data.next_service_due_date is not None:
             record.next_service_due_date = record_data.next_service_due_date
+        if record_data.customer_id is not None:
+            record.customer_id = record_data.customer_id
+        if record_data.service_id is not None:
+            record.service_id = record_data.service_id
+        if record_data.work_order_id is not None:
+            record.work_order_id = record_data.work_order_id
+        if record_data.quote_id is not None:
+            record.quote_id = record_data.quote_id
+        if record_data.service_type is not None:
+            record.service_type = record_data.service_type
+        if record_data.recommended_next_service_text is not None:
+            record.recommended_next_service_text = record_data.recommended_next_service_text
+        if record_data.recommended_next_service_date is not None:
+            record.recommended_next_service_date = record_data.recommended_next_service_date
+        if record_data.notes_customer_visible is not None:
+            record.notes_customer_visible = record_data.notes_customer_visible
+        if record_data.total_price is not None:
+            record.total_price = record_data.total_price
+        if record_data.record_status is not None:
+            record.record_status = _normalize_record_status(record_data.record_status, default=previous_status)
 
         new_snapshot = _service_record_snapshot(record)
         previous_snapshot_json, _ = _snapshot_json_and_hash(previous_snapshot)
         new_snapshot_json, snapshot_hash = _snapshot_json_and_hash(new_snapshot)
         record.snapshot_hash = snapshot_hash
+        new_status = _normalize_record_status(getattr(record, "record_status", None), default=previous_status)
+        audit_action = "status_change" if new_status != previous_status else "update"
         db.add(
             ServiceRecordAuditLog(
                 tenant_id=record.tenant_id,
                 service_record_id=record.id,
                 vehicle_id=record.vehicle_id,
                 changed_by_user_id=getattr(current_user, "id", None),
-                action="update",
+                action=audit_action,
                 previous_snapshot_json=previous_snapshot_json,
                 new_snapshot_json=new_snapshot_json,
                 snapshot_hash=snapshot_hash,
                 change_reason=None,
             )
+        )
+        write_global_audit_log(
+            db,
+            entity_type="service_record",
+            entity_id=int(record.id),
+            action="service_record_status_change" if new_status != previous_status else "service_record_update",
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=getattr(record, "tenant_id", None),
+            metadata={
+                "vehicle_id": int(record.vehicle_id),
+                "previous_status": previous_status,
+                "new_status": new_status,
+            },
         )
         
         db.commit()
@@ -1742,6 +2292,11 @@ def delete_service_record(
     """
     try:
         assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
+        if not is_admin(getattr(current_user, "role", None)):
+            raise HTTPException(
+                status_code=403,
+                detail="Servisní historie je neměnná: záznamy lze pouze přidávat. Odstranění je vyhrazeno administrátorovi.",
+            )
         # Kontrola přístupu k vozidlu
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
@@ -1785,6 +2340,16 @@ def delete_service_record(
                 snapshot_hash=snapshot_hash,
                 change_reason="user_delete",
             )
+        )
+        write_global_audit_log(
+            db,
+            entity_type="service_record",
+            entity_id=int(record_id),
+            action="service_record_archive_admin",
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=int(record.tenant_id),
+            metadata={"vehicle_id": int(vehicle_id)},
         )
         db.commit()
         

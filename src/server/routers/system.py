@@ -10,7 +10,18 @@ from sqlalchemy import func
 
 from src.core.auth import get_current_user_email
 from src.core.branding import APP_API_DISPLAY_NAME, APP_DISPLAY_NAME, APP_OPS_PROJECT_LABEL
-from src.core.config import DATABASE_URL, ENABLE_AI_FEATURES, ENABLE_AUTOPILOT_API, ENABLE_CUSTOMER_COMMANDS, ENVIRONMENT
+from src.core.config import (
+    DATABASE_URL,
+    ENABLE_AI_FEATURES,
+    ENABLE_AUTOPILOT_API,
+    ENABLE_CUSTOMER_COMMANDS,
+    ENVIRONMENT,
+    HAS_LEGACY_APP_DATA_DB,
+    LEGACY_APP_DATA_DB_DRIFT,
+    LEGACY_APP_DATA_DB_PATH,
+    LEGACY_APP_DATA_DB_REALPATH,
+    RUNTIME_DB_PATH,
+)
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer, Vehicle as VehicleModel, VehicleOwnership
 from src.server.main_helpers import APP_VERSION, APP_VERSION_NAME, BUILD_DATE, UPDATE_INFO
@@ -19,6 +30,7 @@ from src.server.main_helpers import APP_VERSION, APP_VERSION_NAME, BUILD_DATE, U
 router = APIRouter()
 public_path = Path(__file__).parent.parent.parent.parent / "public_share"
 public_path.mkdir(parents=True, exist_ok=True)
+web_path = Path(__file__).parent.parent.parent.parent / "web"
 
 
 def _version_context() -> tuple[str, str, str, str]:
@@ -263,6 +275,112 @@ def root():
     return RedirectResponse(url="/web/index.html", status_code=302)
 
 
+def _spa_index_response() -> FileResponse:
+    index_path = web_path / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Web interface není k dispozici")
+    return FileResponse(index_path)
+
+
+# Přípony skutečných statických souborů: chybějící soubor = 404 (ne SPA shell).
+_ASSET_FILE_SUFFIXES: tuple[str, ...] = (
+    ".js",
+    ".mjs",
+    ".css",
+    ".map",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".json",
+    ".xml",
+    ".txt",
+    ".pdf",
+    ".wasm",
+    ".webmanifest",
+)
+
+
+def _serve_web_relative_file_or_spa(relative_path: str) -> FileResponse:
+    """
+    Obsluha cest pod /web/…: existující soubor z disku, jinak SPA index (deep link).
+    Chybějící soubor s typickou příponou assetu → 404 (aby se nevracel HTML místo 404 u /web/assets/…).
+    """
+    rel = (relative_path or "").strip().lstrip("/")
+    if ".." in rel.split("/"):
+        raise HTTPException(status_code=403, detail="Neplatná cesta")
+    base = web_path.resolve()
+    target = (web_path / rel).resolve()
+    if not str(target).startswith(str(base)):
+        raise HTTPException(status_code=403, detail="Neplatná cesta")
+    if target.is_file():
+        return FileResponse(target)
+    if target.is_dir():
+        nested = target / "index.html"
+        if nested.is_file():
+            return FileResponse(nested)
+        raise HTTPException(status_code=404, detail="Not Found")
+    lower = rel.lower()
+    if any(lower.endswith(sfx) for sfx in _ASSET_FILE_SUFFIXES):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return _spa_index_response()
+
+
+@router.api_route("/web", methods=["GET", "HEAD"])
+@router.api_route("/web/", methods=["GET", "HEAD"])
+def spa_web_root_shell():
+    """SPA shell pro /web a /web/ (F5, přímý vstup)."""
+    return _spa_index_response()
+
+
+@router.api_route("/web/{full_path:path}", methods=["GET", "HEAD"])
+def spa_web_deep_shell(full_path: str):
+    """
+    Veškerý obsah pod /web kromě skutečných souborů → index.html (deep linky /web/app/…).
+    Musí být registrováno před mountem StaticFiles na /web (mount je odstraněn — viz bootstrap).
+    """
+    return _serve_web_relative_file_or_spa(full_path)
+
+
+@router.get("/login")
+@router.get("/register")
+@router.get("/forgot-password")
+@router.get("/funkce")
+@router.get("/pro-koho")
+@router.get("/kontakt")
+def spa_public_shell():
+    """Deep-link friendly HTML shell (routing řeší SPA v prohlížeči)."""
+    return _spa_index_response()
+
+
+@router.api_route("/app", methods=["GET", "HEAD"])
+@router.api_route("/app/", methods=["GET", "HEAD"])
+def spa_app_root_shell():
+    """Kořen /app po reloadu (bez další cesty)."""
+    return _spa_index_response()
+
+
+@router.api_route("/app/{full_path:path}", methods=["GET", "HEAD"])
+def spa_app_workspace_shell(full_path: str):
+    """Privátní /app/... URL musí vrátit index.html, aby SPA mohla načíst stav z relace."""
+    return _spa_index_response()
+
+
+@router.get("/verify/{token:path}")
+def verify_document_page(token: str = ""):
+    verify_page = web_path / "verify.html"
+    if not verify_page.exists():
+        raise HTTPException(status_code=404, detail="Ověřovací stránka není dostupná")
+    return FileResponse(verify_page)
+
+
 @router.get("/api")
 def api_root():
     version, version_name, build_date, update_info = _version_context()
@@ -286,7 +404,8 @@ def api_root():
             "register": "/user/register",
             "register_service_request": "/user/register/service-request",
             "login": "/user/login",
-            "me": "/user/me",
+            "me": "/api/me",
+            "me_legacy": "/user/me",
             "me_export": "/user/me/export",
             "me_delete": "/user/me",
             "ares": "/user/ares?ico=ICO",
@@ -398,6 +517,17 @@ def debug_db_stats(
         db_exists = True
         db_size = None
 
+    legacy_db_path = str(LEGACY_APP_DATA_DB_PATH)
+    legacy_db_realpath = str(LEGACY_APP_DATA_DB_REALPATH) if LEGACY_APP_DATA_DB_REALPATH else None
+    runtime_db_realpath = str(RUNTIME_DB_PATH) if RUNTIME_DB_PATH else None
+    legacy_db_exists = bool(HAS_LEGACY_APP_DATA_DB)
+    legacy_db_size = None
+    if legacy_db_exists:
+        try:
+            legacy_db_size = os.path.getsize(legacy_db_path)
+        except OSError:
+            legacy_db_size = None
+
     try:
         vehicles_total = db.query(VehicleModel).count()
         users_total = db.query(Customer).count()
@@ -440,8 +570,16 @@ def debug_db_stats(
         return {
             "db_url": db_url,
             "db_path": db_path,
+            "runtime_db_realpath": runtime_db_realpath,
             "db_exists": db_exists,
             "db_size": db_size,
+            "legacy_app_data_db": {
+                "path": legacy_db_path,
+                "realpath": legacy_db_realpath,
+                "exists": legacy_db_exists,
+                "size_bytes": legacy_db_size,
+                "drift_from_runtime_db": bool(LEGACY_APP_DATA_DB_DRIFT),
+            },
             "cwd": cwd,
             "vehicles_total": vehicles_total,
             "vehicles_for_user": int(vehicles_for_user),
@@ -458,8 +596,16 @@ def debug_db_stats(
         return {
             "db_url": db_url,
             "db_path": db_path,
+            "runtime_db_realpath": runtime_db_realpath,
             "db_exists": db_exists,
             "db_size": db_size,
+            "legacy_app_data_db": {
+                "path": legacy_db_path,
+                "realpath": legacy_db_realpath,
+                "exists": legacy_db_exists,
+                "size_bytes": legacy_db_size,
+                "drift_from_runtime_db": bool(LEGACY_APP_DATA_DB_DRIFT),
+            },
             "cwd": cwd,
             "error": str(exc),
             "traceback": traceback.format_exc(),

@@ -67,11 +67,23 @@ def get_active_vehicle_service_link(
 def service_can_read_vehicle(db: Session, current_user: Customer, vehicle_id: int) -> bool:
     if not is_service(normalize_role(getattr(current_user, "role", None))):
         return False
-    return get_active_vehicle_service_link(
+    if get_active_vehicle_service_link(
         db,
         service_customer_id=int(current_user.id),
         vehicle_id=int(vehicle_id),
-    ) is not None
+    ) is not None:
+        return True
+
+    legacy_access = (
+        db.query(ServiceVehicleAccess.id)
+        .filter(
+            ServiceVehicleAccess.service_customer_id == int(current_user.id),
+            ServiceVehicleAccess.vehicle_id == int(vehicle_id),
+            ServiceVehicleAccess.status == "active",
+        )
+        .first()
+    )
+    return legacy_access is not None
 
 
 def require_service_vehicle_link(

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from src.core.branding import APP_DISPLAY_NAME
+from ..audit_log import write_global_audit_log
 from ..database import get_db
 from ..models import (
     Customer,
@@ -82,6 +83,9 @@ class LicenseStatusResponse(BaseModel):
     vehicles_current_user: Optional[int] = None
     vehicles_remaining: Optional[int] = None
     is_unlimited: bool
+    vehicles_count: Optional[int] = None
+    license_limit: Optional[int] = None
+    is_over_limit: Optional[bool] = None
     vin_decode_enabled: bool = True
     ares_enabled: bool = True
     reminders_enabled: bool = True
@@ -1571,6 +1575,17 @@ def upgrade_license_endpoint(
         )
     
     status = upgrade_license_plan(db, target_tenant_id, payload.plan)
+    write_global_audit_log(
+        db,
+        entity_type="license",
+        entity_id=int(target_tenant_id),
+        action="license_upgrade",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=int(target_tenant_id),
+        metadata={"plan": payload.plan},
+    )
+    db.commit()
     return LicenseStatusResponse(**status)
 
 

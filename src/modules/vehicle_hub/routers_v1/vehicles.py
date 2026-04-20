@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Depends, Body
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import requests
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 
@@ -37,13 +38,18 @@ except Exception:
 from src.core.config import DATA_DIR
 from src.core.rbac import is_admin, vehicle_write_policy
 from ..database import get_db
+from ..audit_log import write_global_audit_log
 from ..models import (
     Vehicle as VehicleModel,
+    VehiclePhoto as VehiclePhotoModel,
+    VehiclePhotoAsset as VehiclePhotoAssetModel,
+    VehicleMileage as VehicleMileageModel,
+    VehicleQrToken as VehicleQrTokenModel,
     Customer,
     ServiceRecord as ServiceRecordModel,
     VehicleTachometerHistoryEntry as VehicleTachometerHistoryEntryModel,
 )
-from ..orv_scans import apply_orv_scan_to_vehicle, create_orv_scan_record, serialize_orv_scan
+from ..orv_scans import apply_orv_review_audit, apply_orv_scan_to_vehicle, create_orv_scan_record, serialize_orv_scan
 from ..ownership import (
     backfill_vehicle_owner_assignment,
     ensure_vehicle_owner_assignment,
@@ -55,6 +61,13 @@ from ..ownership import (
     user_owns_vehicle,
 )
 from ..schema_management import assert_module_ready
+from ..vehicle_photo_assets import (
+    build_main_storage_key,
+    jpeg_dimensions,
+    resolve_storage_file,
+    sha256_hex,
+)
+from ..vehicle_public_history import build_public_history_page_url, render_vehicle_qr_svg
 from .auth import get_current_user, can_access_vehicle
 from .schemas import (
     VehicleCreateV1,
@@ -64,17 +77,23 @@ from .schemas import (
     VehicleMileageRecordV1,
     ORVParseRequestV1,
     ORVParseResponseV1,
+    ORVReviewAuditRequestV1,
+    ORVReviewAuditResponseV1,
 )
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles-v1"])
 
 VEHICLE_PHOTOS_DIR = DATA_DIR / "vehicle_photos"
 VEHICLE_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+VEHICLE_UPLOADS_VEHICLES_DIR = DATA_DIR / "uploads" / "vehicles"
+VEHICLE_UPLOADS_VEHICLES_DIR.mkdir(parents=True, exist_ok=True)
 MAX_VEHICLE_PHOTO_RAW_SIZE_BYTES = 40 * 1024 * 1024
 MAX_VEHICLE_PHOTO_OUTPUT_SIZE_BYTES = 10 * 1024 * 1024
 VEHICLE_PHOTO_TARGET_SIZE = (1280, 720)
 VEHICLE_PHOTO_JPEG_QUALITY = 82
 VEHICLE_PHOTO_MIN_JPEG_QUALITY = 52
+MAX_VEHICLE_GALLERY_PHOTOS = 24
+PRIMARY_PHOTO_CLIENT_MARKER = "__primary_photo__"
 
 
 class VehiclePhotoUploadRequest(BaseModel):
@@ -141,6 +160,7 @@ class VehicleTachometerInitResponse(BaseModel):
 class VehicleTachometerSubmitRequest(BaseModel):
     session_id: str = Field(..., min_length=10, max_length=255)
     captcha_code: str = Field(..., min_length=2, max_length=16)
+    confirm_lower_than_current: bool = False
 
 
 class VehicleTachometerSubmitResponse(BaseModel):
@@ -148,7 +168,8 @@ class VehicleTachometerSubmitResponse(BaseModel):
     latest_mileage_km: int
     latest_check_date: Optional[datetime] = None
     inspections: List[TachometerInspectionOut]
-    created_record_id: int
+    created_record_id: Optional[int] = None
+    created_vehicle_mileage_id: Optional[int] = None
     source: str = "kontrolatachometru.cz"
 
 
@@ -268,6 +289,94 @@ def _contains_captcha_error(page_html: str) -> bool:
         "špatně opsaný kód z obrázku" in decoded
         or "spatne opsany kod z obrazku" in normalized_ascii
         or "submitted code is incorrect" in decoded
+    )
+
+
+def _serialize_tachometer_captcha_payload(
+    *,
+    session_id: str,
+    captcha_bytes: bytes,
+    captcha_mime_type: str,
+) -> dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "captcha_image_base64": base64.b64encode(captcha_bytes).decode("ascii"),
+        "captcha_mime_type": captcha_mime_type,
+        "expires_in_seconds": TACHOMETER_CHALLENGE_TTL_SECONDS,
+    }
+
+
+def _fetch_tachometer_captcha_image(
+    *,
+    session: requests.Session,
+    captcha_src: str,
+) -> tuple[bytes, str]:
+    captcha_response = session.get(
+        urljoin(TACHOMETER_BASE_URL, captcha_src),
+        timeout=_TACHOMETER_HTTP_TIMEOUT_SECONDS,
+    )
+    captcha_response.raise_for_status()
+    captcha_bytes = captcha_response.content
+    if not captcha_bytes:
+        raise HTTPException(
+            status_code=502,
+            detail="Captcha obrázek je prázdný. Zkuste to prosím znovu.",
+        )
+    captcha_mime_type = (
+        captcha_response.headers.get("Content-Type", "image/png").split(";", 1)[0].strip()
+        or "image/png"
+    )
+    return captcha_bytes, captcha_mime_type
+
+
+def _store_tachometer_challenge_session(
+    *,
+    session_id: str,
+    session: requests.Session,
+    request_verification_token: str,
+    expected_vin: Optional[str],
+    vehicle_id: Optional[int],
+) -> None:
+    with _TACHOMETER_CHALLENGE_LOCK:
+        _TACHOMETER_CHALLENGE_STORE[session_id] = {
+            "created_at": datetime.utcnow(),
+            "request_verification_token": request_verification_token,
+            "cookies": requests.utils.dict_from_cookiejar(session.cookies),
+            "expected_vin": expected_vin,
+            "vehicle_id": vehicle_id,
+        }
+
+
+def _refresh_tachometer_challenge_from_html(
+    *,
+    session_id: str,
+    page_html: str,
+    session: requests.Session,
+    existing_challenge: dict[str, Any],
+) -> dict[str, Any] | None:
+    token = _extract_hidden_token(page_html)
+    captcha_src = _extract_captcha_src(page_html)
+    if not token or not captcha_src:
+        return None
+    try:
+        captcha_bytes, captcha_mime_type = _fetch_tachometer_captcha_image(
+            session=session,
+            captcha_src=captcha_src,
+        )
+    except HTTPException:
+        return None
+
+    _store_tachometer_challenge_session(
+        session_id=session_id,
+        session=session,
+        request_verification_token=token,
+        expected_vin=existing_challenge.get("expected_vin"),
+        vehicle_id=existing_challenge.get("vehicle_id"),
+    )
+    return _serialize_tachometer_captcha_payload(
+        session_id=session_id,
+        captcha_bytes=captcha_bytes,
+        captcha_mime_type=captcha_mime_type,
     )
 
 
@@ -677,36 +786,25 @@ def _create_tachometer_session(
                     detail="Nepodařilo se načíst captcha z Kontroly tachometru.",
                 )
 
-            captcha_response = session.get(
-                urljoin(TACHOMETER_BASE_URL, captcha_src),
-                timeout=_TACHOMETER_HTTP_TIMEOUT_SECONDS,
+            captcha_bytes, captcha_mime_type = _fetch_tachometer_captcha_image(
+                session=session,
+                captcha_src=captcha_src,
             )
-            captcha_response.raise_for_status()
-            captcha_bytes = captcha_response.content
-            if not captcha_bytes:
-                raise HTTPException(
-                    status_code=502,
-                    detail="Captcha obrázek je prázdný. Zkuste to prosím znovu.",
-                )
 
             session_id = secrets.token_urlsafe(24)
-            with _TACHOMETER_CHALLENGE_LOCK:
-                _TACHOMETER_CHALLENGE_STORE[session_id] = {
-                    "created_at": datetime.utcnow(),
-                    "request_verification_token": token,
-                    "cookies": requests.utils.dict_from_cookiejar(session.cookies),
-                    "expected_vin": expected_vin,
-                    "vehicle_id": vehicle_id,
-                }
-
-            return VehicleTachometerInitResponse(
+            _store_tachometer_challenge_session(
                 session_id=session_id,
-                captcha_image_base64=base64.b64encode(captcha_bytes).decode("ascii"),
-                captcha_mime_type=(
-                    captcha_response.headers.get("Content-Type", "image/png").split(";", 1)[0].strip()
-                    or "image/png"
-                ),
-                expires_in_seconds=TACHOMETER_CHALLENGE_TTL_SECONDS,
+                session=session,
+                request_verification_token=token,
+                expected_vin=expected_vin,
+                vehicle_id=vehicle_id,
+            )
+            return VehicleTachometerInitResponse(
+                **_serialize_tachometer_captcha_payload(
+                    session_id=session_id,
+                    captcha_bytes=captcha_bytes,
+                    captcha_mime_type=captcha_mime_type,
+                )
             )
     except HTTPException:
         raise
@@ -778,7 +876,29 @@ def _lookup_tachometer_with_session(
 
             search_html = response.text
             if _contains_captcha_error(search_html):
-                raise HTTPException(status_code=422, detail=_TACHOMETER_CAPTCHA_ERROR_TEXT)
+                refreshed_payload = _refresh_tachometer_challenge_from_html(
+                    session_id=session_id,
+                    page_html=search_html,
+                    session=session,
+                    existing_challenge=challenge,
+                )
+                if refreshed_payload:
+                    raise HTTPException(
+                        status_code=422,
+                        detail={
+                            "code": "CAPTCHA_INVALID",
+                            "message": _TACHOMETER_CAPTCHA_ERROR_TEXT,
+                            **refreshed_payload,
+                        },
+                    )
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "CAPTCHA_INVALID",
+                        "message": _TACHOMETER_CAPTCHA_ERROR_TEXT,
+                        "session_id": session_id,
+                    },
+                )
 
             inspections = _parse_tachometer_inspections(search_html, session=session)
             if not inspections:
@@ -811,50 +931,76 @@ def _store_tachometer_mileage_result(
     lookup: TachometerLookupResponse,
     current_user: Customer,
     db: Session,
-) -> tuple[dict, int]:
-    effective_current_mileage = max(
-        getattr(vehicle, "current_mileage_km", None) or lookup.latest_mileage_km,
-        lookup.latest_mileage_km,
-    )
-    _validate_mileage_consistency(
-        current_mileage_km=effective_current_mileage,
-        last_stk_mileage_km=lookup.latest_mileage_km,
-    )
+    confirm_lower_than_current: bool = False,
+) -> tuple[dict, Optional[int]]:
+    new_km = int(lookup.latest_mileage_km)
+    cm = getattr(vehicle, "current_mileage_km", None)
+    if confirm_lower_than_current:
+        vehicle.current_mileage_km = new_km
+    else:
+        base_cm = int(cm) if cm is not None else new_km
+        vehicle.current_mileage_km = max(base_cm, new_km)
 
-    vehicle.current_mileage_km = effective_current_mileage
-    vehicle.last_stk_mileage_km = lookup.latest_mileage_km
+    vehicle.last_stk_mileage_km = new_km
     vehicle.mileage_checked_at = datetime.utcnow()
 
+    _validate_mileage_consistency(
+        current_mileage_km=vehicle.current_mileage_km,
+        last_stk_mileage_km=vehicle.last_stk_mileage_km,
+    )
+
     latest = lookup.inspections[0]
-    performed_at = latest.check_date or datetime.utcnow()
-    record_description = "Načteno z kontroly tachometru (MDČR)"
-    record_note_parts = ["Zdroj: kontrolatachometru.cz"]
+    record_note_parts = ["Zdroj: kontrolatachometru.cz (import portálu)"]
     if latest.protocol_number:
         record_note_parts.append(f"Protokol: {latest.protocol_number}")
     if latest.inspection_type:
         record_note_parts.append(f"Typ: {latest.inspection_type}")
-    existing_record = (
-        db.query(ServiceRecordModel)
+    note_text = " | ".join(record_note_parts)
+    note_stored = note_text[:1000] if note_text else None
+
+    vm_query = (
+        db.query(VehicleMileageModel)
         .filter(
-            ServiceRecordModel.vehicle_id == vehicle.id,
-            ServiceRecordModel.description == record_description,
-            ServiceRecordModel.mileage == lookup.latest_mileage_km,
-            ServiceRecordModel.performed_at == performed_at,
-            ServiceRecordModel.is_deleted.is_(False),
+            VehicleMileageModel.vehicle_id == vehicle.id,
+            VehicleMileageModel.source == "stk",
+            VehicleMileageModel.mileage_km == new_km,
         )
-        .first()
     )
-    if existing_record is None:
-        existing_record = ServiceRecordModel(
-            tenant_id=vehicle.tenant_id,
-            vehicle_id=vehicle.id,
-            user_id=current_user.id,
-            performed_at=performed_at,
-            mileage=lookup.latest_mileage_km,
-            description=record_description,
-            note=" | ".join(record_note_parts),
+    proto = (latest.protocol_number or "").strip()
+    if proto:
+        vm_query = vm_query.filter(VehicleMileageModel.note.contains(proto))
+    vm_existing = vm_query.first()
+
+    vm_id: Optional[int]
+    if vm_existing is not None:
+        vm_id = int(vm_existing.id)
+    else:
+        vm_row = VehicleMileageModel(
+            tenant_id=int(vehicle.tenant_id),
+            vehicle_id=int(vehicle.id),
+            mileage_km=new_km,
+            source="stk",
+            note=note_stored,
+            created_by_user_id=getattr(current_user, "id", None),
         )
-        db.add(existing_record)
+        db.add(vm_row)
+        db.flush()
+        vm_id = int(vm_row.id)
+        write_global_audit_log(
+            db,
+            entity_type="vehicle",
+            entity_id=int(vehicle.id),
+            action="tachometer_stk_import",
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=int(vehicle.tenant_id),
+            metadata={
+                "vehicle_mileage_id": vm_id,
+                "mileage_km": new_km,
+                "protocol_number": proto or None,
+                "source": "kontrolatachometru.cz",
+            },
+        )
 
     _upsert_tachometer_history_entries(
         vehicle=vehicle,
@@ -865,8 +1011,7 @@ def _store_tachometer_mileage_result(
 
     db.commit()
     db.refresh(vehicle)
-    db.refresh(existing_record)
-    return _vehicle_to_response_payload(vehicle, current_user, db), existing_record.id
+    return _vehicle_to_response_payload(vehicle, current_user, db), vm_id
 
 
 def _upsert_tachometer_history_entries(
@@ -1099,8 +1244,212 @@ def _get_normalized_tachometer_history_item_or_404(
 def _get_vehicle_photo_file(photo_path: str | None) -> Path | None:
     if not photo_path:
         return None
+    if str(photo_path).strip() == PRIMARY_PHOTO_CLIENT_MARKER:
+        return None
     base = VEHICLE_PHOTOS_DIR.resolve()
     candidate = (VEHICLE_PHOTOS_DIR / str(photo_path)).resolve()
+    if not str(candidate).startswith(str(base)):
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+def _get_primary_photo_asset_row(db: Session, vehicle: VehicleModel) -> VehiclePhotoAssetModel | None:
+    aid = getattr(vehicle, "primary_photo_asset_id", None)
+    if not aid:
+        return None
+    return (
+        db.query(VehiclePhotoAssetModel)
+        .filter(
+            VehiclePhotoAssetModel.id == int(aid),
+            VehiclePhotoAssetModel.vehicle_id == int(vehicle.id),
+            VehiclePhotoAssetModel.deleted_at.is_(None),
+        )
+        .first()
+    )
+
+
+def _resolve_primary_photo_file(*, vehicle: VehicleModel, db: Session) -> Path | None:
+    asset = _get_primary_photo_asset_row(db, vehicle)
+    if asset is not None:
+        resolved = resolve_storage_file(VEHICLE_PHOTOS_DIR, asset.storage_key)
+        if resolved is not None:
+            return resolved
+    return _get_vehicle_photo_file(getattr(vehicle, "photo_path", None))
+
+
+def _count_active_gallery_assets(db: Session, vehicle_id: int) -> int:
+    return int(
+        db.query(VehiclePhotoAssetModel)
+        .filter(
+            VehiclePhotoAssetModel.vehicle_id == int(vehicle_id),
+            VehiclePhotoAssetModel.role == "gallery",
+            VehiclePhotoAssetModel.deleted_at.is_(None),
+        )
+        .count()
+    )
+
+
+def _soft_delete_photo_asset(db: Session, asset: VehiclePhotoAssetModel) -> None:
+    asset.deleted_at = datetime.utcnow()
+    db.flush()
+
+
+def _unlink_asset_file(asset: VehiclePhotoAssetModel) -> None:
+    path = resolve_storage_file(VEHICLE_PHOTOS_DIR, asset.storage_key)
+    if path and path.is_file():
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _primary_photo_payload_for_api(*, vehicle: VehicleModel, db: Session) -> tuple[dict[str, Any], str | None]:
+    """
+    Vrátí (primary_photo dict, photo_path pro legacy klienty).
+    photo_path je buď PRIMARY_PHOTO_CLIENT_MARKER (fyzicky dostupná fotka), None, nebo legacy relativní cesta.
+    """
+    path = _resolve_primary_photo_file(vehicle=vehicle, db=db)
+    has_ref = bool(getattr(vehicle, "primary_photo_asset_id", None)) or bool(
+        str(getattr(vehicle, "photo_path", None) or "").strip()
+    )
+    asset = _get_primary_photo_asset_row(db, vehicle)
+    primary: dict[str, Any] = {
+        "available": bool(path),
+        "asset_id": int(asset.id) if asset and path else None,
+        "broken": bool(has_ref and not path),
+    }
+    if path:
+        return primary, PRIMARY_PHOTO_CLIENT_MARKER
+    legacy_path = getattr(vehicle, "photo_path", None)
+    if legacy_path and str(legacy_path).strip() != PRIMARY_PHOTO_CLIENT_MARKER:
+        # Legacy klienti: vrátíme skutečnou relativní cestu jen pokud soubor existuje (jinak None + broken).
+        if _get_vehicle_photo_file(legacy_path):
+            primary["available"] = True
+            primary["broken"] = False
+            return primary, str(legacy_path).strip()
+    primary["broken"] = bool(has_ref)
+    return primary, None
+
+
+def _guess_vehicle_image_media_type(image_file: Path) -> str:
+    guessed = mimetypes.guess_type(str(image_file))[0]
+    if guessed:
+        return guessed
+
+    suffix = str(getattr(image_file, "suffix", "") or "").lower()
+    if suffix == ".webp":
+        return "image/webp"
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".png":
+        return "image/png"
+    if suffix == ".gif":
+        return "image/gif"
+    if suffix == ".bmp":
+        return "image/bmp"
+    if suffix == ".svg":
+        return "image/svg+xml"
+    if suffix == ".avif":
+        return "image/avif"
+    return "application/octet-stream"
+
+
+def _gallery_vehicle_subdir(vehicle_id: int) -> Path:
+    directory = VEHICLE_UPLOADS_VEHICLES_DIR / str(int(vehicle_id))
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _persist_primary_vehicle_photo(
+    *,
+    vehicle: VehicleModel,
+    current_user: Customer,
+    normalized_content: bytes,
+    db: Session,
+    audit_action: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    tenant_id = int(getattr(vehicle, "tenant_id", None) or getattr(current_user, "tenant_id", None) or 0)
+    owner = get_primary_vehicle_owner(db, vehicle)
+    owner_id = int(getattr(owner, "id", 0) or 0) or None
+    filename = f"main_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(6)}.jpg"
+    storage_key = build_main_storage_key(tenant_id=tenant_id, vehicle_id=int(vehicle.id), filename=filename)
+    dest_dir = (VEHICLE_PHOTOS_DIR / storage_key).parent
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    target_file = VEHICLE_PHOTOS_DIR / storage_key
+    target_file.write_bytes(normalized_content)
+
+    previous_asset = _get_primary_photo_asset_row(db, vehicle)
+    previous_legacy_file = _get_vehicle_photo_file(getattr(vehicle, "photo_path", None))
+
+    if previous_asset is not None:
+        _soft_delete_photo_asset(db, previous_asset)
+        _unlink_asset_file(previous_asset)
+
+    digest = sha256_hex(normalized_content)
+    w_px, h_px = jpeg_dimensions(normalized_content)
+    row = VehiclePhotoAssetModel(
+        tenant_id=tenant_id,
+        vehicle_id=int(vehicle.id),
+        owner_customer_id=owner_id,
+        role="main",
+        storage_key=storage_key,
+        original_filename=filename,
+        mime_type="image/jpeg",
+        file_size_bytes=len(normalized_content),
+        width=w_px,
+        height=h_px,
+        sha256_hex=digest,
+        uploaded_by_customer_id=int(getattr(current_user, "id", 0) or 0) or None,
+        created_at=datetime.utcnow(),
+        deleted_at=None,
+        sort_order=0,
+    )
+    db.add(row)
+    db.flush()
+    vehicle.primary_photo_asset_id = int(row.id)
+    vehicle.photo_path = None
+
+    write_global_audit_log(
+        db,
+        entity_type="vehicle",
+        entity_id=int(vehicle.id),
+        action=audit_action,
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=tenant_id,
+        metadata={
+            "vehicle_photo_asset_id": int(row.id),
+            "storage_key": storage_key,
+            "sha256_hex": digest,
+            **(metadata or {}),
+        },
+    )
+    db.flush()
+
+    if previous_legacy_file and previous_legacy_file.is_file() and previous_legacy_file.resolve() != target_file.resolve():
+        try:
+            previous_legacy_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    return {
+        "tenant_id": tenant_id,
+        "photo_path": PRIMARY_PHOTO_CLIENT_MARKER,
+        "photo_url": f"/api/v1/vehicles/{vehicle.id}/photo?v={int(datetime.utcnow().timestamp())}",
+        "vehicle_photo_asset_id": int(row.id),
+        "storage_key": storage_key,
+    }
+
+
+def _get_vehicle_gallery_file(relative_path: str | None) -> Path | None:
+    if not relative_path:
+        return None
+    base = VEHICLE_UPLOADS_VEHICLES_DIR.resolve()
+    normalized = str(relative_path).replace("\\", "/").lstrip("/")
+    candidate = (VEHICLE_UPLOADS_VEHICLES_DIR / normalized).resolve()
     if not str(candidate).startswith(str(base)):
         return None
     if not candidate.is_file():
@@ -1523,6 +1872,22 @@ def _tachometer_history_entry_to_detail(
 def _vehicle_to_response_payload(vehicle: VehicleModel, current_user: Customer, db: Session) -> dict:
     owner = get_primary_vehicle_owner(db, vehicle)
     current_owner_since = get_current_owner_since(db, vehicle)
+    primary_photo_payload, photo_path_token = _primary_photo_payload_for_api(vehicle=vehicle, db=db)
+    active_qr_token = (
+        db.query(VehicleQrTokenModel)
+        .filter(
+            VehicleQrTokenModel.vehicle_id == int(vehicle.id),
+            VehicleQrTokenModel.active.is_(True),
+            VehicleQrTokenModel.revoked_at.is_(None),
+        )
+        .order_by(VehicleQrTokenModel.issued_at.desc(), VehicleQrTokenModel.id.desc())
+        .first()
+    )
+    public_history_url = (
+        build_public_history_page_url(str(active_qr_token.token))
+        if active_qr_token and getattr(active_qr_token, "token", None)
+        else None
+    )
     payload = {
         "id": vehicle.id,
         "user_email": getattr(vehicle, "user_email", None),
@@ -1541,7 +1906,8 @@ def _vehicle_to_response_payload(vehicle: VehicleModel, current_user: Customer, 
         "orv_confidence_json": getattr(vehicle, "orv_confidence_json", None),
         "data_trust_state": getattr(vehicle, "data_trust_state", None),
         "notes": getattr(vehicle, "notes", None),
-        "photo_path": getattr(vehicle, "photo_path", None),
+        "primary_photo": primary_photo_payload,
+        "photo_path": photo_path_token,
         "stk_valid_until": getattr(vehicle, "stk_valid_until", None),
         "current_mileage_km": getattr(vehicle, "current_mileage_km", None),
         "last_stk_mileage_km": getattr(vehicle, "last_stk_mileage_km", None),
@@ -1550,6 +1916,11 @@ def _vehicle_to_response_payload(vehicle: VehicleModel, current_user: Customer, 
         "insurance_provider": getattr(vehicle, "insurance_provider", None),
         "insurance_valid_until": getattr(vehicle, "insurance_valid_until", None),
         "current_owner_since": current_owner_since,
+        "has_qr_token": bool(active_qr_token),
+        "qr_public_mode": getattr(active_qr_token, "public_mode", None) if active_qr_token else None,
+        "qr_last_access_at": getattr(active_qr_token, "last_access_at", None) if active_qr_token else None,
+        "public_history_url": public_history_url,
+        "qr_svg": render_vehicle_qr_svg(public_history_url) if public_history_url else None,
         "tenant_id": getattr(vehicle, "tenant_id", None),
         "created_at": getattr(vehicle, "created_at", None),
     }
@@ -1711,6 +2082,34 @@ def parse_orv(
     return serialize_orv_scan(scan)
 
 
+@router.patch("/orv-scans/{scan_id}/review-audit", response_model=ORVReviewAuditResponseV1)
+def save_orv_review_audit(
+    scan_id: int,
+    payload: ORVReviewAuditRequestV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Audit před uložením vozidla: uloží rozdíly oproti OCR a validaci VIN.
+    Samotné vozidlo vzniká až odesláním nadřazeného formuláře (POST /vehicles).
+    """
+    _ensure_vehicle_schema_columns(db)
+    result = apply_orv_review_audit(
+        db=db,
+        scan_id=scan_id,
+        current_user=current_user,
+        nickname=payload.nickname,
+        brand=payload.brand,
+        model=payload.model,
+        year=payload.year,
+        engine=payload.engine,
+        vin=payload.vin,
+        plate=payload.plate,
+        orv_number=payload.orv_number,
+    )
+    return ORVReviewAuditResponseV1(**result)
+
+
 @router.post("", response_model=VehicleOutV1)
 def create_vehicle(
     vehicle_data: VehicleCreateV1,
@@ -1815,6 +2214,16 @@ def create_vehicle(
                 assigned_by_customer_id=current_user.id,
                 ownership_origin="vin_claim",
             )
+            write_global_audit_log(
+                db,
+                entity_type="vehicle",
+                entity_id=int(existing_global_vehicle.id),
+                action="vehicle_create_vin_claim",
+                actor_user_id=current_user.id,
+                actor_role=getattr(current_user, "role", None),
+                tenant_id=tenant_id,
+                metadata={"vin": normalized_vin},
+            )
             db.commit()
             db.refresh(existing_global_vehicle)
             logger.info(f"[VEHICLE_CREATE] claimed existing vehicle by VIN: id={existing_global_vehicle.id}")
@@ -1880,6 +2289,16 @@ def create_vehicle(
             vehicle=vehicle,
             owner=current_user,
             assigned_by_customer_id=current_user.id,
+        )
+        write_global_audit_log(
+            db,
+            entity_type="vehicle",
+            entity_id=int(vehicle.id),
+            action="vehicle_create",
+            actor_user_id=current_user.id,
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=tenant_id,
+            metadata={"nickname": vehicle.nickname, "plate": vehicle.plate},
         )
         db.commit()
         db.refresh(vehicle)
@@ -2065,34 +2484,9 @@ def get_vehicles(
                     continue
                 
                 logger.debug(f"[VEHICLES] Serializuji vozidlo ID {vehicle.id}")
-                
-                # Zkusit vytvořit VehicleOutV1 pro validaci
-                vehicle_dict = {
-                    'id': vehicle.id,
-                    'user_email': getattr(vehicle, 'user_email', None),
-                    'nickname': getattr(vehicle, 'nickname', None),
-                    'brand': getattr(vehicle, 'brand', None),
-                    'model': getattr(vehicle, 'model', None),
-                    'year': getattr(vehicle, 'year', None),
-                    'engine': getattr(vehicle, 'engine', None),
-                    'vin': getattr(vehicle, 'vin', None),
-                    'plate': getattr(vehicle, 'plate', None),
-                    'notes': getattr(vehicle, 'notes', None),
-                    'photo_path': getattr(vehicle, 'photo_path', None),
-                    'stk_valid_until': getattr(vehicle, 'stk_valid_until', None),
-                    'current_mileage_km': getattr(vehicle, 'current_mileage_km', None),
-                    'last_stk_mileage_km': getattr(vehicle, 'last_stk_mileage_km', None),
-                    'mileage_checked_at': getattr(vehicle, 'mileage_checked_at', None),
-                    'tyres_info': getattr(vehicle, 'tyres_info', None),
-                    'insurance_provider': getattr(vehicle, 'insurance_provider', None),
-                    'insurance_valid_until': getattr(vehicle, 'insurance_valid_until', None),
-                    'tenant_id': getattr(vehicle, 'tenant_id', None),
-                    'created_at': getattr(vehicle, 'created_at', None)
-                }
-                
-                # Validovat pomocí schématu
+                vehicle_dict = _vehicle_to_response_payload(vehicle, current_user, db)
                 VehicleOutV1(**vehicle_dict)
-                result.append(vehicle)
+                result.append(vehicle_dict)
             except Exception as veh_error:
                 import traceback
                 vehicle_id = getattr(vehicle, 'id', 'unknown')
@@ -2213,18 +2607,53 @@ def submit_vehicle_tachometer(
         vin=vin,
         captcha_code=str(payload.captcha_code or "").strip(),
     )
-    vehicle_payload, created_record_id = _store_tachometer_mileage_result(
+
+    max_vm = (
+        db.query(func.max(VehicleMileageModel.mileage_km))
+        .filter(VehicleMileageModel.vehicle_id == vehicle.id)
+        .scalar()
+    )
+    ceiling_values: list[int] = []
+    cm = getattr(vehicle, "current_mileage_km", None)
+    if cm is not None:
+        ceiling_values.append(int(cm))
+    if max_vm is not None:
+        ceiling_values.append(int(max_vm))
+    reference_max = max(ceiling_values) if ceiling_values else None
+    new_km = int(lookup.latest_mileage_km)
+    if (
+        reference_max is not None
+        and new_km < reference_max
+        and not payload.confirm_lower_than_current
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Stav km z portálu je nižší než dosud evidované maximum. Pokud jde o opravu dat, "
+                    "potvrďte zápis znovu (confirm_lower_than_current)."
+                ),
+                "current_mileage_km": reference_max,
+                "max_vehicle_mileage_km": int(max_vm) if max_vm is not None else None,
+                "vehicle_current_mileage_km": int(cm) if cm is not None else None,
+                "portal_mileage_km": new_km,
+            },
+        )
+
+    vehicle_payload, created_vm_id = _store_tachometer_mileage_result(
         vehicle=vehicle,
         lookup=lookup,
         current_user=current_user,
         db=db,
+        confirm_lower_than_current=bool(payload.confirm_lower_than_current),
     )
     return VehicleTachometerSubmitResponse(
         vehicle=vehicle_payload,
         latest_mileage_km=lookup.latest_mileage_km,
         latest_check_date=lookup.latest_check_date,
         inspections=lookup.inspections,
-        created_record_id=created_record_id,
+        created_record_id=None,
+        created_vehicle_mileage_id=created_vm_id,
     )
 
 
@@ -2296,7 +2725,7 @@ def record_vehicle_mileage(
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Zapíše aktuální stav tachometru a uloží auditní záznam do servisní historie."""
+    """Zapíše stav tachometru do tabulky vehicle_mileage (odděleně od servisní historie)."""
     _ensure_vehicle_photo_column(db)
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
 
@@ -2306,20 +2735,34 @@ def record_vehicle_mileage(
     if not can_access_vehicle(vehicle_id, current_user, db):
         raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
 
-    current_mileage = getattr(vehicle, "current_mileage_km", None)
+    max_vm = (
+        db.query(func.max(VehicleMileageModel.mileage_km))
+        .filter(VehicleMileageModel.vehicle_id == vehicle_id)
+        .scalar()
+    )
+    ceiling_values = []
+    cm = getattr(vehicle, "current_mileage_km", None)
+    if cm is not None:
+        ceiling_values.append(int(cm))
+    if max_vm is not None:
+        ceiling_values.append(int(max_vm))
+    reference_max = max(ceiling_values) if ceiling_values else None
+
     if (
-        current_mileage is not None
-        and payload.mileage_km < current_mileage
+        reference_max is not None
+        and payload.mileage_km < reference_max
         and not payload.confirm_lower_than_current
     ):
         raise HTTPException(
             status_code=409,
             detail={
                 "message": (
-                    "Nový stav km je nižší než poslední evidovaný stav. "
-                    "Pokud jde o opravu nebo zpřesnění údajů, potvrďte zápis znovu."
+                    "Nový stav km je nižší než dosud evidované maximum (aktuální stav vozidla nebo "
+                    "historie zápisů km). Pokud jde o opravu, potvrďte zápis znovu."
                 ),
-                "current_mileage_km": current_mileage,
+                "current_mileage_km": reference_max,
+                "max_vehicle_mileage_km": int(max_vm) if max_vm is not None else None,
+                "vehicle_current_mileage_km": int(cm) if cm is not None else None,
             },
         )
 
@@ -2328,28 +2771,44 @@ def record_vehicle_mileage(
         last_stk_mileage_km=getattr(vehicle, "last_stk_mileage_km", None),
     )
 
+    allowed_sources = frozenset({"manual", "stk", "service", "import"})
+    raw_src = str(getattr(payload, "source", None) or "manual").strip().lower()
+    mileage_source = raw_src if raw_src in allowed_sources else "manual"
+
     vehicle.current_mileage_km = payload.mileage_km
 
-    mileage_record = ServiceRecordModel(
-        tenant_id=vehicle.tenant_id,
-        vehicle_id=vehicle.id,
-        user_id=getattr(current_user, "id", None),
-        performed_at=datetime.utcnow(),
-        mileage=payload.mileage_km,
-        description="Zápis aktuálního stavu tachometru",
+    vm_row = VehicleMileageModel(
+        tenant_id=int(vehicle.tenant_id),
+        vehicle_id=int(vehicle.id),
+        mileage_km=int(payload.mileage_km),
+        source=mileage_source,
         note=(payload.note.strip() if payload.note else None),
-        category="JINE",
-        created_by_ai=False,
+        created_by_user_id=getattr(current_user, "id", None),
     )
-    db.add(mileage_record)
+    db.add(vm_row)
     db.flush()
+    write_global_audit_log(
+        db,
+        entity_type="vehicle",
+        entity_id=int(vehicle.id),
+        action="mileage_recorded",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=int(vehicle.tenant_id),
+        metadata={
+            "vehicle_mileage_id": vm_row.id,
+            "mileage_km": payload.mileage_km,
+            "source": mileage_source,
+        },
+    )
     db.commit()
     db.refresh(vehicle)
-    db.refresh(mileage_record)
+    db.refresh(vm_row)
 
     return VehicleMileageRecordResultV1(
         vehicle=_vehicle_to_response_payload(vehicle, current_user, db),
-        created_record_id=mileage_record.id,
+        created_record_id=None,
+        created_vehicle_mileage_id=int(vm_row.id),
     )
 
 
@@ -2461,10 +2920,219 @@ def update_vehicle(
     # elif hasattr(vehicle_data, 'assigned_service_id') and vehicle_data.assigned_service_id is None:
     #     vehicle.assigned_service_id = None
     
+    write_global_audit_log(
+        db,
+        entity_type="vehicle",
+        entity_id=int(vehicle.id),
+        action="vehicle_update",
+        actor_user_id=current_user.id,
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=int(vehicle.tenant_id),
+        metadata={"vehicle_id": int(vehicle.id)},
+    )
     db.commit()
     db.refresh(vehicle)
     
     return _vehicle_to_response_payload(vehicle, current_user, db)
+
+
+@router.get("/{vehicle_id}/photos")
+def list_vehicle_gallery_photos(
+    vehicle_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    assert_module_ready(db, "vehicles", detail_prefix="Modul vozidel není připraven")
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+    rows = (
+        db.query(VehiclePhotoAssetModel)
+        .filter(
+            VehiclePhotoAssetModel.vehicle_id == int(vehicle_id),
+            VehiclePhotoAssetModel.role == "gallery",
+            VehiclePhotoAssetModel.deleted_at.is_(None),
+        )
+        .order_by(VehiclePhotoAssetModel.sort_order.asc(), VehiclePhotoAssetModel.created_at.desc(), VehiclePhotoAssetModel.id.desc())
+        .all()
+    )
+    return {
+        "photos": [
+            {
+                "id": int(r.id),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "url": f"/api/v1/vehicles/{vehicle_id}/photos/{r.id}/file",
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.post("/{vehicle_id}/photos")
+def upload_vehicle_gallery_photo(
+    vehicle_id: int,
+    payload: VehiclePhotoUploadRequest,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    assert_module_ready(db, "vehicles", detail_prefix="Modul vozidel není připraven")
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+
+    content = _decode_base64_payload(payload.file_content_base64)
+    if not content:
+        raise HTTPException(status_code=422, detail="Nahraný soubor je prázdný.")
+    if len(content) > MAX_VEHICLE_PHOTO_RAW_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Fotka je příliš velká pro zpracování (max 40 MB vstupních dat).")
+    mime_type = str(payload.file_mime_type or "").lower().strip()
+    if mime_type and not mime_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="Podporované jsou pouze obrázky.")
+    if _count_active_gallery_assets(db, int(vehicle_id)) >= MAX_VEHICLE_GALLERY_PHOTOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Galerie má limit {MAX_VEHICLE_GALLERY_PHOTOS} fotek na vozidlo.",
+        )
+    normalized_content = _normalize_vehicle_photo(content)
+
+    tenant_id = int(getattr(vehicle, "tenant_id", None) or getattr(current_user, "tenant_id", None) or 0)
+    owner = get_primary_vehicle_owner(db, vehicle)
+    owner_id = int(getattr(owner, "id", 0) or 0) or None
+    fname = f"gallery_{secrets.token_hex(8)}.jpg"
+    storage_key = build_main_storage_key(tenant_id=tenant_id, vehicle_id=int(vehicle_id), filename=fname)
+    dest_parent = (VEHICLE_PHOTOS_DIR / storage_key).parent
+    dest_parent.mkdir(parents=True, exist_ok=True)
+    target_file = VEHICLE_PHOTOS_DIR / storage_key
+    target_file.write_bytes(normalized_content)
+    digest = sha256_hex(normalized_content)
+    w_px, h_px = jpeg_dimensions(normalized_content)
+
+    row = VehiclePhotoAssetModel(
+        tenant_id=tenant_id,
+        vehicle_id=int(vehicle_id),
+        owner_customer_id=owner_id,
+        role="gallery",
+        storage_key=storage_key,
+        original_filename=str(payload.file_name or "gallery.jpg")[:255],
+        mime_type="image/jpeg",
+        file_size_bytes=len(normalized_content),
+        width=w_px,
+        height=h_px,
+        sha256_hex=digest,
+        uploaded_by_customer_id=int(getattr(current_user, "id", 0) or 0) or None,
+        created_at=datetime.utcnow(),
+        deleted_at=None,
+        sort_order=0,
+    )
+    db.add(row)
+    db.flush()
+    write_global_audit_log(
+        db,
+        entity_type="vehicle_gallery_photo",
+        entity_id=int(row.id),
+        action="gallery_photo_upload",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=tenant_id,
+        metadata={"vehicle_id": int(vehicle_id), "vehicle_photo_asset_id": int(row.id), "storage_key": storage_key},
+    )
+    promoted_primary = False
+    if not _resolve_primary_photo_file(vehicle=vehicle, db=db):
+        _persist_primary_vehicle_photo(
+            vehicle=vehicle,
+            current_user=current_user,
+            normalized_content=normalized_content,
+            db=db,
+            audit_action="primary_photo_autoset_from_gallery",
+            metadata={"vehicle_id": int(vehicle_id), "gallery_photo_asset_id": int(row.id)},
+        )
+        promoted_primary = True
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": int(row.id),
+        "url": f"/api/v1/vehicles/{vehicle_id}/photos/{row.id}/file",
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "promoted_to_primary": promoted_primary,
+    }
+
+
+@router.get("/{vehicle_id}/photos/{photo_id}/file")
+def get_vehicle_gallery_photo_file(
+    vehicle_id: int,
+    photo_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    assert_module_ready(db, "vehicles", detail_prefix="Modul vozidel není připraven")
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+    row = (
+        db.query(VehiclePhotoAssetModel)
+        .filter(
+            VehiclePhotoAssetModel.id == int(photo_id),
+            VehiclePhotoAssetModel.vehicle_id == int(vehicle_id),
+            VehiclePhotoAssetModel.role == "gallery",
+            VehiclePhotoAssetModel.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Fotka nebyla nalezena")
+    photo_file = resolve_storage_file(VEHICLE_PHOTOS_DIR, row.storage_key)
+    if not photo_file:
+        write_global_audit_log(
+            db,
+            entity_type="vehicle_gallery_photo",
+            entity_id=int(photo_id),
+            action="gallery_photo_missing_file",
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=int(getattr(row, "tenant_id", 0) or 0) or None,
+            metadata={"vehicle_id": int(vehicle_id), "storage_key": row.storage_key},
+        )
+        db.flush()
+        raise HTTPException(status_code=404, detail="Soubor fotky neexistuje")
+    media_type = _guess_vehicle_image_media_type(photo_file)
+    return FileResponse(path=str(photo_file), media_type=media_type, filename=photo_file.name)
+
+
+@router.delete("/photos/{photo_id}")
+def delete_vehicle_gallery_photo(
+    photo_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    assert_module_ready(db, "vehicles", detail_prefix="Modul vozidel není připraven")
+    row = db.query(VehiclePhotoAssetModel).filter(VehiclePhotoAssetModel.id == int(photo_id)).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Fotka nebyla nalezena")
+    if str(getattr(row, "role", "") or "") != "gallery":
+        raise HTTPException(status_code=400, detail="Tento záznam nelze smazat jako galerijní fotku.")
+    if not can_access_vehicle(int(row.vehicle_id), current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+    photo_file = resolve_storage_file(VEHICLE_PHOTOS_DIR, row.storage_key)
+    vid = int(row.vehicle_id)
+    tid = int(getattr(row, "tenant_id", 0) or 0)
+    write_global_audit_log(
+        db,
+        entity_type="vehicle_gallery_photo",
+        entity_id=int(photo_id),
+        action="gallery_photo_delete",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=tid or None,
+        metadata={"vehicle_id": vid, "storage_key": row.storage_key},
+    )
+    _soft_delete_photo_asset(db, row)
+    db.commit()
+    if photo_file:
+        try:
+            photo_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return {"message": "Fotka byla odstraněna."}
 
 
 @router.get("/{vehicle_id}/photo")
@@ -2482,11 +3150,26 @@ def get_vehicle_photo(
     if not can_access_vehicle(vehicle_id, current_user, db):
         raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
 
-    photo_file = _get_vehicle_photo_file(getattr(vehicle, "photo_path", None))
+    photo_file = _resolve_primary_photo_file(vehicle=vehicle, db=db)
     if not photo_file:
+        if _get_primary_photo_asset_row(db, vehicle) or getattr(vehicle, "photo_path", None):
+            write_global_audit_log(
+                db,
+                entity_type="vehicle",
+                entity_id=int(vehicle_id),
+                action="vehicle_primary_photo_missing_file",
+                actor_user_id=getattr(current_user, "id", None),
+                actor_role=getattr(current_user, "role", None),
+                tenant_id=int(getattr(vehicle, "tenant_id", 0) or 0) or None,
+                metadata={
+                    "primary_photo_asset_id": getattr(vehicle, "primary_photo_asset_id", None),
+                    "legacy_photo_path": getattr(vehicle, "photo_path", None),
+                },
+            )
+            db.flush()
         raise HTTPException(status_code=404, detail="Fotka vozidla nebyla nalezena")
 
-    media_type = mimetypes.guess_type(str(photo_file))[0] or "application/octet-stream"
+    media_type = _guess_vehicle_image_media_type(photo_file)
     return FileResponse(path=str(photo_file), media_type=media_type, filename=photo_file.name)
 
 
@@ -2518,29 +3201,70 @@ def upload_vehicle_photo(
 
     normalized_content = _normalize_vehicle_photo(content)
 
-    tenant_id = int(getattr(vehicle, "tenant_id", None) or getattr(current_user, "tenant_id", None) or 0)
-    target_dir = VEHICLE_PHOTOS_DIR / f"tenant_{tenant_id}" / f"vehicle_{vehicle.id}"
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    filename = f"photo_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(6)}.jpg"
-    target_file = target_dir / filename
-    target_file.write_bytes(normalized_content)
-
-    previous_file = _get_vehicle_photo_file(getattr(vehicle, "photo_path", None))
-    vehicle.photo_path = target_file.relative_to(VEHICLE_PHOTOS_DIR).as_posix()
+    result = _persist_primary_vehicle_photo(
+        vehicle=vehicle,
+        current_user=current_user,
+        normalized_content=normalized_content,
+        db=db,
+        audit_action="primary_photo_upload",
+    )
     db.commit()
     db.refresh(vehicle)
 
-    if previous_file and previous_file != target_file:
-        try:
-            previous_file.unlink(missing_ok=True)
-        except Exception:
-            pass
-
     return {
         "message": "Fotka vozidla byla úspěšně nahrána a serverově normalizována na 1280x720 JPEG.",
-        "photo_path": vehicle.photo_path,
-        "photo_url": f"/api/v1/vehicles/{vehicle.id}/photo?v={int(datetime.utcnow().timestamp())}",
+        "photo_path": result["photo_path"],
+        "photo_url": result["photo_url"],
+    }
+
+
+@router.post("/{vehicle_id}/photo/promote/{photo_id}")
+def promote_vehicle_gallery_photo_to_primary(
+    vehicle_id: int,
+    photo_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_vehicle_photo_column(db)
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+
+    row = (
+        db.query(VehiclePhotoAssetModel)
+        .filter(
+            VehiclePhotoAssetModel.id == int(photo_id),
+            VehiclePhotoAssetModel.vehicle_id == int(vehicle_id),
+            VehiclePhotoAssetModel.role == "gallery",
+            VehiclePhotoAssetModel.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Galerijní fotka nebyla nalezena")
+
+    gallery_file = resolve_storage_file(VEHICLE_PHOTOS_DIR, row.storage_key)
+    if not gallery_file:
+        raise HTTPException(status_code=404, detail="Soubor galerijní fotky neexistuje")
+
+    normalized_content = _normalize_vehicle_photo(gallery_file.read_bytes())
+    result = _persist_primary_vehicle_photo(
+        vehicle=vehicle,
+        current_user=current_user,
+        normalized_content=normalized_content,
+        db=db,
+        audit_action="primary_photo_promote_from_gallery",
+        metadata={"vehicle_id": int(vehicle_id), "gallery_photo_asset_id": int(photo_id)},
+    )
+    db.commit()
+    db.refresh(vehicle)
+    return {
+        "message": "Galerijní fotka byla nastavena jako hlavní fotka vozidla.",
+        "photo_path": result["photo_path"],
+        "photo_url": result["photo_url"],
+        "gallery_photo_id": int(photo_id),
     }
 
 
@@ -2559,13 +3283,29 @@ def delete_vehicle_photo(
     if not can_access_vehicle(vehicle_id, current_user, db):
         raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
 
-    photo_file = _get_vehicle_photo_file(getattr(vehicle, "photo_path", None))
+    asset = _get_primary_photo_asset_row(db, vehicle)
+    legacy_file = _get_vehicle_photo_file(getattr(vehicle, "photo_path", None))
+    vehicle.primary_photo_asset_id = None
     vehicle.photo_path = None
+    if asset is not None:
+        _soft_delete_photo_asset(db, asset)
+    write_global_audit_log(
+        db,
+        entity_type="vehicle",
+        entity_id=int(vehicle_id),
+        action="primary_photo_delete",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=int(getattr(vehicle, "tenant_id", 0) or 0) or None,
+        metadata={"previous_vehicle_photo_asset_id": int(asset.id) if asset else None},
+    )
     db.commit()
 
-    if photo_file:
+    if asset is not None:
+        _unlink_asset_file(asset)
+    if legacy_file:
         try:
-            photo_file.unlink(missing_ok=True)
+            legacy_file.unlink(missing_ok=True)
         except Exception:
             pass
 
@@ -2605,6 +3345,16 @@ def delete_vehicle(
             reason="Vozidlo bylo odebráno z profilu vlastníka.",
         )
 
+        write_global_audit_log(
+            db,
+            entity_type="vehicle",
+            entity_id=int(vehicle_id),
+            action="vehicle_removed_from_profile",
+            actor_user_id=current_user.id,
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=int(getattr(vehicle, "tenant_id", 0) or 0) or None,
+            metadata={},
+        )
         db.commit()
 
         return {

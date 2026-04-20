@@ -1,5 +1,5 @@
 // ============================================
-// TOOZ HUB 2 - ADMIN DASHBOARD
+// Správa vozidel – administrační přehled
 // Kompletní refaktoring s plně funkčním CRUD
 // ============================================
 
@@ -598,13 +598,18 @@ async function loadRecentActivity() {
     if (!activityEl) return;
     
     const logs = auditData.logs || [];
+    const source = String(auditData.source || 'unknown');
     
     if (logs.length === 0) {
-      activityEl.innerHTML = '<div class="empty">Žádná nedávná aktivita</div>';
+      activityEl.innerHTML = `<div class="empty">Žádná nedávná aktivita${source === 'audit_log' ? ' v append-only audit logu' : ''}</div>`;
       return;
     }
     
-    activityEl.innerHTML = logs.map(log => {
+    activityEl.innerHTML = `
+      <div class="activity-item" style="justify-content:flex-start; gap:8px; color:#64748b;">
+        <strong>Zdroj:</strong> ${source === 'audit_log' ? 'append-only audit_log' : source}
+      </div>
+      ${logs.map(log => {
       const timestamp = log.timestamp ? new Date(log.timestamp).toLocaleString('cs-CZ') : '-';
       const actor = log.actor_email || `Uživatel #${log.actor_user_id || '?'}`;
       const actionText = getActionText(log.action || '');
@@ -619,7 +624,7 @@ async function loadRecentActivity() {
           <span class="activity-entity">${entityType} #${entityId}</span>
         </div>
       `;
-    }).join('');
+    }).join('')}`;
     
   } catch (error) {
     console.error('Error loading recent activity:', error);
@@ -2386,13 +2391,20 @@ async function loadAuditLog() {
     
     const auditData = await apiRequest('GET', url);
     const logs = auditData.logs || [];
+    const source = String(auditData.source || 'unknown');
     
     if (logs.length === 0) {
-      listEl.innerHTML = '<div class="empty">Žádné záznamy v audit logu</div>';
+      listEl.innerHTML = `<div class="empty">Žádné záznamy v audit logu${source === 'audit_log' ? ' (append-only zdroj)' : ''}</div>`;
       return;
     }
     
-    listEl.innerHTML = logs.map(log => {
+    listEl.innerHTML = `
+      <div class="audit-log-item" style="background:#f8fafc;">
+        <div class="audit-log-content">
+          <strong>Zdroj auditu:</strong> ${source === 'audit_log' ? 'append-only audit_log' : source}
+        </div>
+      </div>
+      ${logs.map(log => {
       const timestamp = log.timestamp ? new Date(log.timestamp).toLocaleString('cs-CZ') : '-';
       const actor = log.actor_email || `Uživatel #${log.actor_user_id || '?'}`;
       const actionText = getActionText(log.action || '');
@@ -2412,7 +2424,7 @@ async function loadAuditLog() {
           ${log.details ? `<div class="audit-log-details">${log.details}</div>` : ''}
         </div>
       `;
-    }).join('');
+    }).join('')}`;
     
   } catch (error) {
     listEl.innerHTML = `<div class="error">Chyba při načítání: ${error.message}</div>`;

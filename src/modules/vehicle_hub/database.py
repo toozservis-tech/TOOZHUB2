@@ -1,5 +1,10 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from __future__ import annotations
+
+import logging
+import re
+
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from src.core.config import DATABASE_URL
 
@@ -26,6 +31,57 @@ else:
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+logger = logging.getLogger(__name__)
+_DML_TABLE_RE = re.compile(
+    r"^\s*(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+([\"`\[]?)([a-zA-Z_][a-zA-Z0-9_]*)\1",
+    re.IGNORECASE,
+)
+
+
+def _writable_table_names() -> set[str]:
+    table_names = set(Base.metadata.tables.keys())
+    table_names.add("alembic_version")
+    return table_names
+
+
+SERVICE_HUB_WRITABLE_TABLES: set[str] = set()
+
+
+def _extract_dml_target_table(statement: str) -> str | None:
+    match = _DML_TABLE_RE.match(statement or "")
+    if not match:
+        return None
+    return str(match.group(2) or "").strip().lower() or None
+
+
+@event.listens_for(Session, "before_flush")
+def _guard_session_writes_to_known_tables(session: Session, flush_context, instances) -> None:
+    allowed_tables = _writable_table_names()
+    SERVICE_HUB_WRITABLE_TABLES.clear()
+    SERVICE_HUB_WRITABLE_TABLES.update(allowed_tables)
+    for collection in (session.new, session.dirty, session.deleted):
+        for obj in collection:
+            table = getattr(getattr(obj, "__table__", None), "name", None)
+            if not table:
+                continue
+            if str(table) not in allowed_tables:
+                logger.error("[DB_GUARD] Blocked ORM write to non-whitelisted table: %s", table)
+                raise RuntimeError(f"Write blocked for non-whitelisted table: {table}")
+
+
+@event.listens_for(engine, "before_cursor_execute")
+def _guard_raw_dml_writes(conn, cursor, statement, parameters, context, executemany) -> None:
+    target_table = _extract_dml_target_table(statement)
+    if not target_table:
+        return
+    allowed_tables = _writable_table_names()
+    SERVICE_HUB_WRITABLE_TABLES.clear()
+    SERVICE_HUB_WRITABLE_TABLES.update(allowed_tables)
+    allowed = {name.lower() for name in allowed_tables}
+    if target_table not in allowed:
+        logger.error("[DB_GUARD] Blocked SQL write to non-whitelisted table: %s", target_table)
+        raise RuntimeError(f"Write blocked for non-whitelisted table: {target_table}")
 
 def get_db():
     db = SessionLocal()

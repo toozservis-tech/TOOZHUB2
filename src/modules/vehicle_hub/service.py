@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .api_vin import decode_vin_api
 from .database import SessionLocal
 from .models import Vehicle as VehicleModel, ServiceRecord as ServiceRecordModel
+from .ownership import get_customer_by_email, get_owned_vehicle_rows
 from .schema_management import assert_module_ready
 
 
@@ -46,6 +47,11 @@ class VehicleHubService:
         """Vrací databázovou session"""
         return SessionLocal()
 
+    def _get_customer(self, db: Session):
+        if not self.user_email:
+            return None
+        return get_customer_by_email(db, self.user_email)
+
     # ---------- VOZIDLA ----------
 
     def add_vehicle(self, vehicle: Vehicle) -> None:
@@ -58,21 +64,19 @@ class VehicleHubService:
         db = self._get_db()
         try:
             assert_module_ready(db, "vehicles", detail_prefix="Modul vozidel není připraven")
+            customer = self._get_customer(db)
+            if customer is None:
+                raise ValueError("Uživatel nebyl nalezen")
             vin = vehicle.vin.strip().upper() if vehicle.vin else None
+            owned_rows = get_owned_vehicle_rows(db, customer, tenant_id=getattr(customer, "tenant_id", None))
             
             # Zkusíme najít existující vozidlo podle VIN nebo SPZ
             existing = None
             if vin:
-                existing = db.query(VehicleModel).filter(
-                    VehicleModel.user_email == self.user_email,
-                    VehicleModel.vin == vin
-                ).first()
+                existing = next((row for row in owned_rows if row.vin == vin), None)
             
             if not existing and vehicle.plate:
-                existing = db.query(VehicleModel).filter(
-                    VehicleModel.user_email == self.user_email,
-                    VehicleModel.plate == vehicle.plate
-                ).first()
+                existing = next((row for row in owned_rows if row.plate == vehicle.plate), None)
             
             if existing:
                 # Aktualizace existujícího vozidla
@@ -111,9 +115,10 @@ class VehicleHubService:
         db = self._get_db()
         try:
             assert_module_ready(db, "vehicles", detail_prefix="Modul vozidel není připraven")
-            db_vehicles = db.query(VehicleModel).filter(
-                VehicleModel.user_email == self.user_email
-            ).all()
+            customer = self._get_customer(db)
+            if customer is None:
+                return []
+            db_vehicles = get_owned_vehicle_rows(db, customer, tenant_id=getattr(customer, "tenant_id", None))
             
             vehicles = []
             for v in db_vehicles:
@@ -139,10 +144,14 @@ class VehicleHubService:
         db = self._get_db()
         try:
             assert_module_ready(db, "vehicles", detail_prefix="Modul vozidel není připraven")
-            db_vehicle = db.query(VehicleModel).filter(
-                VehicleModel.user_email == self.user_email,
-                VehicleModel.vin == vin.strip().upper()
-            ).first()
+            customer = self._get_customer(db)
+            if customer is None:
+                return None
+            normalized_vin = vin.strip().upper()
+            db_vehicle = next(
+                (row for row in get_owned_vehicle_rows(db, customer, tenant_id=getattr(customer, "tenant_id", None)) if row.vin == normalized_vin),
+                None,
+            )
             
             if db_vehicle:
                 return Vehicle(
@@ -169,11 +178,14 @@ class VehicleHubService:
         db = self._get_db()
         try:
             assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
+            customer = self._get_customer(db)
+            if customer is None:
+                raise ValueError("Uživatel nebyl nalezen")
             vin = record.vehicle_vin.strip().upper()
-            vehicle = db.query(VehicleModel).filter(
-                VehicleModel.user_email == self.user_email,
-                VehicleModel.vin == vin
-            ).first()
+            vehicle = next(
+                (row for row in get_owned_vehicle_rows(db, customer, tenant_id=getattr(customer, "tenant_id", None)) if row.vin == vin),
+                None,
+            )
             
             if not vehicle:
                 raise ValueError(f"Unknown vehicle VIN: {vin}")
@@ -200,10 +212,14 @@ class VehicleHubService:
         db = self._get_db()
         try:
             assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
-            vehicle = db.query(VehicleModel).filter(
-                VehicleModel.user_email == self.user_email,
-                VehicleModel.vin == vin.strip().upper()
-            ).first()
+            customer = self._get_customer(db)
+            if customer is None:
+                return []
+            normalized_vin = vin.strip().upper()
+            vehicle = next(
+                (row for row in get_owned_vehicle_rows(db, customer, tenant_id=getattr(customer, "tenant_id", None)) if row.vin == normalized_vin),
+                None,
+            )
             
             if not vehicle:
                 return []

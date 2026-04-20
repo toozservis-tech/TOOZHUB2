@@ -1,6 +1,11 @@
 """
 Admin API router pro Správa vozidel
 Přístupné pouze pro developer_admin/admin role
+
+Struktura (datový tok, ne UI):
+- Sekce Uživatelé: /admin-api/users, /admin-api/users/{id}, /admin-api/users/{id}/vehicles,
+  /admin-api/users/{id}/detail, control-center akce nad uživateli.
+- Sekce Servisy: /admin-api/services, /admin-api/services/{id}, /admin-api/service-registration-requests.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request as FastAPIRequest
 from fastapi.responses import FileResponse
@@ -36,6 +41,7 @@ from src.core.config import (
     ALLOWED_ORIGINS,
 )
 from src.modules.vehicle_hub.database import get_db, DB_URL, engine
+from src.modules.vehicle_hub.audit_log import write_global_audit_log
 from src.modules.vehicle_hub.models import (
     Customer,
     Vehicle,
@@ -51,6 +57,7 @@ from src.modules.vehicle_hub.models import (
     SecurityAccessLog,
     PushSubscription,
     DeveloperActionAuditLog,
+    GlobalAuditLog,
     SecurityBlockedIp,
     SystemNotification,
 )
@@ -1673,6 +1680,76 @@ def get_overview(
         raise HTTPException(status_code=500, detail=f"Chyba při načítání statistik: {str(e)}")
 
 
+@router.get("/workspace-sections")
+def get_admin_workspace_sections(
+    email: str = Depends(require_developer_admin),
+):
+    """Oddělení přehledu admin API: Uživatelé vs. Servisy (pro klienty / nástroje)."""
+    return {
+        "sections": [
+            {
+                "id": "users",
+                "label": "Uživatelé",
+                "description": "Účty, licence, vozidla vázaná na uživatele",
+                "paths": [
+                    "/admin-api/users",
+                    "/admin-api/users/{user_id}",
+                    "/admin-api/users/{user_id}/vehicles",
+                    "/admin-api/users/{user_id}/detail",
+                    "/admin-api/control-center/users/{user_id}/license",
+                ],
+            },
+            {
+                "id": "services",
+                "label": "Servisy",
+                "description": "Servisní účty, žádosti o registraci",
+                "paths": [
+                    "/admin-api/services",
+                    "/admin-api/services/{service_id}",
+                    "/admin-api/service-registration-requests",
+                ],
+            },
+        ]
+    }
+
+
+@router.get("/global-audit-log")
+def list_global_audit_log_entries(
+    limit: int = 100,
+    offset: int = 0,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Čtení append-only tabulky audit_log (globální audit aplikace)."""
+    if not inspect(db.bind).has_table("audit_log"):
+        return {"items": [], "limit": limit, "offset": offset, "note": "audit_log table missing — run alembic upgrade"}
+    rows = (
+        db.query(GlobalAuditLog)
+        .order_by(GlobalAuditLog.created_at.desc(), GlobalAuditLog.id.desc())
+        .offset(max(offset, 0))
+        .limit(min(max(limit, 1), 500))
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "tenant_id": r.tenant_id,
+                "entity_type": r.entity_type,
+                "entity_id": r.entity_id,
+                "action": r.action,
+                "actor_user_id": r.actor_user_id,
+                "actor_role": r.actor_role,
+                "metadata_json": r.metadata_json,
+                "created_at": to_iso_datetime(r.created_at),
+            }
+            for r in rows
+        ],
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 @router.get("/users", response_model=List[UserSummary])
 def get_all_users(
     limit: int = 50,
@@ -1913,10 +1990,12 @@ def create_user(
         if user_data.tenant_id is not None:
             tenant_id = resolve_tenant_id_for_create(db, acting_admin, user_data.tenant_id)
         else:
+            tenant_kind = "service" if target_role == "service" else "user"
             tenant_id = create_dedicated_tenant(
                 db,
                 owner_email=target_email,
                 owner_name=user_data.name,
+                workspace_route_kind=tenant_kind,
             ).id
 
         # Zkontrolovat, zda email již existuje
@@ -3074,6 +3153,7 @@ def approve_service_registration_request(
             db,
             owner_email=req.email,
             owner_name=req.service_name,
+            workspace_route_kind="service",
         )
 
         new_service = Customer(
@@ -3525,14 +3605,62 @@ def get_all_records(
 def get_audit_log(
     limit: int = 50,
     offset: int = 0,
+    entity_type: Optional[str] = None,
+    action: Optional[str] = None,
     email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db)
 ):
     """
-    Vrátí poslední aktivity (reservations, reminders jako audit log)
+    Vrátí audit log pro admin UI.
+    Primárně čte append-only audit_log, fallback je starší syntetický přehled.
     Dostupné jen pro developer_admin
     """
     try:
+        if inspect(db.bind).has_table("audit_log"):
+            global_query = db.query(GlobalAuditLog)
+
+            if entity_type:
+                global_query = global_query.filter(GlobalAuditLog.entity_type == entity_type)
+            if action:
+                global_query = global_query.filter(GlobalAuditLog.action == action)
+
+            rows = (
+                global_query
+                .order_by(GlobalAuditLog.created_at.desc(), GlobalAuditLog.id.desc())
+                .offset(max(offset, 0))
+                .limit(min(max(limit, 1), 500))
+                .all()
+            )
+            logs = []
+            for row in rows:
+                metadata_text = ""
+                if getattr(row, "metadata_json", None):
+                    metadata_text = str(row.metadata_json)
+                    if len(metadata_text) > 240:
+                        metadata_text = metadata_text[:237] + "..."
+                logs.append({
+                    "id": row.id,
+                    "timestamp": to_iso_datetime(row.created_at),
+                    "actor_email": None,
+                    "actor_user_id": row.actor_user_id,
+                    "actor_role": row.actor_role,
+                    "action": row.action,
+                    "entity_type": row.entity_type,
+                    "entity_id": row.entity_id,
+                    "details": metadata_text,
+                    "source_project": "audit_log",
+                    "tenant_id": row.tenant_id,
+                    "metadata_json": row.metadata_json,
+                })
+
+            return {
+                "logs": logs,
+                "total": len(logs),
+                "limit": limit,
+                "offset": offset,
+                "source": "audit_log",
+            }
+
         # Kombinace reservations a reminders jako "audit log"
         # SQLite nepodporuje CONCAT, použít || pro concatenaci
         query = """
@@ -3581,14 +3709,16 @@ def get_audit_log(
                 "action": row[4],
                 "entity_type": row[0],
                 "entity_id": row[5],
-                "details": row[7]
+                "details": row[7],
+                "source_project": "legacy_union",
             })
         
         return {
             "logs": logs,
             "total": len(logs),
             "limit": limit,
-            "offset": offset
+            "offset": offset,
+            "source": "legacy_union",
         }
     except Exception as e:
         import traceback
@@ -4787,6 +4917,30 @@ def update_user_license_admin(
         license_row.valid_to = payload.valid_to
     db.commit()
     db.refresh(license_row)
+
+    try:
+        write_global_audit_log(
+            db,
+            entity_type="license",
+            entity_id=int(user.tenant_id),
+            action="license_admin_override",
+            actor_user_id=None,
+            actor_role="developer_admin",
+            tenant_id=int(user.tenant_id),
+            metadata={
+                "target_user_id": user_id,
+                "plan": plan,
+                "status": status,
+                "operator_email": email,
+                "source": source,
+            },
+        )
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
     log_developer_action(
         db,

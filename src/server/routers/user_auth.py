@@ -18,6 +18,7 @@ from src.modules.vehicle_hub.account_state import (
     customer_is_deleted,
     customer_is_disabled,
     customer_session_version,
+    increment_customer_session_version,
     touch_customer_last_login,
 )
 from src.modules.vehicle_hub.database import get_db
@@ -810,6 +811,7 @@ def reset_password(payload: ResetPasswordRequest, db=Depends(get_db)):
     customer.password_hash = hash_password(payload.new_password)
     customer.reset_token = None
     customer.reset_token_expires = None
+    increment_customer_session_version(customer)
     db.commit()
 
     return {"message": "Heslo bylo úspěšně změněno"}

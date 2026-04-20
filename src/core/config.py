@@ -11,6 +11,7 @@ APP_ROOT = Path(__file__).resolve().parent.parent.parent
 WORKSPACE_ROOT = APP_ROOT.parent
 DEFAULT_RUNTIME_DB_PATH = WORKSPACE_ROOT / "data" / "vehicles.db"
 DEFAULT_RUNTIME_DB_URL = f"sqlite:///{DEFAULT_RUNTIME_DB_PATH}"
+LEGACY_APP_DATA_DB_PATH = APP_ROOT / "data" / "vehicles.db"
 
 # Pokusit se načíst .env soubor
 _env_loaded = False
@@ -99,6 +100,29 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development"))  # d
 # 3) canonical runtime SQLite v ../data/vehicles.db
 DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("VEHICLE_DB_URL") or DEFAULT_RUNTIME_DB_URL
 VEHICLE_DB_URL = DATABASE_URL  # Alias pro zpětnou kompatibilitu
+
+
+def _normalize_sqlite_db_path(db_url: str) -> Path | None:
+    raw = str(db_url or "").strip()
+    if not raw.startswith("sqlite:///"):
+        return None
+    db_path = raw.replace("sqlite:///", "", 1)
+    if not db_path:
+        return None
+    path = Path(db_path)
+    if not path.is_absolute():
+        path = (WORKSPACE_ROOT / path).resolve()
+    return path.resolve()
+
+
+RUNTIME_DB_PATH = _normalize_sqlite_db_path(DATABASE_URL)
+LEGACY_APP_DATA_DB_REALPATH = LEGACY_APP_DATA_DB_PATH.resolve() if LEGACY_APP_DATA_DB_PATH.exists() else None
+HAS_LEGACY_APP_DATA_DB = LEGACY_APP_DATA_DB_PATH.exists()
+LEGACY_APP_DATA_DB_DRIFT = bool(
+    RUNTIME_DB_PATH
+    and LEGACY_APP_DATA_DB_REALPATH
+    and RUNTIME_DB_PATH != LEGACY_APP_DATA_DB_REALPATH
+)
 
 # =============================================================================
 # JWT CONFIGURATION

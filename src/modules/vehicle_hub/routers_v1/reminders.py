@@ -3,8 +3,8 @@ Reminders API v1.0 router (Připomínky)
 Kompletní CRUD operace pro automatické i ruční připomínky
 """
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, inspect, or_
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
 from typing import List, Optional
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -27,6 +27,7 @@ from .schemas import (
     ReminderUpdateV1,
 )
 from ..email_notifications import send_reminder_email, send_reminder_created_email
+from ..ownership import get_owned_vehicle, get_owned_vehicle_rows
 from ..push_notifications import send_push_to_customer
 from ..schema_management import assert_module_ready
 from .reminder_settings import get_reminder_settings
@@ -50,6 +51,14 @@ def _to_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
 
 def _ensure_reminders_schema(db: Session) -> None:
     assert_module_ready(db, "reminders", detail_prefix="Připomínky nejsou připravené")
+
+
+def _get_user_owned_vehicle_rows(db: Session, customer: Customer) -> list[VehicleModel]:
+    return get_owned_vehicle_rows(db, customer, tenant_id=getattr(customer, "tenant_id", None))
+
+
+def _get_user_owned_vehicle(db: Session, customer: Customer, vehicle_id: int) -> Optional[VehicleModel]:
+    return get_owned_vehicle(db, customer, int(vehicle_id), tenant_id=getattr(customer, "tenant_id", None))
 
 
 def _already_sent_today(
@@ -183,9 +192,7 @@ def get_reminders(
         reminders = []
         
         # Načíst všechna vozidla uživatele
-        vehicles = db.query(VehicleModel).filter(
-            VehicleModel.user_email == current_user.email
-        ).all()
+        vehicles = _get_user_owned_vehicle_rows(db, current_user)
         
         today = date.today()
         thirty_days_later = today + timedelta(days=30)
@@ -314,8 +321,8 @@ def get_reminders(
         try:
             # Zkontrolovat, zda tabulka Reminder existuje
             try:
-                inspector = inspect(db.bind)
-                table_names = [table.name for table in inspector.get_table_names()]
+                inspector_obj = inspect(db.bind)
+                table_names = set(inspector_obj.get_table_names())
                 if 'reminders' in table_names:
                     # Filtrovat podle customer_id a tenant_id (pokud existuje)
                     query = db.query(ReminderModel).filter(
@@ -349,10 +356,7 @@ def get_reminders(
         for reminder in manual_reminders:
             vehicle_name = "Obecná připomínka"
             if reminder.vehicle_id:
-                vehicle = db.query(VehicleModel).filter(
-                    VehicleModel.id == reminder.vehicle_id,
-                    VehicleModel.user_email == current_user.email
-                ).first()
+                vehicle = _get_user_owned_vehicle(db, current_user, int(reminder.vehicle_id))
                 if vehicle:
                     vehicle_name = vehicle.nickname or vehicle.plate or f"{vehicle.brand} {vehicle.model}" or "Vozidlo"
             
@@ -409,11 +413,7 @@ def create_reminder(
 
         # Ověřit, že vozidlo patří uživateli (pokud je zadáno)
         if reminder_data.vehicle_id:
-            vehicle = db.query(VehicleModel).filter(
-                VehicleModel.id == reminder_data.vehicle_id,
-                VehicleModel.user_email == current_user.email
-            ).first()
-            
+            vehicle = _get_user_owned_vehicle(db, current_user, int(reminder_data.vehicle_id))
             if not vehicle:
                 raise HTTPException(status_code=404, detail="Vozidlo nenalezeno nebo nemáte oprávnění")
         
@@ -538,10 +538,7 @@ def update_reminder(
             reminder.type = reminder_update.type
         if "vehicle_id" in update_payload:
             if reminder_update.vehicle_id:
-                vehicle = db.query(VehicleModel).filter(
-                    VehicleModel.id == reminder_update.vehicle_id,
-                    VehicleModel.user_email == current_user.email
-                ).first()
+                vehicle = _get_user_owned_vehicle(db, current_user, int(reminder_update.vehicle_id))
                 if not vehicle:
                     raise HTTPException(status_code=404, detail="Vozidlo nenalezeno nebo nemáte oprávnění")
                 reminder.vehicle_id = reminder_update.vehicle_id
@@ -856,10 +853,11 @@ def check_and_send_reminder_notifications(
                 except (TypeError, ValueError):
                     stk_days_before = 30
 
-                user_vehicles = db.query(VehicleModel).filter(
-                    VehicleModel.user_email == customer.email,
-                    VehicleModel.stk_valid_until.isnot(None)
-                ).all()
+                user_vehicles = [
+                    vehicle
+                    for vehicle in _get_user_owned_vehicle_rows(db, customer)
+                    if getattr(vehicle, "stk_valid_until", None) is not None
+                ]
 
                 for vehicle in user_vehicles:
                     checked_auto_stk += 1

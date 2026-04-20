@@ -9,6 +9,7 @@ import json
 
 from ..database import get_db
 from ..models import ServiceRecord as ServiceRecordModel, Vehicle as VehicleModel, Customer
+from ..ownership import get_owned_vehicle, get_owned_vehicle_rows
 from .schemas import AIRecordRequestV1, AIRecordResponseV1
 from src.core.config import AUTOPILOT_SHARED_SECRET
 
@@ -112,17 +113,18 @@ def create_record_from_ai(
     # 3. Najít vozidlo
     vehicle = None
     if request.vehicle_id:
-        vehicle = db.query(VehicleModel).filter(
-            VehicleModel.id == request.vehicle_id,
-            VehicleModel.user_email == user.email
-        ).first()
+        vehicle = get_owned_vehicle(
+            db,
+            user,
+            int(request.vehicle_id),
+            tenant_id=getattr(user, "tenant_id", None),
+        )
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno nebo nepatří uživateli")
     else:
         # Pokusit se najít defaultní vozidlo (první vozidlo uživatele)
-        vehicle = db.query(VehicleModel).filter(
-            VehicleModel.user_email == user.email
-        ).first()
+        owned_vehicles = get_owned_vehicle_rows(db, user, tenant_id=getattr(user, "tenant_id", None))
+        vehicle = owned_vehicles[0] if owned_vehicles else None
         
         if not vehicle:
             raise HTTPException(

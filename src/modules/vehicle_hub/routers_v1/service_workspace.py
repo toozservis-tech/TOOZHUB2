@@ -22,13 +22,14 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from src.core.branding import APP_DISPLAY_NAME
 from src.core.config import DATA_DIR, FRONTEND_BASE_URL
 from src.modules.email_client.service import EmailService
 from src.modules.email_client.templates import render_email_layout, render_panel
+from ..audit_log import write_global_audit_log
 from ..database import get_db
 from ..models import (
     Customer,
@@ -44,6 +45,8 @@ from ..models import (
     ServiceRecord as ServiceRecordModel,
     VehicleOwnership,
     Vehicle as VehicleModel,
+    VehicleQrAccessLog,
+    VehicleQrToken,
     VehicleServiceLink,
 )
 from ..orv_scans import apply_orv_scan_to_vehicle
@@ -51,12 +54,20 @@ from ..ownership import ensure_vehicle_owner_assignment, get_owned_vehicle, get_
 from ..schema_management import assert_module_ready
 from ..service_access import (
     create_or_update_vehicle_service_link,
+    get_active_vehicle_service_link,
     log_vehicle_lookup,
     masked_vin,
     normalize_lookup_query,
     require_service_vehicle_link,
     resolve_vehicle_for_lookup,
     vehicle_label,
+)
+from ..vehicle_public_history import (
+    build_public_history_page_url,
+    build_vehicle_qr_signature,
+    is_vehicle_qr_signature_valid,
+    normalize_public_mode,
+    render_vehicle_qr_svg,
 )
 from .auth import get_current_user
 from .reminders import apply_reminder_completion_update, is_recurring_reminder
@@ -65,6 +76,8 @@ from .schemas import (
     ServiceApprovedVehicleListOutV1,
     ServiceVehicleLookupRequestV1,
     ServiceVehicleLookupResponseV1,
+    VehicleQrTokenCreateV1,
+    VehicleQrTokenOutV1,
 )
 
 router = APIRouter(prefix="/services/workspace", tags=["service-workspace-v1"])
@@ -213,6 +226,34 @@ def _get_active_link(
     )
 
 
+def _query_value(raw_value):
+    if hasattr(raw_value, "default"):
+        return raw_value.default
+    return raw_value
+
+
+def _mask_email_value(value: Optional[str]) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text or "@" not in text:
+        return None
+    local, domain = text.split("@", 1)
+    if len(local) <= 2:
+        local_masked = local[0] + "*"
+    else:
+        local_masked = f"{local[:2]}***"
+    return f"{local_masked}@{domain}"
+
+
+def _mask_phone_value(value: Optional[str]) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    digits = re.sub(r"\D+", "", text)
+    if len(digits) < 4:
+        return "***"
+    return f"***{digits[-3:]}"
+
+
 def _get_linked_customer_or_404(db: Session, current_user: Customer, customer_id: int) -> Customer:
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
@@ -302,10 +343,16 @@ def _lookup_candidate_payload(
     owner_customer: Optional[Customer],
     status: str,
     can_request_access: bool,
+    can_open_detail: bool = True,
+    can_create_work_order: bool = False,
+    blocking_reason: Optional[str] = None,
+    match_score: Optional[float] = None,
+    match_type: Optional[str] = None,
 ) -> dict[str, Any]:
     return {
         "id": f"vehicle-{int(vehicle.id)}",
         "vehicle_id": int(vehicle.id),
+        "owner_customer_id": int(owner_customer.id) if owner_customer else None,
         "nickname": vehicle.nickname,
         "brand": vehicle.brand,
         "model": vehicle.model,
@@ -315,8 +362,333 @@ def _lookup_candidate_payload(
         "owner_label": None,
         "status": status,
         "can_request_access": bool(can_request_access),
+        "can_open_detail": bool(can_open_detail),
+        "can_create_work_order": bool(can_create_work_order),
+        "blocking_reason": blocking_reason,
+        "match_score": match_score,
+        "match_type": match_type,
     }
 
+
+def _detail_state_payload(
+    *,
+    entity_type: str,
+    entity_id: int,
+    status: str,
+    can_open_detail: bool,
+    can_edit: bool,
+    can_request_access: bool,
+    can_create_work_order: bool,
+    blocking_reason: Optional[str],
+    disclosure: str,
+) -> dict[str, Any]:
+    return {
+        "entity_type": entity_type,
+        "entity_id": int(entity_id),
+        "status": status,
+        "access_status": "full_access" if disclosure == "full" else "limited_access",
+        "can_open_detail": bool(can_open_detail),
+        "can_edit": bool(can_edit),
+        "can_request_access": bool(can_request_access),
+        "can_create_work_order": bool(can_create_work_order),
+        "blocking_reason": blocking_reason,
+        "disclosure": disclosure,
+    }
+
+
+def _get_latest_invitation_for_email(
+    db: Session,
+    *,
+    service_customer_id: int,
+    invite_email: Optional[str],
+) -> Optional[ServiceCustomerInvite]:
+    normalized_email = _normalize_email(invite_email or "")
+    if not normalized_email:
+        return None
+    return (
+        db.query(ServiceCustomerInvite)
+        .filter(
+            ServiceCustomerInvite.service_customer_id == int(service_customer_id),
+            func.lower(ServiceCustomerInvite.invite_email) == normalized_email,
+        )
+        .order_by(ServiceCustomerInvite.sent_at.desc(), ServiceCustomerInvite.id.desc())
+        .first()
+    )
+
+
+def _vehicle_access_state(
+    db: Session,
+    *,
+    current_user: Customer,
+    vehicle: VehicleModel,
+    owner_customer: Optional[Customer],
+) -> tuple[str, Optional[VehicleServiceLink], Optional[ServiceAccessRequest]]:
+    approved_link = get_active_vehicle_service_link(
+        db,
+        service_customer_id=int(current_user.id),
+        vehicle_id=int(vehicle.id),
+    )
+    if approved_link:
+        return "already_approved", approved_link, None
+    if not owner_customer:
+        return "owner_missing", None, None
+    pending_request = (
+        db.query(ServiceAccessRequest)
+        .filter(
+            ServiceAccessRequest.service_customer_id == int(current_user.id),
+            ServiceAccessRequest.vehicle_id == int(vehicle.id),
+            ServiceAccessRequest.status == "pending",
+        )
+        .order_by(ServiceAccessRequest.id.desc())
+        .first()
+    )
+    if pending_request:
+        return "pending_request", None, pending_request
+    return "matched", None, None
+
+
+def _vehicle_blocking_reason(
+    *,
+    status: str,
+    linked_customer: bool,
+) -> Optional[str]:
+    if status == "already_approved" and not linked_customer:
+        return "Vozidlo má schválený přístup, ale klient zatím není aktivně propojen se servisním účtem."
+    if status == "pending_request":
+        return "Pro toto vozidlo už čeká žádost o přístup."
+    if status == "owner_missing":
+        return "K vozidlu se nepodařilo určit schvalovatele přístupu."
+    if status == "matched":
+        return "Servis zatím nemá k vozidlu schválený přístup."
+    return None
+
+
+def _serialize_workspace_vehicle_summary(
+    *,
+    vehicle: VehicleModel,
+    is_shared: bool,
+) -> dict[str, Any]:
+    base_label = (
+        vehicle.nickname
+        or " ".join(part for part in [vehicle.brand, vehicle.model] if part).strip()
+        or vehicle.plate
+        or f"Vozidlo #{int(vehicle.id)}"
+    )
+    return {
+        "vehicle_id": int(vehicle.id),
+        "label": (
+            f"{base_label} • {vehicle.plate}"
+            if is_shared and vehicle.plate and base_label != vehicle.plate
+            else base_label
+        ),
+        "status": "already_approved" if is_shared else "matched",
+        "can_open_detail": True,
+        "can_request_access": not bool(is_shared),
+        "can_create_work_order": bool(is_shared),
+        "disclosure": "full" if is_shared else "limited",
+    }
+
+
+def _build_customer_detail_payload(
+    db: Session,
+    *,
+    current_user: Customer,
+    customer: Customer,
+) -> dict[str, Any]:
+    active_link = _get_active_link(db, service_customer_id=current_user.id, customer_id=int(customer.id))
+    disclosure = "full" if active_link else "limited"
+    shared_vehicle_ids = (
+        _get_shared_vehicle_ids_for_pair(db, service_customer_id=current_user.id, customer_id=int(customer.id))
+        if active_link
+        else set()
+    )
+    customer_vehicles = _get_customer_vehicle_rows(db, customer) if active_link else []
+    last_invite = _get_latest_invitation_for_email(
+        db,
+        service_customer_id=int(current_user.id),
+        invite_email=getattr(customer, "email", None),
+    )
+    invite_status = None
+    invite_status_label = None
+    invite_completed = None
+    if last_invite:
+        invite_status, invite_status_label, invite_completed = _invitation_status_meta(
+            str(last_invite.status or ""),
+            accepted_at=last_invite.accepted_at,
+        )
+    last_service_date = None
+    if active_link:
+        last_service_date = (
+            db.query(func.max(ServiceRecordModel.performed_at))
+            .join(VehicleOwnership, VehicleOwnership.vehicle_id == ServiceRecordModel.vehicle_id)
+            .filter(
+                VehicleOwnership.customer_id == customer.id,
+                VehicleOwnership.is_active.is_(True),
+                ServiceRecordModel.user_id == current_user.id,
+            )
+            .scalar()
+        )
+    can_create_work_order = bool(active_link and shared_vehicle_ids)
+    payload = _detail_state_payload(
+        entity_type="customer",
+        entity_id=int(customer.id),
+        status="linked" if active_link else "not_linked",
+        can_open_detail=True,
+        can_edit=False,
+        can_request_access=False,
+        can_create_work_order=can_create_work_order,
+        blocking_reason=(
+            None
+            if can_create_work_order or not active_link
+            else "Klient je propojen, ale servis zatím nemá schválený přístup k žádnému jeho vozidlu."
+        ),
+        disclosure=disclosure,
+    )
+    payload.update(
+        {
+            "customer_id": int(customer.id),
+            "name": customer.name or customer.email or f"Klient #{int(customer.id)}",
+            "role": customer.role,
+            "email": customer.email if disclosure == "full" else None,
+            "email_masked": _mask_email_value(customer.email),
+            "phone": customer.phone if disclosure == "full" else None,
+            "phone_masked": _mask_phone_value(customer.phone),
+            "vehicles_count": len(customer_vehicles) if active_link else None,
+            "shared_vehicles_count": len(shared_vehicle_ids) if active_link else 0,
+            "last_service_date": last_service_date.isoformat() if last_service_date else None,
+            "note": active_link.note if active_link else None,
+            "linked_at": active_link.created_at.isoformat() if active_link and active_link.created_at else None,
+            "can_link": not bool(active_link),
+            "invite_id": int(last_invite.id) if last_invite else None,
+            "invite_status": invite_status,
+            "invite_status_label": invite_status_label,
+            "invite_completed": bool(invite_completed) if invite_completed is not None else None,
+            "can_send_invite": not bool(active_link) and bool(getattr(customer, "email", None)),
+            "vehicles": [
+                _serialize_workspace_vehicle_summary(vehicle=vehicle, is_shared=int(vehicle.id) in shared_vehicle_ids)
+                for vehicle in customer_vehicles
+            ],
+        }
+    )
+    return payload
+
+
+def _build_vehicle_detail_payload(
+    db: Session,
+    *,
+    current_user: Customer,
+    vehicle: VehicleModel,
+) -> dict[str, Any]:
+    owner_customer = get_primary_vehicle_owner(db, vehicle)
+    active_qr_token = _get_vehicle_qr_token(db, vehicle_id=int(vehicle.id))
+    visible_records_count = (
+        db.query(ServiceRecordModel.id)
+        .filter(
+            ServiceRecordModel.vehicle_id == int(vehicle.id),
+            ServiceRecordModel.is_deleted.is_(False),
+        )
+        .count()
+    )
+    linked_customer = bool(
+        owner_customer
+        and _get_active_link(
+            db,
+            service_customer_id=int(current_user.id),
+            customer_id=int(owner_customer.id),
+        )
+    )
+    status, approved_link, pending_request = _vehicle_access_state(
+        db,
+        current_user=current_user,
+        vehicle=vehicle,
+        owner_customer=owner_customer,
+    )
+    disclosure = "full" if approved_link else "limited"
+    can_create_work_order = bool(approved_link and linked_customer and owner_customer)
+    can_request_access = bool(
+        owner_customer
+        and owner_customer.id != current_user.id
+        and status not in {"already_approved", "pending_request", "owner_missing"}
+    )
+    payload = _detail_state_payload(
+        entity_type="vehicle",
+        entity_id=int(vehicle.id),
+        status=status,
+        can_open_detail=True,
+        can_edit=False,
+        can_request_access=can_request_access,
+        can_create_work_order=can_create_work_order,
+        blocking_reason=_vehicle_blocking_reason(status=status, linked_customer=linked_customer),
+        disclosure=disclosure,
+    )
+    payload.update(
+        {
+            "vehicle_id": int(vehicle.id),
+            "owner_customer_id": int(owner_customer.id) if owner_customer and linked_customer else None,
+            "owner_name": (
+                (owner_customer.name or owner_customer.email)
+                if owner_customer and linked_customer and disclosure == "full"
+                else None
+            ),
+            "nickname": vehicle.nickname,
+            "brand": vehicle.brand,
+            "model": vehicle.model,
+            "year": vehicle.year,
+            "engine": vehicle.engine,
+            "plate": vehicle.plate if disclosure == "full" else None,
+            "plate_masked": vehicle.plate,
+            "vin": vehicle.vin if disclosure == "full" else None,
+            "vin_masked": masked_vin(vehicle.vin),
+            "stk_valid_until": vehicle.stk_valid_until.isoformat() if vehicle.stk_valid_until else None,
+            "current_mileage_km": vehicle.current_mileage_km if disclosure == "full" else None,
+            "last_stk_mileage_km": vehicle.last_stk_mileage_km if disclosure == "full" else None,
+            "mileage_checked_at": vehicle.mileage_checked_at.isoformat() if vehicle.mileage_checked_at else None,
+            "data_trust_state": vehicle.data_trust_state,
+            "created_at": vehicle.created_at.isoformat() if vehicle.created_at else None,
+            "linked_customer": linked_customer,
+            "request_id": int(pending_request.id) if pending_request else None,
+            "request_status": pending_request.status if pending_request else None,
+            "service_link_id": int(approved_link.id) if approved_link else None,
+            "records_count": int(visible_records_count),
+            "has_qr_token": bool(active_qr_token),
+            "qr_public_mode": getattr(active_qr_token, "public_mode", None) if active_qr_token else None,
+            "qr_last_access_at": active_qr_token.last_access_at.isoformat() if active_qr_token and active_qr_token.last_access_at else None,
+        }
+    )
+    return payload
+
+
+def _document_disclosure_state(
+    db: Session,
+    *,
+    current_user: Customer,
+    entity: ServiceDocumentIngestion,
+) -> tuple[str, bool, bool, Optional[str]]:
+    linked_customer = bool(
+        entity.customer_id
+        and _get_active_link(
+            db,
+            service_customer_id=int(current_user.id),
+            customer_id=int(entity.customer_id),
+        )
+    )
+    approved_vehicle = bool(
+        entity.vehicle_id
+        and get_active_vehicle_service_link(
+            db,
+            service_customer_id=int(current_user.id),
+            vehicle_id=int(entity.vehicle_id),
+        )
+    )
+    disclosure = "full" if linked_customer and (not entity.vehicle_id or approved_vehicle) else "limited"
+    can_request_access = bool(entity.vehicle_id and not approved_vehicle)
+    can_create_work_order = bool(entity.customer_id and entity.vehicle_id and linked_customer and approved_vehicle)
+    blocking_reason = None
+    if entity.customer_id and not linked_customer:
+        blocking_reason = "Doklad je navázaný na klienta, který už není aktivně propojen se servisním účtem."
+    elif entity.vehicle_id and not approved_vehicle:
+        blocking_reason = "K vozidlu z dokladu není schválený servisní přístup."
+    return disclosure, can_request_access, can_create_work_order, blocking_reason
 
 def _normalize_service_reminder_type(raw_type: Optional[str]) -> str:
     value = str(raw_type or "").strip().upper()
@@ -401,6 +773,90 @@ def _build_invitation_url(token: str) -> str:
     if base.endswith("/web"):
         return f"{base}/index.html?invite_token={token}"
     return f"{base}/web/index.html?invite_token={token}"
+
+
+def _build_vehicle_qr_payload(qr_token: VehicleQrToken) -> dict[str, Any]:
+    public_url = build_public_history_page_url(str(qr_token.token))
+    return {
+        "id": int(qr_token.id),
+        "vehicle_id": int(qr_token.vehicle_id),
+        "token": str(qr_token.token),
+        "public_mode": normalize_public_mode(getattr(qr_token, "public_mode", None), default="basic"),
+        "explicit_full_consent": bool(getattr(qr_token, "explicit_full_consent", False)),
+        "issued_at": qr_token.issued_at,
+        "revoked_at": qr_token.revoked_at,
+        "last_access_at": qr_token.last_access_at,
+        "signature_hash": str(qr_token.signature_hash or ""),
+        "active": bool(getattr(qr_token, "active", False)) and not bool(getattr(qr_token, "revoked_at", None)),
+        "public_history_url": public_url,
+        "qr_svg": render_vehicle_qr_svg(public_url),
+    }
+
+
+def _get_vehicle_qr_token(db: Session, *, vehicle_id: int) -> Optional[VehicleQrToken]:
+    return (
+        db.query(VehicleQrToken)
+        .filter(
+            VehicleQrToken.vehicle_id == int(vehicle_id),
+            VehicleQrToken.active.is_(True),
+            VehicleQrToken.revoked_at.is_(None),
+        )
+        .order_by(VehicleQrToken.issued_at.desc(), VehicleQrToken.id.desc())
+        .first()
+    )
+
+
+def _issue_vehicle_qr_token(
+    db: Session,
+    *,
+    current_user: Customer,
+    vehicle: VehicleModel,
+    public_mode: str,
+    explicit_full_consent: bool,
+) -> VehicleQrToken:
+    issued_at = datetime.utcnow()
+    token_value = secrets.token_urlsafe(24)
+    qr_token = VehicleQrToken(
+        tenant_id=int(vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1),
+        vehicle_id=int(vehicle.id),
+        created_by_user_id=getattr(current_user, "id", None),
+        token=token_value,
+        public_mode=normalize_public_mode(public_mode, default="basic"),
+        explicit_full_consent=bool(explicit_full_consent),
+        active=True,
+        issued_at=issued_at,
+        revoked_at=None,
+        last_access_at=None,
+        signature_hash="pending",
+    )
+    qr_token.signature_hash = build_vehicle_qr_signature(
+        token=token_value,
+        vehicle_id=int(vehicle.id),
+        issued_at=issued_at,
+    )
+    db.add(qr_token)
+    db.flush()
+    return qr_token
+
+
+def _lookup_match_meta(*, identifier_type: str, query: str, vehicle: Optional[VehicleModel]) -> tuple[float, str]:
+    normalized_identifier = str(identifier_type or "unknown").strip().lower()
+    normalized_query = str(query or "").strip().upper()
+    if vehicle is None:
+        return 0.0, "fuzzy"
+    vehicle_vin = str(getattr(vehicle, "vin", "") or "").strip().upper()
+    vehicle_plate = str(getattr(vehicle, "plate", "") or "").strip().upper()
+    if normalized_identifier == "vin":
+        if normalized_query and vehicle_vin == normalized_query:
+            return 1.0, "vin_exact"
+        if normalized_query and vehicle_vin.startswith(normalized_query):
+            return max(0.55, min(0.94, len(normalized_query) / 17.0)), "vin_partial"
+        return 0.62, "fuzzy"
+    if normalized_identifier == "plate":
+        if normalized_query and vehicle_plate == normalized_query:
+            return 1.0, "spz"
+        return 0.68, "fuzzy"
+    return 0.6, "fuzzy"
 
 
 def _send_invitation_email(
@@ -1994,6 +2450,167 @@ def list_service_customers(
     return result
 
 
+@router.get("/customers/search")
+def search_service_customers(
+    query: str = Query(..., min_length=2, max_length=160),
+    limit: int = Query(default=10, ge=1, le=25),
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    raw_query = str(_query_value(query) or "").strip()
+    limit_value = int(_query_value(limit) or 10)
+    normalized_query = raw_query.lower()
+    phone_digits = re.sub(r"\D+", "", raw_query)
+
+    linked_ids = {
+        int(item[0])
+        for item in (
+            db.query(ServiceCustomerLink.customer_id)
+            .filter(
+                ServiceCustomerLink.service_customer_id == current_user.id,
+                ServiceCustomerLink.status == "active",
+            )
+            .all()
+        )
+        if item and item[0]
+    }
+
+    db_query = (
+        db.query(Customer)
+        .filter(
+            Customer.id != current_user.id,
+            func.lower(Customer.role).notin_(["service", "admin", "developer_admin"]),
+        )
+        .filter(
+            or_(
+                func.lower(Customer.email).like(f"%{normalized_query}%"),
+                func.lower(func.coalesce(Customer.name, "")).like(f"%{normalized_query}%"),
+                func.replace(func.replace(func.replace(func.coalesce(Customer.phone, ""), " ", ""), "+", ""), "-", "").like(f"%{phone_digits or normalized_query}%"),
+            )
+        )
+        .order_by(Customer.name.asc(), Customer.email.asc())
+        .limit(limit_value)
+    )
+
+    rows = db_query.all()
+    write_global_audit_log(
+        db,
+        entity_type="service_customer_search",
+        entity_id=getattr(current_user, "id", None),
+        action="search",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=getattr(current_user, "tenant_id", None),
+        metadata={
+            "query": raw_query,
+            "result_count": len(rows),
+        },
+    )
+    db.commit()
+
+    items: list[dict[str, Any]] = []
+    for customer in rows:
+        email_value = str(getattr(customer, "email", "") or "").strip().lower()
+        name_value = str(getattr(customer, "name", "") or "").strip().lower()
+        customer_phone_digits = re.sub(r"\D+", "", str(getattr(customer, "phone", "") or ""))
+        if normalized_query and email_value == normalized_query:
+            match_score = 1.0
+            match_type = "fuzzy"
+        elif phone_digits and customer_phone_digits and customer_phone_digits.endswith(phone_digits):
+            match_score = 0.96
+            match_type = "fuzzy"
+        elif normalized_query and normalized_query in name_value:
+            match_score = 0.88
+            match_type = "fuzzy"
+        else:
+            match_score = 0.7
+            match_type = "fuzzy"
+        latest_invite = _get_latest_invitation_for_email(
+            db,
+            service_customer_id=int(current_user.id),
+            invite_email=getattr(customer, "email", None),
+        )
+        invite_status = None
+        invite_status_label = None
+        if latest_invite:
+            invite_status, invite_status_label, _ = _invitation_status_meta(
+                str(latest_invite.status or ""),
+                accepted_at=latest_invite.accepted_at,
+            )
+        already_linked = int(customer.id) in linked_ids
+        has_pending_invite = invite_status == "pending"
+        items.append(
+            {
+                "customer_id": int(customer.id),
+                "name": customer.name or customer.email or f"Klient #{int(customer.id)}",
+                "email_masked": _mask_email_value(customer.email),
+                "phone_masked": _mask_phone_value(customer.phone),
+                "role": customer.role,
+                "already_linked": already_linked,
+                "can_link": not already_linked,
+                "can_open_detail": True,
+                "invite_status": invite_status,
+                "invite_status_label": invite_status_label,
+                "status": (
+                    "linked"
+                    if already_linked
+                    else "invite_pending"
+                    if has_pending_invite
+                    else "not_linked"
+                ),
+                "status_label": (
+                    "Už propojený klient"
+                    if already_linked
+                    else "Pozvánka už byla odeslána"
+                    if has_pending_invite
+                    else "Lze propojit"
+                ),
+                "can_send_invite": not already_linked and not has_pending_invite,
+                "blocking_reason": (
+                    "Klient už je propojený se servisem."
+                    if already_linked
+                    else "Na tento kontakt už čeká dříve odeslaná pozvánka."
+                    if has_pending_invite
+                    else None
+                ),
+                "match_score": match_score,
+                "match_type": match_type,
+            }
+        )
+
+    return {
+        "query": raw_query,
+        "result_count": len(rows),
+        "has_multiple_matches": len(rows) > 1,
+        "items": items,
+    }
+
+
+@router.get("/customers/{customer_id}/detail")
+def get_service_customer_detail(
+    customer_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    customer = (
+        db.query(Customer)
+        .filter(
+            Customer.id == int(customer_id),
+            func.lower(Customer.role).notin_(["service", "admin", "developer_admin"]),
+        )
+        .first()
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Klient nebyl nalezen.")
+    return _build_customer_detail_payload(db, current_user=current_user, customer=customer)
+
+
 @router.post("/vehicle-lookup", response_model=ServiceVehicleLookupResponseV1)
 def lookup_vehicle_for_service(
     payload: ServiceVehicleLookupRequestV1,
@@ -2007,20 +2624,139 @@ def lookup_vehicle_for_service(
     _ensure_service_workspace_schema(db)
 
     raw_query = str(payload.query or "").strip()
-    vehicle, owner_customer, normalized_query, identifier_type, result_status = resolve_vehicle_for_lookup(
-        db,
-        current_user=current_user,
-        query=raw_query,
+    raw_parts = [part for part in re.split(r"[\s,;/]+", raw_query.upper()) if part]
+    query_parts: list[str] = []
+    for part in raw_parts:
+        if part not in query_parts:
+            query_parts.append(part)
+
+    resolved_hits: list[dict[str, Any]] = []
+    for query_part in (query_parts[:2] or [raw_query]):
+        vehicle, owner_customer, normalized_query, identifier_type, result_status = resolve_vehicle_for_lookup(
+            db,
+            current_user=current_user,
+            query=query_part,
+        )
+        resolved_hits.append(
+            {
+                "query_part": query_part,
+                "vehicle": vehicle,
+                "owner_customer": owner_customer,
+                "normalized_query": normalized_query,
+                "identifier_type": identifier_type,
+                "result_status": result_status,
+            }
+        )
+
+    conflict_hits = [
+        item for item in resolved_hits
+        if item["vehicle"] is not None
+    ]
+    if len(conflict_hits) >= 2 and len({int(item["vehicle"].id) for item in conflict_hits}) > 1:
+        log_vehicle_lookup(
+            db,
+            current_user=current_user,
+            raw_query=raw_query,
+            normalized_query=" / ".join(str(item["normalized_query"]) for item in resolved_hits if item["normalized_query"]),
+            identifier_type="mixed",
+            vehicle=None,
+            owner_customer=None,
+            result_status="conflict",
+            returned_candidate_count=len(conflict_hits),
+        )
+        db.commit()
+        return {
+            "query": raw_query,
+            "result_count": len(conflict_hits),
+            "has_multiple_matches": True,
+            "has_conflict": True,
+            "identifier_type": "mixed",
+            "candidates": [
+                {
+                    "id": "vehicle-lookup-conflict",
+                    "status": "conflict",
+                    "can_request_access": False,
+                    "can_open_detail": False,
+                    "can_create_work_order": False,
+                    "blocking_reason": "VIN a SPZ ukazují na různé záznamy. Zkontrolujte vstup a otevřete správný detail zvlášť.",
+                    "conflicting_candidates": [
+                        _lookup_candidate_payload(
+                            vehicle=item["vehicle"],
+                            owner_customer=item["owner_customer"],
+                            status=item["result_status"],
+                            can_request_access=item["result_status"] not in {"already_approved", "pending_request", "owner_missing"},
+                            can_open_detail=True,
+                            can_create_work_order=item["result_status"] == "already_approved",
+                            blocking_reason=_vehicle_blocking_reason(
+                                status=item["result_status"],
+                                linked_customer=bool(
+                                    item["owner_customer"]
+                                    and _get_active_link(
+                                        db,
+                                        service_customer_id=int(current_user.id),
+                                        customer_id=int(item["owner_customer"].id),
+                                    )
+                                ),
+                            ),
+                            match_score=_lookup_match_meta(
+                                identifier_type=str(item["identifier_type"] or "unknown"),
+                                query=str(item["normalized_query"] or ""),
+                                vehicle=item["vehicle"],
+                            )[0],
+                            match_type=_lookup_match_meta(
+                                identifier_type=str(item["identifier_type"] or "unknown"),
+                                query=str(item["normalized_query"] or ""),
+                                vehicle=item["vehicle"],
+                            )[1],
+                        )
+                        for item in conflict_hits
+                    ],
+                }
+            ],
+        }
+
+    primary_hit = next(
+        (
+            item for item in resolved_hits
+            if item["vehicle"] is not None or item["result_status"] in {"owner_missing"}
+        ),
+        resolved_hits[0],
+    )
+    vehicle = primary_hit["vehicle"]
+    owner_customer = primary_hit["owner_customer"]
+    normalized_query = str(primary_hit["normalized_query"] or "")
+    identifier_type = str(primary_hit["identifier_type"] or "unknown")
+    result_status = str(primary_hit["result_status"] or "not_found")
+    match_score, match_type = _lookup_match_meta(
+        identifier_type=identifier_type,
+        query=normalized_query,
+        vehicle=vehicle,
     )
 
     candidates: list[dict[str, Any]] = []
-    if vehicle and owner_customer:
+    if vehicle:
+        linked_customer = bool(
+            owner_customer
+            and _get_active_link(
+                db,
+                service_customer_id=int(current_user.id),
+                customer_id=int(owner_customer.id),
+            )
+        )
         candidates.append(
             _lookup_candidate_payload(
                 vehicle=vehicle,
                 owner_customer=owner_customer,
                 status=result_status,
-                can_request_access=result_status not in {"already_approved", "pending_request"},
+                can_request_access=result_status not in {"already_approved", "pending_request", "owner_missing"},
+                can_open_detail=True,
+                can_create_work_order=result_status == "already_approved" and linked_customer,
+                blocking_reason=_vehicle_blocking_reason(
+                    status=result_status,
+                    linked_customer=linked_customer,
+                ),
+                match_score=match_score,
+                match_type=match_type,
             )
         )
 
@@ -2036,7 +2772,64 @@ def lookup_vehicle_for_service(
         returned_candidate_count=len(candidates),
     )
     db.commit()
-    return {"candidates": candidates}
+    return {
+        "query": raw_query,
+        "result_count": len(candidates),
+        "has_multiple_matches": len(candidates) > 1,
+        "has_conflict": False,
+        "identifier_type": identifier_type,
+        "candidates": candidates,
+    }
+
+
+@router.post("/customers/{customer_id}/link")
+def link_existing_customer_by_id(
+    customer_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    customer = db.query(Customer).filter(Customer.id == int(customer_id)).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Účet zákazníka nebyl nalezen.")
+    if customer.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Nelze propojit servisní účet se sebou samým.")
+
+    try:
+        _, created = _upsert_service_customer_link(
+            db,
+            service_customer_id=current_user.id,
+            service_tenant_id=current_user.tenant_id,
+            target_customer=customer,
+            note="Propojeno z vyhledání klienta",
+        )
+        write_global_audit_log(
+            db,
+            entity_type="service_customer_link",
+            entity_id=int(customer.id),
+            action="link_existing_customer",
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=getattr(current_user, "tenant_id", None),
+            metadata={
+                "customer_id": int(customer.id),
+                "created": bool(created),
+            },
+        )
+        db.commit()
+        return {
+            "linked": True,
+            "created": created,
+            "message": "Klient byl úspěšně propojen." if created else "Klient už byl propojen, vazba byla potvrzena.",
+            "customer_id": int(customer.id),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Nepodařilo se propojit klienta: {exc}") from exc
 
 
 @router.post("/access-requests")
@@ -2191,6 +2984,182 @@ def list_approved_service_vehicles(
     }
 
 
+@router.get("/vehicles/{vehicle_id}/detail")
+def get_service_vehicle_detail(
+    vehicle_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == int(vehicle_id)).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo nebylo nalezeno.")
+    return _build_vehicle_detail_payload(db, current_user=current_user, vehicle=vehicle)
+
+
+@router.get("/vehicles/{vehicle_id}/qr", response_model=VehicleQrTokenOutV1)
+def get_vehicle_qr_token(
+    vehicle_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    require_service_vehicle_link(
+        db,
+        current_user=current_user,
+        vehicle_id=vehicle_id,
+        require_create_record=False,
+    )
+    qr_token = _get_vehicle_qr_token(db, vehicle_id=vehicle_id)
+    if not qr_token:
+        raise HTTPException(status_code=404, detail="QR token pro vozidlo zatím neexistuje.")
+    if not is_vehicle_qr_signature_valid(qr_token):
+        raise HTTPException(status_code=409, detail="QR token neprošel integritní kontrolou.")
+    return _build_vehicle_qr_payload(qr_token)
+
+
+@router.post("/vehicles/{vehicle_id}/qr", response_model=VehicleQrTokenOutV1)
+def create_vehicle_qr_token(
+    vehicle_id: int,
+    payload: VehicleQrTokenCreateV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    require_service_vehicle_link(
+        db,
+        current_user=current_user,
+        vehicle_id=vehicle_id,
+        require_create_record=False,
+    )
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == int(vehicle_id)).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo nebylo nalezeno.")
+
+    existing = _get_vehicle_qr_token(db, vehicle_id=vehicle_id)
+    if existing:
+        if not is_vehicle_qr_signature_valid(existing):
+            raise HTTPException(status_code=409, detail="Existující QR token neprošel integritní kontrolou.")
+        return _build_vehicle_qr_payload(existing)
+
+    qr_token = _issue_vehicle_qr_token(
+        db,
+        current_user=current_user,
+        vehicle=vehicle,
+        public_mode=payload.public_mode,
+        explicit_full_consent=payload.explicit_full_consent,
+    )
+    write_global_audit_log(
+        db,
+        entity_type="vehicle_qr_token",
+        entity_id=int(qr_token.id),
+        action="vehicle_qr_create",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=getattr(vehicle, "tenant_id", None),
+        metadata={
+            "vehicle_id": int(vehicle.id),
+            "public_mode": qr_token.public_mode,
+            "explicit_full_consent": bool(qr_token.explicit_full_consent),
+        },
+    )
+    db.commit()
+    db.refresh(qr_token)
+    return _build_vehicle_qr_payload(qr_token)
+
+
+@router.delete("/vehicles/{vehicle_id}/qr")
+def revoke_vehicle_qr_token(
+    vehicle_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    require_service_vehicle_link(
+        db,
+        current_user=current_user,
+        vehicle_id=vehicle_id,
+        require_create_record=False,
+    )
+    qr_token = _get_vehicle_qr_token(db, vehicle_id=vehicle_id)
+    if not qr_token:
+        raise HTTPException(status_code=404, detail="QR token pro vozidlo nebyl nalezen.")
+
+    qr_token.active = False
+    qr_token.revoked_at = datetime.utcnow()
+    write_global_audit_log(
+        db,
+        entity_type="vehicle_qr_token",
+        entity_id=int(qr_token.id),
+        action="vehicle_qr_revoke",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=getattr(qr_token, "tenant_id", None),
+        metadata={"vehicle_id": int(vehicle_id)},
+    )
+    db.commit()
+    return {"revoked": True, "vehicle_id": int(vehicle_id)}
+
+
+@router.post("/vehicles/{vehicle_id}/qr/regenerate", response_model=VehicleQrTokenOutV1)
+def regenerate_vehicle_qr_token(
+    vehicle_id: int,
+    payload: VehicleQrTokenCreateV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    require_service_vehicle_link(
+        db,
+        current_user=current_user,
+        vehicle_id=vehicle_id,
+        require_create_record=False,
+    )
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == int(vehicle_id)).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo nebylo nalezeno.")
+
+    existing = _get_vehicle_qr_token(db, vehicle_id=vehicle_id)
+    if existing:
+        existing.active = False
+        existing.revoked_at = datetime.utcnow()
+
+    qr_token = _issue_vehicle_qr_token(
+        db,
+        current_user=current_user,
+        vehicle=vehicle,
+        public_mode=payload.public_mode,
+        explicit_full_consent=payload.explicit_full_consent,
+    )
+    write_global_audit_log(
+        db,
+        entity_type="vehicle_qr_token",
+        entity_id=int(qr_token.id),
+        action="vehicle_qr_regenerate",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=getattr(vehicle, "tenant_id", None),
+        metadata={
+            "vehicle_id": int(vehicle.id),
+            "public_mode": qr_token.public_mode,
+            "previous_token_id": int(existing.id) if existing else None,
+        },
+    )
+    db.commit()
+    db.refresh(qr_token)
+    return _build_vehicle_qr_payload(qr_token)
+
+
 @router.post("/customers/link-existing")
 def link_existing_customer(
     payload: LinkExistingCustomerRequest,
@@ -2214,6 +3183,20 @@ def link_existing_customer(
             service_tenant_id=current_user.tenant_id,
             target_customer=customer,
             note=(payload.note or "").strip() or None,
+        )
+        write_global_audit_log(
+            db,
+            entity_type="service_customer_link",
+            entity_id=int(customer.id),
+            action="link_existing_customer_by_email",
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=getattr(current_user, "tenant_id", None),
+            metadata={
+                "customer_id": int(customer.id),
+                "created": bool(created),
+                "channel": "email",
+            },
         )
         db.commit()
         return {
@@ -2332,6 +3315,28 @@ def send_service_invitation(
                     "Účet už byl propojen." if not created else "Existující účet byl automaticky propojen se servisem."
                 ),
                 "customer_id": existing_customer.id,
+            }
+
+        existing_pending_invite = (
+            db.query(ServiceCustomerInvite)
+            .filter(
+                ServiceCustomerInvite.service_customer_id == current_user.id,
+                func.lower(ServiceCustomerInvite.invite_email) == invite_email,
+                ServiceCustomerInvite.status == "pending",
+            )
+            .order_by(ServiceCustomerInvite.sent_at.desc(), ServiceCustomerInvite.id.desc())
+            .first()
+        )
+        if existing_pending_invite and (
+            not existing_pending_invite.expires_at or existing_pending_invite.expires_at >= datetime.utcnow()
+        ):
+            return {
+                "already_linked": False,
+                "already_pending": True,
+                "invite_id": int(existing_pending_invite.id),
+                "email_sent": True,
+                "registration_url": _build_invitation_url(existing_pending_invite.token),
+                "message": "Pozvánka už byla dříve odeslána a stále čeká na přijetí.",
             }
 
         # Zneplatnit staré čekající pozvánky pro stejný e-mail od stejného servisu.
@@ -2600,6 +3605,99 @@ def list_customer_vehicles(
         }
         for vehicle in vehicles
     ]
+
+
+@router.get("/reservations/{reservation_id}/detail")
+def get_service_workspace_reservation_detail(
+    reservation_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    reservation = (
+        db.query(ReservationModel)
+        .filter(ReservationModel.id == int(reservation_id))
+        .first()
+    )
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Rezervace nebyla nalezena.")
+    if int(reservation.service_id or 0) != int(current_user.id) and str(current_user.role or "").lower() not in {"admin", "developer_admin"}:
+        raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci.")
+
+    customer = db.query(Customer).filter(Customer.id == reservation.customer_id).first()
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == reservation.vehicle_id).first()
+    linked_customer = bool(
+        customer
+        and _get_active_link(db, service_customer_id=int(current_user.id), customer_id=int(customer.id))
+    )
+    approved_vehicle = bool(
+        vehicle
+        and get_active_vehicle_service_link(
+            db,
+            service_customer_id=int(current_user.id),
+            vehicle_id=int(vehicle.id),
+        )
+    )
+    disclosure = "full" if linked_customer and approved_vehicle else "limited"
+    can_create_work_order = bool(linked_customer and approved_vehicle and customer and vehicle)
+    payload = _detail_state_payload(
+        entity_type="reservation",
+        entity_id=int(reservation.id),
+        status=str(reservation.status or "PENDING"),
+        can_open_detail=True,
+        can_edit=str(reservation.status or "").upper() not in {"CANCELLED", "COMPLETED"},
+        can_request_access=bool(vehicle and not approved_vehicle),
+        can_create_work_order=can_create_work_order,
+        blocking_reason=(
+            "Rezervace je navázaná na klienta bez aktivní servisní vazby."
+            if customer and not linked_customer
+            else "K vozidlu z rezervace není schválený servisní přístup."
+            if vehicle and not approved_vehicle
+            else None
+        ),
+        disclosure=disclosure,
+    )
+    payload.update(
+        {
+            "reservation_id": int(reservation.id),
+            "service_id": int(reservation.service_id),
+            "customer_id": int(reservation.customer_id),
+            "vehicle_id": int(reservation.vehicle_id),
+            "service_type": reservation.service_type,
+            "note": reservation.note if disclosure == "full" else None,
+            "start_datetime": reservation.start_datetime.isoformat() if reservation.start_datetime else None,
+            "end_datetime": reservation.end_datetime.isoformat() if reservation.end_datetime else None,
+            "created_at": reservation.created_at.isoformat() if reservation.created_at else None,
+            "source_platform": reservation.source_platform,
+            "customer_name": (
+                (customer.name or customer.email)
+                if customer and disclosure == "full"
+                else customer.name
+                if customer
+                else None
+            ),
+            "customer_email": customer.email if customer and disclosure == "full" else None,
+            "customer_email_masked": _mask_email_value(customer.email if customer else None),
+            "vehicle_name": (
+                (
+                    vehicle.nickname
+                    or " ".join(part for part in [vehicle.brand, vehicle.model] if part).strip()
+                    or vehicle.plate
+                    or f"Vozidlo #{int(vehicle.id)}"
+                )
+                if vehicle
+                else None
+            ),
+            "vehicle_plate": vehicle.plate if vehicle and disclosure == "full" else None,
+            "vehicle_plate_masked": vehicle.plate if vehicle else None,
+            "vehicle_vin_masked": masked_vin(vehicle.vin) if vehicle else None,
+            "customer_linked": linked_customer,
+            "vehicle_access_approved": approved_vehicle,
+        }
+    )
+    return payload
 
 
 def _build_workspace_vehicle_row(
@@ -3067,6 +4165,92 @@ def create_service_workspace_reminder(
     }
 
 
+@router.get("/reminders/{reminder_id}/detail")
+def get_service_workspace_reminder_detail(
+    reminder_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    reminder = db.query(ReminderModel).filter(ReminderModel.id == int(reminder_id)).first()
+    if not reminder:
+        raise HTTPException(status_code=404, detail="Připomínka nebyla nalezena.")
+
+    customer = db.query(Customer).filter(Customer.id == reminder.customer_id).first()
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == reminder.vehicle_id).first() if reminder.vehicle_id else None
+    linked_customer = bool(
+        customer
+        and _get_active_link(db, service_customer_id=int(current_user.id), customer_id=int(customer.id))
+    )
+    approved_vehicle = bool(
+        vehicle
+        and get_active_vehicle_service_link(
+            db,
+            service_customer_id=int(current_user.id),
+            vehicle_id=int(vehicle.id),
+        )
+    )
+    disclosure = "full" if linked_customer and (not vehicle or approved_vehicle) else "limited"
+    can_create_work_order = bool(linked_customer and vehicle and approved_vehicle)
+    payload = _detail_state_payload(
+        entity_type="reminder",
+        entity_id=int(reminder.id),
+        status="completed" if bool(reminder.is_completed) else "open",
+        can_open_detail=True,
+        can_edit=linked_customer,
+        can_request_access=bool(vehicle and not approved_vehicle),
+        can_create_work_order=can_create_work_order,
+        blocking_reason=(
+            "Připomínka patří klientovi bez aktivní servisní vazby."
+            if customer and not linked_customer
+            else "K vozidlu z připomínky není schválený servisní přístup."
+            if vehicle and not approved_vehicle
+            else None
+        ),
+        disclosure=disclosure,
+    )
+    payload.update(
+        {
+            "reminder_id": int(reminder.id),
+            "customer_id": int(reminder.customer_id),
+            "customer_name": (
+                (customer.name or customer.email)
+                if customer and disclosure == "full"
+                else customer.name
+                if customer
+                else None
+            ),
+            "customer_email": customer.email if customer and disclosure == "full" else None,
+            "customer_email_masked": _mask_email_value(customer.email if customer else None),
+            "vehicle_id": int(reminder.vehicle_id) if reminder.vehicle_id else None,
+            "vehicle_label": (
+                (vehicle.nickname if vehicle and vehicle.nickname else None)
+                or (" ".join(part for part in [vehicle.brand, vehicle.model] if part).strip() if vehicle else None)
+                or (vehicle.plate if vehicle and disclosure == "full" else None)
+                or ("Vozidlo bez schváleného přístupu" if vehicle else "Bez vozidla")
+            ),
+            "vehicle_plate_masked": vehicle.plate if vehicle else None,
+            "vehicle_vin_masked": masked_vin(vehicle.vin) if vehicle else None,
+            "type": reminder.type,
+            "text": reminder.text if disclosure == "full" else None,
+            "due_date": reminder.due_date.isoformat() if reminder.due_date else None,
+            "notify_at": reminder.notify_at.isoformat() if reminder.notify_at else None,
+            "notification_method": reminder.notification_method,
+            "is_completed": bool(reminder.is_completed),
+            "is_manual": bool(reminder.is_manual),
+            "is_recurring": bool(is_recurring_reminder(reminder)),
+            "recurrence_group_id": getattr(reminder, "recurrence_group_id", None),
+            "recurrence_index": getattr(reminder, "recurrence_index", None),
+            "created_at": reminder.created_at.isoformat() if reminder.created_at else None,
+            "customer_linked": linked_customer,
+            "vehicle_access_approved": approved_vehicle if vehicle else None,
+        }
+    )
+    return payload
+
+
 @router.put("/reminders/{reminder_id}")
 def update_service_workspace_reminder(
     reminder_id: int,
@@ -3266,6 +4450,82 @@ def list_ingested_documents(
             )
         )
     return result
+
+
+@router.get("/documents/{document_id}/detail")
+def get_service_workspace_document_detail(
+    document_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    row = (
+        db.query(ServiceDocumentIngestion)
+        .filter(
+            ServiceDocumentIngestion.id == int(document_id),
+            ServiceDocumentIngestion.service_customer_id == int(current_user.id),
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Doklad nebyl nalezen.")
+    try:
+        _try_reparse_ingestion_entity(row)
+        db.flush()
+    except Exception as exc:
+        print(f"[SERVICE_WORKSPACE] Re-parse detailu dokladu #{row.id} selhal: {exc}")
+
+    customer_obj = db.query(Customer).filter(Customer.id == row.customer_id).first() if row.customer_id else None
+    vehicle_obj = db.query(VehicleModel).filter(VehicleModel.id == row.vehicle_id).first() if row.vehicle_id else None
+    vehicle_label = None
+    if vehicle_obj:
+        vehicle_label = (
+            vehicle_obj.nickname
+            or " ".join(part for part in [vehicle_obj.brand, vehicle_obj.model] if part).strip()
+            or vehicle_obj.plate
+            or f"Vozidlo #{vehicle_obj.id}"
+        )
+        if vehicle_obj.plate and vehicle_label != vehicle_obj.plate:
+            vehicle_label = f"{vehicle_label} • {vehicle_obj.plate}"
+    detail = _build_ingestion_response(
+        row,
+        customer_name=(customer_obj.name if customer_obj else None),
+        customer_email=(customer_obj.email if customer_obj else None),
+        vehicle_label=vehicle_label,
+    )
+    disclosure, can_request_access, can_create_work_order, blocking_reason = _document_disclosure_state(
+        db,
+        current_user=current_user,
+        entity=row,
+    )
+    payload = _detail_state_payload(
+        entity_type="document",
+        entity_id=int(row.id),
+        status=str(row.processing_status or "processed"),
+        can_open_detail=True,
+        can_edit=False,
+        can_request_access=can_request_access,
+        can_create_work_order=can_create_work_order,
+        blocking_reason=blocking_reason,
+        disclosure=disclosure,
+    )
+    payload.update(detail)
+    payload["customer_email"] = detail.get("customer_email") if disclosure == "full" else None
+    payload["customer_email_masked"] = _mask_email_value(detail.get("customer_email"))
+    payload["parsed_data"] = detail.get("parsed_data") if disclosure == "full" else None
+    payload["extracted_text_preview"] = detail.get("extracted_text_preview") if disclosure == "full" else None
+    payload["vehicle_access_approved"] = not can_request_access if row.vehicle_id else None
+    payload["customer_linked"] = bool(
+        row.customer_id
+        and _get_active_link(
+            db,
+            service_customer_id=int(current_user.id),
+            customer_id=int(row.customer_id),
+        )
+    )
+    return payload
 
 
 @router.post("/documents/ingest")

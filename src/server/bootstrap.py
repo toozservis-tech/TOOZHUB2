@@ -31,6 +31,8 @@ from src.server.routers.system import public_path, router as system_router
 from src.server.routers.user_account import router as user_account_router
 from src.server.routers.user_auth import router as user_auth_router
 from src.server.routers.user_security import router as user_security_router
+from src.server.routers.session_me import router as session_me_router
+from src.server.routers.workspace_debug import router as workspace_debug_router
 from src.server.runtime_settings import get_runtime_setting_bool
 
 
@@ -310,6 +312,41 @@ def _include_feature_routers(app: FastAPI) -> None:
 
         traceback.print_exc()
 
+    try:
+        from src.modules.vehicle_hub.routers_v1.service_dashboard import router as service_dashboard_router
+        from src.modules.vehicle_hub.routers_v1.service_invoices import router as service_invoices_router
+
+        app.include_router(service_dashboard_router)
+        app.include_router(service_invoices_router)
+        print("[SERVER] Service Dashboard + Service Invoices routery zaregistrovány: /api/service/")
+    except ImportError as exc:
+        print(f"[SERVER] Warning: Service Dashboard router není dostupný: {exc}")
+        import traceback
+
+        traceback.print_exc()
+
+    try:
+        from src.server.routers.public_vehicle_history import router as public_vehicle_history_router
+
+        app.include_router(public_vehicle_history_router)
+        print("[SERVER] Public vehicle history router zaregistrován: /api/public/vehicle-history/")
+    except ImportError as exc:
+        print(f"[SERVER] Warning: Public vehicle history router není dostupný: {exc}")
+        import traceback
+
+        traceback.print_exc()
+
+    try:
+        from src.server.routers.public_quote import router as public_quote_router
+
+        app.include_router(public_quote_router)
+        print("[SERVER] Public quote router zaregistrován: /api/public/quote/")
+    except ImportError as exc:
+        print(f"[SERVER] Warning: Public quote router není dostupný: {exc}")
+        import traceback
+
+        traceback.print_exc()
+
     if ENABLE_AUTOPILOT_API:
         try:
             from src.modules.vehicle_hub.routers_v1.autopilot import router as autopilot_router
@@ -366,6 +403,8 @@ def _include_feature_routers(app: FastAPI) -> None:
     else:
         print("[SERVER] AI Features router přeskočen (ENABLE_AI_FEATURES=false)")
 
+    app.include_router(session_me_router)
+    app.include_router(workspace_debug_router)
     app.include_router(user_auth_router)
     app.include_router(user_account_router)
     app.include_router(user_security_router)
@@ -390,15 +429,19 @@ def _mount_static_directories(app: FastAPI) -> None:
     except (OSError, ValueError) as exc:
         print(f"[SERVER] Warning: Could not mount admin web directory: {exc}")
 
+    # /web se nesmí mountovat jako čistý StaticFiles — deep linky (/web/app/u/…/dashboard) by vracely 404 JSON.
+    # Soubory pod /web obsluhuje system_router (spa_web_deep_shell + FileResponse).
     try:
         web_path = Path(__file__).parent.parent.parent / "web"
         if web_path.exists():
-            app.mount("/web", StaticFiles(directory=str(web_path), html=True), name="web")
-            print(f"[SERVER] Web interface zaregistrován: /web/ (directory: {web_path})")
+            print(
+                "[SERVER] Web SPA + statické soubory: GET/HEAD /web a /web/{path} "
+                f"(FileResponse z {web_path}, viz system_router — bez mount StaticFiles na /web)"
+            )
         else:
             print(f"[SERVER] WARNING: Web directory not found: {web_path}")
     except (OSError, ValueError) as exc:
-        print(f"[SERVER] Warning: Could not mount web directory: {exc}")
+        print(f"[SERVER] Warning: Could not verify web directory: {exc}")
 
 
 def _register_lifecycle_hooks(app: FastAPI) -> None:

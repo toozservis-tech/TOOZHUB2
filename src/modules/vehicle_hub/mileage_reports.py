@@ -4,13 +4,14 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from io import BytesIO
-from typing import Iterable
+from typing import Any, Iterable
 
 from sqlalchemy.orm import Session
 
 from .models import (
     ServiceIntake,
     ServiceRecord as ServiceRecordModel,
+    VehicleMileage as VehicleMileageModel,
     VehicleTachometerHistoryEntry as VehicleTachometerHistoryEntryModel,
 )
 
@@ -27,8 +28,22 @@ except Exception:
 
 MANUAL_MILEAGE_DESCRIPTION = "Zápis aktuálního stavu tachometru"
 TACHOMETER_IMPORT_DESCRIPTION = "Načteno z kontroly tachometru (MDČR)"
-SUSPICIOUS_JUMP_KM_THRESHOLD = 20_000
-SUSPICIOUS_JUMP_DAY_THRESHOLD = 31
+# Stejný den + téměř stejné km = duplicitní evidence (auditní sladění s vehicle_report_mileage_timeline).
+DUPLICATE_MILEAGE_TOLERANCE_KM = 100
+# Krátké okno: velký absolutní skok; nebo vysoká denní intenzita nájezdu (bez vyhlazování dat).
+SUSPICIOUS_JUMP_SHORT_WINDOW_DAYS = 30
+SUSPICIOUS_JUMP_MIN_DELTA_KM = 20_000
+SUSPICIOUS_JUMP_MIN_DAILY_RATE = 1_000
+SUSPICIOUS_JUMP_HIGH_KM_FOR_RATE = 5_000
+
+
+def _is_expected_same_day_stk_pair(previous: "MileageTimelinePoint", current: "MileageTimelinePoint") -> bool:
+    if previous.source_type not in ("stk", "import") or current.source_type not in ("stk", "import"):
+        return False
+    previous_label = str(previous.source_label or "").upper()
+    current_label = str(current.source_label or "").upper()
+    labels = {previous_label, current_label}
+    return any("SME" in label for label in labels) and any("STK" in label for label in labels)
 
 
 @dataclass
@@ -63,12 +78,43 @@ def _normalize_int(value: object | None) -> int | None:
 
 
 def _point_sort_key(point: MileageTimelinePoint) -> tuple[datetime, int, int, str]:
-    source_rank = {"service": 0, "manual": 1, "stk": 2}.get(point.source_type, 9)
+    source_rank = {"service": 0, "manual": 1, "stk": 2, "import": 2}.get(point.source_type, 9)
     return (point.date, point.mileage_km, source_rank, point.record_id)
 
 
 def collect_vehicle_mileage_timeline_points(db: Session, vehicle_id: int) -> list[MileageTimelinePoint]:
     points: list[MileageTimelinePoint] = []
+
+    mileage_rows = (
+        db.query(VehicleMileageModel)
+        .filter(VehicleMileageModel.vehicle_id == vehicle_id)
+        .order_by(VehicleMileageModel.created_at.asc(), VehicleMileageModel.id.asc())
+        .all()
+    )
+    _vm_labels = {
+        "manual": "Ruční zápis km",
+        "stk": "STK / portál tachometru",
+        "service": "Servisní zápis km",
+        "import": "Import / synchronizace",
+    }
+    for vm in mileage_rows:
+        normalized_date = _normalize_datetime(getattr(vm, "created_at", None))
+        normalized_mileage = _normalize_int(getattr(vm, "mileage_km", None))
+        if normalized_date is None or normalized_mileage is None:
+            continue
+        src = str(getattr(vm, "source", "") or "manual").strip().lower()
+        if src not in ("manual", "stk", "service", "import"):
+            src = "manual"
+        points.append(
+            MileageTimelinePoint(
+                date=normalized_date,
+                mileage_km=normalized_mileage,
+                source_type=src,
+                source_label=_vm_labels.get(src, src),
+                record_id=f"vehicle_mileage:{vm.id}",
+                is_verified=(src == "stk"),
+            )
+        )
 
     service_records = (
         db.query(ServiceRecordModel)
@@ -128,8 +174,12 @@ def collect_vehicle_mileage_timeline_points(db: Session, vehicle_id: int) -> lis
         .all()
     )
     for entry in stk_rows:
-        normalized_date = _normalize_datetime(getattr(entry, "check_date", None))
-        normalized_mileage = _normalize_int(getattr(entry, "mileage_km", None))
+        normalized_date = _normalize_datetime(
+            getattr(entry, "inspection_date", None) or getattr(entry, "check_date", None)
+        )
+        normalized_mileage = _normalize_int(
+            getattr(entry, "odometer_km", None) or getattr(entry, "mileage_km", None)
+        )
         if normalized_date is None or normalized_mileage is None:
             continue
         source_label = str(getattr(entry, "inspection_type", "") or "").strip() or "STK / tachometr"
@@ -150,26 +200,47 @@ def collect_vehicle_mileage_timeline_points(db: Session, vehicle_id: int) -> lis
 
 
 def _apply_mileage_timeline_anomalies(points: list[MileageTimelinePoint]) -> None:
-    duplicate_groups: dict[tuple[date, int], list[MileageTimelinePoint]] = defaultdict(list)
+    """Označí duplicity (stejný den + malý rozdíl km), rollback a podezřelé skoky — bez úpravy hodnot bodů."""
+    by_day: dict[date, list[MileageTimelinePoint]] = defaultdict(list)
     for point in points:
-        duplicate_groups[(point.date.date(), point.mileage_km)].append(point)
+        by_day[point.date.date()].append(point)
 
-    for group in duplicate_groups.values():
-        if len(group) <= 1:
+    for day_points in by_day.values():
+        if len(day_points) < 2:
             continue
-        for point in group:
-            point.anomaly_flags.append("duplicate")
+        ordered = sorted(day_points, key=lambda p: (p.mileage_km, p.record_id))
+        for idx in range(1, len(ordered)):
+            prev_p = ordered[idx - 1]
+            cur_p = ordered[idx]
+            if abs(cur_p.mileage_km - prev_p.mileage_km) > DUPLICATE_MILEAGE_TOLERANCE_KM:
+                continue
+            if _is_expected_same_day_stk_pair(prev_p, cur_p):
+                continue
+            for p in (prev_p, cur_p):
+                if "duplicate" not in p.anomaly_flags:
+                    p.anomaly_flags.append("duplicate")
 
     previous: MileageTimelinePoint | None = None
     for point in points:
         if previous is not None:
             if point.mileage_km < previous.mileage_km:
-                point.anomaly_flags.append("rollback")
+                if "rollback" not in point.anomaly_flags:
+                    point.anomaly_flags.append("rollback")
             else:
                 delta_km = point.mileage_km - previous.mileage_km
                 delta_days = max((point.date - previous.date).total_seconds() / 86400, 0.0)
-                if delta_km >= SUSPICIOUS_JUMP_KM_THRESHOLD and delta_days <= SUSPICIOUS_JUMP_DAY_THRESHOLD:
-                    point.anomaly_flags.append("suspicious_jump")
+                daily_rate = delta_km / delta_days if delta_days > 0 else float("inf")
+                is_short_window_jump = (
+                    delta_km >= SUSPICIOUS_JUMP_MIN_DELTA_KM
+                    and delta_days <= SUSPICIOUS_JUMP_SHORT_WINDOW_DAYS
+                )
+                is_high_daily_rate = (
+                    delta_km >= SUSPICIOUS_JUMP_HIGH_KM_FOR_RATE
+                    and daily_rate >= SUSPICIOUS_JUMP_MIN_DAILY_RATE
+                )
+                if is_short_window_jump or is_high_daily_rate:
+                    if "suspicious_jump" not in point.anomaly_flags:
+                        point.anomaly_flags.append("suspicious_jump")
         previous = point
 
     for point in points:
@@ -196,6 +267,10 @@ def summarize_mileage_timeline(points: Iterable[MileageTimelinePoint]) -> dict[s
             "point_count": 0,
             "anomaly_point_count": 0,
             "anomaly_counts": {},
+            "first_mileage_km": None,
+            "last_mileage_km": None,
+            "first_date": None,
+            "last_date": None,
         }
 
     anomaly_counts = Counter()
@@ -211,6 +286,47 @@ def summarize_mileage_timeline(points: Iterable[MileageTimelinePoint]) -> dict[s
         "point_count": len(items),
         "anomaly_point_count": anomaly_point_count,
         "anomaly_counts": dict(anomaly_counts),
+        "first_mileage_km": items[0].mileage_km,
+        "last_mileage_km": items[-1].mileage_km,
+        "first_date": items[0].date,
+        "last_date": items[-1].date,
+    }
+
+
+def mileage_timeline_point_to_dict(point: MileageTimelinePoint) -> dict[str, Any]:
+    return {
+        "date": point.date.isoformat(),
+        "mileage_km": point.mileage_km,
+        "source_type": point.source_type,
+        "source_label": point.source_label,
+        "record_id": point.record_id,
+        "is_verified": point.is_verified,
+        "anomaly": point.anomaly,
+        "anomaly_flags": list(point.anomaly_flags),
+    }
+
+
+def build_mileage_timeline_payload(db: Session, vehicle_id: int) -> dict[str, Any]:
+    """
+    Auditní JSON: sloučená časová osa (servisní záznamy, příjmy, STK/tachometr), vzestupně podle data.
+    """
+    points = collect_vehicle_mileage_timeline_points(db, vehicle_id)
+    summary = summarize_mileage_timeline(points)
+    first_dt = summary.get("first_date")
+    last_dt = summary.get("last_date")
+    return {
+        "mileage_timeline": {
+            "points": [mileage_timeline_point_to_dict(p) for p in points],
+            "summary": {
+                "first_mileage_km": summary.get("first_mileage_km"),
+                "last_mileage_km": summary.get("last_mileage_km"),
+                "first_date": first_dt.isoformat() if isinstance(first_dt, datetime) else None,
+                "last_date": last_dt.isoformat() if isinstance(last_dt, datetime) else None,
+                "point_count": summary.get("point_count", 0),
+                "anomaly_point_count": summary.get("anomaly_point_count", 0),
+                "anomaly_counts": summary.get("anomaly_counts") or {},
+            },
+        }
     }
 
 
@@ -239,6 +355,10 @@ def render_mileage_timeline_chart_png(
     plot_height = plot_bottom - plot_top
 
     draw.rounded_rectangle((plot_left, plot_top, plot_right, plot_bottom), radius=12, outline="#cbd5e1", width=1)
+
+    draw.text((plot_left, plot_top - 22), "Stav km (osa Y)", fill="#0f172a", font=font)
+    label_x = plot_left + (plot_width // 2) - 28
+    draw.text((label_x, plot_bottom + 36), "Datum (osa X)", fill="#0f172a", font=font)
 
     timestamps = [point.date.timestamp() for point in items]
     min_ts = min(timestamps)
