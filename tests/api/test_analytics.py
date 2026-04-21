@@ -55,6 +55,26 @@ def _create_service_record(
     assert response.status_code == 200, response.text
 
 
+def _create_reminder(
+    api_url: str,
+    headers: dict[str, str],
+    *,
+    vehicle_id: int,
+    text: str,
+) -> None:
+    response = requests.post(
+        f"{api_url}/api/v1/reminders",
+        headers=headers,
+        json={
+            "vehicle_id": vehicle_id,
+            "type": "SERVIS",
+            "text": text,
+        },
+        timeout=8,
+    )
+    assert response.status_code == 200, response.text
+
+
 def test_analytics_summary_categories_and_monthly_costs(api_url, authenticated_headers, cleanup_test_data):
     if not authenticated_headers:
         pytest.skip("No auth token available")
@@ -131,6 +151,41 @@ def test_analytics_summary_categories_and_monthly_costs(api_url, authenticated_h
     assert len(monthly_payload["entries"]) == 6
     assert int(monthly_payload["total_records"]) == 3
     assert float(monthly_payload["total_cost_czk"]) == 5600.0
+
+
+def test_dashboard_summary_returns_aggregated_view(api_url, authenticated_headers, cleanup_test_data):
+    if not authenticated_headers:
+        pytest.skip("No auth token available")
+
+    vehicle_id = _create_vehicle(api_url, authenticated_headers, "Test Dashboard Vehicle")
+    _create_service_record(
+        api_url,
+        authenticated_headers,
+        vehicle_id=vehicle_id,
+        category="OLEJ",
+        price=2100.0,
+        mileage=111000,
+        description="Dashboard servis",
+    )
+    _create_reminder(
+        api_url,
+        authenticated_headers,
+        vehicle_id=vehicle_id,
+        text="Dashboard připomínka",
+    )
+
+    response = requests.get(
+        f"{api_url}/api/v1/analytics/dashboard",
+        headers=authenticated_headers,
+        timeout=8,
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert int(payload["vehicles_total"]) >= 1
+    assert int(payload["active_reminders"]) >= 1
+    assert "recent_activity" in payload
+    assert "attention" in payload
+    assert any(int(item["vehicle_id"]) == vehicle_id for item in payload["recent_activity"])
 
 
 def test_reminder_settings_endpoint_available_after_dedup(api_url, authenticated_headers):

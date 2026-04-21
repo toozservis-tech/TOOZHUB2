@@ -15,15 +15,17 @@ test.describe('Vehicles Management', () => {
     await expect(page.locator('[data-testid="vehicles-container"]')).toBeVisible();
   });
 
-  test('should switch to add vehicle tab', async ({ page }) => {
-    await page.click('[data-testid="tab-add-vehicle"]');
+  test('should open add vehicle form on vehicles tab', async ({ page }) => {
+    await page.click('[data-testid="tab-vehicles"]');
+    await page.click('[data-testid="btn-toggle-add-vehicle"]');
     await expect(page.locator('[data-testid="add-vehicle-form"]')).toBeVisible();
     await expect(page.locator('[data-testid="input-vehicle-name"]')).toBeVisible();
     await expect(page.locator('[data-testid="input-vehicle-plate"]')).toBeVisible();
   });
 
   test('should create new vehicle', async ({ page }) => {
-    await page.click('[data-testid="tab-add-vehicle"]');
+    await page.click('[data-testid="tab-vehicles"]');
+    await page.click('[data-testid="btn-toggle-add-vehicle"]');
     
     // Vyplnit formulář
     const timestamp = Date.now();
@@ -58,7 +60,8 @@ test.describe('Vehicles Management', () => {
   });
 
   test('should validate required fields', async ({ page }) => {
-    await page.click('[data-testid="tab-add-vehicle"]');
+    await page.click('[data-testid="tab-vehicles"]');
+    await page.click('[data-testid="btn-toggle-add-vehicle"]');
     
     // Zkusit přidat vozidlo bez vyplnění povinných polí
     await page.click('[data-testid="btn-add-vehicle"]');

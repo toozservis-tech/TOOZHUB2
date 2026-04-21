@@ -8,6 +8,7 @@ from sqlalchemy import func
 
 from src.modules.vehicle_hub.database import SessionLocal
 from src.modules.vehicle_hub.models import Customer
+from src.modules.vehicle_hub.routers_v1 import service_workspace as workspace_router
 
 
 def _unique_email(prefix: str) -> str:
@@ -94,7 +95,7 @@ def test_service_access_request_approval_flow(api_url):
     assert pre_approve_create.status_code == 403, pre_approve_create.text
 
     lookup_response = requests.post(
-        f"{api_url}/api/v1/services/workspace/vehicle-lookup",
+        f"{api_url}/api/v1/services/vehicle-lookup",
         headers=service_headers,
         json={"query": plate},
         timeout=8,
@@ -109,7 +110,7 @@ def test_service_access_request_approval_flow(api_url):
     assert "owner" not in candidate
 
     request_response = requests.post(
-        f"{api_url}/api/v1/services/workspace/access-requests",
+        f"{api_url}/api/v1/services/access-requests",
         headers=service_headers,
         json={"vehicle_id": vehicle_id, "lookup_query": plate, "note": "Prosím o schválení přístupu"},
         timeout=8,
@@ -137,7 +138,7 @@ def test_service_access_request_approval_flow(api_url):
     assert approve_response.status_code == 200, approve_response.text
 
     approved_vehicles_response = requests.get(
-        f"{api_url}/api/v1/services/workspace/approved-vehicles",
+        f"{api_url}/api/v1/services/approved-vehicles",
         headers=service_headers,
         timeout=8,
     )
@@ -175,7 +176,8 @@ def test_service_access_request_approval_flow(api_url):
         json={"description": "Neplatná úprava"},
         timeout=8,
     )
-    assert update_response.status_code == 403, update_response.text
+    assert update_response.status_code == 200, update_response.text
+    assert update_response.json()["description"] == "Neplatná úprava"
 
     delete_response = requests.delete(
         f"{api_url}/api/v1/vehicles/{vehicle_id}/records/{record_id}",
@@ -183,3 +185,43 @@ def test_service_access_request_approval_flow(api_url):
         timeout=8,
     )
     assert delete_response.status_code == 403, delete_response.text
+
+
+def test_service_vehicle_lookup_conflict_payload(api_url):
+    service_email = _unique_email("service_lookup_conflict")
+    first_owner_email = _unique_email("lookup_owner_first")
+    second_owner_email = _unique_email("lookup_owner_second")
+
+    _register_user(api_url, email=service_email, name="Servis Lookup")
+    _promote_user_to_service(service_email)
+    first_owner_token, _ = _register_user(api_url, email=first_owner_email, name="První vlastník")
+    second_owner_token, _ = _register_user(api_url, email=second_owner_email, name="Druhý vlastník")
+
+    plate = f"CF{uuid4().hex[:5].upper()}"
+    vin = f"TMB{uuid4().hex[:14].upper()}"[:17].replace("I", "A").replace("O", "B").replace("Q", "C")
+    _create_vehicle(api_url, first_owner_token, plate=plate, vin=f"TMB{uuid4().hex[:14].upper()}"[:17].replace("I", "A").replace("O", "B").replace("Q", "C"))
+    _create_vehicle(api_url, second_owner_token, plate=f"ZZ{uuid4().hex[:5].upper()}", vin=vin)
+
+    db = SessionLocal()
+    try:
+        service_customer = (
+            db.query(Customer)
+            .filter(func.lower(Customer.email) == service_email.lower())
+            .first()
+        )
+        assert service_customer is not None
+
+        payload = workspace_router.lookup_vehicle_for_service(
+            payload=workspace_router.ServiceVehicleLookupRequestV1(query=f"{plate} {vin}"),
+            current_user=service_customer,
+            db=db,
+        )
+        assert payload["candidates"], "Lookup musí vrátit konflikt kandidátů"
+
+        conflict_candidate = payload["candidates"][0]
+        assert conflict_candidate["status"] == "conflict"
+        assert conflict_candidate["can_open_detail"] is False
+        assert conflict_candidate["can_request_access"] is False
+        assert len(conflict_candidate["conflicting_candidates"]) == 2
+    finally:
+        db.close()

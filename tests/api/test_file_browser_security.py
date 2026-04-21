@@ -16,7 +16,7 @@ def client() -> TestClient:
 
 
 def _assert_blocked(response, path: str, endpoint: str) -> None:
-    assert response.status_code in {403, 404}, (
+    assert response.status_code in {401, 403, 404}, (
         f"{endpoint} allowed sensitive path '{path}' "
         f"(status={response.status_code}, body={response.text})"
     )

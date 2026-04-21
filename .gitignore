@@ -42,6 +42,15 @@ build/
 # Playwright
 tests/e2e/node_modules/
 tests/e2e/.playwright/
+tests/e2e/.playwright-browsers/
+tests/e2e/.pw-*/
+
+# Local pip/solver marker files accidentally created during emergency maintenance
+=*
+
+# Local runtime takeover backups
+*.pre_runtime_takeover_*
+*.pre_takeover_*
 
 # Python
 *.py[cod]
@@ -92,3 +101,11 @@ data/uploads/
 data/pdfs/
 data/images/
 data.backup_*/
+
+# Local E2E/runtime artifacts
+tests/e2e/.playwright-browsers/
+tests/e2e/.pw-*/
+=*
+*.pre_runtime_takeover_*
+*.pre_takeover_*
+.tmp-simple-icons/

@@ -226,6 +226,13 @@ python -m uvicorn src.server.main:app --host 127.0.0.1 --port 8000
 
 Server běží na `http://127.0.0.1:8000`
 
+## Runtime DB pravda
+
+- Backend source-of-truth je `DATABASE_URL` v [`src/core/config.py`](/opt/toozhub2/app/src/core/config.py).
+- Pokud není nastavené ENV, výchozí runtime SQLite je `../data/vehicles.db`, tj. na tomto serveru `/opt/toozhub2/data/vehicles.db`.
+- `VEHICLE_DB_URL` je pouze legacy compat alias.
+- `app/data/vehicles.db` může na serveru stále existovat jako starý snapshot / symlink target. Není to produkční pravda, pokud runtime ukazuje na `/opt/toozhub2/data/vehicles.db`.
+
 ### Desktop aplikace
 
 **Windows/Linux/Mac:**

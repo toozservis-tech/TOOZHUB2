@@ -282,6 +282,21 @@ def get_services(
     ]
 
 
+@router.get("/catalog")
+def get_services_catalog(
+    request: Request,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Canonical katalog servisů pro uživatelské UI.
+
+    Stejně jako discovery vychází z backendové pravdy `customers.role=service`
+    a vrací konzistentní výsledek pro všechny běžné uživatele.
+    """
+    return get_services_discovery(request=request, current_user=current_user, db=db)
+
+
 @router.get("/my-contacts")
 def get_my_service_contacts(
     current_user: Customer = Depends(get_current_user),

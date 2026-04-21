@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from src.core.config import (
     LEGACY_APP_DATA_DB_DRIFT,
     LEGACY_APP_DATA_DB_PATH,
     LEGACY_APP_DATA_DB_REALPATH,
+    PRODUCTION_LOCK_MODE,
     RUNTIME_DB_PATH,
 )
 from src.modules.vehicle_hub.database import get_db
@@ -478,6 +478,8 @@ def get_version():
 
 @router.get("/api/_debug/routes")
 def debug_routes(request: Request, current_user_email: str = Depends(get_current_user_email)):
+    if PRODUCTION_LOCK_MODE:
+        raise HTTPException(status_code=404, detail="Not Found")
     routes_list = []
     for route in request.app.routes:
         if hasattr(route, "path") and hasattr(route, "methods"):
@@ -500,6 +502,8 @@ def debug_db_stats(
     current_user_email: str = Depends(get_current_user_email),
     db=Depends(get_db),
 ):
+    if PRODUCTION_LOCK_MODE:
+        raise HTTPException(status_code=404, detail="Not Found")
     db_url = DATABASE_URL
     cwd = str(Path.cwd())
 

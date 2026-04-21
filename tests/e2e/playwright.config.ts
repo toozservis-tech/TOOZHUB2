@@ -54,6 +54,17 @@ const projects = [
     },
   },
   {
+    name: 'workspace-desktop-chromium',
+    testMatch: /service-shell-.*\.spec\.ts/,
+    use: {
+      ...devices['Desktop Chrome'],
+      baseURL,
+      launchOptions: {
+        env: browserEnv,
+      },
+    },
+  },
+  {
     name: 'smoke-desktop-chromium',
     testMatch: /critical-smoke\.spec\.ts/,
     dependencies: ['setup-auth'],
@@ -157,6 +168,7 @@ export default defineConfig({
   ],
   use: {
     baseURL,
+    extraHTTPHeaders: isLocalServer ? { 'x-forwarded-proto': 'https' } : undefined,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -168,7 +180,7 @@ export default defineConfig({
   projects,
   webServer: isLocalServer
     ? {
-        command: 'cd ../.. && . .venv/bin/activate && python -m uvicorn src.server.main:app --host 127.0.0.1 --port 8000',
+        command: 'cd ../.. && . .venv/bin/activate && python3 -m uvicorn src.server.main:app --host 127.0.0.1 --port 8000',
         url: `${baseURL}/health`,
         reuseExistingServer: true,
         timeout: 180 * 1000,

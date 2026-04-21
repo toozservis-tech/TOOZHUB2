@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Předání vozidla | Správa vozidel</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #162033;
+      --muted: #64748b;
+      --line: #d7dde8;
+      --brand: #0f766e;
+      --brand-dark: #115e59;
+      --danger: #b42318;
+      --ok-bg: #ecfdf3;
+      --ok-border: #abefc6;
+      --err-bg: #fef3f2;
+      --err-border: #fecdca;
+      --bg: #f6f8fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    main {
+      width: min(100%, 560px);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+      padding: 28px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(1.45rem, 4vw, 2rem);
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .vehicle-box {
+      margin: 22px 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: #fbfcfe;
+    }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 8px 0;
+      border-bottom: 1px solid #edf1f7;
+    }
+
+    .row:last-child { border-bottom: 0; }
+
+    .label {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .value {
+      font-weight: 700;
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+
+    form {
+      display: grid;
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      font-weight: 700;
+      color: #243047;
+    }
+
+    input {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font: inherit;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    button {
+      min-height: 46px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--brand);
+      color: #fff;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    button:hover { background: var(--brand-dark); }
+    button:disabled { cursor: wait; opacity: 0.7; }
+
+    .alert {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      color: #334155;
+      line-height: 1.45;
+    }
+
+    .alert.success {
+      background: var(--ok-bg);
+      border-color: var(--ok-border);
+      color: #067647;
+    }
+
+    .alert.error {
+      background: var(--err-bg);
+      border-color: var(--err-border);
+      color: var(--danger);
+    }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Předání vozidla</h1>
+    <p>Potvrďte identitu vozidla pomocí SPZ a VIN. Převod se dokončí pouze pro přihlášeného uživatele.</p>
+
+    <section id="vehicleBox" class="vehicle-box" data-testid="transfer-summary">
+      <div class="row">
+        <span class="label">Stav tokenu</span>
+        <span id="transferStatus" class="value">Načítám...</span>
+      </div>
+      <div class="row">
+        <span class="label">Vozidlo</span>
+        <span id="transferVehicle" class="value">-</span>
+      </div>
+      <div class="row">
+        <span class="label">SPZ</span>
+        <span id="transferSpz" class="value">-</span>
+      </div>
+      <div class="row">
+        <span class="label">VIN</span>
+        <span id="transferVin" class="value">-</span>
+      </div>
+    </section>
+
+    <form id="claimForm" class="hidden" data-testid="transfer-claim-form">
+      <label>
+        SPZ
+        <input id="claimSpz" name="spz" autocomplete="off" required minlength="2" maxlength="32" data-testid="transfer-input-spz">
+      </label>
+      <label>
+        VIN
+        <input id="claimVin" name="vin" autocomplete="off" required minlength="5" maxlength="32" data-testid="transfer-input-vin">
+      </label>
+      <button type="submit" id="claimButton" data-testid="transfer-claim-button">Převzít vozidlo</button>
+    </form>
+
+    <div id="message" class="alert hidden" role="status" data-testid="transfer-message"></div>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = String(params.get('token') || '').trim();
+    const message = document.getElementById('message');
+    const claimForm = document.getElementById('claimForm');
+    const claimButton = document.getElementById('claimButton');
+
+    function showMessage(text, type) {
+      message.textContent = text;
+      message.className = `alert ${type || ''}`.trim();
+    }
+
+    function getToken() {
+      return localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken') || localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+    }
+
+    async function requestJson(path, options = {}) {
+      const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+      const authToken = getToken();
+      if (authToken) {
+        headers.Authorization = `Bearer ${authToken}`;
+      }
+      const response = await fetch(path, { ...options, headers });
+      const text = await response.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = { detail: text };
+      }
+      if (!response.ok) {
+        const detail = data && (data.detail || data.message || data.error?.message);
+        throw new Error(detail || `HTTP ${response.status}`);
+      }
+      return data;
+    }
+
+    async function loadTransfer() {
+      if (!token) {
+        document.getElementById('transferStatus').textContent = 'Chybí token';
+        showMessage('V odkazu chybí předávací token.', 'error');
+        return;
+      }
+      try {
+        const data = await requestJson(`/api/public/vehicle-transfer/${encodeURIComponent(token)}`);
+        document.getElementById('transferStatus').textContent = data.status || '-';
+        const vehicle = data.vehicle || {};
+        document.getElementById('transferVehicle').textContent = [vehicle.brand, vehicle.model, vehicle.year].filter(Boolean).join(' ') || `Vozidlo #${vehicle.vehicle_id || '-'}`;
+        document.getElementById('transferSpz').textContent = vehicle.spz_current || '-';
+        document.getElementById('transferVin').textContent = vehicle.vin_masked || '-';
+        if (data.status === 'active') {
+          claimForm.classList.remove('hidden');
+          document.getElementById('claimSpz').value = vehicle.spz_current || '';
+        } else {
+          showMessage('Předávací token už není aktivní.', 'error');
+        }
+      } catch (error) {
+        document.getElementById('transferStatus').textContent = 'Nelze ověřit';
+        showMessage(error.message || 'Předávací token se nepodařilo ověřit.', 'error');
+      }
+    }
+
+    claimForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      claimButton.disabled = true;
+      try {
+        const payload = {
+          token,
+          spz: document.getElementById('claimSpz').value.trim(),
+          vin: document.getElementById('claimVin').value.trim(),
+        };
+        const result = await requestJson(`/api/public/vehicle-transfer/${encodeURIComponent(token)}/claim`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        showMessage(result && result.claimed ? 'Vozidlo bylo úspěšně převzato. Historie zůstala zachovaná.' : 'Převod byl zpracován.', 'success');
+        claimForm.classList.add('hidden');
+        document.getElementById('transferStatus').textContent = 'claimed';
+      } catch (error) {
+        showMessage(error.message || 'Převzetí vozidla se nepodařilo.', 'error');
+      } finally {
+        claimButton.disabled = false;
+      }
+    });
+
+    loadTransfer();
+  </script>
+</body>
+</html>

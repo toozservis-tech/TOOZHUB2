@@ -42,11 +42,11 @@ BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 TIMEOUT = int(os.getenv("SMOKE_TIMEOUT", "20"))
 
 EXPECTED_SERVICE_ACCESS_ROUTES = {
-    ("POST", "/api/v1/services/workspace/vehicle-lookup"),
-    ("POST", "/api/v1/services/workspace/access-requests"),
+    ("POST", "/api/v1/services/vehicle-lookup"),
+    ("POST", "/api/v1/services/access-requests"),
     ("GET", "/api/v1/services/access-requests"),
     ("PUT", "/api/v1/services/access-requests/{request_id}"),
-    ("GET", "/api/v1/services/workspace/approved-vehicles"),
+    ("GET", "/api/v1/services/approved-vehicles"),
 }
 
 
@@ -263,7 +263,7 @@ def main() -> int:
         route_inventory_check(rec, user_token)
 
         # Unauthorized check
-        unauthorized_lookup = request_json("POST", "/api/v1/services/workspace/vehicle-lookup", payload={})
+        unauthorized_lookup = request_json("POST", "/api/v1/services/vehicle-lookup", payload={})
         check_status(
             rec,
             step="unauthorized_lookup_route_presence",
@@ -274,7 +274,7 @@ def main() -> int:
         # Authorized route presence checks.
         lookup = request_json(
             "POST",
-            "/api/v1/services/workspace/vehicle-lookup",
+            "/api/v1/services/vehicle-lookup",
             token=service_token,
             payload={},
         )
@@ -287,7 +287,7 @@ def main() -> int:
 
         access_request_create = request_json(
             "POST",
-            "/api/v1/services/workspace/access-requests",
+            "/api/v1/services/access-requests",
             token=service_token,
             payload={},
         )
@@ -325,7 +325,7 @@ def main() -> int:
 
         approved = request_json(
             "GET",
-            "/api/v1/services/workspace/approved-vehicles",
+            "/api/v1/services/approved-vehicles",
             token=service_token,
         )
         check_status(

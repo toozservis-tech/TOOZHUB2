@@ -12,7 +12,7 @@ const ADMIN_ROLE_KEY = 'adminRole';
 let authToken = null;
 let currentSection = "overview";
 let currentAdminRole = null;
-const LIST_FETCH_PAGE_SIZE = 50;
+const LIST_FETCH_PAGE_SIZE = 200;
 const USERS_RENDER_PAGE_SIZE = 24;
 let usersAllCache = [];
 let usersFilteredCache = [];
@@ -22,6 +22,7 @@ let userDetailActivePanel = 'vehicles';
 let userDetailReturnContext = null;
 const ADMIN_VIEW_SECTIONS = ['users', 'vehicles', 'services', 'records'];
 const ADMIN_VIEW_MODES = ['grid', 'list', 'compact'];
+const ADMIN_API_TIMEOUT_MS = 30000;
 const adminViewState = {};
 const recordFormOptionsState = {
   users: [],
@@ -140,6 +141,8 @@ function showSuccess(message) {
 
 async function apiRequest(method, path, body = null) {
   const token = getAuthToken();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ADMIN_API_TIMEOUT_MS);
   const headers = {
     "Accept": "application/json",
   };
@@ -156,7 +159,8 @@ async function apiRequest(method, path, body = null) {
     const options = {
       method,
       headers,
-      credentials: 'include' // Pro CORS cookies
+      credentials: 'include', // Pro CORS cookies
+      signal: controller.signal
     };
     
     if (body) {
@@ -193,6 +197,12 @@ async function apiRequest(method, path, body = null) {
     
     return await res.json();
   } catch (error) {
+    if (error.name === 'AbortError') {
+      const timeoutError = `Server neodpověděl do ${Math.round(ADMIN_API_TIMEOUT_MS / 1000)} s. Zkuste obnovit stránku; pokud se to opakuje, databáze je pravděpodobně zamčená dlouhou operací.`;
+      console.error(`API Timeout [${method} ${path}]:`, error);
+      showGlobalError(timeoutError);
+      throw new Error(timeoutError);
+    }
     // Pokud je to network error (Failed to fetch), zobrazit uživatelsky přívětivou zprávu
     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
       const friendlyError = 'Nelze se připojit k serveru. Zkontrolujte, zda server běží na ' + (API_BASE || window.location.origin);
@@ -204,6 +214,8 @@ async function apiRequest(method, path, body = null) {
     console.error(`API Error [${method} ${path}]:`, error);
     showGlobalError(error.message || `Chyba při ${method} ${path}`);
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -254,6 +266,14 @@ function escapeHtml(value) {
   const div = document.createElement('div');
   div.textContent = String(value);
   return div.innerHTML;
+}
+
+/** Přehledové číslo v adminu (1,2,3…); fallback na DB id před migrací. */
+function userAdminBadgeLabel(user) {
+  if (user && user.admin_ordinal !== undefined && user.admin_ordinal !== null && user.admin_ordinal !== '') {
+    return `#${user.admin_ordinal}`;
+  }
+  return `#${user?.id ?? '?'}`;
 }
 
 function formatDateTime(value, fallback = '-') {
@@ -514,6 +534,9 @@ function loadSectionData(section) {
     case 'overview':
       loadOverview();
       break;
+    case 'global-admin':
+      loadGlobalAdmin();
+      break;
     case 'users':
       loadUsers();
       break;
@@ -548,9 +571,20 @@ function loadSectionData(section) {
 async function loadOverview() {
   try {
     const stats = await apiRequest('GET', '/admin-api/overview');
+
+    // Počet aktivních uživatelů musí odpovídat seznamu (/admin-api/users vynechává soft-smazané).
+    // Přehledové API může být zastaralé z cache / starého workeru — tady bereme stejný zdroj jako sekce Uživatelé.
+    let activeUsersCount = stats.total_users ?? 0;
+    try {
+      const usersSync = await fetchAllList('/admin-api/users');
+      usersAllCache = usersSync;
+      activeUsersCount = usersSync.length;
+    } catch (syncErr) {
+      console.warn('Nepodařilo se sladit počet uživatelů se seznamem:', syncErr?.message || syncErr);
+    }
     
     // Aktualizovat statistiky v navbaru
-    document.getElementById('summary-users').innerHTML = `👥 Uživatelé: <strong>${stats.total_users ?? 0}</strong>`;
+    document.getElementById('summary-users').innerHTML = `👥 Uživatelé: <strong>${activeUsersCount}</strong>`;
     document.getElementById('summary-vehicles').innerHTML = `🚗 Vozidla: <strong>${stats.total_vehicles ?? 0}</strong>`;
     document.getElementById('summary-services').innerHTML = `🛠 Servisy: <strong>${stats.total_services ?? 0}</strong>`;
     document.getElementById('summary-records').innerHTML = `📋 Záznamy: <strong>${stats.total_records ?? 0}</strong>`;
@@ -560,7 +594,7 @@ async function loadOverview() {
     if (statsEl) {
       statsEl.innerHTML = `
         <div class="stat-card">
-          <h3>${stats.total_users ?? 0}</h3>
+          <h3>${activeUsersCount}</h3>
           <p>Uživatelé</p>
         </div>
         <div class="stat-card">
@@ -631,6 +665,177 @@ async function loadRecentActivity() {
   }
 }
 
+// ============================================
+// GLOBAL ADMIN OVERSIGHT
+// ============================================
+
+function initGlobalAdminBindings() {
+  const searchInput = document.getElementById('global-admin-search');
+  const typeSelect = document.getElementById('global-admin-type');
+  if (searchInput && searchInput.dataset.bound !== '1') {
+    let searchTimer = null;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(loadGlobalAdmin, 250);
+    });
+    searchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        loadGlobalAdmin();
+      }
+    });
+    searchInput.dataset.bound = '1';
+  }
+  if (typeSelect && typeSelect.dataset.bound !== '1') {
+    typeSelect.addEventListener('change', loadGlobalAdmin);
+    typeSelect.dataset.bound = '1';
+  }
+}
+
+function getGlobalAdminTypeLabel(type) {
+  const labels = {
+    user: 'Uživatel',
+    service: 'Servis',
+    vehicle: 'Vozidlo',
+    record: 'Záznam',
+    reservation: 'Rezervace',
+    reminder: 'Připomínka',
+    payment: 'Platba',
+    audit: 'Audit',
+  };
+  return labels[type] || type || '-';
+}
+
+function getGlobalAdminTone(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (['active', 'ok', 'paid', 'confirmed', 'completed'].includes(normalized)) return 'ok';
+  if (['disabled', 'pending', 'created', 'warning'].includes(normalized)) return 'warn';
+  if (['deleted', 'failed', 'cancelled', 'expired', 'suspended'].includes(normalized)) return 'bad';
+  return '';
+}
+
+function renderGlobalAdminSummary(summary = {}) {
+  const el = document.getElementById('global-admin-summary');
+  if (!el) return;
+  const order = ['user', 'service', 'vehicle', 'record', 'reservation', 'reminder', 'payment', 'audit'];
+  el.innerHTML = order.map((type) => `
+    <button class="global-admin-chip" type="button" onclick="filterGlobalAdminType('${type}')">
+      <span>${escapeHtml(getGlobalAdminTypeLabel(type))}</span>
+      <strong>${Number(summary[type] || 0).toLocaleString('cs-CZ')}</strong>
+    </button>
+  `).join('');
+}
+
+function renderGlobalAdminResults(items = []) {
+  const el = document.getElementById('global-admin-results');
+  if (!el) return;
+  if (!items.length) {
+    el.innerHTML = '<div class="empty">Nic nenalezeno. Zkuste email, SPZ, VIN, ID nebo část textu záznamu.</div>';
+    return;
+  }
+  el.innerHTML = items.map((item) => {
+    const type = String(item.type || '');
+    const tone = getGlobalAdminTone(item.status);
+    const statusClass = tone ? ` status-${tone}` : '';
+    const timestamp = item.timestamp ? formatDateTime(item.timestamp) : '-';
+    const tenant = item.tenant_id !== null && item.tenant_id !== undefined ? `Tenant ${item.tenant_id}` : 'Tenant -';
+    return `
+      <article class="global-admin-result">
+        <div class="global-admin-result-main">
+          <div class="global-admin-result-head">
+            <span class="global-admin-type">${escapeHtml(getGlobalAdminTypeLabel(type))}</span>
+            <h3>${escapeHtml(item.title || '-')}</h3>
+            <span class="card-id">#${escapeHtml(String(item.id ?? '-'))}</span>
+          </div>
+          <div class="global-admin-result-subtitle">${escapeHtml(item.subtitle || '-')}</div>
+          <div class="global-admin-result-meta">${escapeHtml(item.meta || '-')}</div>
+        </div>
+        <div class="global-admin-result-state">
+          <span class="status-pill${statusClass}">${escapeHtml(item.status || '-')}</span>
+          <span>${escapeHtml(tenant)}</span>
+          <span>${escapeHtml(timestamp)}</span>
+        </div>
+        <div class="global-admin-result-actions">
+          ${renderGlobalAdminActions(item)}
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderGlobalAdminActions(item) {
+  const type = String(item.type || '');
+  const id = Number(item.id || 0);
+  const userId = Number(item.user_id || 0);
+  const vehicleId = Number(item.vehicle_id || 0);
+  const buttons = [];
+
+  if (userId) {
+    buttons.push(`<button class="btn-secondary btn-sm" type="button" onclick="openUserDetail(${userId})">Detail účtu</button>`);
+    buttons.push(`<button class="btn-secondary btn-sm" type="button" onclick="openGlobalAdminUserInControlCenter(${userId})">Insight</button>`);
+  }
+  if (type === 'service' && id) {
+    buttons.push(`<button class="btn-edit btn-sm" type="button" onclick="editService(${id})">Upravit servis</button>`);
+  } else if (type === 'vehicle' && id) {
+    buttons.push(`<button class="btn-edit btn-sm" type="button" onclick="editVehicle(${id})">Upravit vozidlo</button>`);
+    buttons.push(`<button class="btn-danger btn-sm" type="button" onclick="deleteVehicle(${id}, 'vozidlo #${id}')">Smazat</button>`);
+  } else if (type === 'record' && id) {
+    buttons.push(`<button class="btn-edit btn-sm" type="button" onclick="editRecord(${id})">Upravit záznam</button>`);
+    buttons.push(`<button class="btn-danger btn-sm" type="button" onclick="deleteRecord(${id})">Smazat</button>`);
+  } else if (type === 'audit') {
+    buttons.push(`<button class="btn-secondary btn-sm" type="button" onclick="switchSection('audit')">Audit log</button>`);
+  }
+  if (vehicleId && type !== 'vehicle') {
+    buttons.push(`<button class="btn-secondary btn-sm" type="button" onclick="openGlobalAdminVehicle(${vehicleId})">Vozidlo</button>`);
+  }
+  return buttons.join('') || '<span class="list-meta">Bez rychlé akce</span>';
+}
+
+function filterGlobalAdminType(type) {
+  const select = document.getElementById('global-admin-type');
+  if (select) {
+    select.value = type;
+  }
+  loadGlobalAdmin();
+}
+
+async function openGlobalAdminVehicle(vehicleId) {
+  switchSection('vehicles');
+  const search = document.getElementById('vehicle-search');
+  if (search) {
+    search.value = `#${vehicleId}`;
+    search.dispatchEvent(new Event('input'));
+  }
+}
+
+async function openGlobalAdminUserInControlCenter(userId) {
+  switchSection('control-center');
+  const input = document.getElementById('cc-insight-user-id');
+  if (input) input.value = String(userId);
+  await loadControlCenterUserInsight();
+}
+
+async function loadGlobalAdmin() {
+  const resultsEl = document.getElementById('global-admin-results');
+  if (!resultsEl) return;
+  initGlobalAdminBindings();
+  resultsEl.innerHTML = '<div class="loading">Načítám globální dohled...</div>';
+  try {
+    const query = (document.getElementById('global-admin-search')?.value || '').trim();
+    const entityType = (document.getElementById('global-admin-type')?.value || '').trim();
+    const url = withQueryParams('/admin-api/global-admin/search', {
+      q: query || null,
+      entity_type: entityType || null,
+      limit: 120,
+    });
+    const data = await apiRequest('GET', url);
+    renderGlobalAdminSummary(data.summary || {});
+    renderGlobalAdminResults(data.items || []);
+  } catch (error) {
+    resultsEl.innerHTML = `<div class="error">Chyba při načítání globálního dohledu: ${escapeHtml(error.message || 'Neznámá chyba')}</div>`;
+  }
+}
+
 function getActionText(action) {
   const actionMap = {
     'CREATE_USER': 'vytvořil uživatele',
@@ -678,8 +883,41 @@ async function loadUsers() {
     }
 
     renderUsersList();
+    loadDeletedUsersArchive();
   } catch (error) {
     container.innerHTML = `<div class="error">Chyba při načítání: ${error.message}</div>`;
+  }
+}
+
+async function loadDeletedUsersArchive() {
+  const body = document.getElementById('deleted-users-archive-body');
+  if (!body) return;
+  body.innerHTML = '<div class="loading">Načítám archiv…</div>';
+  try {
+    const rows = await apiRequest('GET', '/admin-api/user-deletion-archive');
+    if (!Array.isArray(rows) || rows.length === 0) {
+      body.innerHTML = '<p class="muted">Zatím žádný záznam v archivu (čísla # / ## vznikají až po smazání účtu).</p>';
+      return;
+    }
+    const esc = escapeHtml;
+    body.innerHTML = `
+      <table class="data-table deleted-archive-table">
+        <thead><tr><th>Označení</th><th>Původní e-mail</th><th>Smazáno</th><th>Aktuální e-mail v DB</th><th></th></tr></thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td><strong>${esc(row.deletion_mark || '')}</strong></td>
+              <td>${esc(row.email_before || '')}</td>
+              <td>${esc(formatDateTime(row.deleted_at))}</td>
+              <td><code>${esc(row.current_email || '')}</code></td>
+              <td><button type="button" class="btn-secondary btn-small" onclick="openUserDetail(${Number(row.customer_id)}, 'vehicles')">Detail</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (error) {
+    body.innerHTML = `<p class="error">Archiv nelze načíst: ${escapeHtml(error.message || String(error))}</p>`;
   }
 }
 
@@ -766,7 +1004,7 @@ function renderUsersList() {
         <div class="card user-card-clickable" data-user-id="${user.id}" onclick="handleUserCardClick(event, ${user.id})" title="Otevřít detail uživatele">
           <div class="card-header">
             <h3 class="card-title">${user.name || user.email || 'Bez jména'}</h3>
-            <span class="card-id">#${user.id}</span>
+            <span class="card-id">${userAdminBadgeLabel(user)}</span>
           </div>
           <div class="card-body">
             <div class="card-field">
@@ -836,7 +1074,7 @@ function renderUsersList() {
           <div class="user-card-head-meta">
             <span class="role-badge role-${role}">${roleLabel}</span>
             <span class="presence-pill ${presenceClass}">${presenceLabel}</span>
-            <span class="card-id">#${user.id}</span>
+            <span class="card-id">${userAdminBadgeLabel(user)}</span>
           </div>
         </div>
         <div class="card-body user-card-body">
@@ -1021,7 +1259,7 @@ function renderUserDetailModal() {
   const insightPresence = insight.presence || {};
   const insightPayments = Array.isArray(insight.payments) ? insight.payments : [];
 
-  titleEl.textContent = `Detail uživatele: ${user.name || user.email || '#' + (user.id ?? '?')}`;
+  titleEl.textContent = `Detail uživatele: ${user.name || user.email || userAdminBadgeLabel(user)}`;
   if (errorEl) {
     errorEl.classList.add('hidden');
     errorEl.textContent = '';
@@ -1062,7 +1300,9 @@ function renderUserDetailModal() {
     <div class="user-detail-info-grid">
       <div class="user-detail-info-card">
         <h4>Základní údaje</h4>
-        <div class="user-detail-row"><span>ID</span><strong>#${user.id ?? '-'}</strong></div>
+        <div class="user-detail-row"><span>Číslo v přehledu</span><strong>${user.admin_ordinal != null && user.admin_ordinal !== '' ? '#' + user.admin_ordinal : '—'}</strong></div>
+        <div class="user-detail-row"><span>Archiv po smazání</span><strong>${user.deletion_archive_mark ? escapeHtml(user.deletion_archive_mark) : '—'}</strong></div>
+        <div class="user-detail-row"><span>Interní ID (DB)</span><strong>${user.id ?? '-'}</strong></div>
         <div class="user-detail-row"><span>Email</span><strong>${escapeHtml(user.email || '-')}</strong></div>
         <div class="user-detail-row"><span>Jméno / Název</span><strong>${escapeHtml(user.name || '-')}</strong></div>
         <div class="user-detail-row"><span>Role</span><strong><span class="role-badge ${roleClass}">${escapeHtml(user.role || 'user')}</span></strong></div>
@@ -1781,8 +2021,10 @@ async function deleteVehicle(vehicleId, vehicleName) {
   try {
     await apiRequest('DELETE', `/admin-api/vehicles/${vehicleId}`);
     showSuccess('Vozidlo bylo smazáno');
-    loadVehicles();
-    loadOverview();
+    await Promise.all([loadVehicles(), loadOverview()]);
+    if (currentSection === 'global-admin') {
+      await loadGlobalAdmin();
+    }
   } catch (error) {
     console.error('Error deleting vehicle:', error);
   }
@@ -2364,8 +2606,10 @@ async function deleteRecord(recordId) {
   try {
     await apiRequest('DELETE', `/admin-api/records/${recordId}`);
     showSuccess('Záznam byl smazán');
-    loadRecords();
-    loadOverview();
+    await Promise.all([loadRecords(), loadOverview()]);
+    if (currentSection === 'global-admin') {
+      await loadGlobalAdmin();
+    }
   } catch (error) {
     console.error('Error deleting record:', error);
   }
@@ -3060,6 +3304,12 @@ function isRecentlyActive(value, minutes = 15) {
 
 function buildControlCenterHealthDetail(component = {}) {
   if (component.error) return String(component.error);
+  if (Array.isArray(component.hardening_hints)) {
+    if (component.hardening_hints.length > 0) {
+      return component.hardening_hints.map((h) => escapeHtml(h)).join(' · ');
+    }
+    return 'Doporučený bezpečnostní obvod: v pořádku.';
+  }
   if (Object.prototype.hasOwnProperty.call(component, 'merchant_configured')) {
     return component.merchant_configured ? 'Merchant configured' : 'Merchant missing';
   }
@@ -3070,7 +3320,13 @@ function buildControlCenterHealthDetail(component = {}) {
     return `Events 15m: ${formatNumber(component.recent_api_activity_15m)}`;
   }
   if (Object.prototype.hasOwnProperty.call(component, 'recent_events_tail_count')) {
-    return `Webhook events: ${formatNumber(component.recent_events_tail_count)}`;
+    if (component.log_file_exists === false) {
+      return 'Licenční webhook: soubor logu ještě není (žádný webhook od hubu neproběhl).';
+    }
+    const n = formatNumber(component.recent_events_tail_count);
+    return n === '0'
+      ? 'Licenční webhook: log existuje, v záběru posledních řádků nic (nebo prázdný soubor).'
+      : `Licenční webhook log (náhled řádků): ${n}`;
   }
   if (Object.prototype.hasOwnProperty.call(component, 'license_worker_paused')) {
     const paused = component.license_worker_paused || component.reminders_worker_paused;
@@ -3088,6 +3344,159 @@ function renderControlCenterStatusLabel(status) {
   return `<span class="${klass}">${escapeHtml(String(status || '-').toUpperCase())}</span>`;
 }
 
+/** Postup + cílová čára po kliknutí „Otevřít“ u priorit Control Center. */
+const CONTROL_CENTER_PLAYBOOKS = {
+  'health-alert': {
+    tone: 'alert',
+    title: 'Vyřešte chybu v System Health',
+    steps: [
+      'V modulu System Health dole klikněte „Načíst health“, pokud tabulka v detailu chybí.',
+      'V tabulce najděte komponentu se stavem ERROR a přečtěte sloupec Poznámka.',
+      'Typicky jde o databázi (připojení, disk) nebo nedostupnou službu — ověřte log aplikace na serveru.',
+      'Po opravě nahoře klikněte „Obnovit panel“ a zkontrolujte, že červená priorita zmizela.',
+    ],
+    done: 'Hotovo: v health detailu jsou všechny komponenty OK a v „Co řešit teď“ už není kritická položka System Health.',
+    afterOpen: () => loadControlCenterHealth(),
+  },
+  'health-warn': {
+    tone: 'warn',
+    title: 'Dokončete kontrolu varování (System Health)',
+    steps: [
+      'Modul System Health je otevřený — v detailu ověřte řádky se stavem WARNING.',
+      'Řádek „security_hardening“ shrnuje doporučený produkční obvod (HTTPS, CORS, admin allowlist) — postupujte podle nápovědy ve sloupci Poznámka.',
+      'Podle poznámky zkontrolujte SMTP, platby (Comgate) nebo workers; část položek může být jen informativní.',
+      'V případě workerů otevřete také sekci Jobs a ověřte, že nejsou zbytečně pozastavené joby.',
+      'Po úpravách konfigurace dejte „Obnovit panel“.',
+    ],
+    done: 'Hotovo: po obnovení přehledu zmizí žlutá priorita System Health, nebo jsou všechny komponenty OK.',
+    afterOpen: () => loadControlCenterHealth(),
+  },
+  'payments-failed': {
+    tone: 'warn',
+    title: 'Vyřešte neúspěšné platby',
+    steps: [
+      'V sekci Licenses & Payments klikněte „Načíst platby“.',
+      'V detailu plateb najděte LIVE transakce ve stavu failed nebo vyžadující pozornost.',
+      'Ověřte u zákazníka platbu, limity, případně po opravě na bráně použijte „Spustit resync“.',
+    ],
+    done: 'Hotovo: neúspěšné LIVE platby jsou vyřešeny (0 v metrikách) nebo evidovaně refundovány.',
+    afterOpen: () => loadControlCenterPayments(),
+  },
+  'security-alerts': {
+    tone: 'alert',
+    title: 'Projděte security alerty',
+    steps: [
+      'Otevřel se Security monitor — data se doplní automaticky; případně klikněte „Načíst monitor“.',
+      'Zkontrolujte tabulku zdrojových pokusů podle IP a řádkové bezpečnostní události.',
+      'U opakovaných neúspěšných přihlášení z jedné IP ji opište do pole „IP adresa“ a klikněte „Blokovat IP“.',
+      'Automatické skeny (.env, config) aplikace už blokuje — u reverse proxy ověřte předávání skutečné IP (X-Forwarded-For).',
+      'Produkční tvrdší obvod: v .env nastavte ENFORCE_HTTPS=1, explicitní ALLOWED_ORIGINS a volitelně ADMIN_NETWORK_ALLOWLIST (VPN/office IP) — popis v .env.example a ukázkový Nginx v deploy/.',
+    ],
+    done: 'Hotovo zásahu: rizika posouzena, případně IP zablokovány. Číslo v banneru klesne na 0 až po uběhnutí 24 h od zdrojových pokusů nebo po odeznění ostatních složek součtu.',
+    afterOpen: () => loadControlCenterSecurityMonitor(),
+    focusSelector: '#cc-block-ip',
+  },
+  'licenses-expired': {
+    tone: 'warn',
+    title: 'Expirované licence',
+    steps: [
+      'V modulu Users zadejte User ID a klikněte „Načíst insight“ (nebo postupně projděte uživatele).',
+      'Ověřte stav licence a domluvte obnovu / platbu.',
+      'Po změně v licenčním hubu nebo ruční úpravě stiskněte „Obnovit panel“.',
+    ],
+    done: 'Hotovo: počet expirovaných licencí v metrikách je 0, nebo máte uživatele ošetřené mimo panel.',
+    afterOpen: () => loadControlCenterUsersSnapshot(),
+    focusSelector: '#cc-insight-user-id',
+  },
+  'backup-alert': {
+    tone: 'alert',
+    title: 'Záloha není dostupná nebo je neplatná',
+    steps: [
+      'V sekci Backup & Restore klikněte „Vytvořit backup“ a počkejte na dokončení.',
+      'Poté „Načíst seznam“ a ověřte první řádek (čas, velikost, že DB existuje).',
+      'Na serveru zkontrolujte místo na disku a oprávnění zápisu do složky záloh.',
+    ],
+    done: 'Hotovo: nejnovější snapshot má vehicles.db (db_exists), KPI nahoře ukáže OK a červená priorita zmizí po obnovení přehledu.',
+    afterOpen: () => loadControlCenterBackups(),
+  },
+  'backup-stale': {
+    tone: 'warn',
+    title: 'Záloha je starší než doporučené okno',
+    steps: [
+      'V sekci Backup klikněte „Vytvořit backup“ nebo spusťte plánovanou zálohu na serveru.',
+      'Po dokončení „Načíst seznam“ a ověřte datum posledního snapshotu.',
+    ],
+    done: 'Hotovo: nový backup je mladší než 72 h, v něm existuje vehicles.db a horní KPI ukáže OK — priorita zálohy zmizí po „Obnovit panel“ nebo automaticky po načtení seznamu.',
+    afterOpen: () => loadControlCenterBackups(),
+  },
+  'jobs-paused': {
+    tone: 'warn',
+    title: 'Pozastavené joby',
+    steps: [
+      'V sekci Jobs / Operations načtěte stav jobů.',
+      'Najděte joby ve stavu paused — pokud je chyba vyřešena, použijte Resume.',
+      'Proč byl job pozastaven ověřte v logách nebo v předchozích chybách integrace.',
+    ],
+    done: 'Hotovo: kritické joby běží a priorita o pozastavených po obnovení zmizí.',
+    afterOpen: () => loadControlCenterJobs(),
+  },
+};
+
+function renderControlCenterActivePlaybook(spec) {
+  const el = document.getElementById('cc-active-playbook');
+  if (!el) return;
+  if (!spec || !spec.title) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  const tone = spec.tone === 'alert' ? 'alert' : (spec.tone === 'ok' ? 'ok' : 'warn');
+  const steps = Array.isArray(spec.steps) ? spec.steps : [];
+  el.hidden = false;
+  el.innerHTML = `
+    <div class="cc-playbook-inner is-${tone}">
+      <div class="cc-playbook-head">
+        <h3 class="cc-playbook-title">${escapeHtml(spec.title)}</h3>
+        <button type="button" class="btn-secondary cc-playbook-dismiss" onclick="dismissControlCenterPlaybook()">Skrýt postup</button>
+      </div>
+      <ol class="cc-playbook-steps">
+        ${steps.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}
+      </ol>
+      <p class="cc-playbook-done"><strong>Cílová čára:</strong> ${escapeHtml(spec.done || '')}</p>
+    </div>
+  `;
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function dismissControlCenterPlaybook() {
+  const el = document.getElementById('cc-active-playbook');
+  if (!el) return;
+  el.hidden = true;
+  el.innerHTML = '';
+}
+
+function focusControlCenterPriorityWithPlaybook(moduleId, detailsId, playbookKey) {
+  const spec = CONTROL_CENTER_PLAYBOOKS[playbookKey];
+  renderControlCenterActivePlaybook(spec || null);
+  focusControlCenterModule(moduleId, detailsId || '');
+  if (!spec) return;
+  const finishFocus = () => {
+    if (spec.focusSelector) {
+      const input = document.querySelector(spec.focusSelector);
+      if (input && typeof input.focus === 'function') {
+        input.focus({ preventScroll: false });
+      }
+    }
+  };
+  if (typeof spec.afterOpen === 'function') {
+    Promise.resolve(spec.afterOpen()).finally(() => {
+      requestAnimationFrame(finishFocus);
+    });
+  } else {
+    requestAnimationFrame(finishFocus);
+  }
+}
+
 function renderControlCenterPriorities(metrics) {
   const listEl = document.getElementById('cc-priority-list');
   if (!listEl) return;
@@ -3099,6 +3508,7 @@ function renderControlCenterPriorities(metrics) {
       text: 'System health hlásí chybu. Zkontrolujte komponenty.',
       moduleId: 'cc-module-health',
       detailsId: 'cc-health-details',
+      playbookKey: 'health-alert',
     });
   } else if (metrics.healthTone === 'warn') {
     priorities.push({
@@ -3106,6 +3516,7 @@ function renderControlCenterPriorities(metrics) {
       text: 'System health má varování. Ověřte konfiguraci a workers.',
       moduleId: 'cc-module-health',
       detailsId: 'cc-health-details',
+      playbookKey: 'health-warn',
     });
   }
 
@@ -3115,15 +3526,29 @@ function renderControlCenterPriorities(metrics) {
       text: `Neúspěšné platby: ${formatNumber(metrics.failedPayments)}.`,
       moduleId: 'cc-module-payments',
       detailsId: 'cc-payments-details',
+      playbookKey: 'payments-failed',
     });
   }
 
   if (metrics.securityAlerts > 0) {
+    const p = metrics.securityAlertParts || {};
+    const sub = [];
+    if (Number(p.bruteForceAlertIps || 0) > 0) {
+      sub.push(`IP s ≥5 neúspěšnými loginy (24h): ${formatNumber(p.bruteForceAlertIps)}`);
+    }
+    if (Number(p.blockedActive || 0) > 0) {
+      sub.push(`aktivních blokací IP: ${formatNumber(p.blockedActive)}`);
+    }
+    if (Number(p.sourceProbes24h || 0) > 0) {
+      sub.push(`blokovaných zdrojových pokusů (24h): ${formatNumber(p.sourceProbes24h)}`);
+    }
+    const suffix = sub.length ? ` — ${sub.join('; ')}` : '';
     priorities.push({
       tone: 'alert',
-      text: `Security alerty: ${formatNumber(metrics.securityAlerts)} (brute-force / blokace).`,
+      text: `Security alerty: ${formatNumber(metrics.securityAlerts)} (součet výše)${suffix}. Otevřete detail pro konkrétní IP, účty a lokality.`,
       moduleId: 'cc-module-security',
       detailsId: 'cc-security-details',
+      playbookKey: 'security-alerts',
     });
   }
 
@@ -3133,6 +3558,7 @@ function renderControlCenterPriorities(metrics) {
       text: `Expirované licence: ${formatNumber(metrics.expiredLicenses)}.`,
       moduleId: 'cc-module-users',
       detailsId: 'cc-users-details',
+      playbookKey: 'licenses-expired',
     });
   }
 
@@ -3144,6 +3570,7 @@ function renderControlCenterPriorities(metrics) {
         : 'Backup je starší než doporučené okno.',
       moduleId: 'cc-module-backups',
       detailsId: 'cc-backups-details',
+      playbookKey: metrics.backupTone === 'alert' ? 'backup-alert' : 'backup-stale',
     });
   }
 
@@ -3153,6 +3580,7 @@ function renderControlCenterPriorities(metrics) {
       text: `Pozastavené joby: ${formatNumber(metrics.pausedJobs)}.`,
       moduleId: 'cc-module-jobs',
       detailsId: 'cc-jobs-details',
+      playbookKey: 'jobs-paused',
     });
   }
 
@@ -3163,12 +3591,17 @@ function renderControlCenterPriorities(metrics) {
     });
   }
 
-  listEl.innerHTML = priorities.map((item) => `
+  listEl.innerHTML = priorities.map((item) => {
+    const openHandler = item.moduleId && item.playbookKey
+      ? `focusControlCenterPriorityWithPlaybook('${item.moduleId}', '${item.detailsId || ''}', '${item.playbookKey}')`
+      : (item.moduleId ? `focusControlCenterModule('${item.moduleId}', '${item.detailsId || ''}')` : '');
+    return `
     <li class="cc-priority-item is-${item.tone}">
       <span class="cc-priority-text">${escapeHtml(item.text)}</span>
-      ${item.moduleId ? `<button class="cc-priority-action" type="button" onclick="focusControlCenterModule('${item.moduleId}', '${item.detailsId || ''}')">Otevřít</button>` : ''}
+      ${openHandler ? `<button class="cc-priority-action" type="button" onclick="${openHandler}">Otevřít postup</button>` : ''}
     </li>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function renderControlCenterDashboard() {
@@ -3232,17 +3665,30 @@ function renderControlCenterDashboard() {
   const paymentsAttention = livePaymentItems.filter((item) => isPaymentNeedsAttention(item)).length;
 
   const blockedActive = Number(securitySummary.blocked_ips_active || 0);
-  const bruteForceAlerts = topFailedIps.filter((item) => Number(item.failed_count || 0) >= 5).length;
+  const bruteForceAlertsFromTop = topFailedIps.filter((item) => Number(item.failed_count || 0) >= 5).length;
+  const bruteForceAlerts = Number.isFinite(Number(securitySummary.brute_force_alert_ips))
+    ? Number(securitySummary.brute_force_alert_ips)
+    : bruteForceAlertsFromTop;
   const rateLimited24h = Number(securitySummary.rate_limited_24h || 0);
+  const sourceProbes24h = Number(securitySummary.source_probes_24h || 0);
   const suspiciousAuthEvents = latestSecurityEvents
     .filter((item) => {
       const type = String(item.event_type || '').toLowerCase();
-      return type.includes('login_failed') || type.includes('rate_limited');
+      return type.includes('login_failed') || type.includes('rate_limited') || type.includes('source_probe');
     })
     .length;
-  const securityAlerts = bruteForceAlerts + blockedActive;
+  const securityAlertsFallback = bruteForceAlerts + blockedActive + sourceProbes24h;
+  const rawAlertTotal = securitySummary.control_center_alert_total;
+  const securityAlerts = (rawAlertTotal != null && Number.isFinite(Number(rawAlertTotal)))
+    ? Number(rawAlertTotal)
+    : securityAlertsFallback;
 
-  const latestBackup = backupItems[0] || null;
+  const backupsByRecency = [...backupItems].sort((a, b) => {
+    const ta = parseIsoDate(a?.created_at)?.getTime() ?? 0;
+    const tb = parseIsoDate(b?.created_at)?.getTime() ?? 0;
+    return tb - ta;
+  });
+  const latestBackup = backupsByRecency.find((row) => row && row.db_exists) || backupsByRecency[0] || null;
   const latestBackupTime = latestBackup?.created_at || null;
   const backupCount = backupItems.length;
   const backupHealthy = Boolean(latestBackup && latestBackup.db_exists);
@@ -3387,6 +3833,11 @@ function renderControlCenterDashboard() {
     healthTone,
     failedPayments,
     securityAlerts,
+    securityAlertParts: {
+      bruteForceAlertIps: bruteForceAlerts,
+      blockedActive,
+      sourceProbes24h,
+    },
     expiredLicenses,
     backupTone,
     pausedJobs,
@@ -3416,8 +3867,20 @@ function summarizeControlCenterPayload(elementId, payload) {
     }
     case 'cc-presence-result':
       return `Načteno presence záznamů: ${formatNumber(payload.count ?? payload.items?.length ?? 0)}.`;
-    case 'cc-security-result':
-      return `Aktivní blokace: ${formatNumber(payload?.summary?.blocked_ips_active || 0)}, failed 24h: ${formatNumber(payload?.summary?.failed_logins_24h || 0)}.`;
+    case 'cc-security-result': {
+      const s = payload?.summary || {};
+      const total = controlCenterSecurityAlertTotal(s);
+      const rollupN = Array.isArray(payload?.source_probe_by_ip_24h) ? payload.source_probe_by_ip_24h.length : 0;
+      const parts = [
+        `součet (banner): ${formatNumber(total)}`,
+        `zdrojové IP řádky (agregace): ${formatNumber(rollupN)}`,
+        `aktivní blokace: ${formatNumber(s.blocked_ips_active || 0)}`,
+        `IP ≥5 fail/24h: ${formatNumber(s.brute_force_alert_ips ?? 0)}`,
+        `zdrojové pokusy 24h: ${formatNumber(s.source_probes_24h || 0)}`,
+      ];
+      const secCount = Array.isArray(payload?.security_events) ? payload.security_events.length : 0;
+      return `${parts.join('; ')}. Detailních bezpečnostních událostí v odpovědi: ${formatNumber(secCount)}.`;
+    }
     case 'cc-backup-result':
       return payload.message || `Načteno backupů: ${formatNumber(payload.items?.length ?? 0)}.`;
     case 'cc-infra-result':
@@ -3592,6 +4055,18 @@ function openControlCenterModuleDetails(detailsId) {
   closeAllControlCenterDetails(detailsId);
   detailsEl.open = true;
   syncControlCenterDetailsOverlayState();
+  const ccDetailLoaders = {
+    'cc-health-details': loadControlCenterHealth,
+    'cc-security-details': loadControlCenterSecurityMonitor,
+    'cc-backups-details': loadControlCenterBackups,
+    'cc-payments-details': loadControlCenterPayments,
+    'cc-jobs-details': loadControlCenterJobs,
+    'cc-users-details': loadControlCenterUsersSnapshot,
+  };
+  const loader = ccDetailLoaders[detailsId];
+  if (typeof loader === 'function') {
+    loader();
+  }
   requestAnimationFrame(() => {
     detailsEl.scrollTop = 0;
     focusControlCenterDetailPrimaryField(detailsEl);
@@ -3671,6 +4146,8 @@ async function refreshControlCenterOverview() {
     setControlCenterResult('cc-health-result', { detail: 'Sekce je dostupná pouze pro roli developer_admin.' });
     return;
   }
+
+  dismissControlCenterPlaybook();
 
   initControlCenterModuleColumns();
   initControlCenterDetailsBehavior();
@@ -3935,49 +4412,174 @@ async function loadControlCenterPresence() {
   }
 }
 
+function formatSecurityLocationRow(row) {
+  const label = (row && row.location_label) ? String(row.location_label).trim() : '';
+  if (label) return escapeHtml(label);
+  const parts = [row?.city, row?.region, row?.country].filter(Boolean);
+  if (parts.length) return escapeHtml(parts.join(', '));
+  return '-';
+}
+
+/** Stejná logika jako banner: API total jen když je skutečně vrácené číslo (ne null). */
+function controlCenterSecurityAlertTotal(summary) {
+  const s = summary || {};
+  const raw = s.control_center_alert_total;
+  if (raw != null && Number.isFinite(Number(raw))) {
+    return Number(raw);
+  }
+  const brute = Number(s.brute_force_alert_ips) || 0;
+  const blocked = Number(s.blocked_ips_active) || 0;
+  const probes = Number(s.source_probes_24h) || 0;
+  return brute + blocked + probes;
+}
+
+function renderSecurityMonitorExplain(data) {
+  const el = document.getElementById('cc-security-breakdown-explain');
+  if (!el) return;
+  const s = data?.summary || {};
+  const total = controlCenterSecurityAlertTotal(s);
+  const brute = Number(s.brute_force_alert_ips) || 0;
+  const blocked = Number(s.blocked_ips_active) || 0;
+  const probes = Number(s.source_probes_24h) || 0;
+  el.innerHTML = `
+    <div class="cc-security-hero-stats" role="group" aria-label="Přehled security alertů">
+      <div class="cc-security-stat"><span>Součet (jako v „Co řešit teď“)</span><strong>${formatNumber(total)}</strong></div>
+      <div class="cc-security-stat"><span>Brute IP ≥5 fail / 24 h</span><strong>${formatNumber(brute)}</strong></div>
+      <div class="cc-security-stat"><span>Aktivní blokace</span><strong>${formatNumber(blocked)}</strong></div>
+      <div class="cc-security-stat"><span>Zdrojové pokusy / 24 h</span><strong>${formatNumber(probes)}</strong></div>
+    </div>
+    <p class="cc-security-hero-hint">Součet = první tři složky výše. U zdrojových pokusů jde o <strong>počet událostí</strong> (stejná IP může přispět vícekrát). Nejdřív zkontrolujte tabulku zdrojových pokusů podle IP — je nejčitelnější.</p>
+  `;
+}
+
+function isSecurityEventRow(item) {
+  const t = String(item?.event_type || '').toLowerCase();
+  if (t === 'login_success') return false;
+  return t === 'login_failed'
+    || t === 'login_rate_limited'
+    || t === 'source_probe_blocked'
+    || t.includes('rate_limited')
+    || t.includes('source_probe')
+    || t.includes('login_failed');
+}
+
 async function loadControlCenterSecurityMonitor() {
-  setControlCenterLoading('cc-security-result', ['cc-security-failed-ips-table', 'cc-security-table', 'cc-security-events-table']);
+  setControlCenterLoading('cc-security-result', [
+    'cc-security-source-probes-table',
+    'cc-security-events-table',
+    'cc-security-failed-ips-table',
+    'cc-security-table',
+    'cc-security-activity-table',
+  ]);
   try {
     const data = await apiRequest('GET', '/admin-api/control-center/security-monitor');
     setControlCenterState('security', data);
+    renderSecurityMonitorExplain(data);
+    const rollup = Array.isArray(data?.source_probe_by_ip_24h) ? data.source_probe_by_ip_24h : [];
+    renderControlCenterTable(
+      'cc-security-source-probes-table',
+      [
+        { key: 'ip_address', label: 'IP', render: (row) => escapeHtml(row.ip_address || '-') },
+        { key: 'probe_count', label: 'Pokusů (24 h)', render: (row) => formatNumber(row.probe_count || 0) },
+        { key: 'last_probe_at', label: 'Poslední', render: (row) => formatDateTime(row.last_probe_at) },
+      ],
+      rollup.slice(0, 50),
+    );
     const topFailedIps = Array.isArray(data?.top_failed_ips) ? data.top_failed_ips : [];
     renderControlCenterTable(
       'cc-security-failed-ips-table',
       [
-        { key: 'ip_address', label: 'Top failed IP', render: (row) => escapeHtml(row.ip_address || '-') },
-        { key: 'failed_count', label: 'Failed count', render: (row) => formatNumber(row.failed_count || 0) },
+        { key: 'ip_address', label: 'IP (neúspěšné loginy 24h)', render: (row) => escapeHtml(row.ip_address || '-') },
+        {
+          key: 'failed_count',
+          label: 'Počet',
+          render: (row) => formatNumber(row.failed_count || 0),
+        },
+        {
+          key: 'alert',
+          label: 'Práh',
+          render: (row) => (Number(row.failed_count || 0) >= 5 ? '<span class="cc-status-alert">≥5 = alert</span>' : 'pod prahem'),
+        },
       ],
-      topFailedIps.slice(0, 15),
+      topFailedIps.slice(0, 20),
     );
-    const blocked = Array.isArray(data?.blocked_ips) ? data.blocked_ips : [];
+    const blocked = Array.isArray(data?.blocked_ips) ? [...data.blocked_ips] : [];
+    blocked.sort((a, b) => {
+      if (Boolean(a.is_active) === Boolean(b.is_active)) return 0;
+      return a.is_active ? -1 : 1;
+    });
     renderControlCenterTable(
       'cc-security-table',
       [
         { key: 'ip_address', label: 'IP' },
         { key: 'is_active', label: 'Aktivní', render: (row) => row.is_active ? 'ANO' : 'NE' },
         { key: 'reason', label: 'Důvod', render: (row) => escapeHtml(row.reason || '-') },
+        {
+          key: 'blocked_by_email',
+          label: 'Blokoval',
+          render: (row) => escapeHtml(row.blocked_by_email || '-'),
+        },
         { key: 'blocked_at', label: 'Blocked at', render: (row) => formatDateTime(row.blocked_at) },
         { key: 'expires_at', label: 'Expires', render: (row) => formatDateTime(row.expires_at) },
       ],
-      blocked.slice(0, 20),
+      blocked.slice(0, 40),
     );
-    const latestEvents = Array.isArray(data?.latest_events) ? data.latest_events : [];
+    let securityEvents = Array.isArray(data?.security_events) ? data.security_events : [];
+    const latestRaw = Array.isArray(data?.latest_events) ? data.latest_events : [];
+    if (securityEvents.length === 0 && latestRaw.length > 0) {
+      securityEvents = latestRaw.filter(isSecurityEventRow);
+    }
     renderControlCenterTable(
       'cc-security-events-table',
       [
         { key: 'created_at', label: 'Čas', render: (row) => formatDateTime(row.created_at) },
         { key: 'event_type', label: 'Událost', render: (row) => escapeHtml(row.event_type || '-') },
+        { key: 'user_email', label: 'Uživatel', render: (row) => escapeHtml(row.user_email || '(neznámý)') },
+        { key: 'ip_address', label: 'IP', render: (row) => escapeHtml(row.ip_address || '-') },
+        { key: 'location_label', label: 'Lokalita', render: (row) => formatSecurityLocationRow(row) },
+        { key: 'endpoint', label: 'Endpoint', render: (row) => escapeHtml(row.endpoint || '-') },
+        {
+          key: 'details_preview',
+          label: 'Detail',
+          render: (row) => {
+            const full = row.details || row.details_preview || '';
+            const short = row.details_preview || (full.length > 120 ? `${full.slice(0, 117)}...` : full);
+            if (!short) return '-';
+            return `<span title="${escapeHtml(full)}">${escapeHtml(short)}</span>`;
+          },
+        },
+      ],
+      securityEvents.slice(0, 150),
+    );
+    const latestEvents = Array.isArray(data?.latest_events) ? data.latest_events : [];
+    renderControlCenterTable(
+      'cc-security-activity-table',
+      [
+        { key: 'created_at', label: 'Čas', render: (row) => formatDateTime(row.created_at) },
+        { key: 'event_type', label: 'Událost', render: (row) => escapeHtml(row.event_type || '-') },
         { key: 'user_email', label: 'Uživatel', render: (row) => escapeHtml(row.user_email || '-') },
         { key: 'ip_address', label: 'IP', render: (row) => escapeHtml(row.ip_address || '-') },
+        { key: 'location_label', label: 'Lokalita', render: (row) => formatSecurityLocationRow(row) },
         { key: 'endpoint', label: 'Endpoint', render: (row) => escapeHtml(row.endpoint || '-') },
       ],
-      latestEvents.slice(0, 40),
+      latestEvents.slice(0, 150),
     );
+    const sp = Number(data?.summary?.source_probes_24h || 0);
+    if (sp > 0 && rollup.length === 0) {
+      const wrap = document.getElementById('cc-security-source-probes-table');
+      if (wrap && wrap.querySelector('.empty')) {
+        wrap.innerHTML = `<div class="cc-security-warn">API hlásí ${formatNumber(sp)} zdrojových pokusů, ale agregace podle IP je prázdná — zkontrolujte nasazení backendu nebo schéma DB.</div>`;
+      }
+    }
     setControlCenterResult('cc-security-result', data);
   } catch (error) {
+    clearControlCenterTable('cc-security-source-probes-table');
     clearControlCenterTable('cc-security-failed-ips-table');
     clearControlCenterTable('cc-security-table');
     clearControlCenterTable('cc-security-events-table');
+    clearControlCenterTable('cc-security-activity-table');
+    const explain = document.getElementById('cc-security-breakdown-explain');
+    if (explain) explain.innerHTML = '';
     setControlCenterResult('cc-security-result', { error: error.message });
   }
 }
@@ -4052,7 +4654,8 @@ async function createControlCenterBackup() {
     const data = await apiRequest('POST', '/admin-api/control-center/backups/create', { include_data_dir: true });
     setControlCenterResult('cc-backup-result', data);
     await Promise.all([loadControlCenterBackups(), loadControlCenterStorage()]);
-    showSuccess('Backup byl vytvořen');
+    renderControlCenterDashboard();
+    showSuccess('Backup byl vytvořen. Stav zálohy a priorita „Co řešit teď“ jsou přepočítané.');
   } catch (error) {
     setControlCenterResult('cc-backup-result', { error: error.message });
   }

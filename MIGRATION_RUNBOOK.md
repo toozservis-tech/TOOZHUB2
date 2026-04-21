@@ -25,7 +25,9 @@ python -m alembic upgrade head
   - `DATABASE_URL`
   - legacy `VEHICLE_DB_URL`
   - fallback `sqlite:///<workspace>/data/vehicles.db`
-- Pokud není nastaveno nic, backend i migrace použijí stejnou runtime DB v `source-mirror/data/vehicles.db`.
+- Pokud není nastaveno nic, backend i migrace použijí stejnou runtime DB v `/opt/toozhub2/data/vehicles.db` resp. `<workspace>/data/vehicles.db`.
+- Produkční runtime DB v tomto projektu je `/opt/toozhub2/data/vehicles.db`.
+- Soubor `app/data/vehicles.db` může na serveru existovat jako starý volume snapshot; není to source of truth, pokud `DATABASE_URL` míří na `/opt/toozhub2/data/vehicles.db`.
 - Pro čistou DB vytvořte prázdný soubor / nový PostgreSQL schema a spusťte migrace.
 
 ## 4. Ověření schématu

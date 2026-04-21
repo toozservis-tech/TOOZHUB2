@@ -5,7 +5,7 @@ from pathlib import Path
 import secrets
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import func
 
@@ -21,6 +21,7 @@ from src.modules.vehicle_hub.account_state import (
     increment_customer_session_version,
     touch_customer_last_login,
 )
+from src.modules.vehicle_hub.customer_ordinal import assign_admin_ordinal_if_missing
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer, CustomerSecuritySettings, ServiceRegistrationRequest
 from src.modules.vehicle_hub.routers_v1.auth import get_current_user as get_v1_current_user
@@ -56,8 +57,92 @@ from src.server.security_tracking import extract_client_ip, log_security_event
 router = APIRouter()
 
 
+def _send_user_registration_confirmation_email(*, email: str, name: str | None) -> None:
+    try:
+        from src.modules.email_client.service import EmailService
+
+        email_service = EmailService()
+        if not email_service.is_configured():
+            print("[REGISTER] WARNING: SMTP není nakonfigurováno, potvrzovací email nebyl odeslán")
+            return
+
+        registered_at = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
+        user_name = (name or "uživateli").strip()
+
+        email_body = f"""
+Dobrý den {user_name},
+
+vaše registrace do aplikace {APP_DISPLAY_NAME} byla úspěšně dokončena.
+
+Registrovaný účet: {email}
+Datum registrace: {registered_at} UTC
+
+Nyní se můžete přihlásit a začít spravovat svá vozidla.
+
+S pozdravem,
+{APP_DISPLAY_NAME}
+"""
+
+        html_body = render_email_layout(
+            title="Účet je připraven",
+            subtitle="Registrace byla úspěšně dokončena.",
+            intro=f"Dobrý den {user_name},",
+            paragraphs=[
+                f"vaše registrace do aplikace {APP_DISPLAY_NAME} byla úspěšně dokončena.",
+                "Teď se můžete přihlásit a začít spravovat svá vozidla, servisní historii i připomínky.",
+            ],
+            panels=[
+                render_panel(
+                    title="Přehled účtu",
+                    rows=[
+                        ("Registrovaný účet", email),
+                        ("Datum registrace", f"{registered_at} UTC"),
+                    ],
+                )
+            ],
+            cta_label="Otevřít aplikaci",
+            cta_url=build_app_url(),
+            accent="#f59e0b",
+        )
+        email_service.send_simple_email(
+            to=email,
+            subject=f"Potvrzení registrace - {APP_DISPLAY_NAME}",
+            body=email_body,
+            html_body=html_body,
+        )
+        print(f"[REGISTER] OK: Potvrzovací email odeslán na: {email}")
+    except Exception as exc:
+        print(f"[REGISTER] ERROR: Nepodařilo se odeslat registrační email na pozadí: {exc}")
+
+
+def _send_registration_alert_email_background(
+    *,
+    registration_type: str,
+    account_email: str,
+    account_name: str | None = None,
+    account_ico: str | None = None,
+    metadata: dict | None = None,
+) -> None:
+    from src.modules.vehicle_hub.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        developer_alert = send_registration_alert_email(
+            db,
+            registration_type=registration_type,
+            account_email=account_email,
+            account_name=account_name,
+            account_ico=account_ico,
+            metadata=metadata,
+        )
+        if developer_alert.get("status") not in {"sent", "no_recipients", "smtp_not_configured"}:
+            print(f"[REGISTER] Developer alert status: {developer_alert.get('status')} error={developer_alert.get('error')}")
+    finally:
+        db.close()
+
+
 @router.post("/user/register", response_model=RegisterTokenResponse)
-def register_user(user_data: UserRegister, db=Depends(get_db)):
+def register_user(user_data: UserRegister, background_tasks: BackgroundTasks, db=Depends(get_db)):
     normalized_email = normalize_email(user_data.email)
     normalized_ico = normalize_ico(user_data.ico)
 
@@ -94,77 +179,20 @@ def register_user(user_data: UserRegister, db=Depends(get_db)):
     )
 
     db.add(customer)
+    db.flush()
+    assign_admin_ordinal_if_missing(db, customer)
     db.commit()
     db.refresh(customer)
 
     ensure_default_license_for_tenant(db, dedicated_tenant.id)
 
-    email_sent = False
-    registration_email_status = "not_configured"
-    try:
-        from src.modules.email_client.service import EmailService
-
-        email_service = EmailService()
-        if email_service.is_configured():
-            registered_at = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
-            user_name = (customer.name or "uživateli").strip()
-
-            email_body = f"""
-Dobrý den {user_name},
-
-vaše registrace do aplikace {APP_DISPLAY_NAME} byla úspěšně dokončena.
-
-Registrovaný účet: {customer.email}
-Datum registrace: {registered_at} UTC
-
-Nyní se můžete přihlásit a začít spravovat svá vozidla.
-
-S pozdravem,
-{APP_DISPLAY_NAME}
-"""
-
-            html_body = render_email_layout(
-                title="Účet je připraven",
-                subtitle="Registrace byla úspěšně dokončena.",
-                intro=f"Dobrý den {user_name},",
-                paragraphs=[
-                    f"vaše registrace do aplikace {APP_DISPLAY_NAME} byla úspěšně dokončena.",
-                    "Teď se můžete přihlásit a začít spravovat svá vozidla, servisní historii i připomínky.",
-                ],
-                panels=[
-                    render_panel(
-                        title="Přehled účtu",
-                        rows=[
-                            ("Registrovaný účet", customer.email),
-                            ("Datum registrace", f"{registered_at} UTC"),
-                        ],
-                    )
-                ],
-                cta_label="Otevřít aplikaci",
-                cta_url=build_app_url(),
-                accent="#f59e0b",
-            )
-            try:
-                email_service.send_simple_email(
-                    to=customer.email,
-                    subject=f"Potvrzení registrace - {APP_DISPLAY_NAME}",
-                    body=email_body,
-                    html_body=html_body,
-                )
-                email_sent = True
-                registration_email_status = "sent"
-                print(f"[REGISTER] OK: Potvrzovací email odeslán na: {customer.email}")
-            except Exception as email_ex:
-                registration_email_status = "failed"
-                print(f"[REGISTER] ERROR: Nepodařilo se odeslat registrační email: {email_ex}")
-        else:
-            print("[REGISTER] WARNING: SMTP není nakonfigurováno, potvrzovací email nebyl odeslán")
-    except Exception as exc:
-        registration_email_status = "failed"
-        print(f"[REGISTER] ERROR: Neočekávaná chyba při odesílání registračního emailu: {exc}")
-
-    developer_alert = send_registration_alert_email(
-        db,
+    background_tasks.add_task(
+        _send_user_registration_confirmation_email,
+        email=customer.email,
+        name=customer.name,
+    )
+    background_tasks.add_task(
+        _send_registration_alert_email_background,
         registration_type="user",
         account_email=customer.email,
         account_name=customer.name,
@@ -175,8 +203,6 @@ S pozdravem,
             "role": customer.role or "user",
         },
     )
-    if developer_alert.get("status") not in {"sent", "no_recipients", "smtp_not_configured"}:
-        print(f"[REGISTER] Developer alert status: {developer_alert.get('status')} error={developer_alert.get('error')}")
 
     access_token = create_access_token(data={"sub": customer.email, "sv": customer_session_version(customer)})
 
@@ -189,8 +215,8 @@ S pozdravem,
             "ico": customer.ico,
             "role": customer.role or "user",
         },
-        email_sent=email_sent,
-        registration_email_status=registration_email_status,
+        email_sent=False,
+        registration_email_status="queued",
     )
 
 

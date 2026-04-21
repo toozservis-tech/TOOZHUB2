@@ -13,6 +13,7 @@ from src.modules.vehicle_hub.database import Base
 from src.modules.vehicle_hub.mileage_reports import (
     MANUAL_MILEAGE_DESCRIPTION,
     TACHOMETER_IMPORT_DESCRIPTION,
+    build_mileage_timeline_payload,
     collect_vehicle_mileage_timeline_points,
     render_mileage_timeline_chart_png,
 )
@@ -193,6 +194,35 @@ def test_detects_rollback(db_session) -> None:
     assert points[-1].anomaly == "rollback"
 
 
+def test_detects_same_day_near_duplicate(db_session) -> None:
+    _, vehicle = _seed_owned_vehicle(db_session)
+    db_session.add_all(
+        [
+            ServiceRecord(
+                tenant_id=vehicle.tenant_id,
+                vehicle_id=vehicle.id,
+                performed_at=datetime(2024, 6, 1, 8, 0),
+                mileage=50_000,
+                description="Servis A",
+                is_deleted=False,
+            ),
+            ServiceRecord(
+                tenant_id=vehicle.tenant_id,
+                vehicle_id=vehicle.id,
+                performed_at=datetime(2024, 6, 1, 16, 0),
+                mileage=50_040,
+                description="Servis B",
+                is_deleted=False,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    points = collect_vehicle_mileage_timeline_points(db_session, vehicle.id)
+
+    assert all("duplicate" in p.anomaly_flags for p in points)
+
+
 def test_detects_suspicious_jump(db_session) -> None:
     _, vehicle = _seed_owned_vehicle(db_session)
     db_session.add_all(
@@ -211,6 +241,35 @@ def test_detects_suspicious_jump(db_session) -> None:
                 performed_at=datetime(2024, 1, 10, 9, 0),
                 mileage=130_500,
                 description="Další servis",
+                is_deleted=False,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    points = collect_vehicle_mileage_timeline_points(db_session, vehicle.id)
+
+    assert "suspicious_jump" in points[-1].anomaly_flags
+
+
+def test_detects_suspicious_jump_by_high_daily_rate(db_session) -> None:
+    _, vehicle = _seed_owned_vehicle(db_session)
+    db_session.add_all(
+        [
+            ServiceRecord(
+                tenant_id=vehicle.tenant_id,
+                vehicle_id=vehicle.id,
+                performed_at=datetime(2024, 1, 1, 9, 0),
+                mileage=100_000,
+                description="Start",
+                is_deleted=False,
+            ),
+            ServiceRecord(
+                tenant_id=vehicle.tenant_id,
+                vehicle_id=vehicle.id,
+                performed_at=datetime(2024, 1, 6, 9, 0),
+                mileage=112_000,
+                description="High daily implied",
                 is_deleted=False,
             ),
         ]
@@ -270,3 +329,34 @@ def test_pdf_report_with_chart_is_valid_and_readable(db_session, monkeypatch, tm
     assert b"%%EOF" in response.body
     assert normalized_pdf.count("/TYPE /PAGE") >= 1
     assert len(response.body) > 5_000
+
+
+def test_mileage_timeline_api_payload(db_session) -> None:
+    owner, vehicle = _seed_owned_vehicle(db_session)
+    _seed_multi_source_points(db_session, vehicle)
+
+    out = service_records_router.get_vehicle_mileage_timeline(
+        vehicle_id=vehicle.id,
+        current_user=owner,
+        db=db_session,
+    )
+
+    assert "mileage_timeline" in out
+    mt = out["mileage_timeline"]
+    assert "points" in mt and "summary" in mt
+    summary = mt["summary"]
+    assert summary["point_count"] == len(mt["points"])
+    assert summary["first_mileage_km"] == mt["points"][0]["mileage_km"]
+    assert summary["last_mileage_km"] == mt["points"][-1]["mileage_km"]
+    assert summary["anomaly_point_count"] >= 0
+    assert "anomaly_counts" in summary
+
+
+def test_build_mileage_timeline_payload_matches_collect(db_session) -> None:
+    _, vehicle = _seed_owned_vehicle(db_session)
+    _seed_multi_source_points(db_session, vehicle)
+
+    payload = build_mileage_timeline_payload(db_session, vehicle.id)
+    direct = collect_vehicle_mileage_timeline_points(db_session, vehicle.id)
+
+    assert len(payload["mileage_timeline"]["points"]) == len(direct)

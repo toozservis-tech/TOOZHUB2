@@ -43,6 +43,7 @@ reportlab>=4.0.0
 
 # Image processing
 Pillow>=10.0.0
+pillow-heif>=0.16.0
 qrcode>=8.2
 
 # Process management

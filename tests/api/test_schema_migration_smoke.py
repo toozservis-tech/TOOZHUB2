@@ -22,6 +22,8 @@ def test_alembic_upgrade_head_creates_active_schema(tmp_path: Path) -> None:
     assert "vehicle_tachometer_history_entries" in tables
     assert "vehicle_orv_scans" in tables
     assert "service_record_audit_logs" in tables
+    assert "service_work_orders" in tables
+    assert "service_work_order_audit_logs" in tables
     assert "service_access_requests" in tables
     assert "vehicle_service_links" in tables
     assert "service_vehicle_lookup_audit" in tables

@@ -80,6 +80,14 @@ from .schemas import (
     VehicleQrTokenOutV1,
 )
 
+"""
+PRODUCTION CRITICAL LOGIC:
+- service access enforcement
+- lifecycle remove/transfer
+- audit log
+Jakákoliv změna musí projít production auditem.
+"""
+
 router = APIRouter(prefix="/services/workspace", tags=["service-workspace-v1"])
 
 ALLOWED_SOURCE_TYPES = {"invoice", "delivery_note", "work_order", "receipt", "manual"}
@@ -2491,7 +2499,7 @@ def search_service_customers(
                 func.replace(func.replace(func.replace(func.coalesce(Customer.phone, ""), " ", ""), "+", ""), "-", "").like(f"%{phone_digits or normalized_query}%"),
             )
         )
-        .order_by(Customer.name.asc(), Customer.email.asc())
+        .order_by(Customer.id.desc())
         .limit(limit_value)
     )
 

@@ -722,19 +722,16 @@ test.describe('Responsive Critical Smoke', () => {
       }
     }
 
-    await page.click('[data-testid="tab-profile"]');
-    await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible({ timeout: 15_000 });
-
-    await page.click('[data-testid="tab-support"]');
-    await expect(page.locator('[data-testid="support-tab"]')).toBeVisible({ timeout: 15_000 });
+    await page.click('[data-testid="tab-account"]');
+    await expect(page.locator('[data-testid="account-tab"]')).toBeVisible({ timeout: 15_000 });
   });
 
   test('mobile/tablet nav remains usable and no blocking horizontal overflow', async ({ page }) => {
     await page.click('[data-testid="tab-vehicles"]');
     await expect(page.locator('[data-testid="vehicles-tab"]')).toBeVisible();
 
-    await page.click('[data-testid="tab-add-vehicle"]');
-    await expect(page.locator('[data-testid="add-vehicle-tab"]')).toBeVisible();
+    await page.click('[data-testid="btn-toggle-add-vehicle"]');
+    await expect(page.locator('[data-testid="add-vehicle-panel"]')).toBeVisible();
 
     await page.click('[data-testid="tab-reminders"]');
     await expect(page.locator('[data-testid="reminders-tab"]')).toBeVisible();
@@ -742,8 +739,8 @@ test.describe('Responsive Critical Smoke', () => {
     await page.click('[data-testid="tab-reservations"]');
     await expect(page.locator('[data-testid="reservations-tab"]')).toBeVisible();
 
-    await page.click('[data-testid="tab-profile"]');
-    await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible();
+    await page.click('[data-testid="tab-account"]');
+    await expect(page.locator('[data-testid="account-tab"]')).toBeVisible();
 
     const overflowX = await page.evaluate(() => {
       return Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
@@ -755,9 +752,9 @@ test.describe('Responsive Critical Smoke', () => {
   test('repeated tab switching keeps layout stable without collision overflow', async ({ page }) => {
     const tabAndPanelPairs = [
       { tab: '[data-testid="tab-vehicles"]', panel: '[data-testid="vehicles-tab"]' },
-      { tab: '[data-testid="tab-add-vehicle"]', panel: '[data-testid="add-vehicle-tab"]' },
       { tab: '[data-testid="tab-reminders"]', panel: '[data-testid="reminders-tab"]' },
-      { tab: '[data-testid="tab-profile"]', panel: '[data-testid="profile-tab"]' },
+      { tab: '[data-testid="tab-documents"]', panel: '[data-testid="documents-tab"]' },
+      { tab: '[data-testid="tab-account"]', panel: '[data-testid="account-tab"]' },
     ];
 
     for (let cycle = 0; cycle < 3; cycle += 1) {
@@ -781,8 +778,8 @@ test.describe('Responsive Critical Smoke', () => {
       await page.click('[data-testid="tab-vehicles"]');
       await expect(page.locator('[data-testid="vehicles-tab"]'), `Vehicles tab on ${viewport.name}`).toBeVisible({ timeout: 15_000 });
 
-      await page.click('[data-testid="tab-profile"]');
-      await expect(page.locator('[data-testid="profile-tab"]'), `Profile tab on ${viewport.name}`).toBeVisible({ timeout: 15_000 });
+      await page.click('[data-testid="tab-account"]');
+      await expect(page.locator('[data-testid="account-tab"]'), `Account tab on ${viewport.name}`).toBeVisible({ timeout: 15_000 });
 
       const mobileMenuToggle = page.locator('#mobileMenuToggle');
       if (await mobileMenuToggle.isVisible().catch(() => false)) {

@@ -204,6 +204,8 @@ ENABLE_CUSTOMER_COMMANDS = _env_flag("ENABLE_CUSTOMER_COMMANDS", ENVIRONMENT != 
 ENABLE_AI_FEATURES = _env_flag("ENABLE_AI_FEATURES", ENVIRONMENT != "production")
 # Autopilot M2M může být produkčně potřebný, default proto zůstává zapnutý.
 ENABLE_AUTOPILOT_API = _env_flag("ENABLE_AUTOPILOT_API", True)
+# Soft production lock: no feature changes, only guardrails around dev/debug surfaces and write logging.
+PRODUCTION_LOCK_MODE = _env_flag("PRODUCTION_LOCK_MODE", False)
 
 # AI / Autopilot Configuration
 AUTOPILOT_SHARED_SECRET = os.getenv("AUTOPILOT_SHARED_SECRET", "")

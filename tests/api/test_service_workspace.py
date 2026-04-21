@@ -3,7 +3,7 @@ Testy pro servisní workspace API.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from uuid import uuid4
 
 import requests
@@ -11,6 +11,7 @@ from sqlalchemy import func
 
 from src.modules.vehicle_hub.database import SessionLocal
 from src.modules.vehicle_hub.models import Customer
+from src.modules.vehicle_hub.routers_v1 import service_workspace as workspace_router
 
 
 def _unique_email(prefix: str) -> str:
@@ -230,3 +231,221 @@ def test_service_workspace_invitation_accept_flow(api_url):
     assert customers_response.status_code == 200, customers_response.text
     customers = customers_response.json()
     assert any(str(item.get("email", "")).lower() == invited_email.lower() for item in customers)
+
+
+def test_service_workspace_customer_search_and_link_by_id(api_url):
+    service_email = _unique_email("service_search")
+    customer_email = _unique_email("customer_search")
+
+    service_token, _ = _register_user(api_url, email=service_email, name="Service Search")
+    _promote_user_to_service(service_email)
+    _register_user(api_url, email=customer_email, name="Klient Vyhledany")
+
+    db = SessionLocal()
+    try:
+        service_customer = (
+            db.query(Customer)
+            .filter(func.lower(Customer.email) == service_email.lower())
+            .first()
+        )
+        target_customer = (
+            db.query(Customer)
+            .filter(func.lower(Customer.email) == customer_email.lower())
+            .first()
+        )
+        assert service_customer is not None
+        assert target_customer is not None
+
+        search_payload = workspace_router.search_service_customers(
+            query="Vyhledany",
+            current_user=service_customer,
+            db=db,
+        )
+        items = search_payload.get("items", [])
+        assert items, "Search musí vrátit kandidáta klienta"
+        candidate = next((item for item in items if int(item.get("customer_id") or 0) == int(target_customer.id)), None)
+        assert candidate is not None
+        assert candidate.get("already_linked") is False
+        assert candidate.get("can_open_detail") is True
+        assert candidate.get("status") == "not_linked"
+
+        link_payload = workspace_router.link_existing_customer_by_id(
+            customer_id=int(target_customer.id),
+            current_user=service_customer,
+            db=db,
+        )
+        assert link_payload.get("linked") is True
+
+        search_again = workspace_router.search_service_customers(
+            query="Vyhledany",
+            current_user=service_customer,
+            db=db,
+        )
+        items_again = search_again.get("items", [])
+        candidate_again = next((item for item in items_again if int(item.get("customer_id") or 0) == int(target_customer.id)), None)
+        assert candidate_again is not None
+        assert candidate_again.get("already_linked") is True
+        assert candidate_again.get("status") == "linked"
+    finally:
+        db.close()
+
+
+def test_service_workspace_shell_detail_contracts(api_url):
+    service_email = _unique_email("service_detail")
+    customer_email = _unique_email("customer_detail")
+
+    service_token, service_id = _register_user(api_url, email=service_email, name="Service Detail")
+    _promote_user_to_service(service_email)
+    customer_token, customer_id = _register_user(api_url, email=customer_email, name="Klient Detail")
+    vehicle_id = _create_vehicle(api_url, customer_token, nickname="Detail Car")
+
+    service_headers = {"Authorization": f"Bearer {service_token}"}
+    customer_headers = {"Authorization": f"Bearer {customer_token}"}
+
+    grant_response = requests.post(
+        f"{api_url}/api/v1/services/vehicle-access",
+        headers=customer_headers,
+        json={"vehicle_id": vehicle_id, "service_id": service_id, "note": "Detail contract grant"},
+        timeout=8,
+    )
+    assert grant_response.status_code == 200, grant_response.text
+
+    reservation_response = requests.post(
+        f"{api_url}/api/v1/reservations",
+        headers=service_headers,
+        json={
+            "service_id": service_id,
+            "vehicle_id": vehicle_id,
+            "service_type": "Příjem vozidla",
+            "note": "API detail reservation",
+            "start_datetime": datetime.utcnow().replace(microsecond=0).isoformat(),
+            "end_datetime": (datetime.utcnow() + timedelta(hours=1)).replace(microsecond=0).isoformat(),
+        },
+        timeout=8,
+    )
+    assert reservation_response.status_code == 200, reservation_response.text
+    reservation_id = int(reservation_response.json()["id"])
+
+    reminder_response = requests.post(
+        f"{api_url}/api/v1/services/workspace/reminders",
+        headers=service_headers,
+        json={
+            "customer_id": customer_id,
+            "vehicle_id": vehicle_id,
+            "type": "SERVIS",
+            "text": "Kontrola detail flow",
+            "due_date": (date.today() + timedelta(days=7)).isoformat(),
+        },
+        timeout=8,
+    )
+    assert reminder_response.status_code == 200, reminder_response.text
+    reminder_id = int(reminder_response.json()["id"])
+
+    ingest_response = requests.post(
+        f"{api_url}/api/v1/services/workspace/documents/ingest",
+        headers=service_headers,
+        json={
+            "customer_id": customer_id,
+            "vehicle_id": vehicle_id,
+            "source_type": "invoice",
+            "manual_text": "Faktura FV-DET-1\nDiagnostika 1 ks 1000 Kč\nCelkem 1000 Kč",
+            "auto_create_service_record": True,
+        },
+        timeout=10,
+    )
+    assert ingest_response.status_code == 200, ingest_response.text
+    document_id = int(ingest_response.json()["id"])
+
+    db = SessionLocal()
+    try:
+        service_customer = (
+            db.query(Customer)
+            .filter(func.lower(Customer.email) == service_email.lower())
+            .first()
+        )
+        assert service_customer is not None
+
+        link_payload = workspace_router.link_existing_customer_by_id(
+            customer_id=customer_id,
+            current_user=service_customer,
+            db=db,
+        )
+        assert link_payload["linked"] is True
+
+        customer_detail = workspace_router.get_service_customer_detail(
+            customer_id=customer_id,
+            current_user=service_customer,
+            db=db,
+        )
+        assert customer_detail["status"] == "linked"
+        assert customer_detail["disclosure"] == "full"
+
+        vehicle_payload = workspace_router.get_service_vehicle_detail(
+            vehicle_id=vehicle_id,
+            current_user=service_customer,
+            db=db,
+        )
+        assert vehicle_payload["can_open_detail"] is True
+        assert vehicle_payload["disclosure"] == "full"
+        assert vehicle_payload["can_create_work_order"] is True
+
+        document_payload = workspace_router.get_service_workspace_document_detail(
+            document_id=document_id,
+            current_user=service_customer,
+            db=db,
+        )
+        assert document_payload["entity_type"] == "document"
+        assert document_payload["disclosure"] == "full"
+
+        reservation_payload = workspace_router.get_service_workspace_reservation_detail(
+            reservation_id=reservation_id,
+            current_user=service_customer,
+            db=db,
+        )
+        assert reservation_payload["entity_type"] == "reservation"
+        assert reservation_payload["can_create_work_order"] is True
+
+        reminder_payload = workspace_router.get_service_workspace_reminder_detail(
+            reminder_id=reminder_id,
+            current_user=service_customer,
+            db=db,
+        )
+        assert reminder_payload["entity_type"] == "reminder"
+        assert reminder_payload["can_edit"] is True
+    finally:
+        db.close()
+
+
+def test_service_workspace_invitation_returns_existing_pending(api_url):
+    service_email = _unique_email("service_pending_invite")
+    invite_email = _unique_email("pending_invite_target")
+
+    _register_user(api_url, email=service_email, name="Service Pending Invite")
+    _promote_user_to_service(service_email)
+
+    db = SessionLocal()
+    try:
+        service_customer = (
+            db.query(Customer)
+            .filter(func.lower(Customer.email) == service_email.lower())
+            .first()
+        )
+        assert service_customer is not None
+
+        first_send = workspace_router.send_service_invitation(
+            payload=workspace_router.SendServiceInviteRequest(invite_email=invite_email),
+            current_user=service_customer,
+            db=db,
+        )
+        assert first_send.get("registration_url")
+        assert isinstance(first_send.get("email_sent"), bool)
+
+        second_payload = workspace_router.send_service_invitation(
+            payload=workspace_router.SendServiceInviteRequest(invite_email=invite_email),
+            current_user=service_customer,
+            db=db,
+        )
+        assert second_payload.get("already_pending") is True
+        assert second_payload.get("invite_id")
+    finally:
+        db.close()

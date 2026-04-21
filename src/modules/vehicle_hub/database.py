@@ -13,8 +13,8 @@ from src.core.config import DATABASE_URL
 # Legacy VEHICLE_DB_URL zůstává podporovaný pouze jako compat vstup do configu.
 DB_URL = DATABASE_URL
 
-# Connect args pro SQLite
-connect_args = {"check_same_thread": False} if DB_URL.startswith("sqlite") else {}
+# Connect args pro SQLite. Admin přehledy čtou hodně dat a nesmí spadnout při krátkém zápisu.
+connect_args = {"check_same_thread": False, "timeout": 30} if DB_URL.startswith("sqlite") else {}
 
 # Engine s poolováním (pro PostgreSQL), nebo bez (pro SQLite)
 if DB_URL.startswith("postgresql") or DB_URL.startswith("postgres"):
@@ -28,6 +28,21 @@ if DB_URL.startswith("postgresql") or DB_URL.startswith("postgres"):
 else:
     # SQLite - bez poolování
     engine = create_engine(DB_URL, connect_args=connect_args)
+
+
+if DB_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite_connection(dbapi_connection, connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+        except Exception as exc:
+            logger.warning("[DB] SQLite PRAGMA setup failed: %s", exc)
+        finally:
+            cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

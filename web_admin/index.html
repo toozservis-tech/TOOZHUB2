@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Správa vozidel – Developer Admin Dashboard</title>
-  <link rel="stylesheet" href="admin.css?v=20260311g" />
+  <link rel="stylesheet" href="admin.css?v=20260421a" />
 </head>
 <body>
   <!-- Přihlašovací obrazovka -->
@@ -65,6 +65,10 @@
             <span class="nav-icon">📊</span>
             <span class="nav-text">Přehled</span>
           </button>
+          <button data-section="global-admin" class="nav-item">
+            <span class="nav-icon">🧭</span>
+            <span class="nav-text">Globální dohled</span>
+          </button>
           <button data-section="users" class="nav-item">
             <span class="nav-icon">👥</span>
             <span class="nav-text">Uživatelé</span>
@@ -121,6 +125,36 @@
           </div>
         </section>
 
+        <!-- Sekce: Globální dohled -->
+        <section id="section-global-admin" class="content-section">
+          <div class="section-header">
+            <div>
+              <h1>Globální dohled</h1>
+              <p class="section-subtitle">Jedno místo pro hledání a zásahy napříč uživateli, vozidly, servisy, záznamy, rezervacemi, připomínkami, platbami a auditem.</p>
+            </div>
+            <button class="btn-primary" type="button" onclick="loadGlobalAdmin()">Obnovit dohled</button>
+          </div>
+          <div class="global-admin-toolbar">
+            <input type="text" id="global-admin-search" class="search-input" placeholder="🔍 Email, jméno, SPZ, VIN, ID, text záznamu, platba..." />
+            <select id="global-admin-type" class="filter-select" title="Filtrovat typ entity">
+              <option value="">Všechny typy</option>
+              <option value="user">Uživatelé</option>
+              <option value="service">Servisy</option>
+              <option value="vehicle">Vozidla</option>
+              <option value="record">Servisní záznamy</option>
+              <option value="reservation">Rezervace</option>
+              <option value="reminder">Připomínky</option>
+              <option value="payment">Platby</option>
+              <option value="audit">Audit</option>
+            </select>
+            <button class="btn-secondary" type="button" onclick="loadGlobalAdmin()">Hledat</button>
+          </div>
+          <div id="global-admin-summary" class="global-admin-summary"></div>
+          <div id="global-admin-results" class="global-admin-results">
+            <div class="loading">Načítám globální dohled...</div>
+          </div>
+        </section>
+
         <!-- Sekce: Uživatelé -->
         <section id="section-users" class="content-section">
           <div class="section-header">
@@ -135,6 +169,10 @@
               <button type="button" class="view-btn" data-view="compact" onclick="setSectionViewMode('users', 'compact')">Kompaktní</button>
             </div>
           </div>
+          <details id="deleted-users-archive" class="deleted-users-archive panel-subtle">
+            <summary>Archiv smazaných účtů (označení # / ## — rozlišení podle e-mailu v detailu)</summary>
+            <div id="deleted-users-archive-body" class="deleted-users-archive-body"></div>
+          </details>
           <div id="users-cards-container" class="cards-grid">
             <!-- Naplní se JavaScriptem -->
           </div>
@@ -369,6 +407,7 @@
               <ul id="cc-priority-list" class="cc-priority-list">
                 <li class="cc-priority-empty">Načítám stav modulů...</li>
               </ul>
+              <div id="cc-active-playbook" class="cc-active-playbook" hidden></div>
             </div>
           </section>
 
@@ -479,7 +518,7 @@
               </div>
               <div class="form-group">
                 <label for="cc-insight-user-id">User ID</label>
-                <input id="cc-insight-user-id" type="number" min="1" placeholder="ID uživatele" />
+                <input id="cc-insight-user-id" type="number" min="1" placeholder="ID uživatele" data-cc-primary-focus="1" />
               </div>
               <div class="tool-inline-actions">
                 <button class="btn-secondary" type="button" onclick="loadControlCenterUserInsight()">Načíst insight</button>
@@ -570,7 +609,7 @@
               <div class="cc-license-inline">
                 <div class="form-group">
                   <label for="cc-block-ip">IP adresa</label>
-                  <input id="cc-block-ip" type="text" placeholder="např. 203.0.113.10" />
+                  <input id="cc-block-ip" type="text" placeholder="např. 203.0.113.10" data-cc-primary-focus="1" />
                 </div>
                 <div class="form-group">
                   <label for="cc-block-reason">Důvod</label>
@@ -584,11 +623,27 @@
                 <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-security-details')">Otevřít security events</button>
               </div>
               <div id="cc-security-result" class="cc-module-result">Čeká na načtení security monitoru.</div>
-              <details id="cc-security-details" class="cc-module-details">
+              <details id="cc-security-details" class="cc-module-details cc-security-details-panel">
                 <summary>Detail security monitoru</summary>
-                <div id="cc-security-failed-ips-table" class="tool-table-wrap"></div>
-                <div id="cc-security-table" class="tool-table-wrap"></div>
+                <div id="cc-security-breakdown-explain" class="cc-security-hero"></div>
+                <h4 class="cc-detail-subhead">1. Zdrojové pokusy podle IP (24 h)</h4>
+                <p class="cc-section-subtitle cc-detail-lead">Nejrychlejší odpověď na „kdo a odkud“ u pokusů o zdrojové soubory.</p>
+                <div id="cc-security-source-probes-table" class="tool-table-wrap"></div>
+                <h4 class="cc-detail-subhead">2. Bezpečnostní události — řádkově (7 dní)</h4>
+                <p class="cc-section-subtitle cc-detail-lead">Čas, účet, IP, lokalita, endpoint a detail události.</p>
                 <div id="cc-security-events-table" class="tool-table-wrap"></div>
+                <details class="cc-security-subdetails">
+                  <summary>Další: neúspěšné přihlášení podle IP (24 h)</summary>
+                  <div id="cc-security-failed-ips-table" class="tool-table-wrap"></div>
+                </details>
+                <details class="cc-security-subdetails">
+                  <summary>Další: ruční blokace IP</summary>
+                  <div id="cc-security-table" class="tool-table-wrap"></div>
+                </details>
+                <details class="cc-technical-details">
+                  <summary>Obecná API aktivita (posl. 400 řádků / 7 dní)</summary>
+                  <div id="cc-security-activity-table" class="tool-table-wrap"></div>
+                </details>
                 <details class="cc-technical-details">
                   <summary>Technický detail (JSON)</summary>
                   <pre id="cc-security-technical" class="tool-result cc-technical-result"></pre>

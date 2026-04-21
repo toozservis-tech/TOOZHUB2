@@ -2177,13 +2177,14 @@
             display: none !important;
         }
 
+        /* Přihlášení + zapomenuté heslo (režim login): jedna obrazovka bez scrollu.
+           Registrace je vyjmuta — viz body.route-register-view níže (dlouhý formulář). */
         body.route-login-view,
-        body.route-register-view,
-        body.route-auth-view,
+        body.route-auth-view:not(.route-register-view),
         body.route-login-view .container,
-        body.route-register-view .container,
+        body.route-auth-view:not(.route-register-view) .container,
         body.route-login-view .content.page-container,
-        body.route-register-view .content.page-container {
+        body.route-auth-view:not(.route-register-view) .content.page-container {
             overflow: hidden;
         }
 
@@ -2218,7 +2219,10 @@
         body.route-register-view,
         body.route-register-view .container,
         body.route-register-view .content.page-container {
-            overflow: auto;
+            overflow-x: hidden;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-y pinch-zoom;
         }
 
         body.route-register-view .auth-shell {
@@ -2386,6 +2390,78 @@
             color: #ffffff;
             border-color: rgba(37, 99, 235, 0.18);
             box-shadow: 0 12px 24px rgba(37, 99, 235, 0.18);
+        }
+
+        /* Release polish: keep the signed-in shell visually connected and balanced. */
+        body.route-app-view {
+            background:
+                radial-gradient(circle at 8% 0%, rgba(37, 99, 235, 0.08), transparent 32%),
+                radial-gradient(circle at 92% 8%, rgba(14, 165, 233, 0.08), transparent 34%),
+                linear-gradient(180deg, #eef4fb 0%, #f8fafc 34%, #f8fafc 100%);
+        }
+
+        body.route-app-view #mainNavbar {
+            margin-top: clamp(10px, 1.4vw, 18px);
+            margin-bottom: 14px;
+            min-height: 82px;
+            padding: 14px 22px;
+            border-radius: 26px;
+            background: rgba(255, 255, 255, 0.92);
+            box-shadow: 0 22px 54px rgba(15, 23, 42, 0.10);
+            backdrop-filter: blur(18px);
+        }
+
+        body.route-app-view #mainNavbar .navbar-stats {
+            background: rgba(248, 250, 252, 0.86);
+        }
+
+        body.route-app-view #mainNavbar .stat-badge {
+            min-height: 44px;
+            background: rgba(255, 255, 255, 0.82);
+        }
+
+        body.route-app-view #mainNavbar #logout-btn {
+            min-height: 50px;
+            padding: 0 22px;
+            border-radius: 16px;
+        }
+
+        body.route-app-view .app-shell-main {
+            padding-top: 0;
+            padding-bottom: 48px;
+        }
+
+        body.route-app-view .app-shell-nav {
+            top: 0;
+            padding-top: 0;
+            margin-bottom: 0;
+            background: linear-gradient(180deg, rgba(239, 246, 255, 0.72), rgba(239, 246, 255, 0));
+        }
+
+        body.route-app-view .app-shell-nav .tabs {
+            min-height: 66px;
+            align-items: center;
+            padding: 8px;
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.94);
+            box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
+        }
+
+        body.route-app-view .app-shell-nav .tab {
+            min-height: 46px;
+            padding: 0 18px;
+            border-radius: 15px;
+            color: #64748b;
+        }
+
+        body.route-app-view .app-shell-nav .tab.active {
+            color: #ffffff !important;
+            box-shadow: 0 12px 24px rgba(37, 99, 235, 0.20);
+        }
+
+        body.route-app-view .app-shell-nav .tab.active:hover,
+        body.route-app-view .app-shell-nav .tab.active:focus-visible {
+            color: #ffffff !important;
         }
 
         /* Veřejná domovská / přihlášení: skrýt aplikační lištu (jinak duplicita s public-site-header). */
@@ -14490,8 +14566,8 @@
         }
         .home-dashboard-scene {
             display: grid;
-            gap: 20px;
-            padding-bottom: 10px;
+            gap: 18px;
+            padding: 0 0 26px;
         }
         .home-dashboard-top-grid {
             display: grid;
@@ -14506,13 +14582,15 @@
             margin: 0;
         }
         .home-dashboard-hero-modern {
-            padding: clamp(22px, 2.8vw, 32px);
-            border-radius: 30px;
+            padding: clamp(22px, 2.4vw, 30px);
+            border-radius: 28px;
             overflow: hidden;
             position: relative;
-            background: var(--app-card-bg);
-            border: 1px solid var(--app-card-border);
-            box-shadow: var(--app-card-shadow);
+            background:
+                radial-gradient(circle at 10% 0%, rgba(37, 99, 235, 0.07), transparent 34%),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98));
+            border: 1px solid rgba(203, 213, 225, 0.76);
+            box-shadow: 0 18px 46px rgba(15, 23, 42, 0.08);
         }
         .home-dashboard-hero-head {
             display: flex;
@@ -14533,7 +14611,7 @@
         }
         .home-dashboard-hero-layout {
             display: grid;
-            grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.95fr);
+            grid-template-columns: minmax(0, 1.42fr) minmax(300px, 0.88fr);
             gap: 16px;
             align-items: start;
             position: relative;
@@ -14633,16 +14711,17 @@
             align-items: flex-start;
             gap: 6px;
             min-height: 0;
-            padding: 10px 12px;
-            border-radius: 12px;
+            padding: 12px 14px;
+            border-radius: 16px;
             background: #ffffff;
-            border: 1px solid #e2e8f0;
+            border: 1px solid rgba(226, 232, 240, 0.92);
             color: #475569;
             font-size: 0.9rem;
             line-height: 1.35;
             border-left-width: 4px;
             border-left-style: solid;
             border-left-color: #cbd5e1;
+            box-shadow: 0 7px 18px rgba(15, 23, 42, 0.04);
         }
         .home-dashboard-status-main {
             display: flex;
@@ -14683,10 +14762,10 @@
             gap: 12px;
             min-width: 0;
             padding: 16px;
-            border-radius: 24px;
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.72);
+            border: 1px solid rgba(226, 232, 240, 0.92);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86);
         }
         .home-dashboard-panel-eyebrow {
             margin: 0;
@@ -14707,9 +14786,9 @@
             flex-direction: column;
             justify-content: flex-start;
             gap: 6px;
-            min-height: 84px;
-            padding: 12px 14px;
-            border-radius: 18px;
+            min-height: 88px;
+            padding: 13px 15px;
+            border-radius: 17px;
             border: 1px solid #e2e8f0;
             background: #ffffff;
             color: #0f172a;
@@ -14748,10 +14827,10 @@
         }
         .home-dashboard-shell-card {
             background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.98));
-            border: 1px solid rgba(203, 213, 225, 0.86);
+            border: 1px solid rgba(203, 213, 225, 0.78);
             border-radius: 22px;
             padding: 20px;
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+            box-shadow: 0 14px 34px rgba(15, 23, 42, 0.07);
             height: 100%;
         }
         .home-dashboard-panel-shell {
@@ -14999,12 +15078,12 @@
             flex-direction: column;
             justify-content: space-between;
             gap: 12px;
-            min-height: 128px;
-            padding: 16px;
-            border-radius: 18px;
+            min-height: 118px;
+            padding: 16px 18px;
+            border-radius: 20px;
             background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 1));
             border: 1px solid rgba(203, 213, 225, 0.78);
-            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.055);
         }
         .home-dashboard-metric-card[data-tone="fleet"] {
             background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 1));
@@ -15040,17 +15119,17 @@
         }
         .home-dashboard-board {
             display: grid;
-            grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.92fr);
+            grid-template-columns: minmax(0, 1.34fr) minmax(360px, 0.88fr);
             gap: 18px;
-            align-items: stretch;
+            align-items: start;
         }
         .home-dashboard-board--secondary {
-            grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.88fr);
-            align-items: stretch;
+            grid-template-columns: minmax(0, 1.24fr) minmax(320px, 0.86fr);
+            align-items: start;
         }
         .home-dashboard-board > .home-dashboard-shell-card,
         .home-dashboard-board--secondary > .home-dashboard-shell-card {
-            height: 100%;
+            height: auto;
         }
         .home-dashboard-command-grid {
             display: grid;
@@ -22886,7 +22965,7 @@
     </div>
     -->
 
-    <script src="storage_migration.js"></script>
+    <script src="/web/storage_migration.js"></script>
     <script>
         // Globální proměnné
         const APP_NAME = 'Správa vozidel';
@@ -22921,6 +23000,12 @@
             applyAppDisplayName();
         }
 
+        /*
+        PRODUCTION LOCK:
+        Shell routing a visibility controller je stabilizovaný.
+        Nesmí se měnit bez auditovaného zásahu.
+        Source of truth: /api/me
+        */
         var API_URL = null; // Bude inicializována po načtení DOM pomocí getApiBaseUrl()
         var moduleCapabilities = {};
         var currentUser = null;
@@ -24377,8 +24462,10 @@
             if (!rel.startsWith('/')) {
                 throw new Error('Neplatná cesta k PDF.');
             }
+            const popup = window.open('', '_blank');
             API_URL = getApiBaseUrl();
             if (!API_URL) {
+                if (popup && !popup.closed) popup.close();
                 throw new Error('API URL není nastavena. Kontaktujte administrátora.');
             }
             const headers = {
@@ -24397,6 +24484,7 @@
             const url = `${API_URL}${rel}`;
             const res = await fetch(url, { method: 'GET', headers, credentials: 'include', mode: 'cors', cache: 'no-cache' });
             if (!res.ok) {
+                if (popup && !popup.closed) popup.close();
                 let msg = `PDF se nepodařilo načíst (HTTP ${res.status}).`;
                 try {
                     const ct = res.headers.get('content-type') || '';
@@ -24413,7 +24501,16 @@
             }
             const blob = await res.blob();
             const objUrl = URL.createObjectURL(blob);
-            window.open(objUrl, '_blank', 'noopener');
+            if (popup && !popup.closed) {
+                popup.location.href = objUrl;
+                try {
+                    popup.opener = null;
+                } catch (e) {
+                    /* ignore */
+                }
+            } else {
+                window.open(objUrl, '_blank', 'noopener');
+            }
             setTimeout(() => {
                 try {
                     URL.revokeObjectURL(objUrl);
@@ -24563,15 +24660,38 @@
             lastClientY: 0,
         };
         let addVehiclePendingPhotoFile = null;
+        let addVehiclePendingPhotoPreviewUrl = '';
 
         function clearAddVehiclePhotoPreview() {
             const previewWrap = document.getElementById('vehiclePhotoPreviewWrap');
             const previewImage = document.getElementById('vehiclePhotoPreview');
+            if (addVehiclePendingPhotoPreviewUrl) {
+                try {
+                    URL.revokeObjectURL(addVehiclePendingPhotoPreviewUrl);
+                } catch (error) {
+                    // ignore revoke failures
+                }
+                addVehiclePendingPhotoPreviewUrl = '';
+            }
             if (previewImage) {
                 previewImage.removeAttribute('src');
             }
             if (previewWrap) {
                 previewWrap.classList.add('hidden');
+            }
+        }
+
+        function setAddVehiclePendingPhoto(file) {
+            addVehiclePendingPhotoFile = file || null;
+            clearAddVehiclePhotoPreview();
+            if (!file) return;
+
+            const previewWrap = document.getElementById('vehiclePhotoPreviewWrap');
+            const previewImage = document.getElementById('vehiclePhotoPreview');
+            if (previewWrap && previewImage) {
+                addVehiclePendingPhotoPreviewUrl = URL.createObjectURL(file);
+                previewImage.src = addVehiclePendingPhotoPreviewUrl;
+                previewWrap.classList.remove('hidden');
             }
         }
 
@@ -24770,6 +24890,36 @@
             vehiclePhotoCropState.originalFile = file;
             vehiclePhotoCropState.objectUrl = URL.createObjectURL(file);
 
+            const canRender = await new Promise((resolve) => {
+                const cleanup = () => {
+                    image.onload = null;
+                    image.onerror = null;
+                };
+                image.onload = () => {
+                    cleanup();
+                    vehiclePhotoCropState.naturalWidth = image.naturalWidth || 0;
+                    vehiclePhotoCropState.naturalHeight = image.naturalHeight || 0;
+                    resolve(Boolean(vehiclePhotoCropState.naturalWidth && vehiclePhotoCropState.naturalHeight));
+                };
+                image.onerror = () => {
+                    cleanup();
+                    resolve(false);
+                };
+                image.src = vehiclePhotoCropState.objectUrl;
+                preview.src = vehiclePhotoCropState.objectUrl;
+            });
+
+            if (!canRender) {
+                if (error) {
+                    error.textContent = 'Soubor se nepodařilo otevřít pro ořez. Zkusím ho použít bez ručního ořezu.';
+                }
+                closeVehiclePhotoCropper({
+                    preserveInput: true,
+                    keepAddPreview: vehiclePhotoCropState.context === 'vehicle-add'
+                });
+                return false;
+            }
+
             image.onload = () => {
                 vehiclePhotoCropState.naturalWidth = image.naturalWidth || 0;
                 vehiclePhotoCropState.naturalHeight = image.naturalHeight || 0;
@@ -24778,8 +24928,6 @@
             image.onerror = () => {
                 if (error) error.textContent = 'Soubor se nepodařilo připravit pro ořez.';
             };
-            image.src = vehiclePhotoCropState.objectUrl;
-            preview.src = vehiclePhotoCropState.objectUrl;
 
             openStaticOverlayModal(modal, { focusSelector: '.vehicle-modal-close' });
             requestAnimationFrame(() => initVehiclePhotoCropGeometry());
@@ -24822,13 +24970,7 @@
             try {
                 const croppedFile = await exportCroppedVehiclePhotoFile();
                 if (vehiclePhotoCropState.context === 'vehicle-add') {
-                    addVehiclePendingPhotoFile = croppedFile;
-                    const previewWrap = document.getElementById('vehiclePhotoPreviewWrap');
-                    const previewImage = document.getElementById('vehiclePhotoPreview');
-                    if (previewWrap && previewImage) {
-                        previewImage.src = URL.createObjectURL(croppedFile);
-                        previewWrap.classList.remove('hidden');
-                    }
+                    setAddVehiclePendingPhoto(croppedFile);
                     closeVehiclePhotoCropper({ preserveInput: true, keepAddPreview: true });
                     showAlert('Fotka je připravená k uložení s novým vozidlem.', 'success');
                     return;
@@ -24852,18 +24994,21 @@
             }
         }
 
-        function previewAddVehiclePhoto(fileInput) {
+        async function previewAddVehiclePhoto(fileInput) {
             const file = fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
             if (!file) {
-                addVehiclePendingPhotoFile = null;
-                clearAddVehiclePhotoPreview();
+                setAddVehiclePendingPhoto(null);
                 return;
             }
-            openVehiclePhotoCropper({
+            setAddVehiclePendingPhoto(file);
+            const cropperReady = await openVehiclePhotoCropper({
                 file,
                 context: 'vehicle-add',
                 inputId: fileInput && fileInput.id ? fileInput.id : 'vehiclePhotoInput',
             });
+            if (!cropperReady) {
+                showAlert('Fotka je připravená bez ručního ořezu. Server ji při uložení automaticky upraví.', 'info');
+            }
         }
 
         const vehiclePhotoObjectUrls = new Map();
@@ -25239,12 +25384,25 @@
         async function handleVehiclePhotoUpload(vehicleId, inputEl) {
             const file = inputEl && inputEl.files && inputEl.files[0] ? inputEl.files[0] : null;
             if (!file) return;
-            await openVehiclePhotoCropper({
+            const cropperReady = await openVehiclePhotoCropper({
                 file,
                 context: 'vehicle-primary',
                 vehicleId,
                 inputId: inputEl && inputEl.id ? inputEl.id : ''
             });
+            if (cropperReady) return;
+
+            try {
+                showAlert('Nahrávám hlavní fotku bez ručního ořezu...', 'info');
+                await uploadVehiclePhoto(vehicleId, file);
+                showAlert('Hlavní fotka vozidla byla uložena.', 'success');
+                await showVehicleDetail(vehicleId);
+                await loadVehicles();
+            } catch (error) {
+                showAlert(`Nepodařilo se nahrát fotku: ${error.message}`, 'error');
+            } finally {
+                if (inputEl) inputEl.value = '';
+            }
         }
 
         async function deleteVehiclePhoto(vehicleId) {
@@ -27325,12 +27483,27 @@
             return 'user';
         }
 
+        function getCanonicalWorkspaceRouteKind() {
+            if (lastWorkspaceMePayload && lastWorkspaceMePayload.authenticated) {
+                return String(lastWorkspaceMePayload.workspace_route_kind || '').toLowerCase() === 'service' ? 'service' : 'user';
+            }
+            return '';
+        }
+
         function hasServiceAccessRole() {
+            const canonicalKind = getCanonicalWorkspaceRouteKind();
+            if (canonicalKind) {
+                return canonicalKind === 'service';
+            }
             const role = String(currentUser?.role || '').toLowerCase();
             return role === 'service' || role === 'admin' || role === 'developer_admin';
         }
 
         function getActiveWorkspaceMode() {
+            const canonicalKind = getCanonicalWorkspaceRouteKind();
+            if (canonicalKind) {
+                return canonicalKind;
+            }
             const role = String(currentUser?.role || '').toLowerCase();
             if (role === 'service') {
                 return 'service';
@@ -27346,6 +27519,10 @@
         }
 
         function isServiceWorkspaceRole() {
+            const canonicalKind = getCanonicalWorkspaceRouteKind();
+            if (canonicalKind) {
+                return canonicalKind === 'service';
+            }
             return hasServiceAccessRole() && getActiveWorkspaceMode() === 'service';
         }
 
@@ -27966,11 +28143,13 @@
             const setLayerVisibility = (element, isVisible, visibleDisplay = '') => {
                 if (!element) return;
                 if (isVisible) {
+                    element.classList.remove('hidden');
                     element.removeAttribute('hidden');
                     element.setAttribute('aria-hidden', 'false');
                     element.inert = false;
                     element.style.display = visibleDisplay;
                 } else {
+                    element.classList.add('hidden');
                     element.setAttribute('hidden', '');
                     element.setAttribute('aria-hidden', 'true');
                     element.inert = true;
@@ -28114,7 +28293,11 @@
         function preparePublicOrAuthView() {
             closePublicSiteMobileMenu();
             if (window.serviceShell && typeof window.serviceShell.unmount === 'function') {
-                window.serviceShell.unmount();
+                try {
+                    window.serviceShell.unmount();
+                } catch (error) {
+                    console.warn('[SERVICE_SHELL] Unmount při přepnutí na login/public selhal:', error?.message || error);
+                }
             }
             applyServiceDashboardAppChrome(false);
             stopClientGeoRefresh();
@@ -28186,7 +28369,12 @@
             }
 
             const authLike = normalizedRoute === 'login' || normalizedRoute === 'register' || normalizedRoute === 'forgotPassword';
-            setPublicPageMode(authLike ? 'login' : 'home');
+            // Důležité: pro /register musí být routeMode 'register', jinak zůstane route-login-view
+            // a #login-view má max-height:100vh + overflow:hidden → nejde scrollovat dlouhý formulář.
+            const pageModeForShell = normalizedRoute === 'register'
+                ? 'register'
+                : (authLike ? 'login' : 'home');
+            setPublicPageMode(pageModeForShell);
             setPublicContentRoute(authLike ? 'home' : normalizedRoute);
 
             if (normalizedRoute === 'register') {
@@ -28232,6 +28420,23 @@
                 hideForgotPasswordForm();
             }
 
+            if (authLike) {
+                const authSectionEl = document.getElementById('authSection');
+                if (authSectionEl) {
+                    authSectionEl.classList.remove('hidden');
+                    authSectionEl.removeAttribute('hidden');
+                    authSectionEl.setAttribute('aria-hidden', 'false');
+                    authSectionEl.inert = false;
+                    authSectionEl.style.display = '';
+                }
+                const loginFormEl = document.getElementById('loginForm');
+                if (loginFormEl && normalizedRoute !== 'register') {
+                    loginFormEl.classList.remove('hidden');
+                    loginFormEl.removeAttribute('hidden');
+                    loginFormEl.style.display = '';
+                }
+            }
+
             if (updateHistory) {
                 updatePublicRoute(normalizedRoute, replaceHistory);
             }
@@ -28270,6 +28475,22 @@
 
             preparePublicOrAuthView();
             renderPublicRoute('login', { updateHistory: options.skipHistoryUpdate ? false : true });
+            authSection.classList.remove('hidden');
+            authSection.removeAttribute('hidden');
+            authSection.setAttribute('aria-hidden', 'false');
+            authSection.inert = false;
+            authSection.style.display = '';
+            const loginForm = document.getElementById('loginForm');
+            const registerForm = document.getElementById('registerForm');
+            if (loginForm) {
+                loginForm.classList.remove('hidden');
+                loginForm.removeAttribute('hidden');
+                loginForm.style.display = '';
+            }
+            if (registerForm) {
+                registerForm.classList.add('hidden');
+                registerForm.style.display = 'none';
+            }
         }
         
         // Zobrazení dashboardu (skrýt login)
@@ -33002,18 +33223,39 @@
                 return;
             }
             
-            // Potvrzení smazání
             const vehicle = await apiCall(`/api/v1/vehicles/${vehicleId}`, 'GET');
             const vehicleName = vehicle.nickname || vehicle.brand || 'Vozidlo';
-            
-            if (!confirm(`Opravdu chcete smazat vozidlo "${vehicleName}"?\n\nTato akce je nevratná a smaže také všechny servisní záznamy a připomínky spojené s tímto vozidlem.`)) {
+
+            const reasonCode = String(prompt(
+                `Důvod odstranění vozidla "${vehicleName}" z aktivní evidence:\n` +
+                'sale = prodej, scrap = likvidace, export = export, temporary_hide = dočasně skrýt, duplicate = duplicita, other = jiné',
+                'sale'
+            ) || '').trim().toLowerCase();
+            if (!reasonCode) {
+                return;
+            }
+
+            const initPayload = await apiCall(`/api/v1/vehicles/${vehicleId}/remove/init`, 'POST', { reason_code: reasonCode });
+            const followupField = String(initPayload?.required_followup_field || '').trim();
+            const followupAnswer = String(prompt(`Doplňte povinnou informaci (${followupField}):`, '') || '').trim();
+            if (!followupAnswer) {
+                showAlert('Odstranění vozidla vyžaduje doplňující odpověď.', 'error');
+                return;
+            }
+
+            if (!confirm(`Ukončit aktivní evidenci vozidla "${vehicleName}"?\n\nBackend vygeneruje digitální PDF výpis, archivuje datový bundle a historii vozidla ponechá zachovanou.`)) {
                 return;
             }
             
             try {
-                showAlert('Mažu vozidlo...', 'info');
-                await apiCall(`/api/v1/vehicles/${vehicleId}`, 'DELETE');
-                showAlert('Vozidlo bylo úspěšně smazáno', 'success');
+                showAlert('Ukončuji aktivní evidenci vozidla...', 'info');
+                const confirmPayload = { reason_code: reasonCode, followup_answer: { [followupField]: followupAnswer } };
+                const result = await apiCall(`/api/v1/vehicles/${vehicleId}/remove/confirm`, 'POST', confirmPayload);
+                if (result?.transfer?.qr_payload) {
+                    showAlert(`Vozidlo bylo archivováno a připraveno k předání: ${result.transfer.qr_payload}`, 'success');
+                } else {
+                    showAlert('Vozidlo bylo odebráno z aktivní evidence, PDF výpis a archiv byly vytvořeny.', 'success');
+                }
                 
                 // Zavřít detail vozidla
                 closeVehicleModal();
@@ -33029,8 +33271,8 @@
                 // Přepnout na záložku s vozidly
                 switchTab('vehicles');
             } catch (error) {
-                console.error('Error deleting vehicle:', error);
-                showAlert('Nepodařilo se smazat vozidlo: ' + (error.message || 'Neznámá chyba'), 'error');
+                console.error('Error removing vehicle:', error);
+                showAlert('Nepodařilo se ukončit evidenci vozidla: ' + (error.message || 'Neznámá chyba'), 'error');
             }
         }
 
@@ -42055,7 +42297,7 @@
                 captureClientGeolocation(true);
                 const isUserContext = getActiveWorkspaceMode() === 'user';
                 const [payload, userVehicles, accessPayload, managedContactsPayload] = await Promise.all([
-                    apiCall('/api/v1/services/discovery', 'GET'),
+                    apiCall('/api/v1/services/catalog', 'GET'),
                     isUserContext
                         ? apiCall('/api/v1/vehicles', 'GET').catch((error) => {
                             console.warn('[SERVICES_DIRECTORY] Nepodařilo se načíst vozidla pro správu přístupu:', error?.message || error);
@@ -42415,7 +42657,7 @@
             // Načíst seznam dostupných servisů
             let services = [];
             try {
-                const servicesDiscoveryPayload = await apiCall('/api/v1/services/discovery', 'GET');
+                const servicesDiscoveryPayload = await apiCall('/api/v1/services/catalog', 'GET');
                 services = Array.isArray(servicesDiscoveryPayload?.services) ? servicesDiscoveryPayload.services : [];
             } catch (error) {
                 console.error('Error loading services discovery:', error);
@@ -47949,7 +48191,7 @@
     </script>
     
     <!-- AI Features JavaScript -->
-    <script src="ai-features.js"></script>
-    <script src="service-shell.js"></script>
+    <script src="/web/ai-features.js"></script>
+    <script src="/web/service-shell.js"></script>
 </body>
 </html>

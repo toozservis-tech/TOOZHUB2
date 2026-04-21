@@ -31,8 +31,9 @@ test.describe('Mobile View', () => {
     
     // Ověřit, že navigace je viditelná a použitelná
     await expect(page.locator('[data-testid="tab-vehicles"]')).toBeVisible();
-    await page.click('[data-testid="tab-add-vehicle"]');
-    await expect(page.locator('[data-testid="add-vehicle-tab"]')).toBeVisible();
+    await page.click('[data-testid="tab-vehicles"]');
+    await page.click('[data-testid="btn-toggle-add-vehicle"]');
+    await expect(page.locator('[data-testid="add-vehicle-panel"]')).toBeVisible();
   });
 });
 

@@ -56,7 +56,9 @@ async function ensureAtLeastOneVehicle(page: Page): Promise<void> {
     if (becameVisible) return;
   }
 
-  await page.click('[data-testid="tab-add-vehicle"]');
+  await page.click('[data-testid="tab-vehicles"]');
+  await expect(page.locator('[data-testid="vehicles-tab"]')).toBeVisible({ timeout: 10_000 });
+  await page.click('[data-testid="btn-toggle-add-vehicle"]');
   await expect(page.locator('[data-testid="add-vehicle-form"]')).toBeVisible({ timeout: 10_000 });
 
   const stamp = Date.now();
@@ -142,8 +144,8 @@ test.describe('Critical Authenticated Smoke', () => {
     await page.click('[data-testid="tab-reservations"]');
     await expect(page.locator('[data-testid="reservations-tab"]')).toBeVisible();
 
-    await page.click('[data-testid="tab-profile"]');
-    await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible();
+    await page.click('[data-testid="tab-account"]');
+    await expect(page.locator('[data-testid="account-tab"]')).toBeVisible();
 
     expect(fatalMessages, `Fatal browser errors:\n${fatalMessages.join('\n')}`).toEqual([]);
   });
@@ -372,14 +374,12 @@ test.describe('Critical Authenticated Smoke', () => {
   });
 
   test('profile and support forms open and basic submit path is operational', async ({ page }) => {
-    await page.click('[data-testid="tab-profile"]');
-    await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible({ timeout: 10_000 });
+    await page.click('[data-testid="tab-account"]');
+    await expect(page.locator('[data-testid="account-tab"]')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('#settingsSaveButton')).toBeVisible({ timeout: 15_000 });
     await page.click('#settingsSaveButton');
     await expect(page.locator('#settingsSaveButton')).toBeEnabled({ timeout: 15_000 });
 
-    await page.click('[data-testid="tab-support"]');
-    await expect(page.locator('[data-testid="support-tab"]')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('#supportForm')).toBeVisible({ timeout: 10_000 });
     await page.fill('#supportSubject', `Smoke support ${Date.now()}`);
     await page.fill('#supportMessage', 'Smoke support request body with enough characters.');
@@ -388,8 +388,10 @@ test.describe('Critical Authenticated Smoke', () => {
   });
 
   test('unsaved add-vehicle draft prompts only when leaving dirty form', async ({ page }) => {
-    await page.click('[data-testid="tab-add-vehicle"]');
-    await expect(page.locator('[data-testid="add-vehicle-tab"]')).toBeVisible({ timeout: 10_000 });
+    await page.click('[data-testid="tab-vehicles"]');
+    await expect(page.locator('[data-testid="vehicles-tab"]')).toBeVisible({ timeout: 10_000 });
+    await page.click('[data-testid="btn-toggle-add-vehicle"]');
+    await expect(page.locator('[data-testid="add-vehicle-form"]')).toBeVisible({ timeout: 10_000 });
 
     await page.fill('[data-testid="input-vehicle-name"]', `Unsaved draft ${Date.now()}`);
 
@@ -399,19 +401,21 @@ test.describe('Critical Authenticated Smoke', () => {
       await dialog.dismiss();
     });
 
-    await page.click('[data-testid="tab-vehicles"]');
-    await expect(page.locator('[data-testid="add-vehicle-tab"]')).toBeVisible({ timeout: 10_000 });
+    await page.click('[data-testid="tab-home"]');
+    await expect(page.locator('[data-testid="vehicles-tab"]')).toBeVisible({ timeout: 10_000 });
     expect(dismissedDialogMessage).not.toEqual('');
 
     page.once('dialog', async (dialog) => {
       await dialog.accept();
     });
 
+    await page.click('[data-testid="tab-home"]');
+    await expect(page.locator('[data-testid="home-tab"]')).toBeVisible({ timeout: 10_000 });
+
     await page.click('[data-testid="tab-vehicles"]');
     await expect(page.locator('[data-testid="vehicles-tab"]')).toBeVisible({ timeout: 10_000 });
-
-    await page.click('[data-testid="tab-add-vehicle"]');
-    await expect(page.locator('[data-testid="add-vehicle-tab"]')).toBeVisible({ timeout: 10_000 });
+    await page.click('[data-testid="btn-toggle-add-vehicle"]');
+    await expect(page.locator('[data-testid="add-vehicle-form"]')).toBeVisible({ timeout: 10_000 });
     await page.fill('[data-testid="input-vehicle-name"]', '');
     await page.fill('[data-testid="input-vehicle-plate"]', '');
     await page.fill('[data-testid="input-vehicle-stk-date"]', '');
@@ -423,8 +427,8 @@ test.describe('Critical Authenticated Smoke', () => {
     };
 
     page.on('dialog', dialogListener);
-    await page.click('[data-testid="tab-vehicles"]');
-    await expect(page.locator('[data-testid="vehicles-tab"]')).toBeVisible({ timeout: 10_000 });
+    await page.click('[data-testid="tab-home"]');
+    await expect(page.locator('[data-testid="home-tab"]')).toBeVisible({ timeout: 10_000 });
     await page.waitForTimeout(250);
     page.off('dialog', dialogListener);
     expect(unexpectedDialog).toBeFalsy();

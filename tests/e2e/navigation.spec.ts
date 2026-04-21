@@ -16,10 +16,12 @@ test.describe('Navigation', () => {
     await expect(page.locator('[data-testid="tab-vehicles"]')).toHaveClass(/active/);
   });
 
-  test('should navigate to add vehicle tab', async ({ page }) => {
-    await page.click('[data-testid="tab-add-vehicle"]');
-    await expect(page.locator('[data-testid="add-vehicle-tab"]')).toBeVisible();
-    await expect(page.locator('[data-testid="tab-add-vehicle"]')).toHaveClass(/active/);
+  test('should open add vehicle form inside vehicles tab', async ({ page }) => {
+    await page.click('[data-testid="tab-vehicles"]');
+    await expect(page.locator('[data-testid="vehicles-tab"]')).toBeVisible();
+    await page.click('[data-testid="btn-toggle-add-vehicle"]');
+    await expect(page.locator('[data-testid="add-vehicle-panel"]')).toBeVisible();
+    await expect(page.locator('[data-testid="add-vehicle-form"]')).toBeVisible();
   });
 
   test('should navigate to reminders tab', async ({ page }) => {
@@ -34,10 +36,15 @@ test.describe('Navigation', () => {
     await expect(page.locator('[data-testid="tab-reservations"]')).toHaveClass(/active/);
   });
 
-  test('should navigate to profile tab', async ({ page }) => {
-    await page.click('[data-testid="tab-profile"]');
-    await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible();
-    await expect(page.locator('[data-testid="tab-profile"]')).toHaveClass(/active/);
+  test('should navigate to documents and account tabs', async ({ page }) => {
+    await page.click('[data-testid="tab-documents"]');
+    await expect(page.locator('[data-testid="documents-tab"]')).toBeVisible();
+    await expect(page.locator('[data-testid="tab-documents"]')).toHaveClass(/active/);
+
+    await page.click('[data-testid="tab-account"]');
+    await expect(page.locator('[data-testid="account-tab"]')).toBeVisible();
+    await expect(page.locator('[data-testid="tab-account"]')).toHaveClass(/active/);
+    await expect(page.locator('[data-testid="profile-container"]')).toBeVisible();
   });
 });
 

@@ -14,6 +14,7 @@ from . import (
     reminder_settings,
     ai,
     services,
+    vehicle_lifecycle,
     service_workspace,
     bot,
     vin_lookup,
@@ -36,6 +37,7 @@ api_router.include_router(reservations.router)
 api_router.include_router(reminders.router)
 api_router.include_router(reminder_settings.router)  # Nastavení připomínek
 api_router.include_router(services.router)
+api_router.include_router(vehicle_lifecycle.router)
 api_router.include_router(service_workspace.router)  # Servisní centrum (klienti + doklady)
 api_router.include_router(ai.router)
 api_router.include_router(bot.router)  # AI Asistent Bot

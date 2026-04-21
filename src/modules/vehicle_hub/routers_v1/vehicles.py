@@ -28,6 +28,12 @@ from typing import Any, Dict, List, Optional
 
 try:
     from PIL import Image, ImageOps, UnidentifiedImageError
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+    except Exception:
+        pass
     PILLOW_AVAILABLE = True
 except Exception:
     Image = None
@@ -3318,7 +3324,14 @@ def delete_vehicle(
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Odebere vozidlo z profilu aktuálního vlastníka, ale zachová jeho historii v databázi."""
+    """Legacy endpoint: přímé odebrání je blokované, používá se řízený lifecycle flow."""
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Vozidlo nelze odstranit přímým smazáním. Použijte /api/v1/vehicles/{vehicle_id}/remove/init "
+            "a /api/v1/vehicles/{vehicle_id}/remove/confirm s důvodem odstranění."
+        ),
+    )
     _ensure_vehicle_photo_column(db)
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     

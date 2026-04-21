@@ -42,8 +42,13 @@ from src.core.config import (
 )
 from src.modules.vehicle_hub.database import get_db, DB_URL, engine
 from src.modules.vehicle_hub.audit_log import write_global_audit_log
+from src.modules.vehicle_hub.customer_ordinal import (
+    assign_admin_ordinal_if_missing,
+    deletion_mark_display,
+)
 from src.modules.vehicle_hub.models import (
     Customer,
+    CustomerDeletionLabel,
     Vehicle,
     VehicleOwnership,
     ServiceRecord,
@@ -67,6 +72,10 @@ from src.modules.vehicle_hub.account_state import (
     customer_is_disabled,
     customer_session_version,
     increment_customer_session_version,
+)
+from src.server.customer_soft_delete import (
+    soft_delete_customer,
+    sync_vehicle_user_email_display_for_customer,
 )
 from src.modules.vehicle_hub.ownership import (
     ensure_vehicle_owner_assignment,
@@ -165,31 +174,52 @@ def _customer_vehicle_count_join_sql(*, customer_alias: str = "c", join_alias: s
     """
 
 
-def _vehicle_ids_owned_by_customer(db: Session, customer_id: int) -> List[int]:
-    rows = (
-        db.query(VehicleOwnership.vehicle_id)
-        .filter(
-            VehicleOwnership.customer_id == customer_id,
-            VehicleOwnership.is_active.is_(True),
-        )
-        .all()
-    )
-    return [int(vehicle_id) for (vehicle_id,) in rows if vehicle_id is not None]
-
-
-def _sync_vehicle_user_email_display_for_customer(db: Session, customer_id: int, display_email: str) -> int:
-    """
-    Deprecated compatibility sync for UI fields.
-    Ownership logic must use vehicle_ownerships, not Vehicle.user_email.
-    """
-    vehicle_ids = _vehicle_ids_owned_by_customer(db, customer_id)
-    if not vehicle_ids:
-        return 0
-    return (
-        db.query(Vehicle)
-        .filter(Vehicle.id.in_(vehicle_ids))
-        .update({Vehicle.user_email: display_email}, synchronize_session=False)
-    )
+def _delete_vehicle_dependencies_for_admin(db: Session, vehicle_id: int) -> Dict[str, int]:
+    """Hard-delete data that blocks developer-admin vehicle deletion."""
+    statements = [
+        ("vehicles_primary_photo", "UPDATE vehicles SET primary_photo_asset_id = NULL WHERE id = :vehicle_id"),
+        ("service_quote_access_logs", "DELETE FROM service_quote_access_logs WHERE quote_id IN (SELECT id FROM service_quotes WHERE vehicle_id = :vehicle_id)"),
+        ("service_quote_access_tokens", "DELETE FROM service_quote_access_tokens WHERE quote_id IN (SELECT id FROM service_quotes WHERE vehicle_id = :vehicle_id)"),
+        ("service_quote_audit_logs", "DELETE FROM service_quote_audit_logs WHERE vehicle_id = :vehicle_id OR quote_id IN (SELECT id FROM service_quotes WHERE vehicle_id = :vehicle_id)"),
+        ("service_quotes", "DELETE FROM service_quotes WHERE vehicle_id = :vehicle_id"),
+        ("service_invoice_lines", "DELETE FROM service_invoice_lines WHERE invoice_id IN (SELECT id FROM service_invoices WHERE vehicle_id = :vehicle_id)"),
+        ("service_invoices", "DELETE FROM service_invoices WHERE vehicle_id = :vehicle_id"),
+        ("service_work_orders_unlink_docs", "UPDATE service_work_orders SET source_document_id = NULL, source_intake_id = NULL WHERE vehicle_id = :vehicle_id"),
+        ("service_record_audit_logs", "DELETE FROM service_record_audit_logs WHERE vehicle_id = :vehicle_id OR service_record_id IN (SELECT id FROM service_records WHERE vehicle_id = :vehicle_id)"),
+        ("service_document_ingestions", "DELETE FROM service_document_ingestions WHERE vehicle_id = :vehicle_id OR auto_created_service_record_id IN (SELECT id FROM service_records WHERE vehicle_id = :vehicle_id)"),
+        ("service_records", "DELETE FROM service_records WHERE vehicle_id = :vehicle_id"),
+        ("service_work_order_audit_logs", "DELETE FROM service_work_order_audit_logs WHERE vehicle_id = :vehicle_id OR work_order_id IN (SELECT id FROM service_work_orders WHERE vehicle_id = :vehicle_id)"),
+        ("service_work_orders", "DELETE FROM service_work_orders WHERE vehicle_id = :vehicle_id"),
+        ("service_labor_sessions", "DELETE FROM service_labor_sessions WHERE vehicle_id = :vehicle_id OR service_case_id IN (SELECT id FROM service_intakes WHERE vehicle_id = :vehicle_id)"),
+        ("service_intakes", "DELETE FROM service_intakes WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_qr_access_logs", "DELETE FROM vehicle_qr_access_logs WHERE vehicle_id = :vehicle_id OR qr_token_id IN (SELECT id FROM vehicle_qr_tokens WHERE vehicle_id = :vehicle_id)"),
+        ("vehicle_qr_tokens", "DELETE FROM vehicle_qr_tokens WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_removal_events", "DELETE FROM vehicle_removal_events WHERE vehicle_id = :vehicle_id OR transfer_token_id IN (SELECT id FROM vehicle_transfer_tokens WHERE vehicle_id = :vehicle_id)"),
+        ("vehicle_ownerships", "DELETE FROM vehicle_ownerships WHERE vehicle_id = :vehicle_id OR transfer_token_id IN (SELECT id FROM vehicle_transfer_tokens WHERE vehicle_id = :vehicle_id)"),
+        ("vehicle_transfer_tokens", "DELETE FROM vehicle_transfer_tokens WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_service_links", "DELETE FROM vehicle_service_links WHERE vehicle_id = :vehicle_id"),
+        ("service_vehicle_access", "DELETE FROM service_vehicle_access WHERE vehicle_id = :vehicle_id"),
+        ("service_access_requests", "DELETE FROM service_access_requests WHERE vehicle_id = :vehicle_id"),
+        ("service_vehicle_lookup_audit", "DELETE FROM service_vehicle_lookup_audit WHERE matched_vehicle_id = :vehicle_id"),
+        ("customer_commands", "DELETE FROM customer_commands WHERE vehicle_id = :vehicle_id"),
+        ("reminders", "DELETE FROM reminders WHERE vehicle_id = :vehicle_id"),
+        ("reservations", "DELETE FROM reservations WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_inspection_histories", "DELETE FROM vehicle_inspection_histories WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_mileage", "DELETE FROM vehicle_mileage WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_orv_scans", "DELETE FROM vehicle_orv_scans WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_photos", "DELETE FROM vehicle_photos WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_photo_assets", "DELETE FROM vehicle_photo_assets WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_report_documents", "DELETE FROM vehicle_report_documents WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_stk_import_audit_logs", "DELETE FROM vehicle_stk_import_audit_logs WHERE vehicle_id = :vehicle_id"),
+        ("vehicle_tachometer_history_entries", "DELETE FROM vehicle_tachometer_history_entries WHERE vehicle_id = :vehicle_id"),
+        ("audit_log", "DELETE FROM audit_log WHERE vehicle_id = :vehicle_id"),
+    ]
+    deleted_counts: Dict[str, int] = {}
+    for label, sql in statements:
+        result = db.execute(text(sql), {"vehicle_id": vehicle_id})
+        if result.rowcount and result.rowcount > 0:
+            deleted_counts[label] = int(result.rowcount)
+    return deleted_counts
 
 
 def _reassign_vehicle_primary_owner(
@@ -471,9 +501,27 @@ def _directory_usage(path: Path) -> Dict[str, Any]:
     }
 
 
+def _backup_entry_sort_ts(created_at: Optional[str], backup_dir: Path) -> float:
+    """Čas pro řazení snapshotů — manifest created_at, jinak mtime složky."""
+    if created_at:
+        try:
+            raw = str(created_at).strip()
+            if raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            return datetime.fromisoformat(raw).timestamp()
+        except Exception:
+            pass
+    try:
+        return backup_dir.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _list_backup_entries() -> List[Dict[str, Any]]:
-    entries: List[Dict[str, Any]] = []
-    for backup_dir in sorted(CONTROL_CENTER_BACKUP_DIR.glob("*"), reverse=True):
+    rows: List[tuple[float, str, Dict[str, Any]]] = []
+    if not CONTROL_CENTER_BACKUP_DIR.exists():
+        return []
+    for backup_dir in CONTROL_CENTER_BACKUP_DIR.iterdir():
         if not backup_dir.is_dir():
             continue
         manifest_path = backup_dir / "manifest.json"
@@ -485,19 +533,20 @@ def _list_backup_entries() -> List[Dict[str, Any]]:
         else:
             manifest = {}
         db_file = backup_dir / "vehicles.db"
-        entries.append(
-            {
-                "backup_id": backup_dir.name,
-                "created_at": manifest.get("created_at"),
-                "created_by": manifest.get("created_by"),
-                "db_exists": db_file.exists(),
-                "db_size_bytes": db_file.stat().st_size if db_file.exists() else 0,
-                "db_size_human": _format_bytes(db_file.stat().st_size if db_file.exists() else 0),
-                "include_data_dir": bool(manifest.get("include_data_dir", False)),
-                "manifest": manifest,
-            }
-        )
-    return entries
+        entry = {
+            "backup_id": backup_dir.name,
+            "created_at": manifest.get("created_at"),
+            "created_by": manifest.get("created_by"),
+            "db_exists": db_file.exists(),
+            "db_size_bytes": db_file.stat().st_size if db_file.exists() else 0,
+            "db_size_human": _format_bytes(db_file.stat().st_size if db_file.exists() else 0),
+            "include_data_dir": bool(manifest.get("include_data_dir", False)),
+            "manifest": manifest,
+        }
+        ts = _backup_entry_sort_ts(entry.get("created_at"), backup_dir)
+        rows.append((ts, backup_dir.name, entry))
+    rows.sort(key=lambda r: (r[0], r[1]), reverse=True)
+    return [r[2] for r in rows]
 
 
 def _create_sqlite_backup(source_db: Path, target_db: Path) -> None:
@@ -1084,11 +1133,6 @@ def generate_temporary_password(length: int = 14) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(safe_length))
 
 
-def build_deleted_alias_email(user_id: int) -> str:
-    stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    return f"deleted+{user_id}.{stamp}@deleted.toozhub.local"
-
-
 def resolve_job_name(job_name_raw: str) -> str:
     normalized = str(job_name_raw or "").strip().lower()
     if not normalized:
@@ -1377,8 +1421,17 @@ class StatsOverview(BaseModel):
     total_reminders: int = 0
 
 
+class DeletedUserArchiveRow(BaseModel):
+    customer_id: int
+    deletion_mark: str
+    email_before: str
+    deleted_at: Optional[str] = None
+    current_email: str
+
+
 class UserSummary(BaseModel):
     id: int
+    admin_ordinal: Optional[int] = None
     email: str
     name: Optional[str] = None
     role: str
@@ -1659,9 +1712,15 @@ def get_overview(
 ):
     """Vrátí přehled statistik celé databáze - pouze pro developer_admin"""
     try:
-        total_users = safe_count_query(db, "SELECT COUNT(*) FROM customers")
+        # Stejná logika jako GET /admin-api/users: bez soft-smazaných účtů (is_deleted).
+        total_users = safe_count_query(
+            db, "SELECT COUNT(*) FROM customers WHERE COALESCE(is_deleted, 0) = 0"
+        )
         total_vehicles = safe_count_query(db, "SELECT COUNT(*) FROM vehicles")
-        total_services = safe_count_query(db, "SELECT COUNT(*) FROM customers WHERE role = 'service'")
+        total_services = safe_count_query(
+            db,
+            "SELECT COUNT(*) FROM customers WHERE role = 'service' AND COALESCE(is_deleted, 0) = 0",
+        )
         total_records = safe_count_query(db, "SELECT COUNT(*) FROM service_records")
         total_reservations = safe_count_query(db, "SELECT COUNT(*) FROM reservations")
         total_reminders = safe_count_query(db, "SELECT COUNT(*) FROM reminders")
@@ -1808,95 +1867,94 @@ def get_all_users(
 
         if security_logs_available:
             result = db.execute(text(f"""
+                WITH page_customers AS (
+                    SELECT
+                        c.id as id,
+                        c.email as email,
+                        c.name as name,
+                        c.role as role,
+                        c.tenant_id as tenant_id,
+                        c.city as city,
+                        c.phone as phone,
+                        c.created_at as created_at,
+                        COALESCE(c.is_disabled, 0) as is_disabled,
+                        COALESCE(c.is_deleted, 0) as is_deleted,
+                        COALESCE(c.session_version, 0) as session_version,
+                        c.admin_ordinal as admin_ordinal,
+                        COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count,
+                        {license_plan_sql} as license_plan,
+                        {license_status_sql} as license_status,
+                        {has_paid_sql} as has_paid,
+                        {last_paid_at_sql} as last_paid_at
+                    FROM customers c
+                    {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
+                    WHERE COALESCE(c.is_deleted, 0) = 0
+                    GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, c.admin_ordinal, vehicle_counts.vehicles_count
+                    ORDER BY c.created_at DESC
+                    LIMIT :limit OFFSET :offset
+                ),
+                latest_security AS (
+                    SELECT *
+                    FROM (
+                        SELECT
+                            lower(sal.user_email) as user_email_norm,
+                            sal.ip_address as last_ip_address,
+                            sal.city as last_city,
+                            sal.region as last_region,
+                            sal.country as last_country,
+                            sal.created_at as last_seen_at,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY lower(sal.user_email)
+                                ORDER BY sal.created_at DESC, sal.id DESC
+                            ) as rn
+                        FROM security_access_logs sal
+                        WHERE sal.event_type IN ('login_success', 'api_activity', 'support_contact_submitted')
+                          AND lower(sal.user_email) IN (SELECT lower(email) FROM page_customers)
+                    )
+                    WHERE rn = 1
+                )
                 SELECT
-                    c.id as id,
-                    c.email as email,
-                    c.name as name,
-                    c.role as role,
-                    c.tenant_id as tenant_id,
-                    c.city as city,
-                    c.phone as phone,
-                    c.created_at as created_at,
-                    COALESCE(c.is_disabled, 0) as is_disabled,
-                    COALESCE(c.is_deleted, 0) as is_deleted,
-                    COALESCE(c.session_version, 0) as session_version,
-                    COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count,
-                    (
-                        SELECT sal.ip_address
-                        FROM security_access_logs sal
-                        WHERE lower(sal.user_email) = lower(c.email)
-                          AND sal.event_type IN ('login_success', 'api_activity', 'support_contact_submitted')
-                        ORDER BY sal.created_at DESC
-                        LIMIT 1
-                    ) as last_ip_address,
-                    (
-                        SELECT sal.city
-                        FROM security_access_logs sal
-                        WHERE lower(sal.user_email) = lower(c.email)
-                          AND sal.event_type IN ('login_success', 'api_activity', 'support_contact_submitted')
-                        ORDER BY sal.created_at DESC
-                        LIMIT 1
-                    ) as last_city,
-                    (
-                        SELECT sal.region
-                        FROM security_access_logs sal
-                        WHERE lower(sal.user_email) = lower(c.email)
-                          AND sal.event_type IN ('login_success', 'api_activity', 'support_contact_submitted')
-                        ORDER BY sal.created_at DESC
-                        LIMIT 1
-                    ) as last_region,
-                    (
-                        SELECT sal.country
-                        FROM security_access_logs sal
-                        WHERE lower(sal.user_email) = lower(c.email)
-                          AND sal.event_type IN ('login_success', 'api_activity', 'support_contact_submitted')
-                        ORDER BY sal.created_at DESC
-                        LIMIT 1
-                    ) as last_country,
-                    (
-                        SELECT sal.created_at
-                        FROM security_access_logs sal
-                        WHERE lower(sal.user_email) = lower(c.email)
-                          AND sal.event_type IN ('login_success', 'api_activity', 'support_contact_submitted')
-                        ORDER BY sal.created_at DESC
-                        LIMIT 1
-                    ) as last_seen_at,
-                    {license_plan_sql} as license_plan,
-                    {license_status_sql} as license_status,
-                    {has_paid_sql} as has_paid,
-                    {last_paid_at_sql} as last_paid_at
-                FROM customers c
-                {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
-                WHERE COALESCE(c.is_deleted, 0) = 0
-                GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, vehicle_counts.vehicles_count
-                ORDER BY c.created_at DESC
-                LIMIT :limit OFFSET :offset
+                    pc.*,
+                    ls.last_ip_address,
+                    ls.last_city,
+                    ls.last_region,
+                    ls.last_country,
+                    ls.last_seen_at
+                FROM page_customers pc
+                LEFT JOIN latest_security ls ON ls.user_email_norm = lower(pc.email)
+                ORDER BY pc.created_at DESC
             """), {"limit": limit, "offset": offset})
         else:
             result = db.execute(text(f"""
-                SELECT
-                    c.id as id,
-                    c.email as email,
-                    c.name as name,
-                    c.role as role,
-                    c.tenant_id as tenant_id,
-                    c.city as city,
-                    c.phone as phone,
-                    c.created_at as created_at,
-                    COALESCE(c.is_disabled, 0) as is_disabled,
-                    COALESCE(c.is_deleted, 0) as is_deleted,
-                    COALESCE(c.session_version, 0) as session_version,
-                    COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count,
-                    {license_plan_sql} as license_plan,
-                    {license_status_sql} as license_status,
-                    {has_paid_sql} as has_paid,
-                    {last_paid_at_sql} as last_paid_at
-                FROM customers c
-                {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
-                WHERE COALESCE(c.is_deleted, 0) = 0
-                GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, vehicle_counts.vehicles_count
-                ORDER BY c.created_at DESC
-                LIMIT :limit OFFSET :offset
+                WITH page_customers AS (
+                    SELECT
+                        c.id as id,
+                        c.email as email,
+                        c.name as name,
+                        c.role as role,
+                        c.tenant_id as tenant_id,
+                        c.city as city,
+                        c.phone as phone,
+                        c.created_at as created_at,
+                        COALESCE(c.is_disabled, 0) as is_disabled,
+                        COALESCE(c.is_deleted, 0) as is_deleted,
+                        COALESCE(c.session_version, 0) as session_version,
+                        c.admin_ordinal as admin_ordinal,
+                        COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count,
+                        {license_plan_sql} as license_plan,
+                        {license_status_sql} as license_status,
+                        {has_paid_sql} as has_paid,
+                        {last_paid_at_sql} as last_paid_at
+                    FROM customers c
+                    {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
+                    WHERE COALESCE(c.is_deleted, 0) = 0
+                    GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, c.admin_ordinal, vehicle_counts.vehicles_count
+                    ORDER BY c.created_at DESC
+                    LIMIT :limit OFFSET :offset
+                )
+                SELECT *
+                FROM page_customers
+                ORDER BY created_at DESC
             """), {"limit": limit, "offset": offset})
 
         rows = result.fetchall()
@@ -1941,6 +1999,7 @@ def get_all_users(
 
             users.append(UserSummary(
                 id=data.get("id"),
+                admin_ordinal=data.get("admin_ordinal"),
                 email=data.get("email"),
                 name=data.get("name"),
                 role=data.get("role"),
@@ -1967,6 +2026,47 @@ def get_all_users(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chyba při načítání uživatelů: {str(e)}")
+
+
+def _fetch_deleted_user_archive_rows(db: Session) -> List[DeletedUserArchiveRow]:
+    rows = (
+        db.query(Customer, CustomerDeletionLabel)
+        .join(CustomerDeletionLabel, CustomerDeletionLabel.customer_id == Customer.id)
+        .filter(Customer.is_deleted.is_(True))
+        .order_by(CustomerDeletionLabel.created_at.desc(), CustomerDeletionLabel.id.desc())
+        .all()
+    )
+    out: List[DeletedUserArchiveRow] = []
+    for cust, label in rows:
+        out.append(
+            DeletedUserArchiveRow(
+                customer_id=int(cust.id),
+                deletion_mark=deletion_mark_display(label.hash_depth, label.ordinal_at_delete),
+                email_before=label.email_before or "",
+                deleted_at=to_iso_datetime(cust.deleted_at),
+                current_email=cust.email or "",
+            )
+        )
+    return out
+
+
+@router.get("/user-deletion-archive", response_model=List[DeletedUserArchiveRow])
+def get_deleted_users_archive(
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Smazané účty s přehledovým označením (#N, ##N) a původním e-mailem.
+
+    Pozn.: Cesta záměrně není pod /users/… — některé reverse proxy vrací 405 Method Not Allowed
+    na vnořené cesty pod /admin-api/users/.
+    """
+    try:
+        return _fetch_deleted_user_archive_rows(db)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Chyba při načítání archivu smazaných: {str(e)}")
 
 
 @router.post("/users")
@@ -2023,6 +2123,8 @@ def create_user(
             created_at=datetime.utcnow()
         )
         db.add(new_user)
+        db.flush()
+        assign_admin_ordinal_if_missing(db, new_user)
         db.commit()
         db.refresh(new_user)
 
@@ -2080,7 +2182,7 @@ def update_user(
             if existing:
                 raise HTTPException(status_code=400, detail="Uživatel s tímto emailem již existuje")
             user.email = new_email
-            _sync_vehicle_user_email_display_for_customer(db, user.id, new_email)
+            sync_vehicle_user_email_display_for_customer(db, user.id, new_email)
         
         if user_data.name is not None:
             user.name = user_data.name
@@ -2137,7 +2239,6 @@ def delete_user(
 ):
     """Bezpečné smazání uživatele (soft-delete + invalidace session)."""
     try:
-        ensure_customer_account_state_schema(db)
         actor = get_customer_by_email(db, email)
         user = db.query(Customer).filter(Customer.id == user_id).first()
         if not user:
@@ -2146,23 +2247,12 @@ def delete_user(
         if actor and actor.id == user.id:
             raise HTTPException(status_code=400, detail="Nelze smazat aktuálně přihlášený admin účet.")
 
-        if customer_is_deleted(user):
-            return {"message": f"Účet {user.email} je již smazaný.", "soft_deleted": True}
+        result = soft_delete_customer(db, user)
+        if result.get("already"):
+            return {"message": f"Účet {result.get('email')} je již smazaný.", "soft_deleted": True}
 
-        previous_email = (user.email or "").strip().lower()
-        deleted_alias = build_deleted_alias_email(user.id)
-
-        # Deprecated compatibility sync: display alias on Vehicle.user_email.
-        # Ownership logic uses vehicle_ownerships and remains intact.
-        _sync_vehicle_user_email_display_for_customer(db, user.id, deleted_alias)
-
-        user.email = deleted_alias
-        user.name = user.name or f"Deleted user #{user.id}"
-        user.is_deleted = True
-        user.is_disabled = True
-        user.deleted_at = datetime.utcnow()
-        user.disabled_at = datetime.utcnow()
-        increment_customer_session_version(user)
+        previous_email = result["previous_email"]
+        deleted_alias = result["deleted_alias"]
         db.commit()
 
         log_developer_action(
@@ -2184,7 +2274,7 @@ def delete_user(
             "message": f"Uživatel {previous_email} byl bezpečně smazán",
             "soft_deleted": True,
             "deleted_alias_email": deleted_alias,
-            "session_version": customer_session_version(user),
+            "session_version": result.get("session_version"),
         }
         
     except HTTPException:
@@ -2731,9 +2821,21 @@ def get_user_detail(
         next_renewal_date = to_iso_datetime(subscription_row.next_charge_at if subscription_row else None)
         purchase_date = first_paid_at or activation_date
 
+        deletion_archive_mark = None
+        label_row = (
+            db.query(CustomerDeletionLabel)
+            .filter(CustomerDeletionLabel.customer_id == user_id)
+            .order_by(CustomerDeletionLabel.id.desc())
+            .first()
+        )
+        if label_row:
+            deletion_archive_mark = deletion_mark_display(label_row.hash_depth, label_row.ordinal_at_delete)
+
         return {
             "user": {
                 "id": user.id,
+                "admin_ordinal": getattr(user, "admin_ordinal", None),
+                "deletion_archive_mark": deletion_archive_mark,
                 "email": user.email,
                 "name": user.name,
                 "role": user.role,
@@ -2926,6 +3028,8 @@ def create_service(
             created_at=datetime.utcnow()
         )
         db.add(new_service)
+        db.flush()
+        assign_admin_ordinal_if_missing(db, new_service)
         db.commit()
         db.refresh(new_service)
 
@@ -2974,7 +3078,7 @@ def update_service(
             if existing:
                 raise HTTPException(status_code=400, detail="Servis s tímto emailem již existuje")
             service.email = new_email
-            _sync_vehicle_user_email_display_for_customer(db, service.id, new_email)
+            sync_vehicle_user_email_display_for_customer(db, service.id, new_email)
         
         if service_data.name is not None:
             service.name = service_data.name
@@ -3173,6 +3277,7 @@ def approve_service_registration_request(
         )
         db.add(new_service)
         db.flush()
+        assign_admin_ordinal_if_missing(db, new_service)
 
         ensure_default_license_for_tenant(db, dedicated_tenant.id)
 
@@ -3466,6 +3571,8 @@ def delete_vehicle(
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
         primary_owner = get_primary_vehicle_owner(db, vehicle)
+        tenant_id = vehicle.tenant_id
+        dependency_counts = _delete_vehicle_dependencies_for_admin(db, vehicle_id)
         db.delete(vehicle)
         db.commit()
         log_developer_action(
@@ -3476,9 +3583,10 @@ def delete_vehicle(
             target_resource=f"vehicle:{vehicle_id}",
             parameters={
                 "vehicle_id": vehicle_id,
-                "tenant_id": vehicle.tenant_id,
+                "tenant_id": tenant_id,
                 "owner_customer_id": primary_owner.id if primary_owner else None,
                 "owner_email": primary_owner.email if primary_owner else None,
+                "deleted_dependencies": dependency_counts,
             },
             result="success",
             status_code=200,
@@ -3781,6 +3889,20 @@ def create_record(
         db.add(new_record)
         db.commit()
         db.refresh(new_record)
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="record.create",
+            target_resource=f"record:{new_record.id}",
+            parameters={
+                "record_id": new_record.id,
+                "tenant_id": new_record.tenant_id,
+                "vehicle_id": new_record.vehicle_id,
+                "user_id": new_record.user_id,
+            },
+            status_code=201,
+        )
         
         return {"id": new_record.id, "tenant_id": new_record.tenant_id, "message": "Servisní záznam byl vytvořen"}
         
@@ -3845,6 +3967,20 @@ def update_record(
             record.note = record_data.note
         
         db.commit()
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="record.update",
+            target_resource=f"record:{record.id}",
+            parameters={
+                "record_id": record.id,
+                "tenant_id": record.tenant_id,
+                "vehicle_id": record.vehicle_id,
+                "user_id": record.user_id,
+            },
+            status_code=200,
+        )
         return {"message": "Záznam byl upraven"}
         
     except HTTPException:
@@ -3868,9 +4004,24 @@ def delete_record(
         record = db.query(ServiceRecord).filter(ServiceRecord.id == record_id).first()
         if not record:
             raise HTTPException(status_code=404, detail="Záznam nenalezen")
+        audit_payload = {
+            "record_id": record.id,
+            "tenant_id": record.tenant_id,
+            "vehicle_id": record.vehicle_id,
+            "user_id": record.user_id,
+        }
         
         db.delete(record)
         db.commit()
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="record.delete",
+            target_resource=f"record:{record_id}",
+            parameters=audit_payload,
+            status_code=200,
+        )
         
         return {"message": "Záznam byl smazán"}
         
@@ -3919,6 +4070,21 @@ def update_reminder_admin(
             apply_reminder_completion_update(reminder, reminder_data.is_completed)
 
         db.commit()
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="reminder.update",
+            target_resource=f"reminder:{reminder.id}",
+            parameters={
+                "reminder_id": reminder.id,
+                "tenant_id": reminder.tenant_id,
+                "customer_id": reminder.customer_id,
+                "vehicle_id": reminder.vehicle_id,
+                "is_completed": reminder.is_completed,
+            },
+            status_code=200,
+        )
         return {"message": "Připomínka byla upravena adminem"}
     except HTTPException:
         raise
@@ -3941,9 +4107,24 @@ def delete_reminder_admin(
         reminder = db.query(Reminder).filter(Reminder.id == reminder_id).first()
         if not reminder:
             raise HTTPException(status_code=404, detail="Připomínka nenalezena")
+        audit_payload = {
+            "reminder_id": reminder.id,
+            "tenant_id": reminder.tenant_id,
+            "customer_id": reminder.customer_id,
+            "vehicle_id": reminder.vehicle_id,
+        }
 
         db.delete(reminder)
         db.commit()
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="reminder.delete",
+            target_resource=f"reminder:{reminder_id}",
+            parameters=audit_payload,
+            status_code=200,
+        )
         return {"message": "Připomínka byla smazána adminem"}
     except HTTPException:
         raise
@@ -4001,6 +4182,22 @@ def update_reservation_admin(
             reservation.status = normalized_status
 
         db.commit()
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="reservation.update",
+            target_resource=f"reservation:{reservation.id}",
+            parameters={
+                "reservation_id": reservation.id,
+                "tenant_id": reservation.tenant_id,
+                "service_id": reservation.service_id,
+                "customer_id": reservation.customer_id,
+                "vehicle_id": reservation.vehicle_id,
+                "status": reservation.status,
+            },
+            status_code=200,
+        )
         return {"message": "Rezervace byla upravena adminem"}
     except HTTPException:
         raise
@@ -4023,9 +4220,26 @@ def delete_reservation_admin(
         reservation = db.query(Reservation).filter(Reservation.id == reservation_id).first()
         if not reservation:
             raise HTTPException(status_code=404, detail="Rezervace nenalezena")
+        audit_payload = {
+            "reservation_id": reservation.id,
+            "tenant_id": reservation.tenant_id,
+            "service_id": reservation.service_id,
+            "customer_id": reservation.customer_id,
+            "vehicle_id": reservation.vehicle_id,
+            "status": reservation.status,
+        }
 
         db.delete(reservation)
         db.commit()
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="reservation.delete",
+            target_resource=f"reservation:{reservation_id}",
+            parameters=audit_payload,
+            status_code=200,
+        )
         return {"message": "Rezervace byla smazána adminem"}
     except HTTPException:
         raise
@@ -4034,6 +4248,381 @@ def delete_reservation_admin(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chyba při mazání rezervace: {str(e)}")
+
+
+GLOBAL_ADMIN_ENTITY_TYPES = {
+    "user",
+    "service",
+    "vehicle",
+    "record",
+    "reservation",
+    "reminder",
+    "payment",
+    "audit",
+}
+
+
+def _global_admin_like(query: Optional[str]) -> tuple[str, str]:
+    normalized = (query or "").strip().lower()
+    return normalized, f"%{normalized}%"
+
+
+def _append_global_admin_rows(
+    db: Session,
+    *,
+    rows: List[Dict[str, Any]],
+    sql: str,
+    params: Dict[str, Any],
+    per_type_limit: int,
+) -> None:
+    result = db.execute(text(sql), {**params, "per_type_limit": per_type_limit})
+    for row in result.fetchall():
+        data = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+        rows.append({
+            "type": data.get("type"),
+            "id": data.get("id"),
+            "title": data.get("title") or "-",
+            "subtitle": data.get("subtitle") or "-",
+            "status": data.get("status") or "-",
+            "tenant_id": data.get("tenant_id"),
+            "user_id": data.get("user_id"),
+            "vehicle_id": data.get("vehicle_id"),
+            "timestamp": to_iso_datetime(data.get("timestamp")),
+            "meta": data.get("meta") or "",
+            "action_hint": data.get("action_hint") or "",
+        })
+
+
+@router.get("/global-admin/search")
+def global_admin_search(
+    q: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    limit: int = 120,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Jednotné admin hledání napříč hlavními entitami aplikace."""
+    normalized_q, like = _global_admin_like(q)
+    selected_type = (entity_type or "").strip().lower()
+    if selected_type and selected_type not in GLOBAL_ADMIN_ENTITY_TYPES:
+        raise HTTPException(status_code=400, detail="Neznámý typ entity pro globální dohled")
+
+    per_type_limit = min(max(limit, 1), 250) if selected_type else max(8, min(max(limit, 1), 160) // 8)
+    params = {
+        "like": like,
+        "exact_id": int(normalized_q) if normalized_q.isdigit() else -1,
+    }
+    inspector = inspect(db.bind)
+    tables = set(inspector.get_table_names())
+    rows: List[Dict[str, Any]] = []
+
+    include_all = not selected_type
+
+    if include_all or selected_type == "user":
+        _append_global_admin_rows(
+            db,
+            rows=rows,
+            sql="""
+                SELECT
+                    'user' AS type,
+                    c.id AS id,
+                    COALESCE(c.name, c.email) AS title,
+                    c.email || ' · role=' || COALESCE(c.role, '-') AS subtitle,
+                    CASE
+                        WHEN COALESCE(c.is_deleted, 0) = 1 THEN 'deleted'
+                        WHEN COALESCE(c.is_disabled, 0) = 1 THEN 'disabled'
+                        ELSE 'active'
+                    END AS status,
+                    c.tenant_id AS tenant_id,
+                    c.id AS user_id,
+                    NULL AS vehicle_id,
+                    c.created_at AS timestamp,
+                    'city=' || COALESCE(c.city, '-') || ' · phone=' || COALESCE(c.phone, '-') AS meta,
+                    'open_user_detail' AS action_hint
+                FROM customers c
+                WHERE COALESCE(c.is_deleted, 0) = 0
+                  AND (
+                    :exact_id = c.id
+                    OR lower(COALESCE(c.email, '')) LIKE :like
+                    OR lower(COALESCE(c.name, '')) LIKE :like
+                    OR lower(COALESCE(c.city, '')) LIKE :like
+                    OR lower(COALESCE(c.phone, '')) LIKE :like
+                  )
+                ORDER BY c.created_at DESC
+                LIMIT :per_type_limit
+            """,
+            params=params,
+            per_type_limit=per_type_limit,
+        )
+
+    if include_all or selected_type == "service":
+        _append_global_admin_rows(
+            db,
+            rows=rows,
+            sql="""
+                SELECT
+                    'service' AS type,
+                    c.id AS id,
+                    COALESCE(c.name, c.email) AS title,
+                    c.email || ' · ' || COALESCE(c.city, '-') AS subtitle,
+                    CASE
+                        WHEN COALESCE(c.is_deleted, 0) = 1 THEN 'deleted'
+                        WHEN COALESCE(c.is_disabled, 0) = 1 THEN 'disabled'
+                        ELSE 'active'
+                    END AS status,
+                    c.tenant_id AS tenant_id,
+                    c.id AS user_id,
+                    NULL AS vehicle_id,
+                    c.created_at AS timestamp,
+                    'ico=' || COALESCE(c.ico, '-') || ' · phone=' || COALESCE(c.phone, '-') AS meta,
+                    'edit_service' AS action_hint
+                FROM customers c
+                WHERE COALESCE(c.is_deleted, 0) = 0
+                  AND lower(COALESCE(c.role, '')) = 'service'
+                  AND (
+                    :exact_id = c.id
+                    OR lower(COALESCE(c.email, '')) LIKE :like
+                    OR lower(COALESCE(c.name, '')) LIKE :like
+                    OR lower(COALESCE(c.ico, '')) LIKE :like
+                    OR lower(COALESCE(c.city, '')) LIKE :like
+                    OR lower(COALESCE(c.phone, '')) LIKE :like
+                  )
+                ORDER BY c.created_at DESC
+                LIMIT :per_type_limit
+            """,
+            params=params,
+            per_type_limit=per_type_limit,
+        )
+
+    if include_all or selected_type == "vehicle":
+        _append_global_admin_rows(
+            db,
+            rows=rows,
+            sql=f"""
+                SELECT
+                    'vehicle' AS type,
+                    v.id AS id,
+                    COALESCE(v.nickname, TRIM(COALESCE(v.brand, '') || ' ' || COALESCE(v.model, '')), 'Vozidlo #' || v.id) AS title,
+                    'SPZ=' || COALESCE(v.plate, '-') || ' · VIN=' || COALESCE(v.vin, '-') AS subtitle,
+                    COALESCE(v.status, 'active') AS status,
+                    v.tenant_id AS tenant_id,
+                    owner_customer.id AS user_id,
+                    v.id AS vehicle_id,
+                    v.created_at AS timestamp,
+                    'owner=' || COALESCE(owner_customer.email, v.user_email, '-') || ' · year=' || COALESCE(CAST(v.year AS TEXT), '-') AS meta,
+                    'edit_vehicle' AS action_hint
+                FROM vehicles v
+                {_primary_owner_join_sql(vehicle_alias="v")}
+                WHERE
+                  :exact_id = v.id
+                  OR lower(COALESCE(v.nickname, '')) LIKE :like
+                  OR lower(COALESCE(v.brand, '')) LIKE :like
+                  OR lower(COALESCE(v.model, '')) LIKE :like
+                  OR lower(COALESCE(v.plate, '')) LIKE :like
+                  OR lower(COALESCE(v.vin, '')) LIKE :like
+                  OR lower(COALESCE(v.user_email, '')) LIKE :like
+                  OR lower(COALESCE(owner_customer.email, '')) LIKE :like
+                  OR lower(COALESCE(owner_customer.name, '')) LIKE :like
+                ORDER BY v.created_at DESC
+                LIMIT :per_type_limit
+            """,
+            params=params,
+            per_type_limit=per_type_limit,
+        )
+
+    if include_all or selected_type == "record":
+        _append_global_admin_rows(
+            db,
+            rows=rows,
+            sql="""
+                SELECT
+                    'record' AS type,
+                    sr.id AS id,
+                    COALESCE(sr.description, 'Servisní záznam #' || sr.id) AS title,
+                    COALESCE(v.nickname, TRIM(COALESCE(v.brand, '') || ' ' || COALESCE(v.model, '')), 'Vozidlo #' || sr.vehicle_id) AS subtitle,
+                    COALESCE(sr.record_status, CASE WHEN COALESCE(sr.is_deleted, 0) = 1 THEN 'deleted' ELSE 'active' END) AS status,
+                    sr.tenant_id AS tenant_id,
+                    sr.user_id AS user_id,
+                    sr.vehicle_id AS vehicle_id,
+                    COALESCE(sr.performed_at, sr.updated_at) AS timestamp,
+                    'category=' || COALESCE(sr.category, '-') || ' · price=' || COALESCE(CAST(sr.price AS TEXT), '-') AS meta,
+                    'edit_record' AS action_hint
+                FROM service_records sr
+                LEFT JOIN vehicles v ON v.id = sr.vehicle_id
+                LEFT JOIN customers c ON c.id = sr.user_id
+                WHERE COALESCE(sr.is_deleted, 0) = 0
+                  AND (
+                    :exact_id = sr.id
+                    OR :exact_id = sr.vehicle_id
+                    OR lower(COALESCE(sr.description, '')) LIKE :like
+                    OR lower(COALESCE(sr.note, '')) LIKE :like
+                    OR lower(COALESCE(sr.category, '')) LIKE :like
+                    OR lower(COALESCE(v.nickname, '')) LIKE :like
+                    OR lower(COALESCE(v.plate, '')) LIKE :like
+                    OR lower(COALESCE(c.email, '')) LIKE :like
+                  )
+                ORDER BY COALESCE(sr.performed_at, sr.updated_at) DESC
+                LIMIT :per_type_limit
+            """,
+            params=params,
+            per_type_limit=per_type_limit,
+        )
+
+    if include_all or selected_type == "reservation":
+        _append_global_admin_rows(
+            db,
+            rows=rows,
+            sql="""
+                SELECT
+                    'reservation' AS type,
+                    r.id AS id,
+                    COALESCE(r.service_type, 'Rezervace #' || r.id) AS title,
+                    COALESCE(v.nickname, v.plate, 'Vozidlo #' || r.vehicle_id) AS subtitle,
+                    COALESCE(r.status, '-') AS status,
+                    r.tenant_id AS tenant_id,
+                    r.customer_id AS user_id,
+                    r.vehicle_id AS vehicle_id,
+                    r.start_datetime AS timestamp,
+                    'customer=' || COALESCE(c.email, '-') || ' · service=' || COALESCE(s.email, '-') AS meta,
+                    'open_user_detail' AS action_hint
+                FROM reservations r
+                LEFT JOIN vehicles v ON v.id = r.vehicle_id
+                LEFT JOIN customers c ON c.id = r.customer_id
+                LEFT JOIN customers s ON s.id = r.service_id
+                WHERE
+                    :exact_id = r.id
+                    OR :exact_id = r.vehicle_id
+                    OR lower(COALESCE(r.service_type, '')) LIKE :like
+                    OR lower(COALESCE(r.note, '')) LIKE :like
+                    OR lower(COALESCE(r.status, '')) LIKE :like
+                    OR lower(COALESCE(c.email, '')) LIKE :like
+                    OR lower(COALESCE(s.email, '')) LIKE :like
+                    OR lower(COALESCE(v.plate, '')) LIKE :like
+                ORDER BY r.start_datetime DESC
+                LIMIT :per_type_limit
+            """,
+            params=params,
+            per_type_limit=per_type_limit,
+        )
+
+    if include_all or selected_type == "reminder":
+        _append_global_admin_rows(
+            db,
+            rows=rows,
+            sql="""
+                SELECT
+                    'reminder' AS type,
+                    rem.id AS id,
+                    COALESCE(rem.text, 'Připomínka #' || rem.id) AS title,
+                    COALESCE(v.nickname, v.plate, 'Bez vozidla') AS subtitle,
+                    CASE WHEN COALESCE(rem.is_completed, 0) = 1 THEN 'completed' ELSE 'active' END AS status,
+                    rem.tenant_id AS tenant_id,
+                    rem.customer_id AS user_id,
+                    rem.vehicle_id AS vehicle_id,
+                    COALESCE(rem.notify_at, rem.due_date, rem.created_at) AS timestamp,
+                    'type=' || COALESCE(rem.type, '-') || ' · customer=' || COALESCE(c.email, '-') AS meta,
+                    'open_user_detail' AS action_hint
+                FROM reminders rem
+                LEFT JOIN vehicles v ON v.id = rem.vehicle_id
+                LEFT JOIN customers c ON c.id = rem.customer_id
+                WHERE
+                    :exact_id = rem.id
+                    OR :exact_id = rem.vehicle_id
+                    OR lower(COALESCE(rem.text, '')) LIKE :like
+                    OR lower(COALESCE(rem.type, '')) LIKE :like
+                    OR lower(COALESCE(c.email, '')) LIKE :like
+                    OR lower(COALESCE(v.plate, '')) LIKE :like
+                ORDER BY COALESCE(rem.notify_at, rem.due_date, rem.created_at) DESC
+                LIMIT :per_type_limit
+            """,
+            params=params,
+            per_type_limit=per_type_limit,
+        )
+
+    if (include_all or selected_type == "payment") and "license_payment_transactions" in tables:
+        _append_global_admin_rows(
+            db,
+            rows=rows,
+            sql="""
+                SELECT
+                    'payment' AS type,
+                    tx.id AS id,
+                    COALESCE(tx.trans_id, tx.ref_id, 'Platba #' || tx.id) AS title,
+                    COALESCE(tx.plan, '-') || ' · ' || COALESCE(tx.provider_status, tx.event_type, '-') AS subtitle,
+                    COALESCE(tx.provider_status, tx.event_type, '-') AS status,
+                    tx.tenant_id AS tenant_id,
+                    c.id AS user_id,
+                    NULL AS vehicle_id,
+                    tx.created_at AS timestamp,
+                    'amount=' || COALESCE(CAST(tx.amount_halers AS TEXT), '-') || ' ' || COALESCE(tx.currency, 'CZK') || ' · user=' || COALESCE(c.email, '-') AS meta,
+                    'open_user_detail' AS action_hint
+                FROM license_payment_transactions tx
+                LEFT JOIN customers c ON c.tenant_id = tx.tenant_id
+                WHERE
+                    :exact_id = tx.id
+                    OR :exact_id = tx.tenant_id
+                    OR lower(COALESCE(tx.trans_id, '')) LIKE :like
+                    OR lower(COALESCE(tx.ref_id, '')) LIKE :like
+                    OR lower(COALESCE(tx.plan, '')) LIKE :like
+                    OR lower(COALESCE(tx.provider_status, '')) LIKE :like
+                    OR lower(COALESCE(tx.event_type, '')) LIKE :like
+                    OR lower(COALESCE(c.email, '')) LIKE :like
+                ORDER BY tx.created_at DESC
+                LIMIT :per_type_limit
+            """,
+            params=params,
+            per_type_limit=per_type_limit,
+        )
+
+    if (include_all or selected_type == "audit") and "audit_log" in tables:
+        _append_global_admin_rows(
+            db,
+            rows=rows,
+            sql="""
+                SELECT
+                    'audit' AS type,
+                    a.id AS id,
+                    COALESCE(a.action, 'audit #' || a.id) AS title,
+                    COALESCE(a.entity_type, '-') || CASE WHEN a.entity_id IS NOT NULL THEN ' #' || a.entity_id ELSE '' END AS subtitle,
+                    COALESCE(a.actor_role, '-') AS status,
+                    a.tenant_id AS tenant_id,
+                    a.actor_user_id AS user_id,
+                    a.vehicle_id AS vehicle_id,
+                    a.created_at AS timestamp,
+                    SUBSTR(COALESCE(a.metadata_json, ''), 1, 180) AS meta,
+                    'open_audit' AS action_hint
+                FROM audit_log a
+                WHERE
+                    :exact_id = a.id
+                    OR :exact_id = a.entity_id
+                    OR :exact_id = a.vehicle_id
+                    OR lower(COALESCE(a.entity_type, '')) LIKE :like
+                    OR lower(COALESCE(a.action, '')) LIKE :like
+                    OR lower(COALESCE(a.actor_role, '')) LIKE :like
+                    OR lower(COALESCE(a.metadata_json, '')) LIKE :like
+                ORDER BY a.created_at DESC
+                LIMIT :per_type_limit
+            """,
+            params=params,
+            per_type_limit=per_type_limit,
+        )
+
+    summary = {kind: 0 for kind in sorted(GLOBAL_ADMIN_ENTITY_TYPES)}
+    for item in rows:
+        kind = str(item.get("type") or "")
+        if kind in summary:
+            summary[kind] += 1
+
+    rows.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
+    rows = rows[: min(max(limit, 1), 250)]
+    return {
+        "query": normalized_q,
+        "entity_type": selected_type or "all",
+        "items": rows,
+        "summary": summary,
+        "count": len(rows),
+        "limit": limit,
+    }
 
 
 # ============= SYSTEM TOOLS =============
@@ -4245,7 +4834,22 @@ def get_control_center_health(
         )
 
         webhook_log_file = CONTROL_CENTER_LOG_DIR / "licensing_webhook.log"
+        webhook_log_exists = webhook_log_file.exists()
+        # Soubor se vytvoří až při prvním licenčním webhooku — chybějící log není porucha.
         webhook_recent_count = len(_tail_file_lines(webhook_log_file, 200))
+
+        hardening_hints: List[str] = []
+        hardening_status = "ok"
+        if ENVIRONMENT == "production":
+            if ALLOWED_ORIGINS == ["*"]:
+                hardening_hints.append("CORS: nastavte explicitní ALLOWED_ORIGINS (ne *).")
+                hardening_status = "warning"
+            if not str(os.getenv("ADMIN_NETWORK_ALLOWLIST", "")).strip():
+                hardening_hints.append("Admin: zvažte ADMIN_NETWORK_ALLOWLIST (VPN / pevná IP).")
+                hardening_status = "warning"
+            if os.getenv("ENFORCE_HTTPS", "").strip().lower() not in {"1", "true", "yes", "on"}:
+                hardening_hints.append("HTTPS: zapněte ENFORCE_HTTPS=1 za TLS proxy (X-Forwarded-Proto).")
+                hardening_status = "warning"
 
         data_usage = _directory_usage(DATA_DIR)
         logs_usage = _directory_usage(CONTROL_CENTER_LOG_DIR)
@@ -4282,9 +4886,16 @@ def get_control_center_health(
                     "recent_api_activity_15m": recent_api_activity,
                 },
                 "webhook_monitor": {
-                    "status": "ok" if webhook_log_file.exists() else "warning",
-                    "log_file_exists": webhook_log_file.exists(),
+                    "status": "ok",
+                    "log_file_exists": webhook_log_exists,
                     "recent_events_tail_count": webhook_recent_count,
+                },
+                "security_hardening": {
+                    "status": hardening_status,
+                    "hardening_hints": hardening_hints,
+                    "admin_allowlist_configured": bool(str(os.getenv("ADMIN_NETWORK_ALLOWLIST", "")).strip()),
+                    "enforce_https": os.getenv("ENFORCE_HTTPS", "").strip().lower() in {"1", "true", "yes", "on"},
+                    "cors_restricted": ALLOWED_ORIGINS != ["*"],
                 },
             },
             "storage": {
@@ -5083,6 +5694,37 @@ def get_security_monitor(
             .count()
         )
 
+        source_probes_24h = (
+            db.query(SecurityAccessLog)
+            .filter(
+                SecurityAccessLog.event_type == "source_probe_blocked",
+                SecurityAccessLog.created_at >= since_24h,
+            )
+            .count()
+        )
+
+        # GROUP BY musi pouzit stejny vyraz jako bucket (SQLite nevzdy podporuje alias ve GROUP BY).
+        _probe_bucket_expr = (
+            "COALESCE(NULLIF(TRIM(COALESCE(ip_address, '')), ''), '(bez IP)')"
+        )
+        source_probe_by_ip_rows = db.execute(
+            text(
+                f"""
+                SELECT
+                    {_probe_bucket_expr} AS ip_bucket,
+                    COUNT(*) AS probe_count,
+                    MAX(created_at) AS last_probe_at
+                FROM security_access_logs
+                WHERE event_type = 'source_probe_blocked'
+                  AND created_at >= :since_24h
+                GROUP BY {_probe_bucket_expr}
+                ORDER BY probe_count DESC, last_probe_at DESC
+                LIMIT 50
+                """
+            ),
+            {"since_24h": since_24h},
+        ).fetchall()
+
         suspicious_rows = db.execute(
             text(
                 """
@@ -5101,6 +5743,26 @@ def get_security_monitor(
             {"since_24h": since_24h},
         ).fetchall()
 
+        brute_force_alert_ips = int(
+            db.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM (
+                        SELECT ip_address
+                        FROM security_access_logs
+                        WHERE event_type = 'login_failed'
+                          AND created_at >= :since_24h
+                          AND ip_address IS NOT NULL
+                        GROUP BY ip_address
+                        HAVING COUNT(*) >= 5
+                    ) AS brute_ips
+                    """
+                ),
+                {"since_24h": since_24h},
+            ).scalar()
+            or 0
+        )
+
         blocked_ips = (
             db.query(SecurityBlockedIp)
             .order_by(SecurityBlockedIp.blocked_at.desc())
@@ -5108,19 +5770,59 @@ def get_security_monitor(
             .all()
         )
 
+        blocked_ips_active = sum(1 for item in blocked_ips if item.is_active)
+        control_center_alert_total = brute_force_alert_ips + blocked_ips_active + source_probes_24h
+
+        security_event_types = ("login_failed", "login_rate_limited", "source_probe_blocked")
+        security_events = (
+            db.query(SecurityAccessLog)
+            .filter(
+                SecurityAccessLog.created_at >= since_7d,
+                SecurityAccessLog.event_type.in_(security_event_types),
+            )
+            .order_by(SecurityAccessLog.created_at.desc())
+            .limit(500)
+            .all()
+        )
+
         latest_events = (
             db.query(SecurityAccessLog)
             .filter(SecurityAccessLog.created_at >= since_7d)
             .order_by(SecurityAccessLog.created_at.desc())
-            .limit(120)
+            .limit(400)
             .all()
         )
+
+        def _security_log_row(item: SecurityAccessLog) -> Dict[str, Any]:
+            loc_parts = [part for part in (item.city, item.region, item.country) if part]
+            details_raw = (item.details or "").strip()
+            details_short = details_raw
+            if len(details_short) > 240:
+                details_short = details_short[:237] + "..."
+            return {
+                "id": item.id,
+                "event_type": item.event_type,
+                "user_email": item.user_email,
+                "ip_address": item.ip_address,
+                "endpoint": item.endpoint,
+                "created_at": to_iso_datetime(item.created_at),
+                "country": item.country,
+                "region": item.region,
+                "city": item.city,
+                "location_label": ", ".join(loc_parts) if loc_parts else None,
+                "user_agent": item.user_agent,
+                "details": details_raw or None,
+                "details_preview": details_short or None,
+            }
 
         return {
             "summary": {
                 "failed_logins_24h": failed_24h,
                 "rate_limited_24h": rate_limited_24h,
-                "blocked_ips_active": sum(1 for item in blocked_ips if item.is_active),
+                "source_probes_24h": source_probes_24h,
+                "blocked_ips_active": blocked_ips_active,
+                "brute_force_alert_ips": brute_force_alert_ips,
+                "control_center_alert_total": control_center_alert_total,
             },
             "top_failed_ips": [
                 {"ip_address": row[0], "failed_count": int(row[1] or 0)}
@@ -5139,17 +5841,16 @@ def get_security_monitor(
                 }
                 for item in blocked_ips
             ],
-            "latest_events": [
+            "source_probe_by_ip_24h": [
                 {
-                    "id": item.id,
-                    "event_type": item.event_type,
-                    "user_email": item.user_email,
-                    "ip_address": item.ip_address,
-                    "endpoint": item.endpoint,
-                    "created_at": to_iso_datetime(item.created_at),
+                    "ip_address": row[0],
+                    "probe_count": int(row[1] or 0),
+                    "last_probe_at": to_iso_datetime(row[2]) if row[2] is not None else None,
                 }
-                for item in latest_events
+                for row in source_probe_by_ip_rows
             ],
+            "security_events": [_security_log_row(item) for item in security_events],
+            "latest_events": [_security_log_row(item) for item in latest_events],
         }
     except Exception as e:
         import traceback

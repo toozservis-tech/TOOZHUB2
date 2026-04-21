@@ -7,7 +7,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.modules.vehicle_hub.database import Base
-from src.modules.vehicle_hub.models import Customer, ServiceRecord, Tenant, Vehicle as VehicleModel, VehicleOwnership
+from src.modules.vehicle_hub.models import (
+    Customer,
+    Tenant,
+    Vehicle as VehicleModel,
+    VehicleMileage,
+    VehicleOwnership,
+)
+from src.modules.vehicle_hub.mileage_reports import collect_vehicle_mileage_timeline_points
 from src.modules.vehicle_hub.ownership import ensure_vehicle_owner_assignment
 from src.modules.vehicle_hub.routers_v1 import vehicles as vehicles_router
 
@@ -72,6 +79,7 @@ def test_record_vehicle_mileage_updates_summary_and_creates_history(db_session) 
             mileage_km=123_456,
             note="Zapsáno při tankování",
             confirm_lower_than_current=False,
+            source="manual",
         ),
         current_user=owner,
         db=db_session,
@@ -82,16 +90,17 @@ def test_record_vehicle_mileage_updates_summary_and_creates_history(db_session) 
     assert result.vehicle.id == vehicle.id
     assert result.vehicle.current_mileage_km == 123_456
 
-    history_record = (
-        db_session.query(ServiceRecord)
-        .filter(ServiceRecord.id == result.created_record_id)
+    assert result.created_vehicle_mileage_id is not None
+    vm_row = (
+        db_session.query(VehicleMileage)
+        .filter(VehicleMileage.id == result.created_vehicle_mileage_id)
         .first()
     )
-    assert history_record is not None
-    assert history_record.vehicle_id == vehicle.id
-    assert history_record.mileage == 123_456
-    assert history_record.description == "Zápis aktuálního stavu tachometru"
-    assert history_record.note == "Zapsáno při tankování"
+    assert vm_row is not None
+    assert vm_row.vehicle_id == vehicle.id
+    assert vm_row.mileage_km == 123_456
+    assert vm_row.source == "manual"
+    assert vm_row.note == "Zapsáno při tankování"
 
 
 def test_record_vehicle_mileage_requires_confirmation_for_lower_value(db_session) -> None:
@@ -104,13 +113,16 @@ def test_record_vehicle_mileage_requires_confirmation_for_lower_value(db_session
                 mileage_km=119_000,
                 note="Oprava po chybně zadaném stavu",
                 confirm_lower_than_current=False,
+                source="manual",
             ),
             current_user=owner,
             db=db_session,
         )
 
     assert exc_info.value.status_code == 409
-    assert "nižší než poslední evidovaný stav" in str(exc_info.value.detail)
+    detail = exc_info.value.detail
+    msg = detail.get("message", "") if isinstance(detail, dict) else str(detail)
+    assert "nižší" in msg.lower() and "maximum" in msg.lower()
 
     confirmed = vehicles_router.record_vehicle_mileage(
         vehicle_id=vehicle.id,
@@ -118,6 +130,7 @@ def test_record_vehicle_mileage_requires_confirmation_for_lower_value(db_session
             mileage_km=119_000,
             note="Oprava po chybně zadaném stavu",
             confirm_lower_than_current=True,
+            source="manual",
         ),
         current_user=owner,
         db=db_session,
@@ -132,3 +145,20 @@ def test_record_vehicle_mileage_requires_confirmation_for_lower_value(db_session
         .count()
     )
     assert ownership_count == 1
+
+
+def test_mileage_timeline_includes_vehicle_mileage_rows(db_session) -> None:
+    owner, vehicle = _seed_owned_vehicle(db_session)
+    vehicles_router.record_vehicle_mileage(
+        vehicle_id=vehicle.id,
+        payload=vehicles_router.VehicleMileageRecordV1(
+            mileage_km=125_000,
+            note=None,
+            confirm_lower_than_current=False,
+            source="stk",
+        ),
+        current_user=owner,
+        db=db_session,
+    )
+    points = collect_vehicle_mileage_timeline_points(db_session, vehicle.id)
+    assert any(str(p.record_id).startswith("vehicle_mileage:") for p in points)

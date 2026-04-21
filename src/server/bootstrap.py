@@ -8,10 +8,12 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.core.branding import APP_API_DISPLAY_NAME, APP_DISPLAY_NAME
 from src.core.config import (
     ALLOWED_ORIGINS,
+    DATA_DIR,
     ENABLE_AI_FEATURES,
     ENABLE_AUTOPILOT_API,
     ENABLE_CUSTOMER_COMMANDS,
@@ -19,8 +21,16 @@ from src.core.config import (
     HOST,
     JWT_SECRET_KEY,
     PORT,
+    PRODUCTION_LOCK_MODE,
 )
-from src.core.security_middleware import AntiTamperingMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
+from src.core.security_middleware import (
+    AdminNetworkGuardMiddleware,
+    AntiTamperingMiddleware,
+    HttpsRedirectMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+    SourceCodeProtectionMiddleware,
+)
 from src.modules.vehicle_hub.account_state import ensure_customer_account_state_schema
 from src.modules.vehicle_hub.database import SessionLocal, engine
 from src.modules.vehicle_hub.schema_management import get_capabilities
@@ -63,6 +73,12 @@ except ValueError:
 
 ENABLE_FILE_BROWSER = _env_bool("ENABLE_FILE_BROWSER", False)
 
+REQUIRED_PRODUCTION_STORAGE_DIRS = (
+    DATA_DIR / "vehicle_archives",
+    DATA_DIR / "vehicle_reports",
+    DATA_DIR / "uploads" / "vehicles",
+)
+
 _reminder_notification_task: asyncio.Task | None = None
 _license_subscription_task: asyncio.Task | None = None
 
@@ -72,6 +88,27 @@ _MAINTENANCE_BYPASS_PREFIXES = (
     "/admin-static",
     "/health",
 )
+
+
+def _validate_required_production_storage() -> None:
+    missing = [str(path) for path in REQUIRED_PRODUCTION_STORAGE_DIRS if not path.is_dir()]
+    if missing:
+        message = "[STORAGE] ERROR: missing required production storage directories: " + ", ".join(missing)
+        print(message)
+        raise RuntimeError(message)
+    for path in REQUIRED_PRODUCTION_STORAGE_DIRS:
+        print(f"[STORAGE] OK: {path}")
+
+
+class ProductionLockWriteAuditMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            print(
+                "[PRODUCTION_LOCK] write request "
+                f"method={request.method.upper()} path={request.url.path} "
+                f"client={request.client.host if request.client else '-'}"
+            )
+        return await call_next(request)
 _MAINTENANCE_BYPASS_EXACT: set[str] = {
     "/version",
     "/version/history",
@@ -193,7 +230,10 @@ def _register_exception_handler(app: FastAPI) -> None:
 
 
 def _register_middlewares(app: FastAPI) -> None:
+    if PRODUCTION_LOCK_MODE:
+        app.add_middleware(ProductionLockWriteAuditMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(SourceCodeProtectionMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=ALLOWED_ORIGINS,
@@ -204,6 +244,8 @@ def _register_middlewares(app: FastAPI) -> None:
     )
     app.add_middleware(AntiTamperingMiddleware)
     app.add_middleware(RateLimitMiddleware, calls=100, period=60)
+    app.add_middleware(AdminNetworkGuardMiddleware)
+    app.add_middleware(HttpsRedirectMiddleware)
 
     @app.middleware("http")
     async def maintenance_mode_middleware(request: Request, call_next):
@@ -315,10 +357,12 @@ def _include_feature_routers(app: FastAPI) -> None:
     try:
         from src.modules.vehicle_hub.routers_v1.service_dashboard import router as service_dashboard_router
         from src.modules.vehicle_hub.routers_v1.service_invoices import router as service_invoices_router
+        from src.modules.vehicle_hub.routers_v1.service_canonical import router as service_canonical_router
 
         app.include_router(service_dashboard_router)
         app.include_router(service_invoices_router)
-        print("[SERVER] Service Dashboard + Service Invoices routery zaregistrovány: /api/service/")
+        app.include_router(service_canonical_router)
+        print("[SERVER] Service Dashboard + Service Invoices + canonical intake routery zaregistrovány: /api/service/")
     except ImportError as exc:
         print(f"[SERVER] Warning: Service Dashboard router není dostupný: {exc}")
         import traceback
@@ -332,6 +376,17 @@ def _include_feature_routers(app: FastAPI) -> None:
         print("[SERVER] Public vehicle history router zaregistrován: /api/public/vehicle-history/")
     except ImportError as exc:
         print(f"[SERVER] Warning: Public vehicle history router není dostupný: {exc}")
+        import traceback
+
+        traceback.print_exc()
+
+    try:
+        from src.server.routers.public_vehicle_transfer import router as public_vehicle_transfer_router
+
+        app.include_router(public_vehicle_transfer_router)
+        print("[SERVER] Public vehicle transfer router zaregistrován: /api/public/vehicle-transfer/")
+    except ImportError as exc:
+        print(f"[SERVER] Warning: Public vehicle transfer router není dostupný: {exc}")
         import traceback
 
         traceback.print_exc()
@@ -404,7 +459,10 @@ def _include_feature_routers(app: FastAPI) -> None:
         print("[SERVER] AI Features router přeskočen (ENABLE_AI_FEATURES=false)")
 
     app.include_router(session_me_router)
-    app.include_router(workspace_debug_router)
+    if PRODUCTION_LOCK_MODE:
+        print("[PRODUCTION_LOCK] workspace debug router disabled")
+    else:
+        app.include_router(workspace_debug_router)
     app.include_router(user_auth_router)
     app.include_router(user_account_router)
     app.include_router(user_security_router)
@@ -448,6 +506,7 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
     @app.on_event("startup")
     async def _start_background_workers() -> None:
         global _reminder_notification_task, _license_subscription_task
+        _validate_required_production_storage()
         db = SessionLocal()
         try:
             ensure_customer_account_state_schema(db)

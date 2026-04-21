@@ -72,7 +72,7 @@ def test_service_record_update_preserves_previous_state(
     current_user = SimpleNamespace(
         id=999,
         email=vehicle.user_email,
-        role="user",
+        role="admin",
         tenant_id=vehicle.tenant_id,
     )
 
@@ -136,7 +136,7 @@ def test_service_record_delete_is_soft_delete_and_audited(
     current_user = SimpleNamespace(
         id=999,
         email=vehicle.user_email,
-        role="user",
+        role="admin",
         tenant_id=vehicle.tenant_id,
     )
 
@@ -172,3 +172,35 @@ def test_service_record_delete_is_soft_delete_and_audited(
     new_snapshot = json.loads(rows[0][2])
     assert previous_snapshot["is_deleted"] is False
     assert new_snapshot["is_deleted"] is True
+
+
+def test_service_record_approved_or_locked_cannot_be_updated(
+    db_context,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = db_context["db"]
+    vehicle = db_context["vehicle"]
+    record = db_context["record"]
+    record.record_status = "approved"
+    db.add(record)
+    db.commit()
+
+    current_user = SimpleNamespace(
+        id=999,
+        email=vehicle.user_email,
+        role="user",
+        tenant_id=vehicle.tenant_id,
+    )
+
+    monkeypatch.setattr(service_records_router, "can_access_vehicle", lambda *_: True)
+
+    with pytest.raises(Exception) as exc_info:
+        service_records_router.update_service_record(
+            vehicle_id=vehicle.id,
+            record_id=record.id,
+            record_data=ServiceRecordUpdateV1(description="Should fail"),
+            current_user=current_user,
+            db=db,
+        )
+
+    assert "nelze upravovat" in str(exc_info.value) or "nelze upravit" in str(exc_info.value)

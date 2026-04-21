@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.modules.vehicle_hub.database import Base
-from src.modules.vehicle_hub.models import Customer, ServiceRecord, Tenant, Vehicle as VehicleModel
+from src.modules.vehicle_hub.models import Customer, Tenant, Vehicle as VehicleModel, VehicleMileage
 from src.modules.vehicle_hub.ownership import ensure_vehicle_owner_assignment
 from src.modules.vehicle_hub.routers_v1 import vehicles as vehicles_router
 
@@ -20,6 +20,18 @@ START_HTML = """
     <form action="/Home/Search" method="post">
       <input name="__RequestVerificationToken" type="hidden" value="token-123" />
       <img id="captcha_IMG" src="/Home/CaptchaPartial" />
+    </form>
+  </body>
+</html>
+"""
+
+CAPTCHA_ERROR_HTML = """
+<html>
+  <body>
+    <form action="/Home/Search" method="post">
+      <input name="__RequestVerificationToken" type="hidden" value="token-456" />
+      <div class="validation-summary-errors">Špatně opsaný kód z obrázku</div>
+      <img id="captcha_IMG" src="/DXB.axd?DXCache=refresh-456" />
     </form>
   </body>
 </html>
@@ -218,6 +230,31 @@ class _FakeSessionDetailForm(_FakeSession):
         raise AssertionError(f"Unexpected POST url: {url}")
 
 
+class _FakeSessionCaptchaRefresh(_FakeSession):
+    def get(self, url: str, timeout: int = 20):
+        if url.rstrip("/").endswith("www.kontrolatachometru.cz"):
+            return _FakeResponse(text=START_HTML, status_code=200)
+        if url.endswith("/Home/CaptchaPartial"):
+            return _FakeResponse(
+                content=b"initial-captcha",
+                status_code=200,
+                headers={"Content-Type": "image/png"},
+            )
+        if "/DXB.axd?DXCache=refresh-456" in url:
+            return _FakeResponse(
+                content=b"refreshed-captcha",
+                status_code=200,
+                headers={"Content-Type": "image/png"},
+            )
+        raise AssertionError(f"Unexpected GET url: {url}")
+
+    def post(self, url: str, data: dict | None = None, timeout: int = 20):
+        _FakeSession.last_post_data = dict(data or {})
+        if not url.endswith("/Home/Search"):
+            raise AssertionError(f"Unexpected POST url: {url}")
+        return _FakeResponse(text=CAPTCHA_ERROR_HTML, status_code=200)
+
+
 @pytest.fixture(autouse=True)
 def _clear_tachometer_store():
     vehicles_router._TACHOMETER_CHALLENGE_STORE.clear()
@@ -325,15 +362,17 @@ def test_submit_vehicle_tachometer_updates_vehicle_and_creates_audit_record(db_s
     assert vehicle.current_mileage_km == 416_588
     assert response.inspections[0].protocol_number == "CZ-3644-25-05-0162"
 
-    history_record = (
-        db_session.query(ServiceRecord)
-        .filter(ServiceRecord.id == response.created_record_id)
+    assert response.created_vehicle_mileage_id is not None
+    assert response.created_record_id is None
+    vm_row = (
+        db_session.query(VehicleMileage)
+        .filter(VehicleMileage.id == response.created_vehicle_mileage_id)
         .first()
     )
-    assert history_record is not None
-    assert history_record.description == "Načteno z kontroly tachometru (MDČR)"
-    assert history_record.mileage == 416_588
-    assert "kontrolatachometru.cz" in (history_record.note or "")
+    assert vm_row is not None
+    assert vm_row.mileage_km == 416_588
+    assert vm_row.source == "stk"
+    assert "kontrolatachometru.cz" in (vm_row.note or "")
 
     history = vehicles_router.get_vehicle_tachometer_history(
         vehicle_id=vehicle.id,
@@ -356,7 +395,6 @@ def test_submit_vehicle_tachometer_updates_vehicle_and_creates_audit_record(db_s
     assert history[1].documents[0].available is False
     assert history[1].source_detail_reference == {"kind": "button_label", "label": "Detail prohlídky"}
     assert history[0].is_monotonic_valid is True
-    assert history[1].is_monotonic_valid is True
 
     detail = vehicles_router.get_vehicle_tachometer_history_entry_detail(
         vehicle_id=vehicle.id,
@@ -377,6 +415,38 @@ def test_submit_vehicle_tachometer_updates_vehicle_and_creates_audit_record(db_s
     )
     assert len(documents) == 1
     assert documents[0].open_mode == "unavailable"
+
+
+def test_submit_vehicle_tachometer_refreshes_captcha_after_invalid_code(db_session, monkeypatch) -> None:
+    owner, vehicle = _seed_owned_vehicle(db_session)
+    monkeypatch.setattr(vehicles_router.requests, "Session", _FakeSessionCaptchaRefresh)
+
+    init_response = vehicles_router.init_vehicle_tachometer(
+        vehicle_id=vehicle.id,
+        current_user=owner,
+        db=db_session,
+    )
+    initial_image = init_response.captcha_image_base64
+
+    with pytest.raises(vehicles_router.HTTPException) as exc:
+        vehicles_router.submit_vehicle_tachometer(
+            vehicle_id=vehicle.id,
+            payload=vehicles_router.VehicleTachometerSubmitRequest(
+                session_id=init_response.session_id,
+                captcha_code="wrong-code",
+            ),
+            current_user=owner,
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 422
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail["code"] == "CAPTCHA_INVALID"
+    assert exc.value.detail["message"] == "Špatně opsaný kód z obrázku"
+    assert exc.value.detail["session_id"] == init_response.session_id
+    assert exc.value.detail["captcha_image_base64"] != initial_image
+    stored = vehicles_router._TACHOMETER_CHALLENGE_STORE[init_response.session_id]
+    assert stored["request_verification_token"] == "token-456"
 
 
 def test_parse_tachometer_inspections_extracts_inline_detail_and_documents() -> None:

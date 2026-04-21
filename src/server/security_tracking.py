@@ -84,6 +84,13 @@ def extract_client_ip(request: Any) -> Optional[str]:
     if request is not None and getattr(request, "client", None) is not None:
         direct_ip = _normalize_ip(getattr(request.client, "host", None))
 
+    if not direct_ip and request is not None:
+        scope = getattr(request, "scope", None)
+        if isinstance(scope, dict):
+            client = scope.get("client")
+            if isinstance(client, (list, tuple)) and client:
+                direct_ip = _normalize_ip(client[0])
+
     if request is None or not hasattr(request, "headers"):
         return direct_ip
 
@@ -95,7 +102,8 @@ def extract_client_ip(request: Any) -> Optional[str]:
         "x-original-forwarded-for",
     )
 
-    if _is_private_or_loopback(direct_ip):
+    # Za proxy je casto direct_ip None nebo privatni — vzdy zkusit forwarding hlavicky.
+    if _is_private_or_loopback(direct_ip) or direct_ip is None:
         for header_name in forwarded_headers:
             candidate = _normalize_ip(headers.get(header_name))
             if candidate:

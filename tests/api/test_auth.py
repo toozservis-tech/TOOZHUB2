@@ -322,6 +322,48 @@ def test_request_password_reset_legacy_alias_returns_200(api_url):
     assert "message" in data
 
 
+def test_password_reset_invalidates_previous_jwt(api_url):
+    """Po resetu hesla musí starý Bearer token vracet 401 (session_version bump)."""
+    import pytest
+    from urllib.parse import parse_qs, urlparse
+
+    try:
+        requests.get(f"{api_url}/health", timeout=2)
+    except Exception:
+        pytest.skip("API server nedostupný (spusťte backend pro integrační test).")
+
+    email, password, old_token, _ = _register_user(api_url)
+    forgot = requests.post(f"{api_url}/user/forgot-password", json={"email": email}, timeout=10)
+    assert forgot.status_code == 200
+    payload = forgot.json()
+    reset_url = str(payload.get("reset_url") or "").strip()
+    if not reset_url:
+        pytest.skip("reset_url není v odpovědi (typicky produkce se SMTP bez dev leaku)")
+    token = (parse_qs(urlparse(reset_url).query).get("token") or [None])[0]
+    assert token
+    reset = requests.post(
+        f"{api_url}/user/reset-password",
+        json={"token": token, "new_password": "newpass999"},
+        timeout=10,
+    )
+    assert reset.status_code == 200
+
+    me = requests.get(
+        f"{api_url}/user/me",
+        headers={"Authorization": f"Bearer {old_token}"},
+        timeout=10,
+    )
+    assert me.status_code == 401
+
+    login = requests.post(
+        f"{api_url}/user/login",
+        json={"email": email, "password": "newpass999"},
+        timeout=10,
+    )
+    assert login.status_code == 200
+    assert login.json().get("access_token")
+
+
 def test_login_role_mismatch_returns_403(api_url):
     """Přihlášení uživatele v režimu service musí vrátit 403."""
     email, password, _, _ = _register_user(api_url)

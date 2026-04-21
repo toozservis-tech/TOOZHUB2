@@ -73,8 +73,8 @@ test.describe('Production Smoke Tests (Read-Only)', () => {
     await loginUser(page);
     await expect(page.locator('[data-testid="dashboard"]')).toBeVisible({ timeout: 10000 });
     
-    await gotoTab(page, 'tab-profile');
-    await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible();
+    await gotoTab(page, 'tab-account');
+    await expect(page.locator('[data-testid="account-tab"]')).toBeVisible();
     await expect(page.locator('[data-testid="profile-container"]')).toBeVisible();
     
     // Ověřit, že nejsou chybové hlášky

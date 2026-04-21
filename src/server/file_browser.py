@@ -3,14 +3,20 @@ Dočasný file browser pro sdílení souborů projektu
 Pouze pro kontrolu - dočasný přístup
 """
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from typing import Optional
 import mimetypes
 from datetime import datetime
 from urllib.parse import unquote
 
-router = APIRouter(prefix="/files", tags=["files"])
+from src.server.admin_api import require_control_center_admin
+
+router = APIRouter(
+    prefix="/files",
+    tags=["files"],
+    dependencies=[Depends(require_control_center_admin)],
+)
 
 # Kořenový adresář projektu
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -483,7 +489,6 @@ async def list_files_api(path: Optional[str] = None):
         "path": str(target_path.relative_to(PROJECT_ROOT)).replace("\\", "/") if path else "",
         "items": items
     }
-
 
 
 

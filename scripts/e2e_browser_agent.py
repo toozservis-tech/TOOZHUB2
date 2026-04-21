@@ -273,10 +273,10 @@ def run_ui_flow(base_url: str, email: str, password: str, rec: Recorder) -> Tupl
 
             for tab, content in [
                 ("tab-vehicles", "vehicles-tab"),
-                ("tab-add-vehicle", "add-vehicle-tab"),
                 ("tab-reminders", "reminders-tab"),
                 ("tab-reservations", "reservations-tab"),
-                ("tab-profile", "profile-tab"),
+                ("tab-documents", "documents-tab"),
+                ("tab-account", "account-tab"),
             ]:
                 page.click(f'[data-testid="{tab}"]')
                 page.wait_for_selector(f'[data-testid="{content}"]', timeout=10000)
@@ -286,7 +286,7 @@ def run_ui_flow(base_url: str, email: str, password: str, rec: Recorder) -> Tupl
             page.wait_for_timeout(1000)
             before_cards = page.locator('[data-testid="vehicle-card"]').count()
 
-            page.click('[data-testid="tab-add-vehicle"]')
+            page.click('[data-testid="btn-toggle-add-vehicle"]')
             page.wait_for_selector('[data-testid="add-vehicle-form"]', timeout=10000)
             ts = int(time.time())
             page.fill('[data-testid="input-vehicle-name"]', f"E2E Vehicle {ts}")
@@ -316,7 +316,7 @@ def run_ui_flow(base_url: str, email: str, password: str, rec: Recorder) -> Tupl
             else:
                 rec.add("ui_vehicle_detail_modal_open", False, "no-cards-available")
 
-            page.click('[data-testid="tab-profile"]')
+            page.click('[data-testid="tab-account"]')
             page.wait_for_selector('[data-testid="profile-container"]', timeout=10000)
             rec.add("ui_profile_load", True)
 

@@ -1,4 +1,10 @@
 (function () {
+  /*
+  PRODUCTION LOCK:
+  Shell routing a visibility controller je stabilizovaný.
+  Nesmí se měnit bez auditovaného zásahu.
+  Source of truth: /api/me
+  */
   console.log('[SERVICE_SHELL] SERVICE SHELL LOADED');
 
   function getAppDisplayName() {
@@ -791,8 +797,10 @@
     stopAutoRefresh();
     state.mounted = false;
     const root = getRoot();
-    root.classList.add('hidden');
-    root.innerHTML = '';
+    if (root) {
+      root.classList.add('hidden');
+      root.innerHTML = '';
+    }
     restoreLegacyDom();
     unapplyTheme();
   }
@@ -2167,10 +2175,11 @@
       renderFooter: (modal) => {
         const edit = modal?.data?.recordEditState || { editable: true, reason: null };
         const canEdit = edit.editable;
+        const canCreateQuote = Number(modal?.context?.recordId || 0) > 0;
         return `
         <div class="service-shell-modal-footer ${isMobileViewport() ? 'service-shell-mobile-action-bar' : ''}">
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal()">Zpět</button>
-          ${modal?.context?.recordId && canEdit ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.createQuoteFromRecord(${Number(modal.context.recordId)})">Vytvořit nabídku</button>` : ''}
+          ${canCreateQuote ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.createQuoteFromRecord(${Number(modal.context.recordId)})">Vytvořit nabídku</button>` : ''}
           ${canEdit ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.appendWorkItemDraft()">Přidat položku</button>` : ''}
           ${canEdit ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.triggerServiceRecordPhotoPicker()">Přidat fotku</button>` : ''}
           ${canEdit ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.runModalAction('save')">${modal.saving ? 'Ukládám…' : 'Uložit'}</button>` : ''}
@@ -2870,14 +2879,14 @@
             public_mode: 'verified',
             explicit_full_consent: false,
           });
-          return { data };
+          return { data, close: false };
         },
         regenerate: async () => {
           const data = await window.apiCall(`/api/v1/services/workspace/vehicles/${resolvedVehicleId}/qr/regenerate`, 'POST', {
             public_mode: 'verified',
             explicit_full_consent: false,
           });
-          return { data };
+          return { data, close: false };
         },
       },
       renderContent: (modal) => {
