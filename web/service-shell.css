@@ -9,7 +9,29 @@
 
 /* Theme tokens na body: floating modály (.app-floating-modal-root) jsou mimo .service-shell-root
    a musí dědit stejné --service-* proměnné jako hlavní shell. */
+/* Výchozí servisní shell = tmavý motiv; .service-shell-theme-light přepne na světlý */
 body.service-shell-app {
+  background: #111315 !important;
+  --service-bg: #111315;
+  --service-panel: rgba(15, 23, 42, 0.96);
+  --service-panel-soft: rgba(30, 41, 59, 0.88);
+  --service-panel-alt: rgba(15, 23, 42, 0.98);
+  --service-border: rgba(148, 163, 184, 0.18);
+  --service-line: rgba(255, 255, 255, 0.08);
+  --service-text: #f5f7fb;
+  --service-text-soft: rgba(232, 238, 247, 0.78);
+  --service-text-muted: rgba(201, 209, 224, 0.56);
+  --service-pill: rgba(255, 255, 255, 0.05);
+  --service-pill-active: rgba(255, 255, 255, 0.09);
+  --service-primary: #4b82ff;
+  --service-primary-strong: #3a74f8;
+  --service-shadow: 0 24px 72px rgba(0, 0, 0, 0.36);
+  --service-queue-bg: linear-gradient(135deg, #3b73ef 0%, #477df7 54%, #315ed7 100%);
+  --service-radius: 24px;
+  --service-radius-sm: 16px;
+}
+
+body.service-shell-app.service-shell-theme-light {
   background: #eaf0f7 !important;
   --service-bg: #eaf0f7;
   --service-panel: rgba(255, 255, 255, 0.96);
@@ -26,12 +48,13 @@ body.service-shell-app {
   --service-primary-strong: #1d4ed8;
   --service-shadow: 0 18px 42px rgba(15, 23, 42, 0.10);
   --service-queue-bg: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
-  --service-radius: 24px;
-  --service-radius-sm: 16px;
 }
 
-body.service-shell-app.service-shell-theme-light {
-  background: #eaf0f7 !important;
+html.service-shell-mobile-nav-open,
+body.service-shell-mobile-nav-open {
+  height: 100%;
+  overflow: hidden !important;
+  overscroll-behavior: none;
 }
 
 body.service-shell-app .container,
@@ -103,32 +126,79 @@ body.service-shell-app .content.page-container {
   font-weight: 800;
   letter-spacing: -0.04em;
   white-space: nowrap;
+  min-width: 0;
 }
 
-.service-shell-brand-mark {
-  width: 18px;
-  height: 18px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--service-primary) 0%, var(--service-primary-strong) 100%);
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.38);
-  position: relative;
+.service-shell-brand-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  flex-shrink: 0;
+  display: block;
+  filter: drop-shadow(0 6px 14px rgba(234, 88, 12, 0.25));
 }
 
-.service-shell-brand-mark::after {
-  content: "";
-  position: absolute;
-  right: -4px;
-  bottom: -2px;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--service-bg);
-  border: 2px solid var(--service-primary);
+.service-shell-brand-text {
+  background: linear-gradient(105deg, #ea580c 0%, #f97316 38%, #2563eb 72%, #1d4ed8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+body.service-shell-app.service-shell-theme-light .service-shell-brand-text {
+  background: linear-gradient(105deg, #c2410c 0%, #ea580c 42%, #1d4ed8 78%, #1e40af 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.service-shell-toolbar .workspace-mode-switch {
+  margin-left: 0;
+  margin-right: 0;
+  flex-shrink: 0;
+  border-color: var(--service-border);
+  background: var(--service-pill);
+}
+
+.service-shell-toolbar .workspace-mode-switch-btn {
+  color: var(--service-text-soft);
+}
+
+.service-shell-toolbar .workspace-mode-switch-btn + .workspace-mode-switch-btn {
+  box-shadow: -1px 0 0 var(--service-line);
+}
+
+.service-shell-toolbar .workspace-mode-switch-btn:hover:not(.is-active) {
+  background: var(--service-pill-active);
+  color: var(--service-text);
+}
+
+.service-shell-toolbar .workspace-mode-switch-btn.is-active[data-workspace-mode="user"] {
+  background: rgba(234, 88, 12, 0.28);
+  color: var(--service-text);
+}
+
+.service-shell-toolbar .workspace-mode-switch-btn.is-active[data-workspace-mode="service"] {
+  background: rgba(59, 130, 246, 0.32);
+  color: var(--service-text);
+}
+
+body.service-shell-app.service-shell-theme-light .service-shell-toolbar .workspace-mode-switch-btn.is-active[data-workspace-mode="user"],
+body.service-shell-app.service-shell-theme-light .service-shell-toolbar .workspace-mode-switch-btn.is-active[data-workspace-mode="service"] {
+  color: #0f172a;
 }
 
 .service-shell-nav {
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.service-shell-nav-section {
+  display: contents;
+}
+
+.service-shell-nav-section-title {
+  display: none;
 }
 
 .service-shell-nav-btn,
@@ -163,6 +233,19 @@ body.service-shell-app .content.page-container {
 .service-shell-toolbar {
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.service-shell-navbar-clock.navbar-digital-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.92rem;
+  padding: 8px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--service-border);
+  background: var(--service-pill);
+  color: var(--service-text);
+  align-self: center;
+  white-space: nowrap;
 }
 
 .service-shell-userbox-wrap {
@@ -485,7 +568,7 @@ body.service-shell-app .content.page-container {
 
 .service-shell-table tbody tr:hover,
 .service-shell-data-table tbody tr:hover {
-  background: rgba(255, 255, 255, 0.026);
+  background: var(--service-pill);
 }
 
 .service-shell-row-primary {
@@ -552,6 +635,341 @@ body.service-shell-app .content.page-container {
 .service-shell-table-tools {
   flex-wrap: wrap;
   margin-top: 16px;
+}
+
+.service-shell-card-list {
+  display: grid;
+  gap: 14px;
+}
+
+.service-shell-invoice-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.service-shell-invoice-toolbar .service-shell-search {
+  min-width: min(360px, 100%);
+}
+
+.service-shell-invoice-overview,
+.service-shell-invoice-two-column {
+  display: grid;
+  gap: 16px;
+}
+
+.service-shell-invoice-overview {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.service-shell-invoice-overview > div,
+.service-shell-invoice-panel {
+  border: 1px solid var(--service-border);
+  background: var(--service-panel-soft);
+  border-radius: 18px;
+}
+
+.service-shell-invoice-overview > div {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+}
+
+.service-shell-invoice-overview strong {
+  color: var(--service-text);
+  font-size: 1.05rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.service-shell-invoice-editor {
+  gap: 18px;
+}
+
+.service-shell-invoice-panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.service-shell-invoice-panel--accent {
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.12), transparent 45%),
+    var(--service-panel-soft);
+}
+
+.service-shell-invoice-two-column {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.service-shell-invoice-compact-options {
+  align-items: end;
+}
+
+.service-shell-inline-check {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--service-border);
+  border-radius: 14px;
+  background: var(--service-pill);
+  color: var(--service-text-soft);
+  font-weight: 800;
+}
+
+.service-shell-inline-check input {
+  width: 18px !important;
+  min-height: 18px !important;
+  padding: 0 !important;
+}
+
+.service-shell-invoice-lines {
+  display: grid;
+  gap: 12px;
+}
+
+.service-shell-invoice-line-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(90px, 0.7fr) minmax(70px, 0.55fr) minmax(120px, 1fr) minmax(90px, 0.7fr) 46px;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--service-border);
+  border-radius: 16px;
+  background: var(--service-panel-alt);
+}
+
+.service-shell-invoice-line-row label {
+  display: grid;
+  gap: 6px;
+}
+
+.service-shell-invoice-line-row label span {
+  color: var(--service-text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.service-shell-invoice-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.service-shell-invoice-totals > div {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--service-border);
+  background: var(--service-pill);
+}
+
+.service-shell-invoice-totals span {
+  color: var(--service-text-muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.service-shell-invoice-totals strong {
+  color: var(--service-text);
+  font-size: 1.05rem;
+}
+
+.service-shell-list-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 18px;
+  background: var(--service-panel-soft);
+  border: 1px solid var(--service-border);
+  color: var(--service-text);
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.service-shell-list-card:hover,
+.service-shell-list-card:focus-visible {
+  background: var(--service-pill-active);
+  border-color: rgba(37, 99, 235, 0.24);
+  transform: translateY(-1px);
+}
+
+.service-shell-list-card-top,
+.service-shell-list-card-actions,
+.service-shell-card-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.service-shell-list-card-top h3 {
+  margin: 0;
+  color: var(--service-text);
+  font-size: 1.05rem;
+  line-height: 1.25;
+}
+
+.service-shell-list-card-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.service-shell-list-card-row {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--service-panel-alt);
+  border: 1px solid var(--service-border);
+}
+
+.service-shell-list-card-row span {
+  color: var(--service-text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.service-shell-list-card-row strong {
+  min-width: 0;
+  color: var(--service-text);
+  font-size: 0.94rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.service-shell-more-actions {
+  position: relative;
+}
+
+.service-shell-more-actions summary {
+  min-height: 46px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--service-border);
+  border-radius: 14px;
+  background: var(--service-pill);
+  color: var(--service-text-soft);
+  font-weight: 800;
+  list-style: none;
+  cursor: pointer;
+}
+
+.service-shell-more-actions summary::-webkit-details-marker {
+  display: none;
+}
+
+.service-shell-more-actions[open] summary {
+  background: var(--service-pill-active);
+  color: var(--service-text);
+}
+
+.service-shell-more-actions button {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 150px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--service-border);
+  border-radius: 14px;
+  background: var(--service-panel-alt);
+  color: var(--service-text);
+  box-shadow: var(--service-shadow);
+  font-weight: 800;
+  z-index: 20;
+}
+
+.service-shell-bottom-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.service-shell-bottom-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(2, 6, 23, 0.56);
+  pointer-events: auto;
+}
+
+.service-shell-bottom-sheet-panel {
+  position: relative;
+  z-index: 1;
+  width: min(620px, 100%);
+  max-height: min(88vh, 680px);
+  overflow-y: auto;
+  display: grid;
+  gap: 18px;
+  padding: 10px 18px calc(18px + env(safe-area-inset-bottom, 0px));
+  border-radius: 24px 24px 0 0;
+  border: 1px solid var(--service-border);
+  background: var(--service-panel-alt);
+  box-shadow: 0 -24px 70px rgba(2, 6, 23, 0.34);
+  pointer-events: auto;
+}
+
+.service-shell-bottom-sheet-handle {
+  width: 46px;
+  height: 5px;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: var(--service-line);
+}
+
+.service-shell-bottom-sheet-controls,
+.service-shell-touch-control {
+  display: grid;
+  gap: 10px;
+}
+
+.service-shell-touch-control > span {
+  color: var(--service-text-muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.service-shell-segmented {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.service-shell-segmented button {
+  min-height: 50px;
+  border: 1px solid var(--service-border);
+  border-radius: 14px;
+  background: var(--service-pill);
+  color: var(--service-text-soft);
+  font-weight: 850;
+}
+
+.service-shell-segmented button.active {
+  background: var(--service-pill-active);
+  color: var(--service-text);
+  border-color: rgba(37, 99, 235, 0.34);
+}
+
+.service-shell-bottom-sheet-apply {
+  width: 100%;
+  justify-content: center;
 }
 
 .service-shell-tools-grid,
@@ -747,7 +1165,7 @@ body.service-shell-theme-light .service-shell-modal-header {
   width: 20px;
   height: 20px;
   border-radius: 999px;
-  border: 2px solid rgba(255, 255, 255, 0.18);
+  border: 2px solid var(--service-border);
   border-top-color: var(--service-primary);
   animation: serviceShellModalSpin 0.8s linear infinite;
 }
@@ -912,8 +1330,8 @@ body.service-shell-theme-light .service-shell-modal-header {
   margin-top: 18px;
   border-radius: 16px;
   padding: 16px 18px;
-  background: rgba(255, 255, 255, 0.18);
-  color: #eff6ff;
+  background: var(--service-primary);
+  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -927,6 +1345,12 @@ body.service-shell-theme-light .service-shell-modal-header {
   background: rgba(127, 29, 29, 0.24);
   border: 1px solid rgba(248, 113, 113, 0.28);
   color: #fca5a5;
+}
+
+body.service-shell-theme-light .service-shell-inline-error {
+  background: rgba(254, 226, 226, 0.6);
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #991b1b;
 }
 
 .service-shell-empty {
@@ -1249,6 +1673,8 @@ body.service-shell-theme-light .service-shell-modal-header {
     gap: 10px;
     width: 100%;
     box-sizing: border-box;
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .service-shell-brandline,
@@ -1258,7 +1684,8 @@ body.service-shell-theme-light .service-shell-modal-header {
   }
 
   .service-shell-brandline {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr) 52px;
     row-gap: 8px;
     align-items: center;
   }
@@ -1273,9 +1700,44 @@ body.service-shell-theme-light .service-shell-modal-header {
   }
 
   .service-shell-brand {
-    font-size: 1.15rem;
-    flex: 1 1 auto;
+    grid-column: 2;
+    justify-content: center;
+    font-size: 1.05rem;
+    letter-spacing: 0;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .service-shell-brand-logo {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* Toolbar v toku dokumentu — absolutní pozice překrývala vycentrovaný název a přepínač Účet/Servis. */
+  .service-shell-toolbar {
+    position: static;
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 8px;
+    margin-top: 2px;
+    border-top: 1px solid var(--service-line);
+    box-sizing: border-box;
+  }
+
+  .service-shell-toolbar .workspace-mode-switch {
+    flex: 1 0 100%;
+    max-width: 100%;
+    justify-content: center;
+    order: -1;
+    box-sizing: border-box;
+  }
+
+  .service-shell-toolbar > .service-shell-icon-btn:not(.service-shell-theme-toggle-btn),
+  .service-shell-toolbar > .service-shell-primary-btn {
+    display: none;
   }
 
   .service-shell-usertext {
@@ -1294,10 +1756,11 @@ body.service-shell-theme-light .service-shell-modal-header {
 
   /* Po klepnutí na menu: svislý seznam na celou šířku (bez vodorovného posuvu). */
   .service-shell-nav {
+    grid-column: 1 / -1;
     display: none;
     flex-direction: column;
     align-items: stretch;
-    gap: 8px;
+    gap: 0;
     width: 100%;
     flex: 1 1 100%;
     overflow-x: hidden;
@@ -1317,6 +1780,30 @@ body.service-shell-theme-light .service-shell-modal-header {
     margin-top: 4px;
     border-top: 1px solid var(--service-border);
     -webkit-overflow-scrolling: touch;
+  }
+
+  .service-shell-nav-section {
+    display: grid;
+    gap: 8px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--service-line);
+  }
+
+  .service-shell-nav-section:first-child {
+    padding-top: 0;
+  }
+
+  .service-shell-nav-section:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+
+  .service-shell-nav-section-title {
+    display: block;
+    color: var(--service-text-muted);
+    font-size: 0.78rem;
+    font-weight: 900;
+    text-transform: uppercase;
   }
 
   .service-shell-nav.mobile-open .service-shell-nav-btn {
@@ -1340,6 +1827,55 @@ body.service-shell-theme-light .service-shell-modal-header {
   .service-shell-primary-btn {
     min-width: 52px;
     padding: 0 18px;
+  }
+
+  .service-shell-list-head,
+  .service-shell-card-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .service-shell-card-head-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .service-shell-filter-open-btn,
+  .service-shell-card-head-actions .btn-primary {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .service-shell-card-list {
+    gap: 12px;
+  }
+
+  .service-shell-list-card {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .service-shell-list-card-top {
+    align-items: flex-start;
+  }
+
+  .service-shell-list-card-meta {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .service-shell-list-card-actions {
+    align-items: stretch;
+  }
+
+  .service-shell-list-card-actions .service-shell-primary-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .service-shell-bottom-sheet-panel .service-shell-card-head {
+    flex-direction: row;
+    align-items: center;
   }
 
   .service-shell-mobile-vehicle-card {
@@ -1390,11 +1926,25 @@ body.service-shell-theme-light .service-shell-modal-header {
     border-radius: 18px;
     background: var(--service-panel-soft);
     border: 1px solid var(--service-border);
+    display: grid;
+    gap: 8px;
   }
 
   .service-shell-data-table tbody td {
     border: 0;
-    padding: 4px 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .service-shell-data-table tbody td::before {
+    content: attr(data-label);
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    color: var(--service-text-muted);
+    letter-spacing: 0.05em;
   }
 
   .service-dashboard-modal-grid.cols-2,
@@ -1474,6 +2024,21 @@ body.service-shell-theme-light .service-shell-modal-header {
     width: 100%;
     min-height: 48px;
   }
+
+  .service-shell-invoice-overview,
+  .service-shell-invoice-two-column,
+  .service-shell-invoice-totals {
+    grid-template-columns: 1fr;
+  }
+
+  .service-shell-invoice-line-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .service-shell-invoice-line-row .service-shell-icon-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1508,5 +2073,90 @@ body.service-shell-theme-light .service-shell-modal-header {
   .service-shell-modal-footer {
     padding-left: 18px;
     padding-right: 18px;
+  }
+}
+
+@media (max-width: 560px) {
+  .service-shell-invoice-line-row,
+  .service-dashboard-modal-grid.cols-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .service-shell-root {
+    padding: 12px max(10px, env(safe-area-inset-left, 0px)) 24px max(10px, env(safe-area-inset-right, 0px));
+  }
+
+  .service-shell-header {
+    padding: 10px max(10px, env(safe-area-inset-left, 0px)) 10px max(10px, env(safe-area-inset-right, 0px));
+  }
+
+  .service-shell-page-head h1 {
+    font-size: 1.75rem;
+    line-height: 1.05;
+  }
+
+  .service-shell-card,
+  .service-shell-side-card,
+  .service-shell-queue-card,
+  .service-shell-mini-card {
+    padding: 16px;
+    border-radius: 16px;
+  }
+
+  .service-shell-stat-grid,
+  .service-shell-kpis {
+    gap: 10px;
+  }
+
+  .service-shell-list-card-top h3 {
+    font-size: 1rem;
+  }
+
+  .service-shell-list-card-row {
+    padding: 9px 10px;
+  }
+
+  .service-shell-list-card-row strong,
+  .service-shell-list-title,
+  .service-shell-list-value {
+    font-size: 0.92rem;
+  }
+
+  .service-shell-segmented {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 360px) {
+  .service-shell-brand {
+    font-size: 0.95rem;
+  }
+
+  .service-shell-icon-btn,
+  .service-shell-avatar {
+    width: 40px;
+    height: 40px;
+  }
+
+  .service-shell-brandline {
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+  }
+
+  .service-shell-list-card {
+    padding: 12px;
+  }
+
+  .service-shell-badge {
+    padding: 7px 10px;
+    font-size: 0.78rem;
+  }
+
+  .service-shell-primary-btn,
+  .service-shell-filter-chip,
+  .service-shell-more-actions summary {
+    min-height: 48px;
+    font-size: 0.94rem;
   }
 }
