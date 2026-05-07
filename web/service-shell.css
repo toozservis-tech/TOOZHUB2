@@ -1772,32 +1772,36 @@ body.service-shell-theme-light .service-shell-inline-error {
     height: 40px;
   }
 
-  /* Po klepnutí na menu: svislý seznam na celou šířku (bez vodorovného posuvu). */
+  /* Po klepnutí na menu: overlay menu přes obsah stránky (neposouvá layout). */
   .service-shell-nav {
-    grid-column: 1 / -1;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
     display: none;
     flex-direction: column;
     flex-wrap: nowrap;
     align-items: stretch;
     gap: 0;
     width: 100%;
-    flex: 1 1 100%;
     overflow-x: hidden;
     overflow-y: visible;
     padding: 0;
     margin: 0;
     border: 0;
+    border-bottom: 1px solid var(--service-border);
+    background: var(--service-panel);
+    box-shadow: var(--service-shadow);
+    z-index: 40;
     scrollbar-width: thin;
   }
 
   .service-shell-nav.mobile-open {
     display: flex;
-    max-height: min(70vh, 540px);
+    max-height: calc(100vh - 80px);
     overflow-y: auto;
     overflow-x: hidden;
-    padding-top: 12px;
-    margin-top: 4px;
-    border-top: 1px solid var(--service-border);
+    padding: 12px max(12px, env(safe-area-inset-left, 0px)) 24px max(12px, env(safe-area-inset-right, 0px));
     -webkit-overflow-scrolling: touch;
   }
 
