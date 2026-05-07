@@ -1076,11 +1076,48 @@
   }
 
   function setKpiFilter(filter) {
+    if (state.kpiFilter === filter) {
+      state.kpiFilter = 'all'; // Toggle off
+    } else {
+      state.kpiFilter = String(filter || 'all');
+    }
+    
+    if (!['dashboard', 'work-orders'].includes(String(state.activeSection || ''))) {
+      state.activeSection = 'dashboard';
+    }
+    render();
+  }
+
+  function openKpiModal(filter) {
     state.kpiFilter = String(filter || 'all');
     if (!['dashboard', 'work-orders'].includes(String(state.activeSection || ''))) {
       state.activeSection = 'dashboard';
     }
     render();
+
+    let title = 'Všechny zakázky';
+    if (filter === 'active') title = 'Aktivní zakázky';
+    if (filter === 'awaiting') title = 'Čeká na schválení';
+    if (filter === 'today') title = 'Dnes k dokončení';
+    if (filter === 'overdue') title = 'Po termínu';
+
+    openModal({
+      title,
+      kicker: 'Přehled',
+      size: 'wide',
+      renderContent: () => {
+        const items = filteredWorkOrders();
+        return renderCardList({
+          cards: workOrderCards(items),
+          empty: 'Žádné zakázky neodpovídají vybranému filtru.',
+        });
+      },
+      renderFooter: () => `
+        <div class="service-shell-modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal()">Zavřít</button>
+        </div>
+      `
+    });
   }
 
   function openFilterSheet() {
@@ -4086,7 +4123,7 @@
           <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openServiceToolsModal()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openServiceToolsModal() }"><span class="service-shell-list-title">Najít klienta nebo vozidlo</span><span class="service-shell-list-value">⌘</span></div>
           <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openCreateWorkOrderModal()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openCreateWorkOrderModal() }"><span class="service-shell-list-title">Nová zakázka</span><span class="service-shell-list-value">+</span></div>
           <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('reservations')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('reservations') }"><span class="service-shell-list-title">Otevřít příchozí rezervace</span><span class="service-shell-list-value">→</span></div>
-          <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.setKpiFilter('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.setKpiFilter('awaiting') }"><span class="service-shell-list-title">Čeká na schválení</span><span class="service-shell-list-value">!</span></div>
+          <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openKpiModal('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openKpiModal('awaiting') }"><span class="service-shell-list-title">Čeká na schválení</span><span class="service-shell-list-value">!</span></div>
         </div>
       </section>
     `;
@@ -4271,15 +4308,15 @@
   function kpiCards() {
     const summary = dashboardSummary();
     const cards = [
-      ['active', 'Aktivní zakázky', summary.active_jobs, 'Ve výrobě nebo schválené', 'success'],
-      ['awaiting', 'Čeká na schválení', summary.awaiting_approval, 'Vyžaduje souhlas', 'warning'],
-      ['today', 'Dnes k dokončení', summary.due_today, 'Plánované na dnešek', 'info'],
-      ['overdue', 'Po termínu', summary.overdue, 'Kritické', 'danger'],
+      ['new_requests', 'Nové požadavky', summary.new_reservations, 'Příchozí od klientů', 'info'],
+      ['active', 'Aktivní zakázky', summary.active_jobs, 'Zaznamenáno v servisu', 'success'],
+      ['today', 'Dnes k dokončení', summary.due_today, 'Plánované na dnešek', 'warning'],
+      ['overdue', 'Nestíháme', summary.overdue, 'Po termínu', 'danger'],
     ];
     return `
       <section class="service-shell-kpis">
         ${cards.map(([key, title, value, note, color]) => `
-          <button type="button" class="service-shell-kpi-card service-shell-kpi-card--${color} ${state.kpiFilter === key ? 'is-active' : ''}" onclick="window.serviceShell.setKpiFilter('${key}')" aria-pressed="${state.kpiFilter === key}">
+          <button type="button" class="service-shell-kpi-card service-shell-kpi-card--${color} ${state.kpiFilter === key ? 'is-active' : ''}" onclick="window.serviceShell.openKpiModal('${key}')" aria-pressed="${state.kpiFilter === key}">
             <div class="service-shell-kpi-card-content">
               <span class="service-shell-kpi-card-title">${title}</span>
               <strong class="service-shell-kpi-card-value">${escape(String(value))}</strong>
@@ -4349,7 +4386,7 @@
           <p class="service-shell-action-note">Otevřít detail zakázek a filtrů</p>
           <div class="service-shell-list">
             <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('work-orders')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('work-orders') }"><span class="service-shell-list-title">Nové zakázky</span><span class="service-shell-list-value">${escape(String(queue?.new_jobs || queue?.new_work_orders || 0))}</span></div>
-            <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.setKpiFilter('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.setKpiFilter('awaiting') }"><span class="service-shell-list-title">Čeká na schválení</span><span class="service-shell-list-value">${escape(String(queue?.awaiting_approval || 0))}</span></div>
+            <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openKpiModal('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openKpiModal('awaiting') }"><span class="service-shell-list-title">Čeká na schválení</span><span class="service-shell-list-value">${escape(String(queue?.awaiting_approval || 0))}</span></div>
             <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('reservations')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('reservations') }"><span class="service-shell-list-title">Nové rezervace</span><span class="service-shell-list-value">${escape(String(queue?.new_reservations || summary.new_reservations || 0))}</span></div>
             <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('invoices')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('invoices') }"><span class="service-shell-list-title">Draft faktury</span><span class="service-shell-list-value">${escape(String(queue?.draft_invoices || summary.draft_invoices || 0))}</span></div>
             <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('documents')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('documents') }"><span class="service-shell-list-title">Chybí dokumenty</span><span class="service-shell-list-value">${escape(String(queue?.missing_documents || 0))}</span></div>
@@ -4393,7 +4430,7 @@
             <span class="service-shell-kpi-arrow">↗</span>
           </div>
           <div class="service-shell-queue-grid">
-            <div class="service-shell-queue-tile service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.setKpiFilter('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.setKpiFilter('awaiting') }"><span class="service-shell-queue-icon">☑</span><div><strong>${escape(String(queue?.missing_client_consent || 0))}</strong><p>Chybí souhlas klienta</p></div></div>
+            <div class="service-shell-queue-tile service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openKpiModal('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openKpiModal('awaiting') }"><span class="service-shell-queue-icon">☑</span><div><strong>${escape(String(queue?.missing_client_consent || 0))}</strong><p>Chybí souhlas klienta</p></div></div>
             <div class="service-shell-queue-tile service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('vehicles')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('vehicles') }"><span class="service-shell-queue-icon">⦿</span><div><strong>${escape(String(queue?.suspicious_km || 0))}</strong><p>Podezřelé km</p></div></div>
             <div class="service-shell-queue-tile service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('work-orders')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('work-orders') }"><span class="service-shell-queue-icon">⌁</span><div><strong>${escape(String(queue?.unfinished_jobs || 0))}</strong><p>Nedokončené zakázky</p></div></div>
             <div class="service-shell-queue-tile service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openServiceToolsModal()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openServiceToolsModal() }"><span class="service-shell-queue-icon">⚑</span><div><strong>${escape(String(queue?.internal_warnings || 0))}</strong><p>Interní varování</p></div></div>
@@ -4452,6 +4489,43 @@
   }
 
   function workOrdersTableCard(title, subtitle) {
+    if (state.kpiFilter === 'new_requests') {
+      const items = Array.isArray(state.reservations) ? state.reservations.filter(item => String(item?.status || '').toUpperCase() === 'PENDING') : [];
+      return `
+        ${renderFilterSheet()}
+        ${renderCardList({
+          head: `
+          <div class="service-shell-card-head service-shell-list-head">
+            <div>
+              <h3 class="service-shell-card-title">Nové požadavky (Rezervace)</h3>
+              <p class="service-shell-subtitle">Příchozí požadavky od klientů čekající na zpracování.</p>
+            </div>
+            <div class="service-shell-card-head-actions">
+              <button type="button" onclick="window.serviceShell.load(true)">Obnovit</button>
+            </div>
+          </div>
+          `,
+          cards: items.map(item => {
+            const action = \`window.serviceShell.openReservationDetailModal(\${Number(item?.id || 0)})\`;
+            return listCard({
+              kicker: vehiclePlate(item),
+              title: vehicleTitle(item),
+              badge: 'Nová rezervace',
+              badgeClass: 'badge-info',
+              rows: [
+                ['Klient', item?.customer_name || item?.customer_email_masked || '-'],
+                ['Termín', item?.scheduled_for || item?.reservation_date || item?.starts_at ? formatDate(item?.scheduled_for || item?.reservation_date || item?.starts_at) : 'Bez termínu'],
+                ['Poznámka', item?.note ? (item.note.length > 30 ? item.note.substring(0, 30) + '...' : item.note) : '-'],
+              ],
+              action,
+              actionLabel: 'Detail',
+            });
+          }).join(''),
+          empty: 'Žádné nové požadavky od klientů.',
+        })}
+      `;
+    }
+
     const items = filteredWorkOrders();
     return `
       ${renderFilterSheet()}
@@ -4481,7 +4555,7 @@
     return `
       ${pageHead('Dashboard servisu', 'Provozní přehled: zakázky, rezervace a klíčové metriky')}
       ${kpiCards()}
-      <div class="service-shell-layout">
+      <div class="service-shell-layout service-shell-layout--dashboard">
         <div class="service-shell-main">
           ${dashboardOpsStats()}
           ${workOrdersTableCard('Příchozí objednávky a zakázky', 'Fronta aktivních zakázek, objednávek a schvalovacích procesů.')}
