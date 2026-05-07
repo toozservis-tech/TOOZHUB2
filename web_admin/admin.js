@@ -7943,3 +7943,229 @@ window.addEventListener('DOMContentLoaded', () => {
     showLoginScreen();
   }
 });
+
+// --- PODPORA (CHAT) ---
+let supportWs = null;
+let activeChatUserId = null;
+let supportSessions = [];
+
+function initSupportChat() {
+    const token = localStorage.getItem('adminAccessToken') || localStorage.getItem('adminToken');
+    if (!token) return;
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/v1/support/ws?token=${token}`;
+    
+    supportWs = new WebSocket(wsUrl);
+    
+    const statusBadge = document.getElementById('support-admin-status');
+    
+    supportWs.onopen = () => {
+        console.log('Admin Support WS connected');
+        statusBadge.textContent = 'Připojeno';
+        statusBadge.style.background = '#10b981';
+        loadSupportSessions();
+    };
+    
+    supportWs.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'message') {
+            // New message from user
+            handleIncomingSupportMessage(data);
+        } else if (data.type === 'user_status') {
+            // User online/offline
+            loadSupportSessions(); // reload to update list
+        }
+    };
+    
+    supportWs.onclose = () => {
+        console.log('Admin Support WS disconnected');
+        statusBadge.textContent = 'Odpojeno';
+        statusBadge.style.background = '#ef4444';
+        setTimeout(initSupportChat, 5000); // try reconnect
+    };
+}
+
+async function loadSupportSessions() {
+    const token = localStorage.getItem('adminAccessToken') || localStorage.getItem('adminToken');
+    if (!token) return;
+    
+    try {
+        const res = await fetch('/api/v1/support/admin/sessions', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            supportSessions = data.sessions;
+            renderSupportChatList();
+            if (activeChatUserId) {
+                renderSupportChatMessages(activeChatUserId);
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load support sessions', e);
+    }
+}
+
+function renderSupportChatList() {
+    const listEl = document.getElementById('support-chat-list');
+    if (supportSessions.length === 0) {
+        listEl.innerHTML = '<div style="padding: 16px; color: var(--color-text-muted); text-align: center; font-size: 14px;">Žádné aktivní chaty</div>';
+        return;
+    }
+    
+    listEl.innerHTML = '';
+    supportSessions.forEach(session => {
+        const item = document.createElement('div');
+        item.style.padding = '12px 16px';
+        item.style.borderBottom = '1px solid var(--color-border)';
+        item.style.cursor = 'pointer';
+        item.style.background = activeChatUserId === session.user_id ? 'var(--color-surface)' : 'transparent';
+        item.style.borderLeft = activeChatUserId === session.user_id ? '4px solid var(--color-primary)' : '4px solid transparent';
+        
+        item.innerHTML = `
+            <div style="font-weight: 500; font-size: 14px; color: var(--color-text);">${escapeHtml(session.user_email)}</div>
+            <div style="font-size: 12px; color: var(--color-text-muted); margin-top: 4px;">ID: ${session.user_id}</div>
+        `;
+        
+        item.addEventListener('click', () => {
+            activeChatUserId = session.user_id;
+            document.getElementById('support-chat-header').style.display = 'block';
+            document.getElementById('support-chat-user-email').textContent = session.user_email;
+            document.getElementById('support-chat-input-area').style.display = 'flex';
+            renderSupportChatList(); // re-render to update active state
+            renderSupportChatMessages(session.user_id);
+        });
+        
+        listEl.appendChild(item);
+    });
+}
+
+function renderSupportChatMessages(userId) {
+    const session = supportSessions.find(s => s.user_id === userId);
+    const messagesEl = document.getElementById('support-chat-messages');
+    
+    if (!session || !session.messages || session.messages.length === 0) {
+        messagesEl.innerHTML = '<div style="margin: auto; color: var(--color-text-muted);">Zatím žádné zprávy</div>';
+        return;
+    }
+    
+    messagesEl.innerHTML = '';
+    session.messages.forEach(msg => {
+        appendMessageToUI(msg.message, msg.sender === 'admin');
+    });
+}
+
+function appendMessageToUI(text, isAdmin) {
+    const messagesEl = document.getElementById('support-chat-messages');
+    // Remove the "no messages" placeholder if it exists
+    if (messagesEl.children.length === 1 && messagesEl.children[0].style.margin === 'auto') {
+        messagesEl.innerHTML = '';
+    }
+    
+    const msgDiv = document.createElement('div');
+    msgDiv.style.padding = '10px 14px';
+    msgDiv.style.borderRadius = '8px';
+    msgDiv.style.fontSize = '14px';
+    msgDiv.style.maxWidth = '80%';
+    msgDiv.style.wordBreak = 'break-word';
+    
+    if (isAdmin) {
+        msgDiv.style.background = 'var(--color-primary)';
+        msgDiv.style.color = 'white';
+        msgDiv.style.alignSelf = 'flex-end';
+    } else {
+        msgDiv.style.background = 'var(--color-surface-soft)';
+        msgDiv.style.color = 'var(--color-text)';
+        msgDiv.style.border = '1px solid var(--color-border)';
+        msgDiv.style.alignSelf = 'flex-start';
+    }
+    
+    msgDiv.textContent = text;
+    messagesEl.appendChild(msgDiv);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function handleIncomingSupportMessage(data) {
+    let session = supportSessions.find(s => s.user_id === data.user_id);
+    if (!session) {
+        session = {
+            user_id: data.user_id,
+            user_email: data.user_email,
+            messages: []
+        };
+        supportSessions.push(session);
+        renderSupportChatList();
+    }
+    
+    session.messages.push({
+        sender: 'user',
+        message: data.message,
+        timestamp: data.timestamp
+    });
+    
+    if (activeChatUserId === data.user_id) {
+        appendMessageToUI(data.message, false);
+    } else {
+        // Could show a notification badge here
+        renderSupportChatList();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const sendBtn = document.getElementById('support-chat-send');
+    const input = document.getElementById('support-chat-input');
+    
+    if (sendBtn && input) {
+        const sendMsg = () => {
+            const text = input.value.trim();
+            if (!text || !activeChatUserId || !supportWs || supportWs.readyState !== WebSocket.OPEN) return;
+            
+            supportWs.send(JSON.stringify({
+                type: 'message',
+                target_user_id: activeChatUserId,
+                message: text
+            }));
+            
+            // Optimistically add to UI and local state
+            const session = supportSessions.find(s => s.user_id === activeChatUserId);
+            if (session) {
+                session.messages.push({
+                    sender: 'admin',
+                    message: text,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            appendMessageToUI(text, true);
+            input.value = '';
+        };
+        
+        sendBtn.addEventListener('click', sendMsg);
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMsg();
+        });
+    }
+    
+    // Initialize if already logged in
+    if (localStorage.getItem('adminAccessToken') || localStorage.getItem('adminToken')) {
+        initSupportChat();
+    }
+});
+
+// Hook into login/logout
+const originalHandleAdminLogin = window.handleAdminLogin;
+window.handleAdminLogin = async function(e) {
+    if (originalHandleAdminLogin) await originalHandleAdminLogin(e);
+    if (localStorage.getItem('adminAccessToken') || localStorage.getItem('adminToken')) {
+        initSupportChat();
+    }
+};
+
+const originalHandleAdminLogout = window.handleAdminLogout;
+window.handleAdminLogout = function() {
+    if (supportWs) {
+        supportWs.close();
+        supportWs = null;
+    }
+    if (originalHandleAdminLogout) originalHandleAdminLogout();
+};

@@ -82,6 +82,10 @@
             <span class="nav-icon">👥</span>
             <span class="nav-text">Uživatelé</span>
           </button>
+          <button data-section="support-chat" class="nav-item">
+            <span class="nav-icon">💬</span>
+            <span class="nav-text">Podpora (Chat)</span>
+          </button>
           <button data-section="vehicles" class="nav-item">
             <span class="nav-icon">🚗</span>
             <span class="nav-text">Vozidla</span>
@@ -223,6 +227,38 @@
           <div id="demo-access-summary" class="global-admin-summary"></div>
           <p id="demo-access-note" class="panel-subtle hidden" style="margin: 0 0 12px;"></p>
           <div id="demo-access-table" class="tool-table-wrap"></div>
+        </section>
+
+        <!-- Sekce: Podpora (Chat) -->
+        <section id="section-support-chat" class="content-section">
+          <div class="section-header">
+            <h1>Podpora (Chat)</h1>
+            <div class="header-actions">
+              <span id="support-admin-status" class="badge" style="background: #ef4444; color: white;">Odpojeno</span>
+            </div>
+          </div>
+          <div class="card" style="display: flex; height: 600px; padding: 0; overflow: hidden;">
+            <!-- Seznam chatů -->
+            <div style="width: 300px; border-right: 1px solid var(--color-border); display: flex; flex-direction: column; background: var(--color-surface-soft);">
+              <div style="padding: 16px; border-bottom: 1px solid var(--color-border); font-weight: 600;">Aktivní chaty</div>
+              <div id="support-chat-list" style="flex: 1; overflow-y: auto;">
+                <div style="padding: 16px; color: var(--color-text-muted); text-align: center; font-size: 14px;">Žádné aktivní chaty</div>
+              </div>
+            </div>
+            <!-- Okno chatu -->
+            <div style="flex: 1; display: flex; flex-direction: column; background: var(--color-surface);">
+              <div id="support-chat-header" style="padding: 16px; border-bottom: 1px solid var(--color-border); font-weight: 600; display: none;">
+                Chat s uživatelem <span id="support-chat-user-email" style="color: var(--color-primary);"></span>
+              </div>
+              <div id="support-chat-messages" style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+                <div style="margin: auto; color: var(--color-text-muted);">Vyberte chat ze seznamu vlevo</div>
+              </div>
+              <div id="support-chat-input-area" style="padding: 16px; border-top: 1px solid var(--color-border); display: none; gap: 12px;">
+                <input type="text" id="support-chat-input" placeholder="Napište zprávu..." style="flex: 1; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 6px; font-family: inherit;">
+                <button id="support-chat-send" class="btn-primary">Odeslat</button>
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- Sekce: Uživatelé -->

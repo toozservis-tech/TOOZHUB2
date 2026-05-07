@@ -1775,3 +1775,26 @@ class ServiceFakturywebAuditLog(Base):
     error_message = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+class SupportSession(Base):
+    __tablename__ = "support_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    status = Column(String(20), default="active", index=True) # active, closed
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    customer = relationship("Customer")
+    messages = relationship("SupportMessage", back_populates="session", cascade="all, delete-orphan")
+
+class SupportMessage(Base):
+    __tablename__ = "support_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("support_sessions.id"), nullable=False, index=True)
+    sender_type = Column(String(20), nullable=False) # 'user' or 'admin'
+    sender_id = Column(Integer, nullable=True) # customer_id or admin_id
+    message = Column(String, nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    session = relationship("SupportSession", back_populates="messages")

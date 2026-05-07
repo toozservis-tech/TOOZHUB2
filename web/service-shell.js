@@ -4052,11 +4052,23 @@
   function dashboardOpsStats() {
     const summary = dashboardSummary();
     return `
-      <div class="service-shell-stat-grid">
-        <article class="service-shell-mini-card summary-card"><h3>Nové rezervace</h3><div class="service-shell-stat-value">${summary.new_reservations}</div><p class="service-shell-muted">Čekají na reakci servisu</p></article>
-        <article class="service-shell-mini-card summary-card"><h3>Čekající nabídky</h3><div class="service-shell-stat-value">${summary.pending_quotes}</div><p class="service-shell-muted">Koncepty a odeslané nabídky</p></article>
-        <article class="service-shell-mini-card summary-card"><h3>Draft faktury</h3><div class="service-shell-stat-value">${summary.draft_invoices}</div><p class="service-shell-muted">Připravené k vystavení</p></article>
-        <article class="service-shell-mini-card summary-card"><h3>Aktivní připomínky</h3><div class="service-shell-stat-value">${summary.open_reminders}</div><p class="service-shell-muted">Follow-upy a kritické termíny</p></article>
+      <div class="service-shell-metrics-ticker">
+        <div class="service-shell-metric">
+          <span class="service-shell-metric-label">Nové rezervace</span>
+          <strong class="service-shell-metric-value">${summary.new_reservations}</strong>
+        </div>
+        <div class="service-shell-metric">
+          <span class="service-shell-metric-label">Čekající nabídky</span>
+          <strong class="service-shell-metric-value">${summary.pending_quotes}</strong>
+        </div>
+        <div class="service-shell-metric">
+          <span class="service-shell-metric-label">Draft faktury</span>
+          <strong class="service-shell-metric-value">${summary.draft_invoices}</strong>
+        </div>
+        <div class="service-shell-metric">
+          <span class="service-shell-metric-label">Aktivní připomínky</span>
+          <strong class="service-shell-metric-value">${summary.open_reminders}</strong>
+        </div>
       </div>
     `;
   }
@@ -4259,28 +4271,22 @@
   function kpiCards() {
     const summary = dashboardSummary();
     const cards = [
-      ['active', 'Aktivní zakázky', summary.active_jobs, 'Ve výrobě nebo schválené klientem', '✓', 'success', 'Otevřít aktivní frontu'],
-      ['awaiting', 'Čeká na schválení', summary.awaiting_approval, 'Zakázky blokované souhlasem klienta', '!', 'warning', 'Otevřít čekající zakázky'],
-      ['today', 'Dnes k dokončení', summary.due_today, 'Plánované odevzdání během dneška', '△', 'warning', 'Otevřít dnešní termíny'],
-      ['overdue', 'Po termínu', summary.overdue, 'Rozpracované zakázky po deadlinu', '•', 'danger', 'Otevřít kritické zakázky'],
+      ['active', 'Aktivní zakázky', summary.active_jobs, 'Ve výrobě nebo schválené', 'success'],
+      ['awaiting', 'Čeká na schválení', summary.awaiting_approval, 'Vyžaduje souhlas', 'warning'],
+      ['today', 'Dnes k dokončení', summary.due_today, 'Plánované na dnešek', 'info'],
+      ['overdue', 'Po termínu', summary.overdue, 'Kritické', 'danger'],
     ];
     return `
       <section class="service-shell-kpis">
-        ${cards.map(([key, title, value, note, icon, iconCls, actionNote]) => `
-          <article class="service-shell-kpi summary-card ${state.kpiFilter === key ? 'active' : ''}" tabindex="0" role="button" onclick="window.serviceShell.setKpiFilter('${key}')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.setKpiFilter('${key}') }">
-            <div class="service-shell-kpi-head">
-              <span class="service-shell-kpi-icon ${iconCls}">${icon}</span>
-              <span class="service-shell-kpi-arrow">↗</span>
+        ${cards.map(([key, title, value, note, color]) => `
+          <button type="button" class="service-shell-kpi-card service-shell-kpi-card--${color} ${state.kpiFilter === key ? 'is-active' : ''}" onclick="window.serviceShell.setKpiFilter('${key}')" aria-pressed="${state.kpiFilter === key}">
+            <div class="service-shell-kpi-card-content">
+              <span class="service-shell-kpi-card-title">${title}</span>
+              <strong class="service-shell-kpi-card-value">${escape(String(value))}</strong>
+              <span class="service-shell-kpi-card-note">${note}</span>
             </div>
-            <div>
-              <h3 class="service-shell-kpi-title">${title}</h3>
-            </div>
-            <div>
-              <p class="service-shell-kpi-value">${escape(String(value))}</p>
-              <p class="service-shell-muted">${note}</p>
-              <p class="service-shell-action-note">${actionNote}</p>
-            </div>
-          </article>
+            <div class="service-shell-kpi-card-indicator"></div>
+          </button>
         `).join('')}
       </section>
     `;
@@ -4316,10 +4322,11 @@
     const queue = state.queue || {};
     return `
       <aside class="service-shell-side">
+        ${dashboardQuickActions()}
         <section class="service-shell-side-card list-card">
           <div class="service-shell-card-head">
             <h3>Výkon techniků</h3>
-            <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.load(true)" aria-label="Obnovit panel">↗</button>
+            <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.load(true)" aria-label="Obnovit panel">↻</button>
           </div>
           <p class="service-shell-action-note">Otevřít tým a rozdělení práce</p>
           <div class="service-shell-list">
@@ -4472,13 +4479,12 @@
 
   function dashboardSection() {
     return `
-      ${pageHead('Dashboard servisu', 'Příchozí objednávky, příchozí rezervace a rozpracovaná práce v jednom provozním přehledu.')}
+      ${pageHead('Dashboard servisu', 'Provozní přehled: zakázky, rezervace a klíčové metriky')}
       ${kpiCards()}
-      ${dashboardOpsStats()}
-      ${dashboardQuickActions()}
       <div class="service-shell-layout">
         <div class="service-shell-main">
-          ${workOrdersTableCard('Příchozí objednávky a zakázky', 'Fronta příchozích servisních objednávek a rozpracovaných zakázek nad produkčními daty backendu.')}
+          ${dashboardOpsStats()}
+          ${workOrdersTableCard('Příchozí objednávky a zakázky', 'Fronta aktivních zakázek, objednávek a schvalovacích procesů.')}
         </div>
         ${rightPanel()}
       </div>
@@ -5233,6 +5239,14 @@
     setCustomerSearchQuery,
     setVehicleLookupQuery,
     state,
+  };
+
+  window.onServiceHistoryExpandClick = function(event, vid, rid) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (window.serviceShell && typeof window.serviceShell.openServiceRecordModal === 'function') {
+      window.serviceShell.openServiceRecordModal(vid, rid);
+    }
   };
 
   window.renderServiceWorkspace = function () {

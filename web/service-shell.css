@@ -2179,3 +2179,148 @@ body.service-shell-theme-light .service-shell-inline-error {
     font-size: 0.94rem;
   }
 }
+
+/* SaaS Dashboard Re-design */
+.service-shell-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.service-shell-kpi-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  background: var(--service-panel);
+  border: 1px solid var(--service-border);
+  border-radius: var(--service-radius);
+  padding: 16px 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+}
+
+.service-shell-kpi-card:hover {
+  border-color: var(--service-text-muted);
+  transform: translateY(-2px);
+  box-shadow: var(--service-shadow);
+}
+
+.service-shell-kpi-card.is-active {
+  background: var(--service-panel-alt);
+  border-color: var(--service-primary);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+}
+
+.service-shell-kpi-card-content {
+  display: grid;
+  gap: 6px;
+  z-index: 2;
+}
+
+.service-shell-kpi-card-title {
+  color: var(--service-text-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.service-shell-kpi-card-value {
+  color: var(--service-text);
+  font-size: 2.2rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.service-shell-kpi-card-note {
+  color: var(--service-text-soft);
+  font-size: 0.85rem;
+}
+
+.service-shell-kpi-card-indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: transparent;
+  transition: background 0.2s ease;
+}
+
+.service-shell-kpi-card--success .service-shell-kpi-card-indicator { background: #22c55e; }
+.service-shell-kpi-card--warning .service-shell-kpi-card-indicator { background: #f59e0b; }
+.service-shell-kpi-card--danger .service-shell-kpi-card-indicator { background: #ef4444; }
+.service-shell-kpi-card--info .service-shell-kpi-card-indicator { background: #3b82f6; }
+
+.service-shell-metrics-ticker {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+  background: var(--service-panel);
+  border: 1px solid var(--service-border);
+  border-radius: var(--service-radius);
+  padding: 16px;
+}
+
+.service-shell-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 16px;
+  border-right: 1px solid var(--service-border);
+}
+
+.service-shell-metric:last-child {
+  border-right: none;
+}
+
+.service-shell-metric-label {
+  color: var(--service-text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.service-shell-metric-value {
+  color: var(--service-text);
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+@media (max-width: 900px) {
+  .service-shell-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .service-shell-metrics-ticker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .service-shell-metric:nth-child(2) {
+    border-right: none;
+  }
+  .service-shell-metric {
+    padding: 8px 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .service-shell-metrics-ticker {
+    grid-template-columns: 1fr;
+  }
+  .service-shell-metric {
+    border-right: none;
+    border-bottom: 1px solid var(--service-border);
+    padding: 12px;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .service-shell-metric:last-child {
+    border-bottom: none;
+  }
+}
