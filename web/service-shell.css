@@ -12,6 +12,7 @@
 /* Výchozí servisní shell = tmavý motiv; .service-shell-theme-light přepne na světlý */
 body.service-shell-app {
   background: #111315 !important;
+  color: var(--service-text);
   --service-bg: #111315;
   --service-panel: rgba(15, 23, 42, 0.96);
   --service-panel-soft: rgba(30, 41, 59, 0.88);
@@ -1765,6 +1766,7 @@ body.service-shell-theme-light .service-shell-inline-error {
     grid-column: 1 / -1;
     display: none;
     flex-direction: column;
+    flex-wrap: nowrap;
     align-items: stretch;
     gap: 0;
     width: 100%;
