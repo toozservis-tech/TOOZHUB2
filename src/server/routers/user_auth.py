@@ -2,14 +2,22 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
+import json
 import secrets
 import time
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import func
 
-from src.core.config import ENVIRONMENT, PUBLIC_API_BASE_URL
+from src.core.config import (
+    ENVIRONMENT,
+    LOGIN_RATE_LIMIT_MAX,
+    PUBLIC_API_BASE_URL,
+    REGISTER_RATE_LIMIT_EMAIL_MAX,
+    REGISTER_RATE_LIMIT_IP_MAX,
+)
 from src.core.branding import APP_DISPLAY_NAME
 from src.core.rate_limiter import rate_limiter
 from src.core.security import create_access_token, hash_password, needs_rehash, verify_password
@@ -26,11 +34,20 @@ from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer, CustomerSecuritySettings, ServiceRegistrationRequest
 from src.modules.vehicle_hub.routers_v1.auth import get_current_user as get_v1_current_user
 from src.modules.vehicle_hub.routers_v1.ares_lookup import lookup_ares as lookup_ares_v1
+from src.modules.vehicle_hub.registration_security import (
+    assert_ico_exists_in_ares,
+    collect_email_domain_risk_flags,
+    generate_email_verification_secret,
+    hash_email_verification_token,
+    is_disposable_email_domain,
+    normalize_validate_phone_e164,
+)
 from src.modules.vehicle_hub.tenant_provisioning import create_dedicated_tenant, ensure_default_license_for_tenant
 from src.server.main_helpers import (
     ForgotPasswordRequest,
     LoginResponse,
     RegisterTokenResponse,
+    ResendVerificationEmailRequest,
     ResetPasswordRequest,
     ServiceRegisterRequest,
     ServiceRegisterResponse,
@@ -38,6 +55,7 @@ from src.server.main_helpers import (
     TwoFactorLoginVerifyRequest,
     UserLogin,
     UserRegister,
+    VerifyEmailRequest,
     get_active_ip_block,
     get_customer_by_email,
     normalize_email,
@@ -56,63 +74,72 @@ from src.server.security_tracking import extract_client_ip, log_security_event
 
 router = APIRouter()
 
+_EMAIL_VERIFICATION_TTL = timedelta(minutes=30)
 
-def _send_user_registration_confirmation_email(*, email: str, name: str | None) -> None:
+
+def _login_blocked_pending_email_verification(customer: Customer) -> bool:
+    return customer.email_verified_at is None
+
+
+def _send_email_verification_link_email(*, email: str, name: str | None, token: str) -> None:
     try:
         from src.modules.email_client.service import EmailService
 
         email_service = EmailService()
         if not email_service.is_configured():
-            print("[REGISTER] WARNING: SMTP není nakonfigurováno, potvrzovací email nebyl odeslán")
+            print("[REGISTER] WARNING: SMTP není nakonfigurováno, ověřovací e-mail nebyl odeslán")
             return
 
-        registered_at = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
         user_name = (name or "uživateli").strip()
+        verify_url = f"{build_app_url('/web/verify-email.html')}?token={quote(token, safe='')}"
 
         email_body = f"""
 Dobrý den {user_name},
 
-vaše registrace do aplikace {APP_DISPLAY_NAME} byla úspěšně dokončena.
+dokončete registraci v aplikaci {APP_DISPLAY_NAME} kliknutím na odkaz níže (platnost {int(_EMAIL_VERIFICATION_TTL.total_seconds() // 60)} minut):
 
-Registrovaný účet: {email}
-Datum registrace: {registered_at} UTC
+{verify_url}
 
-Nyní se můžete přihlásit a začít spravovat svá vozidla.
+Pokud jste o účet nežádali, tento e-mail ignorujte.
 
-S pozdravem,
 {APP_DISPLAY_NAME}
 """
 
         html_body = render_email_layout(
-            title="Účet je připraven",
-            subtitle="Registrace byla úspěšně dokončena.",
+            title="Ověřte e-mailovou adresu",
+            subtitle="Jednorázový odkaz pro dokončení registrace.",
             intro=f"Dobrý den {user_name},",
             paragraphs=[
-                f"vaše registrace do aplikace {APP_DISPLAY_NAME} byla úspěšně dokončena.",
-                "Teď se můžete přihlásit a začít spravovat svá vozidla, servisní historii i připomínky.",
+                f"pro aktivaci účtu v aplikaci {APP_DISPLAY_NAME} je nutné ověřit tuto e-mailvou adresu.",
+                f"Odkaz je platný {int(_EMAIL_VERIFICATION_TTL.total_seconds() // 60)} minut.",
             ],
             panels=[
                 render_panel(
-                    title="Přehled účtu",
-                    rows=[
-                        ("Registrovaný účet", email),
-                        ("Datum registrace", f"{registered_at} UTC"),
-                    ],
+                    title="Ověření",
+                    rows=[("Účet", email)],
                 )
             ],
-            cta_label="Otevřít aplikaci",
-            cta_url=build_app_url(),
+            cta_label="Ověřit e-mail",
+            cta_url=verify_url,
             accent="#f59e0b",
         )
         email_service.send_simple_email(
             to=email,
-            subject=f"Potvrzení registrace - {APP_DISPLAY_NAME}",
+            subject=f"Ověření e-mailu — {APP_DISPLAY_NAME}",
             body=email_body,
             html_body=html_body,
         )
-        print(f"[REGISTER] OK: Potvrzovací email odeslán na: {email}")
     except Exception as exc:
-        print(f"[REGISTER] ERROR: Nepodařilo se odeslat registrační email na pozadí: {exc}")
+        print(f"[REGISTER] ERROR: Ověřovací e-mail se nepodařilo odeslat: {exc}")
+
+
+def _schedule_verification_email(customer: Customer, raw_token: str, background_tasks: BackgroundTasks) -> None:
+    background_tasks.add_task(
+        _send_email_verification_link_email,
+        email=customer.email,
+        name=customer.name,
+        token=raw_token,
+    )
 
 
 def _send_registration_alert_email_background(
@@ -142,21 +169,93 @@ def _send_registration_alert_email_background(
 
 
 @router.post("/user/register", response_model=RegisterTokenResponse)
-def register_user(user_data: UserRegister, background_tasks: BackgroundTasks, db=Depends(get_db)):
+def register_user(
+    user_data: UserRegister,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db=Depends(get_db),
+):
     normalized_email = normalize_email(user_data.email)
     normalized_ico = normalize_ico(user_data.ico)
+    domain_part = normalized_email.split("@", 1)[-1].strip().lower() if "@" in normalized_email else ""
 
     if not user_data.password or len(user_data.password) < 6:
         raise HTTPException(status_code=400, detail="Heslo musí mít alespoň 6 znaků")
+
+    client_ip = extract_client_ip(request) or "unknown"
+    if not rate_limiter.check_rate_limit(
+        f"register_ip:{client_ip}", max_calls=REGISTER_RATE_LIMIT_IP_MAX, period=3600
+    ):
+        raise HTTPException(status_code=429, detail="Příliš mnoho pokusů o registraci. Zkuste to později.")
+    if not rate_limiter.check_rate_limit(
+        f"register_email:{normalized_email}", max_calls=REGISTER_RATE_LIMIT_EMAIL_MAX, period=3600
+    ):
+        raise HTTPException(status_code=429, detail="Příliš mnoho pokusů o registraci pro tento e-mail.")
 
     existing = get_customer_by_email(db, normalized_email)
     if existing:
         raise HTTPException(status_code=400, detail="Uživatel s tímto emailem již existuje")
 
+    if is_disposable_email_domain(domain_part):
+        log_security_event(
+            event_type="registration_risk_flagged",
+            request=request,
+            user_email=normalized_email,
+            endpoint=str(request.url.path),
+            details={"reason": "disposable_email_domain", "domain": domain_part},
+        )
+        raise HTTPException(
+            status_code=422,
+            detail="Tento typ e-mailové adresy není pro registraci podporován. Použijte běžnou doménu.",
+        )
+
+    domain_flags, domain_ok = collect_email_domain_risk_flags(domain_part)
+    if not domain_ok:
+        log_security_event(
+            event_type="registration_risk_flagged",
+            request=request,
+            user_email=normalized_email,
+            endpoint=str(request.url.path),
+            details={"reason": "email_domain_rejected", "flags": domain_flags},
+        )
+        raise HTTPException(
+            status_code=422,
+            detail="E-mailová doména neexistuje nebo neumožňuje doručování zpráv. Zkontrolujte překlep.",
+        )
+
+    risk_flags: list[str] = list(domain_flags)
+
+    try:
+        phone_e164 = normalize_validate_phone_e164(user_data.phone)
+    except ValueError as exc:
+        log_security_event(
+            event_type="registration_rejected_invalid_phone",
+            request=request,
+            user_email=normalized_email,
+            endpoint=str(request.url.path),
+            details={"reason": "invalid_phone"},
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if risk_flags:
+        log_security_event(
+            event_type="registration_risk_flagged",
+            request=request,
+            user_email=normalized_email,
+            endpoint=str(request.url.path),
+            details={"risk_flags": risk_flags},
+        )
+
     try:
         hashed_password = hash_password(user_data.password)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    raw_token = generate_email_verification_secret()
+    token_hash = hash_email_verification_token(raw_token)
+    now = datetime.utcnow()
+    reg_ip = (extract_client_ip(request) or "")[:128] or None
+    reg_ua = (request.headers.get("user-agent") or "")[:2000] or None
 
     dedicated_tenant = create_dedicated_tenant(
         db,
@@ -176,6 +275,14 @@ def register_user(user_data: UserRegister, background_tasks: BackgroundTasks, db
         city=user_data.city,
         zip=user_data.zip,
         phone=user_data.phone,
+        phone_e164=phone_e164,
+        account_status="pending_email_verification",
+        email_verification_token_hash=token_hash,
+        email_verification_expires_at=now + _EMAIL_VERIFICATION_TTL,
+        email_verification_sent_at=now,
+        registration_ip=reg_ip,
+        registration_user_agent=reg_ua,
+        registration_risk_flags=risk_flags or None,
     )
 
     db.add(customer)
@@ -186,11 +293,30 @@ def register_user(user_data: UserRegister, background_tasks: BackgroundTasks, db
 
     ensure_default_license_for_tenant(db, dedicated_tenant.id)
 
-    background_tasks.add_task(
-        _send_user_registration_confirmation_email,
-        email=customer.email,
-        name=customer.name,
+    log_security_event(
+        event_type="registration_created",
+        request=request,
+        user_email=customer.email,
+        customer_id=customer.id,
+        tenant_id=customer.tenant_id,
+        endpoint=str(request.url.path),
+        details={"account_status": customer.account_status, "risk_flag_count": len(risk_flags)},
     )
+
+    _schedule_verification_email(customer, raw_token, background_tasks)
+    log_security_event(
+        event_type="email_verification_sent",
+        request=request,
+        user_email=customer.email,
+        customer_id=customer.id,
+        tenant_id=customer.tenant_id,
+        endpoint=str(request.url.path),
+        details={"channel": "email"},
+    )
+
+    email_status_label = "pending"
+    phone_status_label = "unverified"
+
     background_tasks.add_task(
         _send_registration_alert_email_background,
         registration_type="user",
@@ -201,34 +327,76 @@ def register_user(user_data: UserRegister, background_tasks: BackgroundTasks, db
             "customer_id": customer.id,
             "tenant_id": customer.tenant_id,
             "role": customer.role or "user",
+            "email_status": email_status_label,
+            "phone_status": phone_status_label,
+            "fraud_score": len(risk_flags),
+            "risk_flags": json.dumps(risk_flags, ensure_ascii=False) if risk_flags else "[]",
+            "registration_ip": reg_ip,
+            "registration_user_agent": reg_ua,
+            "account_status": customer.account_status,
         },
     )
 
-    access_token = create_access_token(data={"sub": customer.email, "sv": customer_session_version(customer)})
-
     return RegisterTokenResponse(
-        access_token=access_token,
+        access_token=None,
         user={
             "id": customer.id,
             "email": customer.email,
             "name": customer.name,
             "ico": customer.ico,
             "role": customer.role or "user",
+            "account_status": customer.account_status,
         },
-        email_sent=False,
+        verification_required=True,
+        message="Registrace přijata. Na e-mail vám byl odeslán ověřovací odkaz.",
+        email_sent=True,
         registration_email_status="queued",
     )
 
 
 @router.post("/user/register/service-request", response_model=ServiceRegisterResponse)
-def register_service_request(payload: ServiceRegisterRequest, db=Depends(get_db)):
+def register_service_request(payload: ServiceRegisterRequest, request: Request, db=Depends(get_db)):
     normalized_email = normalize_email(payload.email)
     ico_digits = normalize_ico(payload.ico) or ""
+    domain_part = normalized_email.split("@", 1)[-1].strip().lower() if "@" in normalized_email else ""
 
     if not payload.password or len(payload.password) < 6:
         raise HTTPException(status_code=400, detail="Heslo musí mít alespoň 6 znaků")
     if len(ico_digits) != 8:
         raise HTTPException(status_code=400, detail="IČO musí obsahovat přesně 8 číslic")
+
+    if is_disposable_email_domain(domain_part):
+        raise HTTPException(
+            status_code=422,
+            detail="Tento typ e-mailové adresy není pro registraci podporován. Použijte běžnou doménu.",
+        )
+    domain_flags, domain_ok = collect_email_domain_risk_flags(domain_part)
+    if not domain_ok:
+        raise HTTPException(
+            status_code=422,
+            detail="E-mailová doména neexistuje nebo neumožňuje doručování zpráv. Zkontrolujte překlep.",
+        )
+    risk_flags: list[str] = list(domain_flags)
+
+    try:
+        phone_e164 = normalize_validate_phone_e164(payload.phone)
+    except ValueError as exc:
+        log_security_event(
+            event_type="registration_rejected_invalid_phone",
+            request=request,
+            user_email=normalized_email,
+            endpoint=str(request.url.path),
+            details={"flow": "service_request"},
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        assert_ico_exists_in_ares(ico_digits)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    reg_ip = (extract_client_ip(request) or "")[:128] or None
+    reg_ua = (request.headers.get("user-agent") or "")[:2000] or None
 
     if get_customer_by_email(db, normalized_email):
         raise HTTPException(status_code=400, detail="Účet s tímto emailem již existuje")
@@ -317,8 +485,16 @@ def register_service_request(payload: ServiceRegisterRequest, db=Depends(get_db)
                 "city": existing_request.city,
                 "responsible_person": existing_request.responsible_person,
                 "phone": existing_request.phone,
+                "phone_e164": phone_e164,
                 "purpose": existing_request.registration_purpose[:180],
                 "event": "service_request_resubmitted",
+                "email_status": "pending",
+                "phone_status": "unverified",
+                "fraud_score": len(risk_flags),
+                "risk_flags": json.dumps(risk_flags, ensure_ascii=False) if risk_flags else "[]",
+                "registration_ip": reg_ip,
+                "registration_user_agent": reg_ua,
+                "role": "service",
             },
         )
         if developer_alert.get("status") not in {"sent", "no_recipients", "smtp_not_configured"}:
@@ -364,8 +540,16 @@ def register_service_request(payload: ServiceRegisterRequest, db=Depends(get_db)
             "city": new_request.city,
             "responsible_person": new_request.responsible_person,
             "phone": new_request.phone,
+            "phone_e164": phone_e164,
             "purpose": new_request.registration_purpose[:180],
             "event": "service_request_created",
+            "email_status": "pending",
+            "phone_status": "unverified",
+            "fraud_score": len(risk_flags),
+            "risk_flags": json.dumps(risk_flags, ensure_ascii=False) if risk_flags else "[]",
+            "registration_ip": reg_ip,
+            "registration_user_agent": reg_ua,
+            "role": "service",
         },
     )
     if developer_alert.get("status") not in {"sent", "no_recipients", "smtp_not_configured"}:
@@ -407,13 +591,13 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
             )
 
         key = f"login:{normalized_email}:{client_ip}"
-        if not rate_limiter.check_rate_limit(key, max_calls=5, period=60):
+        if not rate_limiter.check_rate_limit(key, max_calls=LOGIN_RATE_LIMIT_MAX, period=60):
             log_security_event(
                 event_type="login_rate_limited",
                 request=request,
                 user_email=normalized_email,
                 endpoint=str(request.url.path),
-                details={"reason": "rate_limit", "max_calls": 5, "period_sec": 60},
+                details={"reason": "rate_limit", "max_calls": LOGIN_RATE_LIMIT_MAX, "period_sec": 60},
             )
             raise HTTPException(
                 status_code=429,
@@ -479,10 +663,27 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
             )
             raise HTTPException(status_code=401, detail="Neplatný email nebo heslo")
 
+        if _login_blocked_pending_email_verification(customer):
+            log_security_event(
+                event_type="login_blocked_email_unverified",
+                request=request,
+                user_email=normalized_email,
+                customer_id=customer.id,
+                tenant_id=customer.tenant_id,
+                endpoint=str(request.url.path),
+                details={"account_status": getattr(customer, "account_status", None)},
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Nejdříve ověřte e-mailovou adresu.",
+            )
+
         requested_role = (login_data.expected_role or "").strip().lower()
         if requested_role in {"user", "service"}:
-            customer_role = (customer.role or "user").strip().lower()
-            if requested_role == "service" and customer_role not in {"service", "admin", "developer_admin"}:
+            from src.modules.vehicle_hub.workspace_entitlements import effective_workspace_kinds
+
+            kinds = effective_workspace_kinds(customer)
+            if requested_role == "service" and "service" not in kinds:
                 log_security_event(
                     event_type="login_failed",
                     request=request,
@@ -490,13 +691,13 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
                     customer_id=customer.id,
                     tenant_id=customer.tenant_id,
                     endpoint=str(request.url.path),
-                    details={"reason": "role_mismatch_service", "customer_role": customer_role},
+                    details={"reason": "role_mismatch_service", "workspace_kinds": list(kinds)},
                 )
                 raise HTTPException(
                     status_code=403,
-                    detail="Tento účet není servisní. Přepněte režim na Uživatel.",
+                    detail="Tento účet nemá povolený servisní režim přihlášení. Přepněte na Uživatel.",
                 )
-            if requested_role == "user" and customer_role == "service":
+            if requested_role == "user" and "user" not in kinds:
                 log_security_event(
                     event_type="login_failed",
                     request=request,
@@ -504,11 +705,11 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
                     customer_id=customer.id,
                     tenant_id=customer.tenant_id,
                     endpoint=str(request.url.path),
-                    details={"reason": "role_mismatch_user", "customer_role": customer_role},
+                    details={"reason": "role_mismatch_user", "workspace_kinds": list(kinds)},
                 )
                 raise HTTPException(
                     status_code=403,
-                    detail="Tento účet je servisní. Přepněte režim na Servis.",
+                    detail="Tento účet nemá povolený uživatelský režim přihlášení. Přepněte na Servis.",
                 )
 
         if needs_rehash(customer.password_hash):
@@ -618,15 +819,21 @@ def verify_login_two_factor(
     if customer_is_disabled(customer):
         pop_2fa_login_challenge(payload.challenge_token)
         raise HTTPException(status_code=403, detail="Účet je dočasně pozastaven.")
+    if _login_blocked_pending_email_verification(customer):
+        pop_2fa_login_challenge(payload.challenge_token)
+        raise HTTPException(status_code=403, detail="Nejdříve ověřte e-mailovou adresu.")
 
     expected_role = str(challenge.get("expected_role") or "").strip().lower()
-    customer_role = (customer.role or "user").strip().lower()
-    if expected_role == "service" and customer_role not in {"service", "admin", "developer_admin"}:
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(status_code=403, detail="Tento účet není servisní.")
-    if expected_role == "user" and customer_role == "service":
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(status_code=403, detail="Tento účet je servisní.")
+    if expected_role in {"user", "service"}:
+        from src.modules.vehicle_hub.workspace_entitlements import effective_workspace_kinds
+
+        kinds = effective_workspace_kinds(customer)
+        if expected_role == "service" and "service" not in kinds:
+            pop_2fa_login_challenge(payload.challenge_token)
+            raise HTTPException(status_code=403, detail="Tento účet nemá povolený servisní režim.")
+        if expected_role == "user" and "user" not in kinds:
+            pop_2fa_login_challenge(payload.challenge_token)
+            raise HTTPException(status_code=403, detail="Tento účet nemá povolený uživatelský režim.")
 
     security_settings = (
         db.query(CustomerSecuritySettings)
@@ -688,42 +895,17 @@ def get_ares_data(
     return lookup_ares_v1(ico=ico, current_user=current_user, db=db)
 
 
-@router.post("/user/forgot-password")
-@router.post("/user/request-password-reset")
-def forgot_password(payload: ForgotPasswordRequest, db=Depends(get_db)):
+def _send_forgot_password_email_background(target_email: str, reset_url: str) -> None:
+    """Odeslání reset e-mailu na pozadí — neblokuje HTTP odpověď (SMTP může trvat desítky sekund)."""
     from src.modules.email_client.service import EmailService
 
-    normalized_email = normalize_email(payload.email)
-    customer = get_customer_by_email(db, normalized_email)
-
-    if not customer:
-        return {"message": "Pokud email existuje, byl odeslán reset odkaz"}
-
-    target_email = customer.email
-    reset_token = secrets.token_urlsafe(32)
-    reset_token_expires = datetime.utcnow() + timedelta(hours=24)
-
-    customer.reset_token = reset_token
-    customer.reset_token_expires = reset_token_expires
-    db.commit()
-
-    reset_url = f"{PUBLIC_API_BASE_URL}/reset-password.html?token={reset_token}"
-
-    email_sent = False
-    email_error = None
     email_service = EmailService()
+    if not email_service.is_configured():
+        print("[RESET] background: SMTP není nakonfigurován, e-mail se neodeslal")
+        return
 
-    try:
-        print("[RESET] Kontroluji email konfiguraci...")
-        print(f"[RESET] SMTP_HOST: {email_service.host}")
-        print(f"[RESET] SMTP_PORT: {email_service.port}")
-        print(f"[RESET] SMTP_USER: {'***' if email_service.username else '(není nastaveno)'}")
-        print(f"[RESET] SMTP_FROM: {email_service.from_email}")
-        print(f"[RESET] SMTP configured: {email_service.is_configured()}")
-
-        if email_service.is_configured():
-            print(f"[RESET] Pokusím se odeslat email na: {target_email}")
-            email_body = f"""
+    print(f"[RESET] background: odesílám na {target_email} …")
+    email_body = f"""
 Dobrý den,
 
 obdrželi jsme žádost o obnovení hesla k vašemu účtu v aplikaci {APP_DISPLAY_NAME}.
@@ -738,73 +920,164 @@ Pokud jste tento požadavek nevytvořili, ignorujte tento email.
 S pozdravem,
 {APP_DISPLAY_NAME}
 """
-            html_body = render_email_layout(
-                title="Obnovení hesla",
-                subtitle="Požadavek na změnu hesla k vašemu účtu.",
-                intro="Dobrý den,",
-                paragraphs=[
-                    f"obdrželi jsme žádost o obnovení hesla k vašemu účtu v aplikaci {APP_DISPLAY_NAME}.",
-                    "Odkaz je platný 24 hodin. Pokud jste o změnu hesla nežádali, tento e-mail ignorujte.",
+    html_body = render_email_layout(
+        title="Obnovení hesla",
+        subtitle="Požadavek na změnu hesla k vašemu účtu.",
+        intro="Dobrý den,",
+        paragraphs=[
+            f"obdrželi jsme žádost o obnovení hesla k vašemu účtu v aplikaci {APP_DISPLAY_NAME}.",
+            "Odkaz je platný 24 hodin. Pokud jste o změnu hesla nežádali, tento e-mail ignorujte.",
+        ],
+        panels=[
+            render_panel(
+                title="Bezpečnostní informace",
+                rows=[
+                    ("Platnost odkazu", "24 hodin"),
+                    ("Účet", target_email),
                 ],
-                panels=[
-                    render_panel(
-                        title="Bezpečnostní informace",
-                        rows=[
-                            ("Platnost odkazu", "24 hodin"),
-                            ("Účet", target_email),
-                        ],
-                        accent="#ef4444",
-                        tone="#fef2f2",
-                    )
-                ],
-                cta_label="Obnovit heslo",
-                cta_url=reset_url,
-                accent="#f59e0b",
+                accent="#ef4444",
+                tone="#fef2f2",
             )
-            try:
-                email_service.send_simple_email(
-                    to=target_email,
-                    subject=f"Obnovení hesla - {APP_DISPLAY_NAME}",
-                    body=email_body,
-                    html_body=html_body,
-                )
-                email_sent = True
-                print(f"[RESET] OK: Email uspesne odeslan na: {target_email}")
-            except Exception as email_ex:
-                email_error = str(email_ex)
-                print(f"[RESET] ERROR: Chyba pri odesilani emailu: {email_error}")
-                import traceback
-                traceback.print_exc()
-        else:
-            print("[RESET] WARNING: Email NENI nakonfigurovan (chybi SMTP udaje)")
-            print(f"[RESET] Reset URL (pro testování): {reset_url}")
-            print("[RESET] Nastavte v .env souboru: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD")
-    except Exception as exc:
-        email_error = str(exc)
-        print(f"[RESET] ERROR: Neocekavana chyba: {email_error}")
+        ],
+        cta_label="Obnovit heslo",
+        cta_url=reset_url,
+        accent="#f59e0b",
+    )
+    try:
+        email_service.send_simple_email(
+            to=target_email,
+            subject=f"Obnovení hesla - {APP_DISPLAY_NAME}",
+            body=email_body,
+            html_body=html_body,
+        )
+        print(f"[RESET] background OK: odesláno na {target_email}")
+    except Exception as email_ex:
+        print(f"[RESET] background ERROR: {email_ex}")
         import traceback
+
         traceback.print_exc()
 
-    if email_sent:
+
+@router.post("/user/verify-email")
+def verify_email_token(payload: VerifyEmailRequest, request: Request, db=Depends(get_db)):
+    """Jednorázové ověření e-mailu — token jen jako vstup, v DB je hash."""
+    th = hash_email_verification_token(payload.token.strip())
+    customer = (
+        db.query(Customer)
+        .filter(
+            Customer.email_verification_token_hash == th,
+        )
+        .first()
+    )
+    if not customer:
+        raise HTTPException(
+            status_code=400,
+            detail="Neplatný nebo již použitý ověřovací odkaz.",
+        )
+    if customer.email_verification_expires_at and datetime.utcnow() > customer.email_verification_expires_at:
+        raise HTTPException(
+            status_code=400,
+            detail="Ověřovací odkaz vypršel. Požádejte o nový pomocí tlačítka pro opětovné odeslání.",
+        )
+    customer.email_verified_at = datetime.utcnow()
+    customer.account_status = "active"
+    customer.email_verification_token_hash = None
+    customer.email_verification_expires_at = None
+    db.commit()
+    log_security_event(
+        event_type="email_verified",
+        request=request,
+        user_email=customer.email,
+        customer_id=customer.id,
+        tenant_id=customer.tenant_id,
+        endpoint="/user/verify-email",
+        details={"account_status": customer.account_status},
+    )
+    return {"verified": True, "message": "E-mail byl ověřen. Nyní se můžete přihlásit."}
+
+
+@router.post("/user/resend-verification-email")
+def resend_verification_email(
+    payload: ResendVerificationEmailRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db=Depends(get_db),
+):
+    """Stejná odpověď vždy — bez prozrazení existence účtu."""
+    normalized = normalize_email(payload.email)
+    client_ip = extract_client_ip(request) or "unknown"
+    if not rate_limiter.check_rate_limit(f"resend_verify_ip:{client_ip}", max_calls=30, period=3600):
+        raise HTTPException(status_code=429, detail="Příliš mnoho požadavků. Zkuste to později.")
+    if not rate_limiter.check_rate_limit(f"resend_verify_mail:{normalized}", max_calls=5, period=900):
+        raise HTTPException(status_code=429, detail="Příliš mnoho požadavků pro tento e-mail. Zkuste to později.")
+
+    generic = {"message": "Pokud účet existuje a čeká na ověření e-mailu, byl odeslán nový odkaz."}
+
+    customer = get_customer_by_email(db, normalized)
+    if not customer or customer.email_verified_at is not None:
+        return generic
+    if customer_is_deleted(customer) or customer_is_disabled(customer):
+        return generic
+
+    raw = generate_email_verification_secret()
+    customer.email_verification_token_hash = hash_email_verification_token(raw)
+    customer.email_verification_expires_at = datetime.utcnow() + _EMAIL_VERIFICATION_TTL
+    customer.email_verification_sent_at = datetime.utcnow()
+    db.commit()
+
+    background_tasks.add_task(
+        _send_email_verification_link_email,
+        email=customer.email,
+        name=customer.name,
+        token=raw,
+    )
+    log_security_event(
+        event_type="email_verification_sent",
+        request=request,
+        user_email=customer.email,
+        customer_id=customer.id,
+        tenant_id=customer.tenant_id,
+        endpoint="/user/resend-verification-email",
+        details={"channel": "email", "resend": True},
+    )
+    return generic
+
+
+@router.post("/user/forgot-password")
+@router.post("/user/request-password-reset")
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db=Depends(get_db),
+):
+    normalized_email = normalize_email(payload.email)
+    customer = get_customer_by_email(db, normalized_email)
+
+    if not customer:
+        return {"message": "Pokud email existuje, byl odeslán reset odkaz"}
+
+    if customer.email_verified_at is None:
+        return {"message": "Pokud email existuje, byl odeslán reset odkaz"}
+
+    target_email = customer.email
+    reset_token = secrets.token_urlsafe(32)
+    reset_token_expires = datetime.utcnow() + timedelta(hours=24)
+
+    customer.reset_token = reset_token
+    customer.reset_token_expires = reset_token_expires
+    db.commit()
+
+    reset_url = f"{PUBLIC_API_BASE_URL}/reset-password.html?token={reset_token}"
+
+    from src.modules.email_client.service import EmailService
+
+    email_service = EmailService()
+    if email_service.is_configured():
+        background_tasks.add_task(_send_forgot_password_email_background, target_email, reset_url)
         return {"message": "Pokud email existuje, byl odeslán reset odkaz", "email_sent": True}
-    if email_error:
-        error_message = "Email nebyl odeslán."
-        if "authentication failed" in email_error.lower() or "535" in email_error:
-            error_message = "Chyba autentizace SMTP - zkontrolujte uživatelské jméno a heslo v .env souboru."
-        elif "connection" in email_error.lower() or "timeout" in email_error.lower():
-            error_message = "Chyba připojení k SMTP serveru - zkontrolujte SMTP_HOST a SMTP_PORT."
-        else:
-            error_message = f"Email nebyl odeslán: {email_error}"
 
-        response = {
-            "message": error_message,
-            "email_sent": False,
-        }
-        if ENVIRONMENT != "production":
-            response["reset_url"] = reset_url
-            response["error_detail"] = email_error
-        return response
-
+    print("[RESET] WARNING: Email NENI nakonfigurovan (chybi SMTP udaje)")
+    print(f"[RESET] Reset URL (pro testování): {reset_url}")
     response = {
         "message": "Email není nakonfigurován. Nastavte SMTP údaje v .env souboru.",
         "email_sent": False,
@@ -820,6 +1093,14 @@ def reset_password_page():
     if web_path.exists():
         return FileResponse(web_path)
     raise HTTPException(status_code=404, detail="Reset password page not found")
+
+
+@router.get("/web/verify-email.html", response_class=HTMLResponse)
+def verify_email_page():
+    web_path = Path(__file__).parent.parent.parent.parent / "web" / "verify-email.html"
+    if web_path.exists():
+        return FileResponse(web_path)
+    raise HTTPException(status_code=404, detail="Verify email page not found")
 
 
 @router.post("/user/reset-password")

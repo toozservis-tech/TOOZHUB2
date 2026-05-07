@@ -85,25 +85,29 @@ def ensure_tenant_workspace_slug(
 
 
 def resolve_workspace_route_kind_for_customer(customer: Customer) -> str:
-    role = str(getattr(customer, "role", "") or "").strip().lower()
-    if role == "service":
-        return "service"
-    return "user"
+    from .workspace_entitlements import default_workspace_route_kind
+
+    return default_workspace_route_kind(customer)
 
 
-def build_default_app_path(db: Session, customer: Customer, tenant: Tenant) -> str:
-    rk = resolve_workspace_route_kind_for_customer(customer)
+def build_app_path_for_kind(db: Session, customer: Customer, tenant: Tenant, rk: str) -> str:
+    kind = (rk or "user").strip().lower()
+    if kind not in {"user", "service"}:
+        kind = "user"
     ensure_tenant_workspace_slug(
         db,
         tenant,
         seed_label=str(tenant.name or customer.name or customer.email or "workspace"),
-        route_kind=rk,
+        route_kind=kind,
     )
-    prefix = "s" if rk == "service" else "u"
-    slug = str(tenant.workspace_slug or "").strip()
-    if not slug:
-        slug = "workspace"
+    prefix = "s" if kind == "service" else "u"
+    slug = str(tenant.workspace_slug or "").strip() or "workspace"
     return f"/app/{prefix}/{slug}/dashboard"
+
+
+def build_default_app_path(db: Session, customer: Customer, tenant: Tenant) -> str:
+    rk = resolve_workspace_route_kind_for_customer(customer)
+    return build_app_path_for_kind(db, customer, tenant, rk)
 
 
 def map_account_type(role: str) -> str:

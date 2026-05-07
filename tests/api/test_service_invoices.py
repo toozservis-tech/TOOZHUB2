@@ -278,6 +278,64 @@ def test_d_issue_assigns_number_and_audits(invoice_context) -> None:
     assert row is not None
 
 
+def test_export_issued_invoice_to_fakturyweb_persists_reference(invoice_context, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = invoice_context
+    ctx["set_user"](ctx["service_a"])
+
+    class FakeFakturyWebClient:
+        def create_invoice(self, payload):
+            assert payload["d"]["d_name"] == ctx["service_a"].name
+            assert payload["o"]["o_email"] == ctx["owner"].email
+            assert payload["p"][0]["p_text"] == LINE["description"]
+            return {"status": 1, "code": "fw-code-123", "number": "20260001"}
+
+    monkeypatch.setattr(service_invoices_router, "_fakturyweb_client", lambda **_: FakeFakturyWebClient())
+
+    c = ctx["client"]
+    created = c.post(
+        "/api/service/invoices",
+        json={"customer_id": ctx["owner"].id, "vehicle_id": ctx["vehicle"].id, "lines": [LINE]},
+    )
+    assert created.status_code == 201
+    inv_id = created.json()["id"]
+    issued = c.post(f"/api/service/invoices/{inv_id}/issue")
+    assert issued.status_code == 200
+
+    exported = c.post(f"/api/service/invoices/{inv_id}/fakturyweb/export", json={})
+    assert exported.status_code == 200, exported.text
+    body = exported.json()
+    assert body["fakturyweb"]["code"] == "fw-code-123"
+    assert body["fakturyweb"]["number"] == "20260001"
+    assert body["fakturyweb"]["status"] == "created"
+
+    row = (
+        ctx["db"]
+        .query(GlobalAuditLog)
+        .filter(
+            GlobalAuditLog.entity_type == "service_invoice",
+            GlobalAuditLog.entity_id == int(inv_id),
+            GlobalAuditLog.action == "invoice_fakturyweb_exported",
+        )
+        .first()
+    )
+    assert row is not None
+
+
+def test_export_draft_invoice_to_fakturyweb_is_rejected(invoice_context, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = invoice_context
+    ctx["set_user"](ctx["service_a"])
+    monkeypatch.setattr(service_invoices_router, "_fakturyweb_client", lambda **_: object())
+
+    created = ctx["client"].post(
+        "/api/service/invoices",
+        json={"customer_id": ctx["owner"].id, "vehicle_id": ctx["vehicle"].id, "lines": [LINE]},
+    )
+    assert created.status_code == 201
+
+    exported = ctx["client"].post(f"/api/service/invoices/{created.json()['id']}/fakturyweb/export", json={})
+    assert exported.status_code == 409
+
+
 def test_e_cancel_audits(invoice_context) -> None:
     ctx = invoice_context
     ctx["set_user"](ctx["service_a"])

@@ -182,6 +182,13 @@ def test_documents_hub_endpoint_aggregates_reports_attachments_and_tachometer(do
     assert int(payload["attachments_total"]) == 1
     assert int(payload["reports_total"]) == 2
     assert int(payload["tachometer_documents_total"]) == 1
+    assert int(payload["technical_certificates_total"]) == 2
+    assert len(payload["technical_certificates"]) == 2
+    tc_by_vid = {int(item["vehicle_id"]): item for item in payload["technical_certificates"]}
+    assert tc_by_vid[vehicle.id]["document_title"] == "Velký technický průkaz"
+    assert tc_by_vid[vehicle.id]["download_url"].endswith(
+        f"/api/v1/vehicles/{vehicle.id}/documents/large-technical-certificate.pdf"
+    )
     assert payload["attachments"][0]["vehicle_id"] == vehicle.id
     reports_by_vehicle = {int(item["vehicle_id"]): item for item in payload["reports"]}
     assert reports_by_vehicle[vehicle.id]["verify_url"] == "/verify/public-doc-token"
@@ -192,6 +199,14 @@ def test_documents_hub_endpoint_aggregates_reports_attachments_and_tachometer(do
     assert reports_by_vehicle[vehicle_second.id]["verified_pdf_url"] is None
     assert reports_by_vehicle[vehicle_second.id]["has_verified_report"] is False
     assert payload["tachometer_documents"][0]["protocol_number"] == "PT-001"
+
+
+def test_large_technical_certificate_pdf_returns_pdf_bytes(documents_client) -> None:
+    client, vehicle, _vehicle_second = documents_client
+    response = client.get(f"/api/v1/vehicles/{vehicle.id}/documents/large-technical-certificate.pdf")
+    assert response.status_code == 200
+    assert response.headers.get("content-type", "").startswith("application/pdf")
+    assert response.content[:4] == b"%PDF"
 
 
 def test_free_plan_blocks_documents_hub_and_pdf_endpoints(tmp_path: Path) -> None:
@@ -257,6 +272,10 @@ def test_free_plan_blocks_documents_hub_and_pdf_endpoints(tmp_path: Path) -> Non
         assert client.get("/api/v1/vehicles/documents/hub").status_code == 403
         assert client.get(f"/api/v1/vehicles/{vehicle.id}/report.pdf?mode=public").status_code == 403
         assert client.get(f"/api/v1/vehicles/{vehicle.id}/export/pdf").status_code == 403
+        assert (
+            client.get(f"/api/v1/vehicles/{vehicle.id}/documents/large-technical-certificate.pdf").status_code
+            == 403
+        )
     finally:
         client.close()
         db.close()

@@ -87,7 +87,28 @@ ENV_FILE_SOURCE = _env_source
 
 HOST = os.getenv("HOST", "0.0.0.0")  # 0.0.0.0 pro Cloudflare Tunnel, 127.0.0.1 pro lokální vývoj
 PORT = int(os.getenv("PORT", "8000"))
+# Rozhraní, na kterém skutečně poslouchá Uvicorn. Prázdné = stejné jako HOST.
+# Pro test z fyzického telefonu ve stejné Wi‑Fi (PC jako server): LISTEN_HOST=0.0.0.0 + přístup http://<IP-PC>:PORT
+# Na produkčním VPS nechte prázdné (nebo 127.0.0.1), ať služba není omylem veřejná na :8000.
+_listen_host_env = os.getenv("LISTEN_HOST", "").strip()
+LISTEN_HOST = _listen_host_env if _listen_host_env else HOST
 ENVIRONMENT = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development"))  # development | production
+
+
+def _int_env_positive(name: str, default: int, *, minimum: int = 1) -> int:
+    try:
+        v = int(str(os.getenv(name, str(default))).strip())
+        return max(minimum, v)
+    except ValueError:
+        return default
+
+
+# Omezit brute force na /user/login: max pokusů za 60 s na klíč (email + IP). V produkci typicky 5;
+# pro integrační testy z jedné IP nastavte LOGIN_RATE_LIMIT_MAX=300+ v .env nebo v prostředí procesu serveru.
+LOGIN_RATE_LIMIT_MAX = _int_env_positive("LOGIN_RATE_LIMIT_MAX", 5, minimum=5)
+# POST /user/register — antispam; integrační běhy z jedné IP zvyšte REGISTER_RATE_LIMIT_* .
+REGISTER_RATE_LIMIT_IP_MAX = _int_env_positive("REGISTER_RATE_LIMIT_IP_MAX", 20, minimum=5)
+REGISTER_RATE_LIMIT_EMAIL_MAX = _int_env_positive("REGISTER_RATE_LIMIT_EMAIL_MAX", 5, minimum=3)
 
 # =============================================================================
 # DATABASE
@@ -207,6 +228,13 @@ ENABLE_AUTOPILOT_API = _env_flag("ENABLE_AUTOPILOT_API", True)
 # Soft production lock: no feature changes, only guardrails around dev/debug surfaces and write logging.
 PRODUCTION_LOCK_MODE = _env_flag("PRODUCTION_LOCK_MODE", False)
 
+# FakturyWeb API pro export servisních faktur.
+FAKTURYWEB_API_BASE_URL = os.getenv("FAKTURYWEB_API_BASE_URL", "https://www.fakturyweb.cz")
+FAKTURYWEB_EMAIL = os.getenv("FAKTURYWEB_EMAIL", "").strip()
+FAKTURYWEB_API_KEY = os.getenv("FAKTURYWEB_API_KEY", "").strip()
+FAKTURYWEB_SUPPLIER_ID = os.getenv("FAKTURYWEB_SUPPLIER_ID", "").strip()
+FAKTURYWEB_API_TEST = _env_flag("FAKTURYWEB_API_TEST", ENVIRONMENT != "production")
+
 # AI / Autopilot Configuration
 AUTOPILOT_SHARED_SECRET = os.getenv("AUTOPILOT_SHARED_SECRET", "")
 
@@ -243,6 +271,30 @@ MDCR_API_TOKEN = DATAOVO_API_KEY
 
 EU_VEHICLE_API_BASE_URL = os.getenv("EU_VEHICLE_API_BASE_URL", "")
 EU_VEHICLE_API_TOKEN = os.getenv("EU_VEHICLE_API_TOKEN", "")
+
+# =============================================================================
+# VEHICLE CATALOG IMAGE PREVIEW
+# =============================================================================
+
+VEHICLE_IMAGE_PROVIDER = os.getenv("VEHICLE_IMAGE_PROVIDER", "disabled").strip().lower() or "disabled"
+VEHICLE_IMAGE_API_KEY = (os.getenv("VEHICLE_IMAGE_API_KEY") or os.getenv("VEHICLE_IMAGE_API_SECRET") or "").strip()
+VEHICLE_IMAGE_SEARCH_ENDPOINT = os.getenv("VEHICLE_IMAGE_SEARCH_ENDPOINT", "").strip()
+VEHICLE_IMAGE_CACHE_TTL_DAYS = int(os.getenv("VEHICLE_IMAGE_CACHE_TTL_DAYS", "180"))
+VEHICLE_IMAGE_MAX_RESULTS = int(os.getenv("VEHICLE_IMAGE_MAX_RESULTS", "6"))
+VEHICLE_IMAGE_MIN_WIDTH = int(os.getenv("VEHICLE_IMAGE_MIN_WIDTH", "600"))
+VEHICLE_IMAGE_MIN_HEIGHT = int(os.getenv("VEHICLE_IMAGE_MIN_HEIGHT", "350"))
+VEHICLE_IMAGE_ALLOWED_COLORS = [
+    item.strip().lower()
+    for item in os.getenv("VEHICLE_IMAGE_ALLOWED_COLORS", "white,grey").split(",")
+    if item.strip()
+]
+VEHICLE_IMAGE_SERPAPI_ENGINE = os.getenv("VEHICLE_IMAGE_SERPAPI_ENGINE", "google_images").strip().lower() or "google_images"
+VEHICLE_IMAGE_SERPAPI_ENDPOINT = os.getenv("VEHICLE_IMAGE_SERPAPI_ENDPOINT", "https://serpapi.com/search.json").strip()
+VEHICLE_IMAGE_SERPAPI_YANDEX_DOMAIN = os.getenv("VEHICLE_IMAGE_SERPAPI_YANDEX_DOMAIN", "yandex.com").strip() or "yandex.com"
+VEHICLE_IMAGE_SERPAPI_YANDEX_ORIENTATION = os.getenv("VEHICLE_IMAGE_SERPAPI_YANDEX_ORIENTATION", "horizontal").strip().lower() or "horizontal"
+VEHICLE_IMAGE_SERPAPI_YANDEX_IMAGE_TYPE = os.getenv("VEHICLE_IMAGE_SERPAPI_YANDEX_IMAGE_TYPE", "photo").strip().lower() or "photo"
+VEHICLE_IMAGE_SERPAPI_YANDEX_FAMILY_MODE = os.getenv("VEHICLE_IMAGE_SERPAPI_YANDEX_FAMILY_MODE", "1").strip() or "1"
+VEHICLE_IMAGE_REGEN_LIMIT_ENABLED = _env_flag("VEHICLE_IMAGE_REGEN_LIMIT_ENABLED", True)
 
 # =============================================================================
 # FILE PATHS

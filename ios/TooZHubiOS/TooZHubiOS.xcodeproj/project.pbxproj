@@ -43,6 +43,7 @@
 		7D508F5A64D3A8F4BB675D07 /* UserFeatureModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE2DA55BC498CB1AC92735B1 /* UserFeatureModels.swift */; };
 		8C96D7EE3520E5D6B1606F8C /* ReminderCalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F3D3347E5F7090B1576AB7D /* ReminderCalendarView.swift */; };
 		901518AA56B701ED8D1793DE /* VehiclesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A99110E830BB9E8A39D5D84D /* VehiclesView.swift */; };
+		D7139A2B4C5D6E7F8091AAB1D /* VehicleRemovalSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7139A2B4C5D6E7F8091AAB1C /* VehicleRemovalSheet.swift */; };
 		9099E4D63F1923546466A449 /* UserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 185144925546B34C13923847 /* UserModels.swift */; };
 		96B4D8F22C2DAE0DCEB6DC5E /* UserFeatureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEBB38762DD9DDB37DE10C14 /* UserFeatureService.swift */; };
 		97A3621B17BA5C3E3F276CBB /* ReservationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEC3C328169144B4C0AF8EE5 /* ReservationModels.swift */; };
@@ -110,6 +111,7 @@
 		A7EE5F7C2140EAD537E6E9AD /* VehicleService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehicleService.swift; sourceTree = "<group>"; };
 		A8EE98BE1E28976BC064008F /* ReservationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservationService.swift; sourceTree = "<group>"; };
 		A99110E830BB9E8A39D5D84D /* VehiclesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehiclesView.swift; sourceTree = "<group>"; };
+		D7139A2B4C5D6E7F8091AAB1C /* VehicleRemovalSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehicleRemovalSheet.swift; sourceTree = "<group>"; };
 		AE2DA55BC498CB1AC92735B1 /* UserFeatureModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserFeatureModels.swift; sourceTree = "<group>"; };
 		B62FB363FA9B74FEE10A1B0A /* AppLockManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockManager.swift; sourceTree = "<group>"; };
 		B679AA9CE207B9F82203E801 /* ServiceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceView.swift; sourceTree = "<group>"; };
@@ -241,6 +243,7 @@
 				55DED3A8BFCE36FA13395D0F /* VehicleDetailView.swift */,
 				9CEA43C3BC515640B71F195E /* VehicleMediaViews.swift */,
 				E092CEB5DED97A586CAC264C /* VehicleReportViews.swift */,
+				D7139A2B4C5D6E7F8091AAB1C /* VehicleRemovalSheet.swift */,
 				A99110E830BB9E8A39D5D84D /* VehiclesView.swift */,
 			);
 			path = Views;
@@ -422,6 +425,7 @@
 				09187A97C352FDCEAA312046 /* VehicleService.swift in Sources */,
 				901518AA56B701ED8D1793DE /* VehiclesView.swift in Sources */,
 				0785127A8F053B534E04052C /* VehiclesViewModel.swift in Sources */,
+				D7139A2B4C5D6E7F8091AAB1D /* VehicleRemovalSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

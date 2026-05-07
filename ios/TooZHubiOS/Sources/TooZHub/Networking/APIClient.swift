@@ -238,7 +238,7 @@ final class APIClient: NetworkService {
             }
             throw APIError.unauthorized
         case 403:
-            throw APIError.forbidden
+            throw APIError.serverError(serverMessage ?? "Nemáte oprávnění pro tuto akci.")
         default:
             let message = serverMessage ?? String(data: data, encoding: .utf8) ?? "Chyba API \(http.statusCode)"
             throw APIError.serverError(message)

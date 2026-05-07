@@ -23,7 +23,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
-BASE_URL = "https://kontrolatachometru.cz"
+BASE_URL = "https://www.kontrolatachometru.cz"
 SEARCH_PATH = "/Home/Search"
 
 

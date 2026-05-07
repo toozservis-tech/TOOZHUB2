@@ -20,6 +20,7 @@ from src.modules.vehicle_hub.models import (
 )
 from src.modules.vehicle_hub.vehicle_photo_assets import resolve_storage_file
 from src.modules.vehicle_hub.ownership import get_primary_vehicle_owner
+from src.modules.vehicle_hub.service_record_view import viewer_record_same_ownership_era
 
 from .vehicle_report_mileage_timeline import build_vehicle_report_mileage_timeline
 from .vehicle_report_models import (
@@ -519,7 +520,9 @@ def build_vehicle_service_report_payload(
 
     rendered_records: list[VehicleReportServiceRecord] = []
     for row in records:
-        attachments = _parse_attachments_payload(row.attachments)
+        attachments_full = _parse_attachments_payload(row.attachments)
+        same_era = viewer_record_same_ownership_era(db, int(vehicle.id), current_user, row)
+        attachments = attachments_full if same_era else []
         row_audit_logs = audit_logs_by_record.get(int(row.id), [])
         supplier, workshop, technician = _pick_supplier_fields(
             record=row,
@@ -527,6 +530,8 @@ def build_vehicle_service_report_payload(
             users_by_id=users_by_id,
             mode=mode,
         )
+        if not same_era:
+            supplier = workshop = technician = None
         created_at = None
         created_by = _identity_label(row.user_id, users_by_id=users_by_id, mode=mode) if mode == VehicleReportMode.INTERNAL_AUDIT else None
         updated_at = _isoformat(row_audit_logs[-1].created_at) if row_audit_logs else None
@@ -540,6 +545,13 @@ def build_vehicle_service_report_payload(
                 created_at = _isoformat(create_logs[0].created_at)
                 created_by = _identity_label(create_logs[0].changed_by_user_id, users_by_id=users_by_id, mode=mode)
 
+        notes_render = _first_non_empty(row.note, None) if same_era else None
+        verification_render = (
+            _verification_status(record=row, attachments=attachments, audit_logs=row_audit_logs)
+            if same_era
+            else "Bez dokladů předchozího majitele (ochrana údajů)"
+        )
+
         rendered_records.append(
             VehicleReportServiceRecord(
                 id=int(row.id),
@@ -549,7 +561,7 @@ def build_vehicle_service_report_payload(
                 title=_pick_record_title(row, attachments),
                 performed_work=_first_non_empty(row.description, None),
                 parts=_extract_parts(attachments),
-                notes=_first_non_empty(row.note, None),
+                notes=notes_render,
                 attachments_count=len(attachments),
                 supplier=supplier,
                 workshop=workshop,
@@ -559,7 +571,7 @@ def build_vehicle_service_report_payload(
                 updated_at=updated_at if mode in {VehicleReportMode.WORKSHOP, VehicleReportMode.INTERNAL_AUDIT} else None,
                 updated_by=updated_by if mode == VehicleReportMode.INTERNAL_AUDIT else None,
                 source_type=_pick_record_source_type(row, attachments) if mode in {VehicleReportMode.WORKSHOP, VehicleReportMode.INTERNAL_AUDIT} else None,
-                verification_status=_verification_status(record=row, attachments=attachments, audit_logs=row_audit_logs),
+                verification_status=verification_render,
                 audit_note=_record_audit_note(audit_logs=row_audit_logs, mode=mode, users_by_id=users_by_id),
                 totals=_extract_record_totals(attachments),
             )

@@ -28,6 +28,10 @@ const projects = [
       baseURL,
       launchOptions: {
         env: browserEnv,
+        args: [
+          '--disable-dev-shm-usage',
+          '--js-flags=--max-old-space-size=4096',
+        ],
       },
     },
   },
@@ -74,6 +78,44 @@ const projects = [
       storageState: authStatePath,
       launchOptions: {
         env: browserEnv,
+      },
+    },
+  },
+  {
+    name: 'react-vehicle-list-gated',
+    testMatch: /react-vehicle-list-gated\.spec\.ts/,
+    dependencies: ['setup-auth'],
+    use: {
+      ...devices['Desktop Chrome'],
+      baseURL,
+      storageState: authStatePath,
+      launchOptions: {
+        env: browserEnv,
+      },
+    },
+  },
+  {
+    name: 'vin-preview-smoke',
+    testMatch: /vehicle-vin-preview\.spec\.ts/,
+    dependencies: ['setup-auth'],
+    use: {
+      ...devices['Desktop Chrome'],
+      baseURL,
+      storageState: authStatePath,
+      launchOptions: {
+        env: browserEnv,
+      },
+    },
+  },
+  {
+    name: 'tutorials-desktop-chromium',
+    testMatch: /tutorials\.spec\.ts/,
+    use: {
+      ...devices['Desktop Chrome'],
+      baseURL,
+      launchOptions: {
+        env: browserEnv,
+        args: ['--disable-dev-shm-usage'],
       },
     },
   },
@@ -168,6 +210,7 @@ export default defineConfig({
   ],
   use: {
     baseURL,
+    ignoreHTTPSErrors: isLocalServer,
     extraHTTPHeaders: isLocalServer ? { 'x-forwarded-proto': 'https' } : undefined,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',

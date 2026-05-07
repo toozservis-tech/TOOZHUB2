@@ -61,6 +61,14 @@ class DashboardLicenseSummaryV1(BaseModel):
     vehicles_count: Optional[int] = None
     license_limit: Optional[int] = None
     is_over_limit: Optional[bool] = None
+    vin_decode_enabled: bool = False
+    reminders_enabled: bool = True
+    reservations_enabled: bool = False
+    vehicle_history_enabled: bool = False
+    documents_enabled: bool = False
+    costs_tracking_enabled: bool = False
+    statistics_enabled: bool = False
+    sharing_with_service_enabled: bool = False
 
 
 class DashboardExtrasV1(BaseModel):
@@ -89,12 +97,23 @@ def _vehicle_name(vehicle: VehicleModel) -> str:
     return str(vehicle.nickname or vehicle.plate or f"Vozidlo #{vehicle.id}")
 
 
+def _vehicle_has_primary_photo(vehicle: VehicleModel) -> bool:
+    """
+    Hlavní fotka: buď legacy sloupec photo_path, nebo nové primary_photo_asset_id (promoce z galerie).
+    Po uploadu z galerie může být photo_path v DB prázdný — stejná sémantika jako v API vozidla.
+    """
+    if getattr(vehicle, "primary_photo_asset_id", None):
+        return True
+    p = getattr(vehicle, "photo_path", None)
+    return bool(p and str(p).strip())
+
+
 def _visible_vehicle_ids_for_dashboard(db: Session, *, current_user: Customer) -> list[int]:
     role_key = _normalize_role(getattr(current_user, "role", None))
     tenant_id = getattr(current_user, "tenant_id", None)
 
     if is_admin(role_key):
-        query = db.query(VehicleModel.id)
+        query = db.query(VehicleModel.id).filter(VehicleModel.status != "archived")
         if tenant_id:
             query = query.filter(VehicleModel.tenant_id == tenant_id)
         return [int(row[0]) for row in query.all()]
@@ -183,6 +202,23 @@ def _stk_counts(vehicles: list[VehicleModel]) -> tuple[int, int]:
     return stk_soon, stk_expired
 
 
+def _build_dashboard_license_summary(status: dict) -> DashboardLicenseSummaryV1:
+    return DashboardLicenseSummaryV1(
+        plan=str(status.get("plan") or "free"),
+        vehicles_count=status.get("vehicles_count"),
+        license_limit=status.get("license_limit"),
+        is_over_limit=status.get("is_over_limit"),
+        vin_decode_enabled=bool(status.get("vin_decode_enabled", False)),
+        reminders_enabled=bool(status.get("reminders_enabled", True)),
+        reservations_enabled=bool(status.get("reservations_enabled", False)),
+        vehicle_history_enabled=bool(status.get("vehicle_history_enabled", False)),
+        documents_enabled=bool(status.get("documents_enabled", False)),
+        costs_tracking_enabled=bool(status.get("costs_tracking_enabled", False)),
+        statistics_enabled=bool(status.get("statistics_enabled", False)),
+        sharing_with_service_enabled=bool(status.get("sharing_with_service_enabled", False)),
+    )
+
+
 @router.get("/dashboard", response_model=DashboardSummaryOutV1)
 def get_dashboard_summary(
     recent_limit: int = Query(default=8, ge=1, le=20),
@@ -198,12 +234,7 @@ def get_dashboard_summary(
         license_summary = None
         if scope == "user" and getattr(current_user, "tenant_id", None):
             status = get_license_status(db, current_user.tenant_id, current_user.email)
-            license_summary = DashboardLicenseSummaryV1(
-                plan=str(status.get("plan") or "free"),
-                vehicles_count=status.get("vehicles_count"),
-                license_limit=status.get("license_limit"),
-                is_over_limit=status.get("is_over_limit"),
-            )
+            license_summary = _build_dashboard_license_summary(status)
         return DashboardSummaryOutV1(
             scope=scope,
             vehicles_total=0,
@@ -220,7 +251,10 @@ def get_dashboard_summary(
 
     vehicles = (
         db.query(VehicleModel)
-        .filter(VehicleModel.id.in_(vehicle_ids))
+        .filter(
+            VehicleModel.id.in_(vehicle_ids),
+            VehicleModel.status != "archived"
+        )
         .order_by(VehicleModel.created_at.desc(), VehicleModel.id.desc())
         .all()
     )
@@ -256,6 +290,7 @@ def get_dashboard_summary(
         .filter(
             ServiceRecordModel.vehicle_id.in_(vehicle_ids),
             ServiceRecordModel.is_deleted.is_(False),
+            VehicleModel.status != "archived",
         )
         .order_by(ServiceRecordModel.performed_at.desc(), ServiceRecordModel.id.desc())
         .limit(recent_limit)
@@ -287,8 +322,8 @@ def get_dashboard_summary(
                         label=f"{vehicle_name} — STK po platnosti",
                         severity="critical",
                         days_remaining=days_remaining,
-                        action_label="Otevřít STK",
-                        action_target="tachometer",
+                        action_label="Aktualizovat z VIN",
+                        action_target="vin_sync",
                     )
                 )
             elif days_remaining <= 60:
@@ -300,13 +335,13 @@ def get_dashboard_summary(
                         label=f"{vehicle_name} — blíží se STK ({days_remaining} dní)",
                         severity="warning",
                         days_remaining=days_remaining,
-                        action_label="Otevřít STK",
-                        action_target="tachometer",
+                        action_label="Aktualizovat z VIN",
+                        action_target="vin_sync",
                     )
                 )
 
         gallery_count = photo_count_by_vehicle.get(vehicle_id, 0)
-        has_primary_photo = bool(getattr(vehicle, "photo_path", None))
+        has_primary_photo = _vehicle_has_primary_photo(vehicle)
         if not has_primary_photo:
             attention.append(
                 DashboardAttentionItemV1(
@@ -356,18 +391,9 @@ def get_dashboard_summary(
     license_summary = None
     if scope == "user" and getattr(current_user, "tenant_id", None):
         status = get_license_status(db, current_user.tenant_id, current_user.email)
-        license_summary = DashboardLicenseSummaryV1(
-            plan=str(status.get("plan") or "free"),
-            vehicles_count=status.get("vehicles_count"),
-            license_limit=status.get("license_limit"),
-            is_over_limit=status.get("is_over_limit"),
-        )
+        license_summary = _build_dashboard_license_summary(status)
 
-    missing_main_photo = sum(
-        1
-        for vehicle in vehicles
-        if not getattr(vehicle, "photo_path", None)
-    )
+    missing_main_photo = sum(1 for vehicle in vehicles if not _vehicle_has_primary_photo(vehicle))
     records_missing_history = sum(1 for vehicle in vehicles if records_count_by_vehicle.get(int(vehicle.id), 0) == 0)
 
     return DashboardSummaryOutV1(

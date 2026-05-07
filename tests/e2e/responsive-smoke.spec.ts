@@ -881,7 +881,7 @@ test.describe('Responsive Critical Smoke', () => {
       });
       await expect(page.locator('[data-testid="services-directory-tab"]')).toBeVisible({ timeout: 10_000 });
 
-      const serviceActionButtons = page.locator('.service-directory-card .service-directory-actions .btn');
+      const serviceActionButtons = page.locator('.service-directory-row .service-directory-actions .btn');
       await expect(serviceActionButtons.first(), `${viewport.name}: service card buttons should be visible`).toBeVisible({ timeout: 10_000 });
       await serviceActionButtons.first().click({ trial: true });
       await serviceActionButtons.nth(1).click({ trial: true });
@@ -920,7 +920,7 @@ test.describe('Responsive Critical Smoke', () => {
         expect(metric.marginBottom, `${viewport.name}: managed-service button has heavy bottom margin`).toBe('0px');
       });
 
-      const serviceCardOverflow = await page.locator('.service-directory-card').first().evaluate((card) => {
+      const serviceCardOverflow = await page.locator('.service-directory-row').first().evaluate((card) => {
         return Math.max(0, card.scrollWidth - card.clientWidth);
       });
       expect(serviceCardOverflow, `${viewport.name}: service card should not overflow horizontally`).toBeLessThanOrEqual(1);

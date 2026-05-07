@@ -12,26 +12,23 @@ from sqlalchemy import func
 from src.modules.vehicle_hub.database import SessionLocal
 from src.modules.vehicle_hub.models import Customer
 from src.modules.vehicle_hub.routers_v1 import service_workspace as workspace_router
-
-
-def _unique_email(prefix: str) -> str:
-    return f"{prefix}_{uuid4().hex[:10]}@example.com"
+from tests.api.integration_accounts import (
+    CI_WS_CUSTOMER_DETAIL,
+    CI_WS_CUSTOMER_LINK,
+    CI_WS_CUSTOMER_SEARCH,
+    CI_WS_INVITE_PENDING,
+    CI_WS_INVITED,
+    CI_WS_SERVICE_DETAIL,
+    CI_WS_SERVICE_LINK,
+    CI_WS_SERVICE_PENDING,
+    CI_WS_SERVICE_SEARCH,
+    CI_WS_SERVICE_INVITE,
+    ensure_user_token,
+)
 
 
 def _register_user(api_url: str, *, email: str, password: str = "testpass123", name: str = "Test User") -> tuple[str, int]:
-    response = requests.post(
-        f"{api_url}/user/register",
-        json={
-            "email": email,
-            "password": password,
-            "name": name,
-            "phone": "+420123456789",
-        },
-        timeout=8,
-    )
-    assert response.status_code == 200
-    payload = response.json()
-    return payload["access_token"], int(payload["user"]["id"])
+    return ensure_user_token(api_url, email, password=password, name=name)
 
 
 def _promote_user_to_service(email: str) -> None:
@@ -68,8 +65,8 @@ def _create_vehicle(api_url: str, user_token: str, nickname: str = "Test Vehicle
 
 
 def test_service_workspace_link_existing_and_ingest(api_url):
-    service_email = _unique_email("service")
-    customer_email = _unique_email("customer")
+    service_email = CI_WS_SERVICE_LINK
+    customer_email = CI_WS_CUSTOMER_LINK
 
     service_token, service_id = _register_user(api_url, email=service_email, name="Service účet")
     _promote_user_to_service(service_email)
@@ -147,8 +144,8 @@ def test_service_workspace_link_existing_and_ingest(api_url):
 
 
 def test_service_workspace_invitation_accept_flow(api_url):
-    service_email = _unique_email("service_invite")
-    invited_email = _unique_email("invited")
+    service_email = CI_WS_SERVICE_INVITE
+    invited_email = CI_WS_INVITED
 
     service_token, _ = _register_user(api_url, email=service_email, name="Service Invite")
     _promote_user_to_service(service_email)
@@ -234,8 +231,8 @@ def test_service_workspace_invitation_accept_flow(api_url):
 
 
 def test_service_workspace_customer_search_and_link_by_id(api_url):
-    service_email = _unique_email("service_search")
-    customer_email = _unique_email("customer_search")
+    service_email = CI_WS_SERVICE_SEARCH
+    customer_email = CI_WS_CUSTOMER_SEARCH
 
     service_token, _ = _register_user(api_url, email=service_email, name="Service Search")
     _promote_user_to_service(service_email)
@@ -291,8 +288,8 @@ def test_service_workspace_customer_search_and_link_by_id(api_url):
 
 
 def test_service_workspace_shell_detail_contracts(api_url):
-    service_email = _unique_email("service_detail")
-    customer_email = _unique_email("customer_detail")
+    service_email = CI_WS_SERVICE_DETAIL
+    customer_email = CI_WS_CUSTOMER_DETAIL
 
     service_token, service_id = _register_user(api_url, email=service_email, name="Service Detail")
     _promote_user_to_service(service_email)
@@ -417,8 +414,8 @@ def test_service_workspace_shell_detail_contracts(api_url):
 
 
 def test_service_workspace_invitation_returns_existing_pending(api_url):
-    service_email = _unique_email("service_pending_invite")
-    invite_email = _unique_email("pending_invite_target")
+    service_email = CI_WS_SERVICE_PENDING
+    invite_email = CI_WS_INVITE_PENDING
 
     _register_user(api_url, email=service_email, name="Service Pending Invite")
     _promote_user_to_service(service_email)

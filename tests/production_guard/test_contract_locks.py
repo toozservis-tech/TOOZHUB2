@@ -46,11 +46,14 @@ def test_vehicle_lifecycle_response_structure_is_locked() -> None:
         "@router.post(\"/{vehicle_id}/remove/init\")",
         "@router.post(\"/{vehicle_id}/remove/confirm\")",
         "@router.post(\"/claim-by-transfer\")",
+        "@router.post(\"/transfer-claim\")",
+        "@router.post(\"/transfer-technical-refresh-before-claim\")",
         "@router.get(\"/{vehicle_id}/digital-report\")",
     ]:
         assert endpoint in source
     for key in [
         "required_followup_field",
+        "required_followup_fields",
         "will_generate_digital_report",
         "archive_bundle_path",
         "digital_report_url",
@@ -80,6 +83,8 @@ def test_critical_audit_events_are_present() -> None:
         "transfer_token_claimed",
     ]:
         assert action in lifecycle
+    assert "transfer_technical_overview_pre_claim_refresh" in lifecycle
+    assert "perform_transfer_technical_refresh_before_claim" in lifecycle
     for action in [
         "service_intake_created_from_spz_photo",
         "service_access_requested_from_intake",
@@ -99,3 +104,40 @@ def test_production_storage_and_lock_mode_guards_are_registered() -> None:
     assert "ProductionLockWriteAuditMiddleware" in bootstrap
     assert "PRODUCTION_LOCK_MODE" in config
     assert "workspace debug router disabled" in bootstrap
+
+
+def test_admin_vehicle_lifecycle_router_is_dual_mounted() -> None:
+    bootstrap = read("src/server/bootstrap.py")
+    assert 'app.include_router(admin_vehicle_lifecycle_router, prefix="/admin-api")' in bootstrap
+    assert 'app.include_router(admin_vehicle_lifecycle_router, prefix="/api/admin")' in bootstrap
+    assert 'app.include_router(admin_vehicle_support_router, prefix="/admin-api")' in bootstrap
+    assert 'app.include_router(admin_vehicle_support_router, prefix="/api/admin")' not in bootstrap
+
+
+def test_admin_path_prefixes_include_api_admin_alias() -> None:
+    mw = read("src/core/security_middleware.py")
+    assert "_ADMIN_PATH_PREFIXES" in mw
+    assert '"/api/admin"' in mw
+
+
+def test_admin_vehicle_lifecycle_list_is_removal_event_backed_not_all_vehicles() -> None:
+    admin_lc = read("src/server/admin_vehicle_lifecycle.py")
+    assert (
+        "db.query(VehicleRemovalEvent, Vehicle).join(Vehicle, Vehicle.id == VehicleRemovalEvent.vehicle_id)"
+        in admin_lc
+    )
+    assert "require_developer_admin" in admin_lc
+
+
+def test_admin_vehicle_lifecycle_revoke_does_not_delete_vehicle() -> None:
+    """Kontrola zdroje: revoke mění jen status tokenu + audit, bez mazání řádků vozidla."""
+    admin_lc = read("src/server/admin_vehicle_lifecycle.py")
+    assert 'tok.status = "revoked"' in admin_lc
+    assert ".delete(" not in admin_lc
+
+
+def test_public_vehicle_transfer_get_never_returns_vehicle_id_or_plain_spz() -> None:
+    pub = read("src/server/routers/public_vehicle_transfer.py")
+    assert '"vehicle_id"' not in pub.split("return {")[1].split("@router.post")[0]
+    assert "spz_masked" in pub
+    assert "_mask_spz_public" in pub

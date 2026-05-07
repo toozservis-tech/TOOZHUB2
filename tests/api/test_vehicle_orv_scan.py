@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from starlette.responses import JSONResponse
 from sqlalchemy.orm import sessionmaker
@@ -140,6 +141,45 @@ def test_parse_orv_requires_both_images(db_session, monkeypatch):
             db=db_session,
         )
     assert "obě strany" in str(exc_info.value.detail).lower()
+
+
+def test_orv_parse_request_rejects_single_plus_dual_images():
+    with pytest.raises(ValidationError):
+        ORVParseRequestV1(
+            single_orv_image_base64=VALID_BASE64_IMAGE,
+            front_image_base64=VALID_BASE64_IMAGE,
+            back_image_base64=VALID_BASE64_IMAGE,
+        )
+
+
+def test_parse_orv_accepts_single_card_scan(db_session, monkeypatch):
+    user = _seed_user(db_session)
+    combined = (
+        "A 1AB 2345\n"
+        "VIN: TMBJF73T2B9044629\n"
+        "Cislo ORV UH123456\n"
+    )
+
+    def fake_ocr(image_bytes, file_name, mime_type):
+        del image_bytes, file_name, mime_type
+        return combined
+
+    monkeypatch.setattr(orv_scans, "_extract_ocr_text", fake_ocr)
+    response = vehicles_router.parse_orv(
+        payload=ORVParseRequestV1(
+            single_orv_image_base64=VALID_BASE64_IMAGE,
+            source="web_add_vehicle_single",
+        ),
+        current_user=user,
+        db=db_session,
+    )
+    assert response["scan_id"] > 0
+    vf = response["vehicle_fields"]
+    assert vf.get("vin") == "TMBJF73T2B9044629"
+    assert vf.get("orv_number") == "UH123456"
+    scan = db_session.query(VehicleORVScan).filter(VehicleORVScan.id == response["scan_id"]).first()
+    assert scan is not None
+    assert scan.front_image_hash == scan.back_image_hash
 
 
 def test_parse_orv_persists_scan_draft_and_hashes(db_session, monkeypatch):

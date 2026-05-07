@@ -39,6 +39,7 @@ from ..service_access import (
     resolve_vehicle_for_lookup,
     vehicle_label,
 )
+from ..user_in_app_notifications import notify_owner_service_access_requested
 from ..vehicle_photo_assets import jpeg_dimensions
 from .auth import get_current_user
 from .service_workspace import _require_service_workspace_role
@@ -226,9 +227,11 @@ def request_owner_access_for_intake(
         ServiceAccessRequest.vehicle_id == int(vehicle.id),
         ServiceAccessRequest.status == "pending",
     ).first()
+    created_new_access_request = False
     if existing:
         request_row = existing
     else:
+        created_new_access_request = True
         request_row = ServiceAccessRequest(
             tenant_id=int(vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1),
             service_customer_id=int(current_user.id),
@@ -245,6 +248,17 @@ def request_owner_access_for_intake(
     case.owner_approval_required = True
     case.owner_approval_status = "pending"
     write_global_audit_log(db, entity_type="vehicle_service_request", entity_id=int(request_row.id), action="service_access_requested_from_intake", actor_type="service_staff", actor_user_id=int(current_user.id), actor_role=getattr(current_user, "role", None), tenant_id=getattr(current_user, "tenant_id", None), vehicle_id=int(vehicle.id), metadata={"case_id": int(case.id)})
+    if created_new_access_request:
+        try:
+            notify_owner_service_access_requested(
+                db,
+                owner_customer_id=int(owner.id),
+                service=current_user,
+                vehicle=vehicle,
+                request_message=request_row.request_message,
+            )
+        except Exception as exc:
+            print(f"[SERVICE_CANONICAL] In-app oznámení majiteli (intake žádost) selhalo: {exc}")
     db.commit()
     return {"requested": True, "request_id": int(request_row.id), "case": _serialize_case(case)}
 
@@ -428,6 +442,7 @@ def assigned_service_vehicles(
         .filter(
             VehicleServiceLink.service_customer_id == int(current_user.id),
             VehicleServiceLink.status == "approved",
+            Vehicle.status != "archived",
         )
         .order_by(Vehicle.created_at.desc(), Vehicle.id.desc())
         .all()

@@ -4135,9 +4135,6 @@
             <img class="service-shell-brand-logo" src="/web/assets/toozservis-logo-icon.png" alt="" width="40" height="40" decoding="async" />
             <span class="service-shell-brand-text">${escape(getAppDisplayName())}</span>
           </div>
-          <nav id="service-shell-main-nav" class="service-shell-nav ${mobile && state.mobileNavOpen ? 'mobile-open' : ''}" aria-label="Servisní navigace">
-            ${navItems}
-          </nav>
         </div>
         <div class="service-shell-toolbar">
           <time id="serviceShellNavbarClock" class="navbar-digital-clock service-shell-navbar-clock" datetime="" title="Čas v Česku (Europe/Prague)">--:--:--</time>
@@ -4157,6 +4154,9 @@
           </div>
           <button type="button" class="service-shell-primary-btn" onclick="${state.activeVehicle ? `window.serviceShell.openServiceRecordModal(${Number(state.activeVehicle.vehicleId || 0)})` : 'window.serviceShell.openCreateWorkOrderModal()'}">${mobile ? '+' : '+ Nová zakázka'}</button>
         </div>
+        <nav id="service-shell-main-nav" class="service-shell-nav ${mobile && state.mobileNavOpen ? 'mobile-open' : ''}" aria-label="Servisní navigace">
+          ${navItems}
+        </nav>
       </header>
     `;
   }

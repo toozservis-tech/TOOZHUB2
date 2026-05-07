@@ -22,29 +22,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/vehicles", tags=["vehicles", "decoder"])
 
 
-@router.post("/decode-vin", response_model=VehicleDecodeResponse)
-async def decode_vin(
+async def decode_vin_core(
     req: VinDecodeRequest,
-    db: Session = Depends(get_db),
-    current_user: Customer = Depends(get_current_user)
+    db: Session,
+    current_user: Optional[Customer],
 ) -> VehicleDecodeResponse:
     """
-    Dekóduje VIN z více zdrojů (MDČR, EU Open Data, lokální VIN dekódování).
-    
-    Args:
-        req: VinDecodeRequest s VIN kódem
-        
-    Returns:
-        VehicleDecodeResponse s dekódovanými daty
+    Jádro dekódování VIN (sdílené HTTP endpointem i interními voláními, např. GET /api/v1/vin).
+
+    current_user=None znamená anonymní volání (bez licence tenantu) — např. veřejný VIN lookup.
     """
     import time
     from ...licensing.service import assert_feature
-    
+
     request_start = time.time()
-    
+
     vin = req.vin.strip().upper().replace(" ", "").replace("-", "")
     errors = []
-    tenant_id = getattr(current_user, 'tenant_id', None)
+    tenant_id = getattr(current_user, "tenant_id", None)
     
     logger.info(f"[DECODER] ========================================")
     logger.info(f"[DECODER] VIN decode request received")
@@ -255,6 +250,24 @@ async def decode_vin(
         data=merged,
         errors=errors  # Warnings/errors (např. checksum warning)
     )
+
+
+@router.post("/decode-vin", response_model=VehicleDecodeResponse)
+async def decode_vin(
+    req: VinDecodeRequest,
+    db: Session = Depends(get_db),
+    current_user: Customer = Depends(get_current_user),
+) -> VehicleDecodeResponse:
+    """
+    Dekóduje VIN z více zdrojů (MDČR, EU Open Data, lokální VIN dekódování).
+
+    Args:
+        req: VinDecodeRequest s VIN kódem
+
+    Returns:
+        VehicleDecodeResponse s dekódovanými daty
+    """
+    return await decode_vin_core(req, db, current_user)
 
 
 @router.post("/decode-plate", response_model=VehicleDecodeResponse)

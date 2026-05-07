@@ -20,6 +20,13 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
 from src.core.branding import APP_SERVER_PRODUCT_TOKEN
+from src.core.cloudflare_access import (
+    cloudflare_access_admin_protection_enabled,
+    normalize_cf_access_team_domain,
+    parse_cf_access_allowed_emails,
+    parse_cf_access_audiences,
+    verify_cf_access_jwt_assertion,
+)
 from src.core.config import ALLOWED_ORIGINS, ENVIRONMENT
 from src.server.security_tracking import extract_client_ip
 
@@ -301,7 +308,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # Produkce: povolit embed jen z toozservis.cz domén, API volání na hub.toozservis.cz
             csp = (
                 "default-src 'self' https://hub.toozservis.cz; "
-                "img-src 'self' data: https:; "
+                "img-src 'self' data: https: blob:; "
                 "style-src 'self' 'unsafe-inline'; "
                 "script-src 'self' 'unsafe-inline'; "
                 "connect-src 'self' https://hub.toozservis.cz https://api.dataovozidlech.cz https://ares.gov.cz; "
@@ -311,7 +318,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # Development: povolit všechny (pro testování)
             csp = (
                 "default-src 'self'; "
-                "img-src 'self' data: https:; "
+                "img-src 'self' data: https: blob:; "
                 "style-src 'self' 'unsafe-inline'; "
                 "script-src 'self' 'unsafe-inline'; "
                 "connect-src 'self' http://localhost:* https:; "
@@ -365,7 +372,8 @@ def load_admin_network_allowlist() -> List[Any]:
     return nets
 
 
-_ADMIN_PATH_PREFIXES = ("/admin-api", "/web_admin", "/admin-static")
+# /api/admin — alias pro vybrané admin routery (např. vehicle-lifecycle); musí projít stejnými guardy jako /admin-api.
+_ADMIN_PATH_PREFIXES = ("/admin-api", "/api/admin", "/web_admin", "/admin-static")
 
 
 class HttpsRedirectMiddleware(BaseHTTPMiddleware):
@@ -380,6 +388,15 @@ class HttpsRedirectMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         forwarded = (request.headers.get("x-forwarded-proto") or "").strip().lower()
+        # Přímé lokální spojení k Uvicornu (bez proxy) nemá TLS na :PORT — výjimka umožní http://127.0.0.1:…
+        # při ENFORCE_HTTPS=1 (SSH tunel, lokální test). Za reverse proxy zůstává X-Forwarded-Proto: https.
+        client_host = getattr(getattr(request, "client", None), "host", None) or ""
+        ch = client_host.lower()
+        if ch.startswith("::ffff:"):
+            ch = ch[7:]
+        if forwarded == "" and ch in {"127.0.0.1", "::1", "localhost"}:
+            return await call_next(request)
+
         scheme = forwarded or (request.url.scheme or "http")
         if scheme != "https":
             host = request.headers.get("host") or request.url.netloc
@@ -434,6 +451,52 @@ class AdminNetworkGuardMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class CloudflareAccessAdminMiddleware(BaseHTTPMiddleware):
+    """Na /admin-api, /web_admin, /admin-static volitelně vyžádá platný JWT z Cloudflare Access."""
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        if not cloudflare_access_admin_protection_enabled():
+            return await call_next(request)
+
+        path = request.url.path or ""
+        if not any(path.startswith(p) for p in _ADMIN_PATH_PREFIXES):
+            return await call_next(request)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        team = normalize_cf_access_team_domain(os.getenv("CLOUDFLARE_ACCESS_TEAM_DOMAIN", "").strip())
+        audiences = parse_cf_access_audiences(os.getenv("CLOUDFLARE_ACCESS_AUDIENCE", "").strip())
+        if not team or not audiences:
+            return Response(
+                content='{"detail":"Cloudflare Access ochrana administrace není dokončená (TEAM_DOMAIN nebo AUDIENCE)."}',
+                status_code=503,
+                media_type="application/json",
+            )
+        allowed_mail = parse_cf_access_allowed_emails(os.getenv("CLOUDFLARE_ACCESS_ALLOWED_EMAILS", ""))
+        token = (
+            (request.headers.get("cf-access-jwt-assertion") or request.headers.get("CF-Access-Jwt-Assertion") or "").strip()
+        )
+        if not token:
+            return Response(
+                content='{"detail":"Přístup k administraci vyžaduje Cloudflare Access."}',
+                status_code=403,
+                media_type="application/json",
+            )
+        ok, _reason = verify_cf_access_jwt_assertion(
+            token,
+            team_domain=team,
+            audiences=audiences,
+            allowed_emails=allowed_mail,
+        )
+        if not ok:
+            return Response(
+                content='{"detail":"Ověření Cloudflare Access selhalo."}',
+                status_code=403,
+                media_type="application/json",
+            )
+        return await call_next(request)
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Middleware pro rate limiting"""
     
@@ -465,7 +528,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         client_ip = extract_client_ip(request) or (request.client.host if request.client else None) or "unknown"
         
         path = request.url.path or ""
-        if path.startswith(ADMIN_API_PREFIX):
+        if path.startswith(ADMIN_API_PREFIX) or path.startswith("/api/admin"):
             key = f"{client_ip}:admin_api_bucket"
             limit = _ADMIN_API_RATE_LIMIT_PER_MIN
             period = 60

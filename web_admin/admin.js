@@ -24,6 +24,42 @@ const ADMIN_VIEW_SECTIONS = ['users', 'vehicles', 'services', 'records'];
 const ADMIN_VIEW_MODES = ['grid', 'list', 'compact'];
 const ADMIN_API_TIMEOUT_MS = 30000;
 const adminViewState = {};
+const ADMIN_NAVBAR_CLOCK_TZ = 'Europe/Prague';
+let adminNavbarClockTimer = null;
+
+function tickAdminNavbarClock() {
+  const el = document.getElementById('adminNavbarClock');
+  if (!el) return;
+  const now = new Date();
+  el.textContent = now.toLocaleTimeString('cs-CZ', {
+    timeZone: ADMIN_NAVBAR_CLOCK_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  const dateStr = now.toLocaleDateString('cs-CZ', {
+    timeZone: ADMIN_NAVBAR_CLOCK_TZ,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  el.setAttribute('datetime', now.toISOString());
+  el.title = `Čas v Česku (Europe/Prague): ${dateStr}`;
+}
+
+function startAdminNavbarClock() {
+  if (adminNavbarClockTimer) clearInterval(adminNavbarClockTimer);
+  tickAdminNavbarClock();
+  adminNavbarClockTimer = setInterval(tickAdminNavbarClock, 1000);
+}
+
+function stopAdminNavbarClock() {
+  if (adminNavbarClockTimer) {
+    clearInterval(adminNavbarClockTimer);
+    adminNavbarClockTimer = null;
+  }
+}
 const recordFormOptionsState = {
   users: [],
   vehicles: [],
@@ -54,6 +90,99 @@ const controlCenterPaymentsFilters = {
   query: '',
 };
 let systemCapabilities = {};
+
+const USER_LICENSE_PLAN_OPTIONS = [
+  { value: 'free', label: 'FREE (uživatel · 1 vozidlo)' },
+  { value: 'basic', label: 'BASIC (uživatel · plná osobní správa)' },
+  { value: 'premium', label: 'PREMIUM (uživatel · rozšířený přehled a servisní propojení)' },
+  { value: 'lifetime', label: 'LIFETIME (uživatel · doživotní Premium, pouze admin)' },
+];
+
+const SERVICE_LICENSE_PLAN_OPTIONS = [
+  { value: 'service_free', label: 'SERVICE FREE (servis · seznamovací provoz)' },
+  { value: 'service_basic', label: 'SERVICE BASIC (servis · standardní denní provoz)' },
+  { value: 'service_premium', label: 'SERVICE PREMIUM (servis · plný provoz a analytika)' },
+  { value: 'service_lifetime', label: 'SERVICE LIFETIME (servis · doživotní Premium, pouze admin)' },
+];
+
+function getLicenseWorkspaceKindForRole(role) {
+  return String(role || '').trim().toLowerCase() === 'service' ? 'service' : 'user';
+}
+
+function getLicensePlanBase(plan) {
+  const normalized = String(plan || '').trim().toLowerCase();
+  const base = normalized.startsWith('service_') ? normalized.slice(8) : normalized;
+  return ['free', 'basic', 'premium', 'lifetime'].includes(base) ? base : 'free';
+}
+
+function normalizeLicensePlanForRole(plan, role) {
+  const normalized = String(plan || '').trim().toLowerCase();
+  const base = getLicensePlanBase(normalized);
+  return getLicenseWorkspaceKindForRole(role) === 'service' ? `service_${base}` : base;
+}
+
+function getLicensePlanOptionsForRole(role) {
+  return getLicenseWorkspaceKindForRole(role) === 'service'
+    ? SERVICE_LICENSE_PLAN_OPTIONS
+    : USER_LICENSE_PLAN_OPTIONS;
+}
+
+function formatAdminLicensePlanLabel(plan, role = null) {
+  const normalized = String(plan || '').trim().toLowerCase();
+  const inferredRole = role || (normalized.startsWith('service_') ? 'service' : 'user');
+  const normalizedForRole = normalizeLicensePlanForRole(normalized, inferredRole);
+  const options = getLicensePlanOptionsForRole(inferredRole);
+  const match = options.find((option) => option.value === normalizedForRole);
+  return match ? match.label : normalizedForRole.toUpperCase();
+}
+
+/** Stejná logika jako backend _format_bytes — pro fallback když API pošle jen disk_usage_bytes. */
+function formatAdminBytes(value) {
+  let size = Math.max(0, Number(value) || 0);
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  for (let i = 0; i < units.length; i += 1) {
+    if (size < 1024 || i === units.length - 1) {
+      return `${size.toFixed(1)} ${units[i]}`;
+    }
+    size /= 1024;
+  }
+  return '0.0 B';
+}
+
+function formatUserDiskHuman(row) {
+  const h = row?.disk_usage_human;
+  if (h != null && String(h).trim() !== '') {
+    return String(h);
+  }
+  const b = row?.disk_usage_bytes;
+  if (b != null && Number.isFinite(Number(b))) {
+    return formatAdminBytes(Number(b));
+  }
+  return null;
+}
+
+function populateLicensePlanSelect(selectId, role, currentPlan = '', options = {}) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const includeBlank = options.includeBlank !== false;
+  const blankLabel = options.blankLabel || 'beze změny';
+  const normalizedCurrent = currentPlan
+    ? normalizeLicensePlanForRole(currentPlan, role)
+    : '';
+  const previousValue = String(select.value || '').trim().toLowerCase();
+  const desiredValue = normalizedCurrent || normalizeLicensePlanForRole(previousValue, role);
+  const planOptions = getLicensePlanOptionsForRole(role);
+  const html = [];
+  if (includeBlank) {
+    html.push(`<option value="">${escapeHtml(blankLabel)}</option>`);
+  }
+  planOptions.forEach((option) => {
+    html.push(`<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`);
+  });
+  select.innerHTML = html.join('');
+  const canUseDesiredValue = planOptions.some((option) => option.value === desiredValue);
+  select.value = canUseDesiredValue ? desiredValue : (includeBlank ? '' : planOptions[0]?.value || '');
+}
 
 // ============================================
 // AUTH & TOKEN MANAGEMENT
@@ -139,7 +268,65 @@ function showSuccess(message) {
   }
 }
 
-async function apiRequest(method, path, body = null) {
+function formatApiDetailMessage(detail) {
+  if (detail == null || detail === '') return null;
+  if (typeof detail === 'string') return detail;
+  try {
+    return JSON.stringify(detail);
+  } catch {
+    return String(detail);
+  }
+}
+
+/** Klik na text uvnitř <button> má target = Text — closest() tam není. */
+function eventClickTargetElement(ev) {
+  const t = ev && ev.target;
+  if (t instanceof Element) return t;
+  if (t && typeof t === 'object' && t.parentElement instanceof Element) return t.parentElement;
+  return null;
+}
+
+let _sysNotifDeactivateInFlight = false;
+
+function initSysNotificationDeactivateDelegation() {
+  const root = document.getElementById('dashboard-screen');
+  if (!root || root.dataset.sysNotifDeactivateBound === '1') return;
+  root.dataset.sysNotifDeactivateBound = '1';
+  root.addEventListener(
+    'click',
+    async (ev) => {
+      const origin = eventClickTargetElement(ev);
+      const btn = origin && origin.closest('.js-sys-notif-off');
+      if (!btn || !root.contains(btn)) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (_sysNotifDeactivateInFlight || btn.disabled) return;
+      const nid = Number(btn.getAttribute('data-sys-notif-id'));
+      if (!Number.isFinite(nid) || nid <= 0) return;
+      if (!confirm(`Vypnout oznámení #${nid} pro všechny uživatele?`)) return;
+      _sysNotifDeactivateInFlight = true;
+      btn.disabled = true;
+      const prev = btn.textContent;
+      btn.textContent = '…';
+      try {
+        await apiRequest('POST', `/admin-api/settings/system-notifications/${nid}/deactivate`, {});
+        showSuccess('Oznámení bylo vypnuto');
+        await refreshSettingsNotificationsOverview();
+      } catch (err) {
+        showGlobalError(err?.message || String(err));
+        btn.disabled = false;
+        btn.textContent = prev;
+      } finally {
+        _sysNotifDeactivateInFlight = false;
+      }
+    },
+    true,
+  );
+}
+
+async function apiRequest(method, path, body = null, requestConfig = null) {
+  const silentBanner =
+    requestConfig && typeof requestConfig === 'object' && requestConfig.silentGlobalError === true;
   const token = getAuthToken();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ADMIN_API_TIMEOUT_MS);
@@ -187,7 +374,8 @@ async function apiRequest(method, path, body = null) {
       } catch {
         errorData = { detail: res.statusText || `HTTP ${res.status}` };
       }
-      throw new Error(errorData.detail || `Request failed: ${res.status} ${res.statusText}`);
+      const detailMsg = formatApiDetailMessage(errorData.detail);
+      throw new Error(detailMsg || `Request failed: ${res.status} ${res.statusText}`);
     }
     
     // Pokud response je prázdný (204 No Content), vrátit null
@@ -200,19 +388,19 @@ async function apiRequest(method, path, body = null) {
     if (error.name === 'AbortError') {
       const timeoutError = `Server neodpověděl do ${Math.round(ADMIN_API_TIMEOUT_MS / 1000)} s. Zkuste obnovit stránku; pokud se to opakuje, databáze je pravděpodobně zamčená dlouhou operací.`;
       console.error(`API Timeout [${method} ${path}]:`, error);
-      showGlobalError(timeoutError);
+      if (!silentBanner) showGlobalError(timeoutError);
       throw new Error(timeoutError);
     }
     // Pokud je to network error (Failed to fetch), zobrazit uživatelsky přívětivou zprávu
     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
       const friendlyError = 'Nelze se připojit k serveru. Zkontrolujte, zda server běží na ' + (API_BASE || window.location.origin);
       console.error(`API Error [${method} ${path}]:`, error);
-      showGlobalError(friendlyError);
+      if (!silentBanner) showGlobalError(friendlyError);
       throw new Error(friendlyError);
     }
-    
+
     console.error(`API Error [${method} ${path}]:`, error);
-    showGlobalError(error.message || `Chyba při ${method} ${path}`);
+    if (!silentBanner) showGlobalError(error.message || `Chyba při ${method} ${path}`);
     throw error;
   } finally {
     clearTimeout(timeoutId);
@@ -276,24 +464,52 @@ function userAdminBadgeLabel(user) {
   return `#${user?.id ?? '?'}`;
 }
 
+/** Časová pásma klienta ignorujeme — admin má konzistentně čas podle Prahy. */
+const ADMIN_DISPLAY_TIMEZONE = { timeZone: 'Europe/Prague' };
+
 function formatDateTime(value, fallback = '-') {
   if (!value) return fallback;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return fallback;
-  return date.toLocaleString('cs-CZ');
+  return date.toLocaleString('cs-CZ', ADMIN_DISPLAY_TIMEZONE);
 }
 
 function formatDate(value, fallback = '-') {
   if (!value) return fallback;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return fallback;
-  return date.toLocaleDateString('cs-CZ');
+  return date.toLocaleDateString('cs-CZ', ADMIN_DISPLAY_TIMEZONE);
 }
 
 function formatMoney(value, fallback = '-') {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
   return `${num.toLocaleString('cs-CZ')} Kč`;
+}
+
+function phoneStatusAdminLabel(user) {
+  const s = user && user.phone_status_label;
+  if (s === 'verified') return 'Ověřený';
+  if (s === 'unverified') return 'Formálně validní, neověřený';
+  if (s === 'invalid') return 'Nevalidní / chybí E.164';
+  return '—';
+}
+
+function formatRiskFlags(raw) {
+  if (raw == null || raw === '') return '—';
+  if (Array.isArray(raw)) return raw.length ? raw.join(', ') : '—';
+  if (typeof raw === 'string') return raw || '—';
+  try {
+    return JSON.stringify(raw);
+  } catch (e) {
+    return String(raw);
+  }
+}
+
+function truncUa(ua) {
+  if (!ua) return '—';
+  const t = String(ua);
+  return t.length > 80 ? `${t.slice(0, 77)}…` : t;
 }
 
 function getAdminSectionContainer(section) {
@@ -406,7 +622,8 @@ function initNavigation() {
   });
 
   initSummaryNavigation();
-  
+  initOverviewStatsDelegation();
+
   // Načíst data pro aktivní sekci
   const activeItem = document.querySelector('.nav-item.active');
   if (activeItem) {
@@ -492,6 +709,24 @@ function initSummaryNavigation() {
   });
 }
 
+function initOverviewStatsDelegation() {
+  const grid = document.getElementById('overview-stats');
+  if (!grid || grid.dataset.overviewNavBound === '1') {
+    return;
+  }
+  grid.dataset.overviewNavBound = '1';
+  grid.addEventListener('click', (ev) => {
+    const btn = ev.target?.closest?.('button[data-admin-section]');
+    if (!btn || !grid.contains(btn)) {
+      return;
+    }
+    const section = btn.getAttribute('data-admin-section');
+    if (section) {
+      switchSection(section);
+    }
+  });
+}
+
 function switchSection(section) {
   if (section !== 'control-center') {
     closeAllControlCenterDetails();
@@ -534,8 +769,14 @@ function loadSectionData(section) {
     case 'overview':
       loadOverview();
       break;
+    case 'app-center':
+      loadAppCenter();
+      break;
     case 'global-admin':
       loadGlobalAdmin();
+      break;
+    case 'demo-access':
+      loadDemoAccessLeads();
       break;
     case 'users':
       loadUsers();
@@ -543,14 +784,27 @@ function loadSectionData(section) {
     case 'vehicles':
       loadVehicles();
       break;
+    case 'mdcr-open-data':
+      loadMdcrOpenData();
+      break;
+    case 'vehicle-lifecycle':
+      loadVehicleLifecycleSection();
+      break;
     case 'services':
       loadServices();
       break;
     case 'records':
       loadRecords();
+      loadDeletedServiceRecords();
       break;
     case 'audit':
       loadAuditLog();
+      break;
+    case 'support':
+      loadSupportInbox();
+      break;
+    case 'security':
+      loadSecurityPanel();
       break;
     case 'system':
       // Systémové nástroje se načítají při kliknutí
@@ -564,12 +818,130 @@ function loadSectionData(section) {
   }
 }
 
+async function loadVehicleLifecycleSection() {
+  try {
+    const data = await apiRequest('GET', '/admin-api/vehicle-lifecycle?limit=100');
+    const wrap = document.getElementById('vehicle-lifecycle-table');
+    if (!wrap) return;
+    const rows = (data.items || []).map((row) => `
+      <tr>
+        <td>${escapeHtml(String(row.vehicle_id ?? ''))}</td>
+        <td>${escapeHtml(row.vin || '')}</td>
+        <td>${escapeHtml(row.plate || '')}</td>
+        <td>${escapeHtml(row.lifecycle_phase || '')}</td>
+        <td>${escapeHtml(row.reason_code || '')}</td>
+        <td>${escapeHtml(row.recipient_email || '')}</td>
+      </tr>
+    `).join('');
+    wrap.innerHTML = `
+      <table class="tool-table">
+        <thead><tr><th>ID</th><th>VIN</th><th>SPZ</th><th>Fáze</th><th>Důvod</th><th>Příjemce</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="6">Žádné záznamy</td></tr>'}</tbody>
+      </table>`;
+  } catch (err) {
+    showGlobalError(err?.message || String(err));
+  }
+}
+
 // ============================================
 // OVERVIEW SECTION
 // ============================================
 
+function adminPriorityClass(severity) {
+  const normalized = String(severity || '').toLowerCase();
+  if (normalized === 'critical') return 'is-critical';
+  if (normalized === 'warning') return 'is-warning';
+  if (normalized === 'ok') return 'is-ok';
+  return '';
+}
+
+function formatMoneyHalers(amount, currency = 'CZK') {
+  if (amount === null || amount === undefined || amount === '') return '-';
+  const value = Number(amount) / 100;
+  if (!Number.isFinite(value)) return '-';
+  return `${value.toLocaleString('cs-CZ', { maximumFractionDigits: 2 })} ${currency || 'CZK'}`;
+}
+
+async function loadAdminToday() {
+  const el = document.getElementById('admin-today-panel');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Načítám pracovní přehled...</div>';
+  try {
+    const data = await apiRequest('GET', '/admin-api/admin-home');
+    const priorities = Array.isArray(data.priorities) ? data.priorities : [];
+    const requests = Array.isArray(data.pending_service_requests) ? data.pending_service_requests : [];
+    const payments = Array.isArray(data.payment_attention) ? data.payment_attention : [];
+    const licenses = Array.isArray(data.expired_licenses) ? data.expired_licenses : [];
+    const errors = Array.isArray(data.recent_errors) ? data.recent_errors : [];
+    const security = data.security || {};
+    const backup = data.backup || {};
+
+    el.innerHTML = `
+      <div class="admin-today-hero">
+        <div>
+          <span class="eyebrow">Pracovní přehled</span>
+          <h2>Admin nemusí lovit v systému. Tady jsou věci, které chtějí pozornost.</h2>
+          <p>Aktualizováno: ${escapeHtml(formatDateTime(data.timestamp))}</p>
+        </div>
+        <div class="admin-today-security">
+          <span>Vaše IP</span>
+          <strong>${escapeHtml(security.current_ip || '-')}</strong>
+          <small>Allowlist: ${security.admin_allowlist_configured ? 'nastaven' : 'není nastaven'}</small>
+        </div>
+      </div>
+      <div class="admin-priority-grid">
+        ${priorities.map((item) => `
+          <button type="button" class="admin-priority-card ${adminPriorityClass(item.severity)}" onclick="switchSection('${escapeHtml(item.section || 'overview')}')">
+            <span>${escapeHtml(item.label || '-')}</span>
+            <strong>${Number(item.count || 0).toLocaleString('cs-CZ')}</strong>
+            <small>${escapeHtml(item.hint || '')}</small>
+          </button>
+        `).join('')}
+      </div>
+      <div class="admin-today-grid">
+        <article class="admin-work-card">
+          <h3>Čekající servisy</h3>
+          ${requests.length ? requests.map((row) => `
+            <div class="admin-work-row">
+              <div><strong>${escapeHtml(row.service_name || row.email || '-')}</strong><span>${escapeHtml(row.email || '')} · ${escapeHtml(row.city || '')}</span></div>
+              <button class="btn-secondary btn-sm" type="button" onclick="switchSection('services')">Vyřešit</button>
+            </div>
+          `).join('') : '<div class="empty">Žádná čekající servisní registrace.</div>'}
+        </article>
+        <article class="admin-work-card">
+          <h3>Platby a licence</h3>
+          ${payments.length ? payments.slice(0, 5).map((row) => `
+            <div class="admin-work-row">
+              <div><strong>${escapeHtml(row.email || row.trans_id || '-')}</strong><span>${escapeHtml(row.provider_status || row.event_type || '-')} · ${formatMoneyHalers(row.amount_halers, row.currency)}</span></div>
+              ${row.user_id ? `<button class="btn-secondary btn-sm" type="button" onclick="openUserDetail(${Number(row.user_id)}, 'timeline')">Detail</button>` : ''}
+            </div>
+          `).join('') : '<div class="empty">Žádné problémové platby v posledních 14 dnech.</div>'}
+          ${licenses.length ? `<div class="admin-work-note">${licenses.length} expirovaných licencí čeká na kontrolu.</div>` : ''}
+        </article>
+        <article class="admin-work-card">
+          <h3>Bezpečnost a backup</h3>
+          <div class="admin-work-row"><div><strong>Neúspěšné login pokusy 24h</strong><span>${Number(security.failed_logins_24h || 0).toLocaleString('cs-CZ')}</span></div><button class="btn-secondary btn-sm" type="button" onclick="switchSection('security')">Otevřít</button></div>
+          <div class="admin-work-row"><div><strong>Aktivní blokace IP</strong><span>${Number(security.blocked_ips_active || 0).toLocaleString('cs-CZ')}</span></div><button class="btn-secondary btn-sm" type="button" onclick="switchSection('security')">Detail</button></div>
+          <div class="admin-work-row"><div><strong>Backup</strong><span>${backup.warning ? 'Chybí nebo je starší než 72 h' : 'OK'} · ${Number(backup.count || 0).toLocaleString('cs-CZ')} snapshotů</span></div><button class="btn-secondary btn-sm" type="button" onclick="switchSection('system')">Systém</button></div>
+        </article>
+        <article class="admin-work-card">
+          <h3>Poslední chyby</h3>
+          ${errors.length ? errors.slice(0, 6).map((row) => `
+            <div class="admin-work-row">
+              <div><strong>${escapeHtml(row.action || row.source || '-')}</strong><span>${escapeHtml(row.actor || '-')} · ${escapeHtml(row.result || '')} · ${escapeHtml(formatDateTime(row.created_at))}</span></div>
+            </div>
+          `).join('') : '<div class="empty">Žádné nové kritické chyby.</div>'}
+        </article>
+      </div>
+    `;
+  } catch (error) {
+    el.innerHTML = `<div class="error">Nepodařilo se načíst pracovní přehled: ${escapeHtml(error.message || String(error))}</div>`;
+  }
+}
+
 async function loadOverview() {
   try {
+    loadAdminToday();
     const stats = await apiRequest('GET', '/admin-api/overview');
 
     // Počet aktivních uživatelů musí odpovídat seznamu (/admin-api/users vynechává soft-smazané).
@@ -593,25 +965,30 @@ async function loadOverview() {
     const statsEl = document.getElementById('overview-stats');
     if (statsEl) {
       statsEl.innerHTML = `
-        <div class="stat-card">
-          <h3>${activeUsersCount}</h3>
-          <p>Uživatelé</p>
-        </div>
-        <div class="stat-card">
-          <h3>${stats.total_vehicles ?? 0}</h3>
-          <p>Vozidla</p>
-        </div>
-        <div class="stat-card">
-          <h3>${stats.total_services ?? 0}</h3>
-          <p>Servisy</p>
-        </div>
-        <div class="stat-card">
-          <h3>${stats.total_records ?? 0}</h3>
-          <p>Servisní záznamy</p>
-        </div>
-        <div class="stat-card">
-          <h3>${stats.total_assignments ?? 0}</h3>
-          <p>Přiřazení</p>
+        <button type="button" class="overview-stat overview-stat--action" data-admin-section="users" title="Otevřít sekci Uživatelé">
+          <span class="overview-stat-ico" aria-hidden="true">👥</span>
+          <span class="overview-stat-val">${activeUsersCount}</span>
+          <span class="overview-stat-lbl">Uživatelé</span>
+        </button>
+        <button type="button" class="overview-stat overview-stat--action" data-admin-section="vehicles" title="Otevřít sekci Vozidla">
+          <span class="overview-stat-ico" aria-hidden="true">🚗</span>
+          <span class="overview-stat-val">${stats.total_vehicles ?? 0}</span>
+          <span class="overview-stat-lbl">Vozidla</span>
+        </button>
+        <button type="button" class="overview-stat overview-stat--action" data-admin-section="services" title="Otevřít sekci Servisy">
+          <span class="overview-stat-ico" aria-hidden="true">🛠</span>
+          <span class="overview-stat-val">${stats.total_services ?? 0}</span>
+          <span class="overview-stat-lbl">Servisy</span>
+        </button>
+        <button type="button" class="overview-stat overview-stat--action" data-admin-section="records" title="Otevřít sekci Záznamy">
+          <span class="overview-stat-ico" aria-hidden="true">📋</span>
+          <span class="overview-stat-val">${stats.total_records ?? 0}</span>
+          <span class="overview-stat-lbl">Servisní záznamy</span>
+        </button>
+        <div class="overview-stat overview-stat--passive" title="Souhrnný údaj (bez přímé sekce v menu)">
+          <span class="overview-stat-ico" aria-hidden="true">🔗</span>
+          <span class="overview-stat-val">${stats.total_assignments ?? 0}</span>
+          <span class="overview-stat-lbl">Přiřazení</span>
         </div>
       `;
     }
@@ -621,6 +998,568 @@ async function loadOverview() {
     
   } catch (error) {
     console.error('Error loading overview:', error);
+  }
+}
+
+function appCenterStatusLabel(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'ok') return 'OK';
+  if (normalized === 'warning') return 'Pozornost';
+  if (normalized === 'error') return 'Chyba';
+  return 'Neznámé';
+}
+
+function appCenterStatusClass(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'ok') return 'is-ok';
+  if (normalized === 'warning') return 'is-warning';
+  if (normalized === 'error') return 'is-critical';
+  return '';
+}
+
+function formatAppMetricValue(value) {
+  if (value === null || value === undefined || value === '') return '-';
+  if (typeof value === 'boolean') return value ? 'ANO' : 'NE';
+  if (typeof value === 'number') return value.toLocaleString('cs-CZ');
+  return String(value);
+}
+
+function runAppCenterAction(actionType, target) {
+  const type = String(actionType || '');
+  const destination = String(target || '');
+  if (!destination) return;
+  if (type === 'section') {
+    switchSection(destination);
+    return;
+  }
+  if (type === 'url') {
+    window.open(destination, '_blank', 'noopener');
+    return;
+  }
+  if (type === 'global_filter') {
+    switchSection('global-admin');
+    setTimeout(() => {
+      const select = document.getElementById('global-admin-type');
+      if (select) select.value = destination;
+      loadGlobalAdmin();
+    }, 0);
+    return;
+  }
+  if (type === 'control_center') {
+    switchSection('control-center');
+    setTimeout(() => {
+      const detailsMap = {
+        payments: 'cc-payments-details',
+        notifications: 'cc-notifications-details',
+        security: 'cc-security-details',
+      };
+      const detailId = detailsMap[destination];
+      if (detailId) openControlCenterModuleDetails(detailId);
+      if (destination === 'payments') loadControlCenterPayments();
+      if (destination === 'notifications') loadControlCenterNotifications();
+      if (destination === 'security') loadControlCenterSecurityMonitor();
+    }, 0);
+    return;
+  }
+  if (type === 'command') {
+    executeAppCenterCommand(destination);
+  }
+}
+
+async function executeAppCenterCommand(commandKey) {
+  if (!commandKey) return;
+  const needsConfirm = ['payments.resync', 'backup.create'].includes(commandKey);
+  if (needsConfirm && !confirm(`Spustit rychlou akci ${commandKey}?`)) return;
+  try {
+    const data = await apiRequest('POST', `/admin-api/app-center/actions/${encodeURIComponent(commandKey)}`, {});
+    showSuccess(`Akce ${commandKey} dokončena`);
+    console.info('App center action result:', data);
+    await loadAppCenter();
+    if (currentSection === 'overview') {
+      await loadAdminToday();
+    }
+  } catch (error) {
+    showGlobalError(error.message || String(error));
+  }
+}
+
+async function loadAppCenter() {
+  const grid = document.getElementById('app-center-grid');
+  const summary = document.getElementById('app-center-summary');
+  if (!grid) return;
+  grid.innerHTML = '<div class="loading">Načítám centrum aplikace...</div>';
+  try {
+    const data = await apiRequest('GET', '/admin-api/app-center/modules');
+    const modules = Array.isArray(data.modules) ? data.modules : [];
+    const counts = data.status_counts || {};
+    if (summary) {
+      summary.innerHTML = `
+        <span class="global-admin-chip"><span>Moduly</span><strong>${modules.length.toLocaleString('cs-CZ')}</strong></span>
+        <span class="global-admin-chip"><span>OK</span><strong>${Number(counts.ok || 0).toLocaleString('cs-CZ')}</strong></span>
+        <span class="global-admin-chip"><span>Pozornost</span><strong>${Number(counts.warning || 0).toLocaleString('cs-CZ')}</strong></span>
+        <span class="global-admin-chip"><span>Chyby</span><strong>${Number(counts.error || 0).toLocaleString('cs-CZ')}</strong></span>
+      `;
+    }
+    if (!modules.length) {
+      grid.innerHTML = '<div class="empty">Žádné moduly nebyly nalezeny.</div>';
+      return;
+    }
+    const groups = [...new Set(modules.map((item) => item.group || 'Ostatní'))];
+    grid.innerHTML = groups.map((group) => {
+      const groupModules = modules.filter((item) => (item.group || 'Ostatní') === group);
+      return `
+        <section class="app-center-group">
+          <h2>${escapeHtml(group)}</h2>
+          <div class="app-center-cards">
+            ${groupModules.map((module) => {
+              const metrics = module.metrics || {};
+              const actions = Array.isArray(module.actions) ? module.actions : [];
+              const notes = Array.isArray(module.notes) ? module.notes : [];
+              return `
+                <article class="app-center-card ${appCenterStatusClass(module.status)}">
+                  <div class="app-center-card-head">
+                    <div>
+                      <h3>${escapeHtml(module.label || module.key || '-')}</h3>
+                      <p>${escapeHtml(module.description || '')}</p>
+                    </div>
+                    <span class="app-center-status">${escapeHtml(appCenterStatusLabel(module.status))}</span>
+                  </div>
+                  <div class="app-center-metrics">
+                    ${Object.entries(metrics).map(([key, value]) => `
+                      <div><span>${escapeHtml(key)}</span><strong>${escapeHtml(formatAppMetricValue(value))}</strong></div>
+                    `).join('') || '<div><span>Stav</span><strong>Bez metrik</strong></div>'}
+                  </div>
+                  ${notes.length ? `<div class="app-center-notes">${notes.map((note) => `<span>${escapeHtml(note)}</span>`).join('')}</div>` : ''}
+                  <div class="app-center-actions">
+                    ${actions.map((action) => `
+                      <button class="btn-secondary btn-sm" type="button" onclick="runAppCenterAction(decodeURIComponent('${encodeURIComponent(action.type || '')}'), decodeURIComponent('${encodeURIComponent(action.target || '')}'))">${escapeHtml(action.label || action.target || 'Akce')}</button>
+                    `).join('')}
+                  </div>
+                </article>
+              `;
+            }).join('')}
+          </div>
+        </section>
+      `;
+    }).join('');
+  } catch (error) {
+    grid.innerHTML = `<div class="error">Centrum aplikace se nepodařilo načíst: ${escapeHtml(error.message || String(error))}</div>`;
+  }
+}
+
+async function loadMdcrOpenData() {
+  const statusEl = document.getElementById('mdcr-open-data-status');
+  const fieldsEl = document.getElementById('mdcr-open-data-fields');
+  const importsEl = document.getElementById('mdcr-open-data-imports');
+  const legalEl = document.getElementById('mdcr-legal-panel');
+  const urlEl = document.getElementById('mdcr-source-url');
+  if (statusEl) statusEl.innerHTML = '<span class="global-admin-chip"><span>Stav</span><strong>Načítám...</strong></span>';
+  try {
+    const data = await apiRequest('GET', '/admin-api/mdcr-open-data/status');
+    if (urlEl) urlEl.value = data.latest_source?.source_url || data.default_source_url || '';
+    const tables = data.tables || {};
+    const tableOk = Object.values(tables).every(Boolean);
+    if (statusEl) {
+      statusEl.innerHTML = `
+        <span class="global-admin-chip"><span>Vozidla s VIN</span><strong>${Number(data.vehicles_with_vin || 0).toLocaleString('cs-CZ')}</strong></span>
+        <span class="global-admin-chip"><span>DB tabulky</span><strong>${tableOk ? 'OK' : 'Chybí'}</strong></span>
+        <span class="global-admin-chip"><span>Nejnovější MDČR data</span><strong>${escapeHtml(data.latest_source?.dataset_date || 'nezjištěno')}</strong></span>
+        <span class="global-admin-chip"><span>Zdroj</span><strong>${escapeHtml(data.source_label || 'MDČR')}</strong></span>
+        <span class="global-admin-chip"><span>Poslední import</span><strong>${escapeHtml(data.latest_import?.created_at || 'zatím žádný')}</strong></span>
+      `;
+    }
+    if (fieldsEl) {
+      const fields = Array.isArray(data.what_is_imported) ? data.what_is_imported : [];
+      fieldsEl.innerHTML = fields.map((item) => `<span>${escapeHtml(item)}</span>`).join('');
+    }
+    if (legalEl) {
+      legalEl.innerHTML = renderMdcrLegalNotice(data.legal_notice || {});
+    }
+    await loadMdcrOpenDataImports();
+  } catch (error) {
+    if (statusEl) statusEl.innerHTML = `<div class="error">MDČR stav se nepodařilo načíst: ${escapeHtml(error.message || String(error))}</div>`;
+    if (importsEl) importsEl.innerHTML = '';
+  }
+}
+
+function renderMdcrLegalNotice(notice) {
+  const links = Array.isArray(notice.links) ? notice.links : [];
+  const rules = Array.isArray(notice.usage_rules) ? notice.usage_rules : [];
+  const datasets = Array.isArray(notice.supported_datasets) ? notice.supported_datasets : [];
+  return `
+    <section class="mdcr-compliance-card">
+      <div class="mdcr-compliance-head">
+        <div>
+          <h2>Právní a zdrojový režim použití dat</h2>
+          <p>${escapeHtml(notice.freshness_notice || '')}</p>
+        </div>
+        <span>${escapeHtml(notice.status || 'open_data')}</span>
+      </div>
+      <div class="mdcr-compliance-grid">
+        <div><span>Poskytovatel</span><strong>${escapeHtml(notice.provider || 'Ministerstvo dopravy ČR')}</strong></div>
+        <div><span>Katalog</span><strong>${escapeHtml(notice.catalog || 'data.gov.cz')}</strong></div>
+        <div><span>Atribuce</span><strong>${escapeHtml(notice.attribution || '')}</strong></div>
+        <div><span>Upozornění</span><strong>${escapeHtml(notice.not_official_app_notice || '')}</strong></div>
+      </div>
+      <details class="mdcr-compliance-details">
+        <summary>Zobrazit pravidla správného použití a rozšiřování dat</summary>
+        <div class="mdcr-compliance-lists">
+          <div>
+            <h3>Pravidla použití</h3>
+            <ul>${rules.map((rule) => `<li>${escapeHtml(rule)}</li>`).join('')}</ul>
+          </div>
+          <div>
+            <h3>Oficiální odkazy</h3>
+            <ul>${links.map((link) => `<li><a href="${escapeHtml(link.url || '#')}" target="_blank" rel="noopener">${escapeHtml(link.label || link.url || '')}</a></li>`).join('')}</ul>
+          </div>
+        </div>
+        <h3>Datové sady</h3>
+        <div class="mdcr-dataset-list">
+          ${datasets.map((dataset) => `
+            <article>
+              <strong>${escapeHtml(dataset.label || dataset.key || '')}</strong>
+              <span>${escapeHtml(dataset.status || '')}</span>
+              <p>${escapeHtml(dataset.purpose || '')}</p>
+            </article>
+          `).join('')}
+        </div>
+      </details>
+    </section>
+  `;
+}
+
+async function loadMdcrOpenDataImports() {
+  const importsEl = document.getElementById('mdcr-open-data-imports');
+  if (!importsEl) return;
+  try {
+    const data = await apiRequest('GET', '/admin-api/mdcr-open-data/imports?limit=30');
+    const rows = Array.isArray(data.items) ? data.items : [];
+    if (!rows.length) {
+      importsEl.innerHTML = '<div class="empty">Zatím tu není žádný lokální import.</div>';
+      return;
+    }
+    importsEl.innerHTML = `
+      <table class="data-table">
+        <thead><tr><th>Čas</th><th>Vozidlo</th><th>VIN</th><th>Stav</th><th>Zpráva</th></tr></thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td>${escapeHtml(formatDateTime(row.created_at))}</td>
+              <td>#${escapeHtml(String(row.vehicle_id || ''))}</td>
+              <td>${escapeHtml(row.vin || '')}</td>
+              <td>${escapeHtml(row.status || '')}</td>
+              <td>${escapeHtml(row.message || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (error) {
+    importsEl.innerHTML = `<div class="error">Importy se nepodařilo načíst: ${escapeHtml(error.message || String(error))}</div>`;
+  }
+}
+
+function renderMdcrRecordTable(records, title, emptyText, includeRaw = false) {
+  const rows = Array.isArray(records) ? records : [];
+  if (!rows.length) {
+    return `<div class="empty">${escapeHtml(emptyText || 'Žádné záznamy.')}</div>`;
+  }
+  return `
+    <h3>${escapeHtml(title)}</h3>
+    <div class="tool-table-wrap">
+      <table class="data-table mdcr-record-table">
+        <thead><tr><th>VIN</th><th>Datum</th><th>Typ</th><th>Výsledek</th><th>Km</th><th>STK do</th><th>Vozidlo</th><th>Stanice</th><th>Protokol</th>${includeRaw ? '<th>Raw</th>' : ''}</tr></thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td>${escapeHtml(row.vin || '')}</td>
+              <td>${escapeHtml(formatDateTime(row.inspection_date || row.inspection_date_raw))}</td>
+              <td>${escapeHtml(row.inspection_type || '')}</td>
+              <td>${escapeHtml(row.result_label || '')}</td>
+              <td>${escapeHtml(row.odometer_km == null ? '' : Number(row.odometer_km).toLocaleString('cs-CZ'))}</td>
+              <td>${escapeHtml(row.next_inspection_date || row.next_inspection_date_raw || '')}</td>
+              <td>${escapeHtml([row.brand, row.model].filter(Boolean).join(' '))}</td>
+              <td>${escapeHtml(row.station_name || row.station_code || '')}</td>
+              <td>${escapeHtml(row.protocol_number || '')}</td>
+              ${includeRaw ? `
+                <td>
+                  <details class="mdcr-raw-details">
+                    <summary>JSON</summary>
+                    <pre>${escapeHtml(JSON.stringify(row, null, 2))}</pre>
+                  </details>
+                </td>
+              ` : ''}
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderMdcrRecordCards(records, title, emptyText) {
+  const rows = Array.isArray(records) ? records : [];
+  if (!rows.length) {
+    return `<div class="empty">${escapeHtml(emptyText || 'Žádné záznamy.')}</div>`;
+  }
+  return `
+    <section class="mdcr-visible-data-panel">
+      <div class="mdcr-visible-data-head">
+        <div>
+          <h3>${escapeHtml(title)}</h3>
+          <p>Tyto řádky jsou už rozbalené z MDČR GZIP/XML souboru a zobrazené přímo v aplikaci.</p>
+        </div>
+        <span>${rows.length.toLocaleString('cs-CZ')} řádků</span>
+      </div>
+      <div class="mdcr-record-cards">
+        ${rows.map((row, index) => `
+          <article class="mdcr-record-card">
+            <div class="mdcr-record-card-head">
+              <strong>${escapeHtml(row.vin || 'VIN neuveden')}</strong>
+              <span>Řádek ${Number(index + 1).toLocaleString('cs-CZ')}</span>
+            </div>
+            <dl>
+              <div><dt>Datum prohlídky</dt><dd>${escapeHtml(formatDateTime(row.inspection_date || row.inspection_date_raw) || '-')}</dd></div>
+              <div><dt>Druh prohlídky</dt><dd>${escapeHtml(row.inspection_type || '-')}</dd></div>
+              <div><dt>Výsledek</dt><dd>${escapeHtml(row.result_label || '-')}</dd></div>
+              <div><dt>Tachometr</dt><dd>${escapeHtml(row.odometer_km == null ? '-' : `${Number(row.odometer_km).toLocaleString('cs-CZ')} km`)}</dd></div>
+              <div><dt>Příští STK</dt><dd>${escapeHtml(row.next_inspection_date || row.next_inspection_date_raw || '-')}</dd></div>
+              <div><dt>Vozidlo</dt><dd>${escapeHtml([row.brand, row.model].filter(Boolean).join(' ') || '-')}</dd></div>
+              <div><dt>Stanice</dt><dd>${escapeHtml(row.station_name || row.station_code || '-')}</dd></div>
+              <div><dt>Protokol</dt><dd>${escapeHtml(row.protocol_number || '-')}</dd></div>
+            </dl>
+            <details class="mdcr-raw-details">
+              <summary>Zobrazit raw JSON tohoto řádku</summary>
+              <pre>${escapeHtml(JSON.stringify(row, null, 2))}</pre>
+            </details>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderMdcrSearchedVehiclePanel(data, localVehicles) {
+  const vehicles = Array.isArray(localVehicles) ? localVehicles : [];
+  const normalizedVin = data.normalized_vin || data.vin || '';
+  return `
+    <section class="mdcr-visible-data-panel mdcr-searched-vehicle-panel">
+      <div class="mdcr-visible-data-head">
+        <div>
+          <h3>Hledané vozidlo podle zadaného VIN</h3>
+          <p>Zobrazuji jen vozidlo, které bylo zadané do pole VIN. Náhodné ukázkové řádky z jiných vozidel jsou schované pryč, aby to nemátlo.</p>
+        </div>
+        <span>${escapeHtml(normalizedVin)}</span>
+      </div>
+      ${vehicles.length ? `
+        <div class="mdcr-record-cards">
+          ${vehicles.map((vehicle) => `
+            <article class="mdcr-record-card">
+              <div class="mdcr-record-card-head">
+                <strong>${escapeHtml(vehicle.plate || normalizedVin)}</strong>
+                <span>Naše vozidlo #${escapeHtml(String(vehicle.id || ''))}</span>
+              </div>
+              <dl>
+                <div><dt>VIN</dt><dd>${escapeHtml(normalizedVin)}</dd></div>
+                <div><dt>Značka</dt><dd>${escapeHtml(vehicle.brand || '-')}</dd></div>
+                <div><dt>Model</dt><dd>${escapeHtml(vehicle.model || '-')}</dd></div>
+                <div><dt>Uživatel</dt><dd>${escapeHtml(vehicle.user_email || '-')}</dd></div>
+                <div><dt>STK v aplikaci</dt><dd>${escapeHtml(vehicle.stk_valid_until || '-')}</dd></div>
+                <div><dt>Poslední km v aplikaci</dt><dd>${escapeHtml(vehicle.latest_stk_odometer_km == null ? '-' : `${Number(vehicle.latest_stk_odometer_km).toLocaleString('cs-CZ')} km`)}</dd></div>
+              </dl>
+              <div class="mdcr-no-vin-match">
+                MDČR data pro tento VIN v aktuálně čteném souboru/limitu nebyla nalezena.
+              </div>
+            </article>
+          `).join('')}
+        </div>
+      ` : `
+        <article class="mdcr-record-card">
+          <div class="mdcr-record-card-head">
+            <strong>${escapeHtml(normalizedVin)}</strong>
+            <span>Zadaný VIN</span>
+          </div>
+          <div class="mdcr-no-vin-match">
+            Tento VIN není v lokální databázi aplikace a v aktuálně čteném MDČR souboru/limitu pro něj nebyl nalezen záznam.
+          </div>
+        </article>
+      `}
+    </section>
+  `;
+}
+
+function renderMdcrLocalVehicles(localVehicles, normalizedVin) {
+  const vehicles = Array.isArray(localVehicles) ? localVehicles : [];
+  if (!vehicles.length) {
+    return '<p class="panel-subtle">Tento VIN zatím není v lokálních vozidlech aplikace.</p>';
+  }
+  return `
+    <section class="mdcr-app-data-panel">
+      <h3>Data uložená v naší aplikaci</h3>
+      <p>Tyto hodnoty jsou naše lokální data pod aktuální kontrolou MDČR.</p>
+      <div class="tool-table-wrap">
+        <table class="data-table">
+          <thead><tr><th>ID</th><th>VIN</th><th>SPZ</th><th>Značka</th><th>Model</th><th>Uživatel</th><th>STK v aplikaci</th><th>Poslední km v aplikaci</th></tr></thead>
+          <tbody>
+            ${vehicles.map((vehicle) => `
+              <tr>
+                <td>#${escapeHtml(String(vehicle.id || ''))}</td>
+                <td>${escapeHtml(normalizedVin || '')}</td>
+                <td>${escapeHtml(vehicle.plate || '')}</td>
+                <td>${escapeHtml(vehicle.brand || '')}</td>
+                <td>${escapeHtml(vehicle.model || '')}</td>
+                <td>${escapeHtml(vehicle.user_email || '')}</td>
+                <td>${escapeHtml(vehicle.stk_valid_until || '')}</td>
+                <td>${escapeHtml(vehicle.latest_stk_odometer_km == null ? '' : Number(vehicle.latest_stk_odometer_km).toLocaleString('cs-CZ'))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+async function lookupMdcrVin(forceNoLimit = false) {
+  const resultEl = document.getElementById('mdcr-vin-lookup-result');
+  const vin = document.getElementById('mdcr-vin-lookup')?.value?.trim() || '';
+  const sourceUrl = document.getElementById('mdcr-source-url')?.value?.trim() || '';
+  const limitRaw = document.getElementById('mdcr-limit')?.value?.trim() || '';
+  if (!vin) {
+    if (resultEl) resultEl.innerHTML = '<div class="error">Zadej VIN, který chceš ověřit v MDČR datech.</div>';
+    return;
+  }
+  const payload = {
+    vin,
+    source_url: sourceUrl || null,
+    use_latest_source: true,
+    limit: forceNoLimit ? null : (limitRaw ? Number(limitRaw) : null),
+    max_matches: 50,
+  };
+  if (resultEl) resultEl.innerHTML = '<div class="loading">Hledám VIN v MDČR datasetu...</div>';
+  try {
+    const data = await apiRequest('POST', '/admin-api/mdcr-open-data/lookup-vin', payload);
+    const matches = Array.isArray(data.matches) ? data.matches : [];
+    const localVehicles = Array.isArray(data.local_vehicles) ? data.local_vehicles : [];
+    const sourceMetadata = data.source_metadata || {};
+    const sourceInfo = data.source_info || {};
+    const legalNotice = data.legal_notice || {};
+    if (!resultEl) return;
+    resultEl.innerHTML = `
+      <div class="section-header section-header-secondary">
+        <div>
+          <h2>Kontrolní protokol MDČR pro VIN ${escapeHtml(data.normalized_vin || vin)}</h2>
+          <p class="section-subtitle">${escapeHtml(data.verification_note || '')}</p>
+        </div>
+      </div>
+      <div class="mdcr-proof-card ${matches.length ? 'is-match' : 'is-miss'}">
+        <strong>${matches.length ? 'VIN byl v tomto MDČR souboru nalezen.' : 'VIN v tomto rozsahu nebyl nalezen.'}</strong>
+        <span>${matches.length ? 'Níže jsou přesné řádky, které by se importovaly.' : 'Níže je přesto vidět, že MDČR soubor se skutečně načetl a jaká data z něj chodí.'}</span>
+      </div>
+      <div class="mdcr-opened-card">
+        <strong>${data.source_opened ? 'Soubor MDČR se podařilo otevřít a rozbalit.' : 'Soubor MDČR se nepodařilo otevřít.'}</strong>
+        <span>${escapeHtml(data.source_opened_note || 'Níže se zobrazí dostupný obsah po zpracování aplikací.')}</span>
+      </div>
+      <div class="mdcr-compliance-mini">
+        <strong>Oficiální zdroj a omezení tvrzení</strong>
+        <span>${escapeHtml(legalNotice.attribution || 'Zdroj dat: Ministerstvo dopravy ČR / data.gov.cz.')} ${escapeHtml(legalNotice.not_official_app_notice || '')}</span>
+      </div>
+      <div class="global-admin-summary">
+        <span class="global-admin-chip"><span>VIN</span><strong>${escapeHtml(data.normalized_vin || '')}</strong></span>
+        <span class="global-admin-chip"><span>Aktuální dataset</span><strong>${escapeHtml(sourceInfo.dataset_date || 'nezjištěno')}</strong></span>
+        <span class="global-admin-chip"><span>Lokální vozidla</span><strong>${Number(localVehicles.length || 0).toLocaleString('cs-CZ')}</strong></span>
+        <span class="global-admin-chip"><span>Záznamy s VIN</span><strong>${Number(data.records_with_vin || 0).toLocaleString('cs-CZ')}</strong></span>
+        <span class="global-admin-chip"><span>Prošlo záznamů</span><strong>${Number(data.scanned_records || 0).toLocaleString('cs-CZ')}</strong></span>
+        <span class="global-admin-chip"><span>Nalezené shody</span><strong>${Number(data.matches_count || 0).toLocaleString('cs-CZ')}</strong></span>
+        <span class="global-admin-chip"><span>Limit</span><strong>${escapeHtml(data.limit == null ? 'bez limitu' : String(data.limit))}</strong></span>
+      </div>
+      <div class="mdcr-source-card">
+        <h3>Aktuální zdroj k okamžiku kliknutí</h3>
+        <p class="panel-subtle">${escapeHtml(sourceInfo.title || 'Nejnovější dostupný distribuční soubor z data.gov.cz')} ${sourceInfo.warning ? `· ${escapeHtml(sourceInfo.warning)}` : ''}</p>
+        <div class="mdcr-source-grid">
+          <div><span>URL</span><a href="${escapeHtml(data.source_url || '#')}" target="_blank" rel="noopener">${escapeHtml(data.source_url || '')}</a></div>
+          <div><span>Dataset na data.gov.cz</span>${sourceInfo.catalog_url ? `<a href="${escapeHtml(sourceInfo.catalog_url)}" target="_blank" rel="noopener">Otevřít katalog</a>` : '<strong>-</strong>'}</div>
+          <div><span>Datum datasetu</span><strong>${escapeHtml(sourceInfo.dataset_date || '-')}</strong></div>
+          <div><span>Zjištěno přes</span><strong>${escapeHtml(sourceInfo.resolved_by || '-')}</strong></div>
+          <div><span>Finální URL</span><strong>${escapeHtml(sourceMetadata.final_url || data.source_url || '')}</strong></div>
+          <div><span>HTTP status</span><strong>${escapeHtml(String(sourceMetadata.status_code || ''))}</strong></div>
+          <div><span>Content-Type</span><strong>${escapeHtml(sourceMetadata.content_type || '')}</strong></div>
+          <div><span>Formát</span><strong>${escapeHtml(sourceMetadata.detected_format || '')}</strong></div>
+          <div><span>Content-Length</span><strong>${escapeHtml(sourceMetadata.content_length || 'neuvedeno')}</strong></div>
+        </div>
+      </div>
+      ${matches.length
+        ? renderMdcrRecordCards(matches, 'Aktuální hodnoty z MDČR pro zadaný VIN', 'Pro zadaný VIN není v aktuálním souboru žádný řádek.')
+        : renderMdcrSearchedVehiclePanel(data, localVehicles)
+      }
+      ${renderMdcrLocalVehicles(localVehicles, data.normalized_vin || vin)}
+      ${matches.length ? renderMdcrRecordTable(matches, 'Tabulkový pohled na shody pro zadaný VIN', 'V tomto datasetu a limitu nebyl pro zadaný VIN nalezen žádný záznam.', true) : ''}
+    `;
+  } catch (error) {
+    if (resultEl) resultEl.innerHTML = `<div class="error">VIN lookup selhal: ${escapeHtml(error.message || String(error))}</div>`;
+  }
+}
+
+function lookupMdcrVinWithoutLimit() {
+  const limitEl = document.getElementById('mdcr-limit');
+  if (limitEl) limitEl.value = '';
+  lookupMdcrVin(true);
+}
+
+async function runMdcrOpenDataImport(forceDryRun = true) {
+  const resultEl = document.getElementById('mdcr-open-data-result');
+  const sourceUrl = document.getElementById('mdcr-source-url')?.value?.trim() || '';
+  const limitRaw = document.getElementById('mdcr-limit')?.value?.trim() || '';
+  const updateProfileEl = document.getElementById('mdcr-update-profile');
+  const dryRun = forceDryRun ? true : false;
+  if (!dryRun && !confirm('Spustit lokální zápis MDČR dat do historie vozidel a karet vozidel? Doporučený první krok je test bez zápisu.')) return;
+  const payload = {
+    source_url: sourceUrl || null,
+    use_latest_source: true,
+    dry_run: dryRun,
+    limit: limitRaw ? Number(limitRaw) : null,
+    update_vehicle_profile: Boolean(updateProfileEl?.checked ?? true),
+  };
+  if (resultEl) resultEl.innerHTML = '<div class="loading">Import běží, čtu stream z MDČR a páruji VIN...</div>';
+  try {
+    const data = await apiRequest('POST', '/admin-api/mdcr-open-data/import', payload);
+    const samples = Array.isArray(data.sample_matches) ? data.sample_matches : [];
+    if (resultEl) {
+      resultEl.innerHTML = `
+        <div class="success">${data.dry_run ? 'Test dokončen bez zápisu.' : 'Lokální import dokončen.'}</div>
+        <div class="security-status-grid mdcr-result-grid">
+          <article class="security-status-card"><span>Prošlo záznamů</span><strong>${Number(data.scanned_records || 0).toLocaleString('cs-CZ')}</strong></article>
+          <article class="security-status-card"><span>Záznamy s VIN</span><strong>${Number(data.records_with_vin || 0).toLocaleString('cs-CZ')}</strong></article>
+          <article class="security-status-card"><span>Nalezené záznamy</span><strong>${Number(data.matched_records || 0).toLocaleString('cs-CZ')}</strong></article>
+          <article class="security-status-card"><span>Nalezená vozidla</span><strong>${Number(data.matched_vehicles || 0).toLocaleString('cs-CZ')}</strong></article>
+          <article class="security-status-card"><span>STK historie</span><strong>+${Number(data.inspection_inserted || 0).toLocaleString('cs-CZ')} / ${Number(data.inspection_updated || 0).toLocaleString('cs-CZ')}</strong></article>
+          <article class="security-status-card"><span>Karty vozidel</span><strong>${Number(data.vehicle_profile_updated || 0).toLocaleString('cs-CZ')}</strong></article>
+        </div>
+        ${samples.length ? `
+          <h3>Ukázka nalezených shod</h3>
+          <div class="tool-table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Vozidlo</th><th>VIN</th><th>SPZ</th><th>Datum</th><th>Km</th><th>Výsledek</th></tr></thead>
+              <tbody>
+                ${samples.map((row) => `
+                  <tr>
+                    <td>#${escapeHtml(String(row.vehicle_id || ''))}</td>
+                    <td>${escapeHtml(row.vin || '')}</td>
+                    <td>${escapeHtml(row.plate || '')}</td>
+                    <td>${escapeHtml(formatDateTime(row.inspection_date))}</td>
+                    <td>${escapeHtml(row.odometer_km == null ? '' : Number(row.odometer_km).toLocaleString('cs-CZ'))}</td>
+                    <td>${escapeHtml(row.result || '')}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : '<p class="panel-subtle">V tomto rozsahu nebyla nalezena shoda na VIN v aplikaci. Zkus vyšší limit nebo plný import bez limitu.</p>'}
+      `;
+    }
+    if (!data.dry_run) await loadMdcrOpenData();
+  } catch (error) {
+    if (resultEl) resultEl.innerHTML = `<div class="error">Import selhal: ${escapeHtml(error.message || String(error))}</div>`;
   }
 }
 
@@ -644,7 +1583,7 @@ async function loadRecentActivity() {
         <strong>Zdroj:</strong> ${source === 'audit_log' ? 'append-only audit_log' : source}
       </div>
       ${logs.map(log => {
-      const timestamp = log.timestamp ? new Date(log.timestamp).toLocaleString('cs-CZ') : '-';
+      const timestamp = log.timestamp ? formatDateTime(log.timestamp) : '-';
       const actor = log.actor_email || `Uživatel #${log.actor_user_id || '?'}`;
       const actionText = getActionText(log.action || '');
       const entityType = log.entity_type || '?';
@@ -836,6 +1775,67 @@ async function loadGlobalAdmin() {
   }
 }
 
+function truncateDemoAccessUa(value, maxLen = 96) {
+  const s = String(value || '').trim();
+  if (!s) return '-';
+  const shortened = s.length > maxLen ? `${s.slice(0, maxLen)}…` : s;
+  return escapeHtml(shortened);
+}
+
+async function loadDemoAccessLeads() {
+  const tableEl = document.getElementById('demo-access-table');
+  const summaryEl = document.getElementById('demo-access-summary');
+  const noteEl = document.getElementById('demo-access-note');
+  if (!tableEl) return;
+  setControlCenterTableLoading('demo-access-table', 'Načítám přehled žádostí o ukázku…');
+  if (noteEl) {
+    noteEl.classList.add('hidden');
+    noteEl.textContent = '';
+  }
+  try {
+    const search = (document.getElementById('demo-access-search')?.value || '').trim();
+    const params = new URLSearchParams({ limit: '500', offset: '0' });
+    if (search) params.set('search', search);
+    const data = await apiRequest('GET', `/admin-api/demo-access-leads?${params.toString()}`);
+    const summary = data.summary || {};
+    if (summaryEl) {
+      summaryEl.innerHTML = `
+        <div class="cc-metric-grid" style="margin-bottom: 8px;">
+          <div class="cc-metric-item"><span>Odeslaných odkazů (celkem)</span><strong>${Number(summary.total_requests ?? 0).toLocaleString('cs-CZ')}</strong></div>
+          <div class="cc-metric-item"><span>Unikátních e-mailů</span><strong>${Number(summary.unique_visitor_emails ?? 0).toLocaleString('cs-CZ')}</strong></div>
+          <div class="cc-metric-item"><span>Uplatněných odkazů</span><strong>${Number(summary.consumed_total ?? 0).toLocaleString('cs-CZ')}</strong></div>
+          <div class="cc-metric-item"><span>Za posledních 24 h</span><strong>${Number(summary.last_24h_requests ?? 0).toLocaleString('cs-CZ')}</strong></div>
+        </div>
+      `;
+    }
+    const items = Array.isArray(data.items) ? data.items : [];
+    const filteredTotal = summary.filtered_total != null ? Number(summary.filtered_total) : items.length;
+    if (noteEl) {
+      const parts = [];
+      if (data.note) parts.push(String(data.note));
+      if (Number.isFinite(filteredTotal) && items.length < filteredTotal) {
+        parts.push(`Zobrazeno ${items.length} z ${filteredTotal} záznamů (maximum 500 na jedno načtení).`);
+      }
+      noteEl.textContent = parts.join(' ');
+      noteEl.classList.toggle('hidden', parts.length === 0);
+    }
+    renderControlCenterTable('demo-access-table', [
+      { key: 'visitor_email', label: 'E-mail (odeslán odkaz)', render: (row) => escapeHtml(row.visitor_email || '-') },
+      { key: 'created_at', label: 'Požadavek', render: (row) => escapeHtml(formatDateTime(row.created_at)) },
+      { key: 'expires_at', label: 'Platnost do', render: (row) => escapeHtml(formatDateTime(row.expires_at)) },
+      {
+        key: 'consumed_at',
+        label: 'Odkaz použit',
+        render: (row) => (row.consumed_at ? escapeHtml(formatDateTime(row.consumed_at)) : 'ne'),
+      },
+      { key: 'client_ip', label: 'IP (žádost)', render: (row) => escapeHtml(row.client_ip || '-') },
+      { key: 'user_agent', label: 'User-Agent', render: (row) => truncateDemoAccessUa(row.user_agent) },
+    ], items);
+  } catch (error) {
+    tableEl.innerHTML = `<div class="error">Nepodařilo se načíst přehled demo: ${escapeHtml(error.message || 'Chyba')}</div>`;
+  }
+}
+
 function getActionText(action) {
   const actionMap = {
     'CREATE_USER': 'vytvořil uživatele',
@@ -939,6 +1939,8 @@ function renderUsersList() {
           user.phone,
           user.last_ip_address,
           user.last_location,
+          user.disk_usage_human,
+          user.disk_usage_bytes,
         ]
           .filter(Boolean)
           .join(' ')
@@ -971,7 +1973,9 @@ function renderUsersList() {
   const usersViewMode = adminViewState.users || getStoredViewMode('users');
 
   container.innerHTML = pageItems.map(user => {
-    const createdDate = user.created_at ? new Date(user.created_at).toLocaleDateString('cs-CZ') : '-';
+    const pendingN = Number(user.pending_admin_notify_count || 0);
+    const notifyBadge = pendingN > 0 ? `<span class="notify-badge">${pendingN}</span>` : '';
+    const createdDate = formatDate(user.created_at, '-');
     const lastSeen = formatDateTime(user.last_seen_at);
     const lastPaidAt = formatDateTime(user.last_paid_at);
     const hasPaid = Boolean(user.has_paid);
@@ -990,11 +1994,14 @@ function renderUsersList() {
     const phone = escapeHtml(user.phone || '-');
     const ipAddress = escapeHtml(user.last_ip_address || '-');
     const location = escapeHtml(user.last_location || '-');
-    const licensePlan = escapeHtml((user.license_plan || 'free').toUpperCase());
+    const licensePlan = escapeHtml(formatAdminLicensePlanLabel(user.license_plan || 'free', user.role));
     const licenseStatus = escapeHtml(user.license_status || 'active');
     const vehiclesCount = Number(user.vehicles_count || 0).toLocaleString('cs-CZ');
     const tenantId = user.tenant_id ?? '-';
     const tenantIdValue = escapeHtml(String(tenantId));
+    const diskTitle =
+      'Odhad obsazení disku ve složce data/ pro tenant tohoto účtu (fotky, přílohy, ORV, reporty). Stejná hodnota u účtů se stejným tenant_id.';
+    const diskHuman = escapeHtml(formatUserDiskHuman(user) ?? '—');
     const contactValue = [phone !== '-' ? phone : null, city !== '-' ? city : null].filter(Boolean).join(' • ') || '-';
     const networkValue = [ipAddress !== '-' ? ipAddress : null, location !== '-' ? location : null].filter(Boolean).join(' • ') || '-';
     const encodedEmail = encodeURIComponent(String(user.email || ''));
@@ -1036,6 +2043,10 @@ function renderUsersList() {
               <span class="card-value">${user.tenant_id ?? '-'}</span>
             </div>
             <div class="card-field">
+              <span class="card-label">Úložiště (data)</span>
+              <span class="card-value" title="${diskTitle}">${diskHuman}</span>
+            </div>
+            <div class="card-field">
               <span class="card-label">Vozidla</span>
               <span class="card-value">${user.vehicles_count || 0}</span>
             </div>
@@ -1057,6 +2068,7 @@ function renderUsersList() {
             </div>
           </div>
           <div class="card-actions">
+            <button type="button" class="btn-secondary btn-small user-card-notify-btn" title="E-mail uživateli (historie změn z adminu)" onclick="openAdminUserNotifyModal(event, ${user.id})">✉️${notifyBadge}</button>
             <button class="btn-edit" onclick="editUser(event, ${user.id})">✏️ Upravit</button>
             <button class="btn-danger" onclick="deleteUser(event, ${user.id}, decodeURIComponent('${encodedEmail}'))">🗑️ Smazat</button>
           </div>
@@ -1081,6 +2093,7 @@ function renderUsersList() {
           <div class="user-card-kpis">
             <span class="user-chip">Vozidla <strong>${vehiclesCount}</strong></span>
             <span class="user-chip">Tenant <strong>${tenantIdValue}</strong></span>
+            <span class="user-chip" title="${diskTitle}">Data <strong>${diskHuman}</strong></span>
             <span class="user-chip">${licensePlan} • ${licenseStatus}</span>
             <span class="user-chip">Platby <strong>${hasPaid ? 'ANO' : 'NE'}</strong></span>
           </div>
@@ -1112,6 +2125,7 @@ function renderUsersList() {
           </div>
         </div>
         <div class="card-actions user-card-actions">
+          <button type="button" class="btn-secondary user-card-notify-btn" title="E-mail uživateli (historie změn z adminu)" onclick="openAdminUserNotifyModal(event, ${user.id})">✉️${notifyBadge}</button>
           <button class="btn-edit" onclick="editUser(event, ${user.id})">Upravit</button>
           <button class="btn-danger" onclick="deleteUser(event, ${user.id}, decodeURIComponent('${encodedEmail}'))">Smazat</button>
         </div>
@@ -1147,11 +2161,142 @@ function handleUserCardClick(event, userId) {
   // Ochrana proti nechtěnému otevření detailu při kliku na akční tlačítka uvnitř karty.
   const target = event?.target;
   if (target && typeof target.closest === 'function') {
-    if (target.closest('.card-actions, .user-card-actions, button, a, input, select, textarea, label')) {
+    if (target.closest('.card-actions, .user-card-actions, .user-card-notify-btn, button, a, input, select, textarea, label')) {
       return;
     }
   }
   openUserDetail(userId);
+}
+
+function closeAdminUserNotifyModal() {
+  const modal = document.getElementById('admin-user-notify-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.dataset.userId = '';
+  const err = document.getElementById('admin-notify-error');
+  if (err) {
+    err.classList.add('hidden');
+    err.textContent = '';
+  }
+}
+
+async function openAdminUserNotifyModal(event, userId) {
+  if (event && typeof event.stopPropagation === 'function') {
+    event.stopPropagation();
+  }
+  const modal = document.getElementById('admin-user-notify-modal');
+  if (!modal || !userId) return;
+  modal.dataset.userId = String(userId);
+  modal.classList.remove('hidden');
+  await refreshAdminUserNotifyModal();
+}
+
+function adminNotifySelectAllPending() {
+  const modal = document.getElementById('admin-user-notify-modal');
+  if (!modal) return;
+  modal.querySelectorAll('.admin-notify-row input[type="checkbox"][data-change-id]').forEach((box) => {
+    if (!box.disabled) {
+      box.checked = true;
+    }
+  });
+}
+
+async function refreshAdminUserNotifyModal() {
+  const modal = document.getElementById('admin-user-notify-modal');
+  const listEl = document.getElementById('admin-notify-list');
+  const loadingEl = document.getElementById('admin-notify-loading');
+  const titleEl = document.getElementById('admin-notify-modal-title');
+  const errEl = document.getElementById('admin-notify-error');
+  if (!modal || !listEl) return;
+  const userId = modal.dataset.userId;
+  if (!userId) return;
+  if (loadingEl) loadingEl.classList.remove('hidden');
+  if (errEl) {
+    errEl.classList.add('hidden');
+    errEl.textContent = '';
+  }
+  listEl.innerHTML = '';
+  try {
+    const data = await apiRequest('GET', `/admin-api/users/${userId}/admin-notify-history`);
+    const items = Array.isArray(data.items) ? data.items : [];
+    const email = escapeHtml(data.user_email || '');
+    if (titleEl) {
+      titleEl.textContent = email ? `E-mail uživateli (${email})` : 'E-mail uživateli';
+    }
+    if (items.length === 0) {
+      listEl.innerHTML = '<div class="empty">Zatím žádné zaznamenané změny z adminu pro tento účet.</div>';
+    } else {
+      listEl.innerHTML = items
+        .map((item) => {
+          const sent = Boolean(item.notified_at);
+          const esc = escapeHtml;
+          const sum = esc(item.summary_line || '');
+          const meta = [
+            item.created_at ? formatDateTime(item.created_at) : '',
+            item.admin_email ? `admin: ${esc(item.admin_email)}` : '',
+            sent ? `odesláno: ${esc(formatDateTime(item.notified_at))}` : 'čeká na odeslání',
+          ]
+            .filter(Boolean)
+            .join(' · ');
+          const det = item.detail_text ? `<div class="admin-notify-detail muted">${esc(item.detail_text)}</div>` : '';
+          const disabled = sent ? 'disabled' : '';
+          const checked = !sent ? 'checked' : '';
+          return `
+            <label class="admin-notify-row ${sent ? 'is-sent' : ''}">
+              <input type="checkbox" data-change-id="${item.id}" ${disabled} ${checked} />
+              <div>
+                <div><strong>${sum}</strong></div>
+                <div class="admin-notify-meta">${meta}</div>
+                ${det}
+              </div>
+            </label>
+          `;
+        })
+        .join('');
+    }
+  } catch (e) {
+    if (errEl) {
+      errEl.textContent = e.message || String(e);
+      errEl.classList.remove('hidden');
+    }
+  } finally {
+    if (loadingEl) loadingEl.classList.add('hidden');
+  }
+}
+
+async function submitAdminUserNotifySend() {
+  const modal = document.getElementById('admin-user-notify-modal');
+  const errEl = document.getElementById('admin-notify-error');
+  if (!modal) return;
+  const userId = modal.dataset.userId;
+  if (!userId) return;
+  const boxes = modal.querySelectorAll('.admin-notify-row input[type="checkbox"][data-change-id]:checked:not(:disabled)');
+  const ids = [...boxes].map((b) => parseInt(b.getAttribute('data-change-id'), 10)).filter((n) => Number.isFinite(n));
+  if (!ids.length) {
+    if (errEl) {
+      errEl.textContent = 'Vyberte alespoň jednu změnu k odeslání.';
+      errEl.classList.remove('hidden');
+    }
+    return;
+  }
+  if (errEl) {
+    errEl.classList.add('hidden');
+    errEl.textContent = '';
+  }
+  try {
+    const res = await apiRequest('POST', `/admin-api/users/${userId}/admin-notify-send`, { change_ids: ids });
+    showSuccess(res?.message || 'E-mail byl odeslán');
+    closeAdminUserNotifyModal();
+    await loadUsers();
+    if (getCurrentUserDetailId() === parseInt(userId, 10)) {
+      await refreshUserDetail(userDetailActivePanel);
+    }
+  } catch (e) {
+    if (errEl) {
+      errEl.textContent = e.message || String(e);
+      errEl.classList.remove('hidden');
+    }
+  }
 }
 
 function getCurrentUserDetailId() {
@@ -1207,6 +2352,20 @@ async function reopenUserDetailIfNeeded() {
   await openUserDetail(context.userId, context.panel || 'vehicles');
 }
 
+/** Skryje akce jen pro aktivní účty a zobrazí „Obnovit účet“ u soft-smazaného zákazníka. */
+function syncUserDetailModalFooter(user) {
+  const modal = document.getElementById('user-detail-modal');
+  if (!modal) return;
+  const isDeleted = !!(user && user.is_deleted);
+  modal.querySelectorAll('[data-user-detail-active-only]').forEach((btn) => {
+    btn.classList.toggle('hidden', isDeleted);
+  });
+  const restoreBtn = document.getElementById('user-detail-btn-restore-account');
+  if (restoreBtn) {
+    restoreBtn.classList.toggle('hidden', !isDeleted);
+  }
+}
+
 async function refreshUserDetail(panelOverride = null) {
   const userId = getCurrentUserDetailId();
   const modal = document.getElementById('user-detail-modal');
@@ -1260,6 +2419,15 @@ function renderUserDetailModal() {
   const insightPayments = Array.isArray(insight.payments) ? insight.payments : [];
 
   titleEl.textContent = `Detail uživatele: ${user.name || user.email || userAdminBadgeLabel(user)}`;
+  const notifyWrap = document.getElementById('user-detail-notify-wrap');
+  if (notifyWrap && user.id) {
+    const pending = Number(detail.admin_notify_pending_count || 0);
+    notifyWrap.innerHTML = `
+      <button type="button" class="btn-secondary btn-small user-detail-notify-btn" title="Historie změn z adminu a e-mail uživateli" onclick="openAdminUserNotifyModal(event, ${user.id})">
+        ✉️ Informovat${pending > 0 ? `<span class="notify-badge">${pending}</span>` : ''}
+      </button>
+    `;
+  }
   if (errorEl) {
     errorEl.classList.add('hidden');
     errorEl.textContent = '';
@@ -1296,21 +2464,33 @@ function renderUserDetailModal() {
     })
     .join('<br/>');
 
+  const diskUsageTitle =
+    user.disk_usage_note ||
+    'Odhad obsazení disku ve složce data/ pro tenant tohoto účtu (fotky, přílohy, ORV, reporty). Stejná hodnota u účtů se stejným tenant_id.';
+
   profileEl.innerHTML = `
     <div class="user-detail-info-grid">
       <div class="user-detail-info-card">
         <h4>Základní údaje</h4>
         <div class="user-detail-row"><span>Číslo v přehledu</span><strong>${user.admin_ordinal != null && user.admin_ordinal !== '' ? '#' + user.admin_ordinal : '—'}</strong></div>
         <div class="user-detail-row"><span>Archiv po smazání</span><strong>${user.deletion_archive_mark ? escapeHtml(user.deletion_archive_mark) : '—'}</strong></div>
+        ${user.is_deleted && user.deletion_email_before ? `<div class="user-detail-row"><span>E-mail po obnově (z archivu)</span><strong>${escapeHtml(user.deletion_email_before)}</strong></div>` : ''}
         <div class="user-detail-row"><span>Interní ID (DB)</span><strong>${user.id ?? '-'}</strong></div>
         <div class="user-detail-row"><span>Email</span><strong>${escapeHtml(user.email || '-')}</strong></div>
         <div class="user-detail-row"><span>Jméno / Název</span><strong>${escapeHtml(user.name || '-')}</strong></div>
         <div class="user-detail-row"><span>Role</span><strong><span class="role-badge ${roleClass}">${escapeHtml(user.role || 'user')}</span></strong></div>
         <div class="user-detail-row"><span>Tenant</span><strong>${user.tenant_id ?? '-'}</strong></div>
-        <div class="user-detail-row"><span>Licence</span><strong>${escapeHtml((user.license_plan || 'free').toUpperCase())} (${escapeHtml(user.license_status || 'active')})</strong></div>
+        <div class="user-detail-row"><span>Úložiště (data)</span><strong title="${escapeHtml(diskUsageTitle)}">${escapeHtml(formatUserDiskHuman(user) ?? '—')}</strong></div>
+        <div class="user-detail-row"><span>Licence</span><strong>${escapeHtml(formatAdminLicensePlanLabel(user.license_plan || 'free', user.role))} (${escapeHtml(user.license_status || 'active')})</strong></div>
         <div class="user-detail-row"><span>Stav účtu</span><strong>${user.is_deleted ? 'Smazaný' : (user.is_disabled ? 'Pozastavený' : 'Aktivní')}</strong></div>
         <div class="user-detail-row"><span>Session verze</span><strong>${user.session_version ?? 0}</strong></div>
         <div class="user-detail-row"><span>Registrován</span><strong>${formatDateTime(user.created_at)}</strong></div>
+        <div class="user-detail-row"><span>E-mail</span><strong>${user.email_verification_label === 'verified' ? 'Ověřen' : 'Neověřen'}</strong></div>
+        <div class="user-detail-row"><span>Telefon</span><strong>${escapeHtml(phoneStatusAdminLabel(user))}</strong></div>
+        <div class="user-detail-row"><span>Účet (stav)</span><strong>${escapeHtml(user.account_status || 'active')}</strong></div>
+        <div class="user-detail-row"><span>Rizikové příznaky</span><strong>${escapeHtml(formatRiskFlags(user.registration_risk_flags))}</strong></div>
+        <div class="user-detail-row"><span>Registr. IP</span><strong>${escapeHtml(user.registration_ip || '—')}</strong></div>
+        <div class="user-detail-row"><span>Registr. user-agent</span><strong title="${escapeHtml(user.registration_user_agent || '')}">${escapeHtml(truncUa(user.registration_user_agent))}</strong></div>
       </div>
       <div class="user-detail-info-card">
         <h4>Kontakt a firma</h4>
@@ -1373,7 +2553,7 @@ function renderUserDetailModal() {
       </div>
       <div class="user-detail-info-card">
         <h4>Licence a platby</h4>
-        <div class="user-detail-row"><span>Plan</span><strong>${escapeHtml((insightLicense.current_plan || user.license_plan || 'free').toUpperCase())}</strong></div>
+        <div class="user-detail-row"><span>Plan</span><strong>${escapeHtml(formatAdminLicensePlanLabel(insightLicense.current_plan || user.license_plan || 'free', user.role))}</strong></div>
         <div class="user-detail-row"><span>Status</span><strong>${escapeHtml(insightLicense.status || user.license_status || 'active')}</strong></div>
         <div class="user-detail-row"><span>Zdroj aktivace</span><strong>${escapeHtml(insightLicense.source_of_activation || '-')}</strong></div>
         <div class="user-detail-row"><span>Nákup</span><strong>${escapeHtml(formatDateTime(insightLicense.purchase_date))}</strong></div>
@@ -1403,6 +2583,7 @@ function renderUserDetailModal() {
     { key: 'reminders', label: 'Připomínky', icon: '⏰', count: stats.reminders_count ?? 0 },
     { key: 'reservations', label: 'Rezervace', icon: '📅', count: stats.reservations_count ?? 0 },
     { key: 'records', label: 'Záznamy', icon: '📋', count: stats.records_count ?? 0 },
+    { key: 'timeline', label: 'Historie', icon: '🧾', count: '∞' },
   ];
 
   panelsEl.innerHTML = panelDefs.map((panel) => `
@@ -1417,13 +2598,23 @@ function renderUserDetailModal() {
     </button>
   `).join('');
 
+  syncUserDetailModalFooter(user);
+
   const titleMap = {
     vehicles: 'Vozidla uživatele',
     reminders: 'Připomínky uživatele',
     reservations: 'Rezervace uživatele',
     records: 'Servisní záznamy uživatele',
+    timeline: 'Jednotná historie účtu',
   };
   listTitleEl.textContent = titleMap[userDetailActivePanel] || 'Detail položek';
+
+  if (userDetailActivePanel === 'timeline') {
+    listEl.innerHTML = '<div class="loading">Načítám jednotnou historii účtu...</div>';
+    contentEl.classList.remove('hidden');
+    loadUserDetailTimeline(user.id);
+    return;
+  }
 
   const selected = Array.isArray(panels[userDetailActivePanel]) ? panels[userDetailActivePanel] : [];
   if (selected.length === 0) {
@@ -1527,6 +2718,36 @@ function renderUserDetailModal() {
   contentEl.classList.remove('hidden');
 }
 
+async function loadUserDetailTimeline(userId) {
+  const listEl = document.getElementById('user-detail-list');
+  if (!listEl || !userId) return;
+  try {
+    const role = String(userDetailData?.user?.role || 'user').toLowerCase();
+    const entityType = role === 'service' ? 'service' : 'user';
+    const data = await apiRequest('GET', `/admin-api/entity-history/${entityType}/${userId}?limit=150`);
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) {
+      listEl.innerHTML = '<div class="empty">Zatím žádná timeline historie pro tento účet.</div>';
+      return;
+    }
+    listEl.innerHTML = items.map((item) => `
+      <div class="user-detail-list-item timeline-item timeline-${escapeHtml(item.severity || 'info')}">
+        <div class="user-detail-list-text">
+          <div class="user-detail-list-title">${escapeHtml(item.title || '-')}</div>
+          <div class="user-detail-list-meta">
+            ${escapeHtml(item.source || '-')} · ${escapeHtml(item.actor || '-')} · ${escapeHtml(formatDateTime(item.created_at))}
+            ${item.ip_address ? ` · IP ${escapeHtml(item.ip_address)}` : ''}
+          </div>
+          ${item.details ? `<div class="user-detail-list-note">${escapeHtml(String(item.details))}</div>` : ''}
+        </div>
+        <span class="status-pill">${escapeHtml(item.severity || 'info')}</span>
+      </div>
+    `).join('');
+  } catch (error) {
+    listEl.innerHTML = `<div class="error">Chyba při načítání historie: ${escapeHtml(error.message || String(error))}</div>`;
+  }
+}
+
 async function editUserFromDetail() {
   if (!userDetailData?.user?.id) return;
   const userId = userDetailData.user.id;
@@ -1542,6 +2763,45 @@ async function deleteCurrentUserFromDetail() {
   if (!userId) return;
   const userEmail = userDetailData?.user?.email || `#${userId}`;
   await deleteUser(userId, userEmail);
+}
+
+/** Obnova po soft-delete: e-mail z archivu, aktivace účtu, sync `user_email` u vozidel, obnova archivovaných servisních záznamů na vozidlech vlastníka. */
+async function restoreSoftDeletedUserFromDetail() {
+  const userId = getCurrentUserDetailId();
+  const user = userDetailData?.user;
+  if (!userId || !user?.is_deleted) {
+    showGlobalError('Obnova je dostupná jen pro účty ve stavu soft-delete.');
+    return;
+  }
+  const planned = user.deletion_email_before ? String(user.deletion_email_before).trim() : '';
+  const reason = await promptAdminReason(
+    planned
+      ? `Obnova účtu #${userId}: přihlašovací e-mail bude ${planned}. U vozidel vlastníka se obnoví zobrazený e-mail a archivované servisní záznamy na těchto vozidlech.`
+      : `Obnova účtu #${userId} z archivu smazání.`,
+  );
+  if (!reason) return;
+  const confirmMsg = planned
+    ? `Obnovit účet #${userId} na e-mail ${planned}?\n\nDůvod (audit): ${reason}`
+    : `Obnovit účet #${userId}?\n\nDůvod (audit): ${reason}`;
+  if (!confirm(confirmMsg)) return;
+  try {
+    const data = await apiRequest('POST', '/admin-api/user-soft-restore', {
+      customer_id: userId,
+      reason,
+    });
+    showSuccess(data?.message || 'Účet byl obnoven');
+    if (typeof loadDeletedUsersArchive === 'function') {
+      await loadDeletedUsersArchive();
+    }
+    await Promise.all([
+      typeof loadUsers === 'function' ? loadUsers() : Promise.resolve(),
+      typeof loadOverview === 'function' ? loadOverview() : Promise.resolve(),
+    ]);
+    await refreshUserDetail(userDetailActivePanel);
+  } catch (error) {
+    console.error('Error restoring soft-deleted user:', error);
+    showGlobalError(error?.message || String(error));
+  }
 }
 
 async function disableCurrentUserFromDetail() {
@@ -1632,11 +2892,11 @@ async function deleteVehicleFromUserDetail(vehicleId, encodedVehicleLabel) {
 }
 
 async function deleteRecordFromUserDetail(recordId) {
-  if (!confirm('Opravdu chcete smazat tento servisní záznam?')) return;
+  if (!confirm('Archivovat tento servisní záznam? Lze jej později obnovit v sekci Záznamy → archivované záznamy.')) return;
   try {
     await apiRequest('DELETE', `/admin-api/records/${recordId}`);
-    showSuccess('Údaj byl upraven adminem: záznam smazán');
-    await Promise.all([loadRecords(), loadOverview()]);
+    showSuccess('Servisní záznam archivován (obnovitelný v adminu)');
+    await Promise.all([loadRecords(), loadDeletedServiceRecords(), loadOverview()]);
     await refreshUserDetail('records');
   } catch (error) {
     console.error('Error deleting record from detail:', error);
@@ -1703,6 +2963,53 @@ async function deleteReservationFromUserDetail(reservationId) {
   }
 }
 
+function applyDefaultUserWorkspaceCheckboxesFromRole() {
+  const role = (document.getElementById('user-role')?.value || 'user').toLowerCase();
+  populateLicensePlanSelect('user-license-plan', role, document.getElementById('user-license-plan')?.value || '', {
+    includeBlank: false,
+  });
+  const uEl = document.getElementById('user-ws-user');
+  const sEl = document.getElementById('user-ws-service');
+  const dEl = document.getElementById('user-ws-default');
+  if (!uEl || !sEl) return;
+  if (role === 'service') {
+    uEl.checked = false;
+    sEl.checked = true;
+  } else {
+    uEl.checked = true;
+    sEl.checked = false;
+  }
+  if (dEl) dEl.value = '';
+}
+
+function roleDerivedWorkspaceEntitlements(role) {
+  const r = String(role || '').toLowerCase();
+  if (r === 'service') return ['service'];
+  return ['user'];
+}
+
+/** Sjednocení s backendem effective_workspace_kinds + PATCH přes model_fields_set. */
+function collectUserWorkspaceSavePayload(role) {
+  const ws = [];
+  if (document.getElementById('user-ws-user')?.checked) ws.push('user');
+  if (document.getElementById('user-ws-service')?.checked) ws.push('service');
+  ws.sort((a, b) => a.localeCompare(b));
+  if (ws.length === 0) {
+    return { error: 'Vyberte alespoň jeden pracovní režim (uživatel a/nebo servis).' };
+  }
+  const derived = roleDerivedWorkspaceEntitlements(role).slice().sort((a, b) => a.localeCompare(b));
+  const sameDer = ws.length === derived.length && ws.every((k) => derived.includes(k));
+  const defRaw = (document.getElementById('user-ws-default')?.value || '').trim();
+  if (sameDer) {
+    return { workspace_entitlements: null, workspace_ui_default: null, sameAsRoleDefault: true };
+  }
+  return {
+    workspace_entitlements: ws,
+    workspace_ui_default: ws.length > 1 && defRaw ? defRaw : null,
+    sameAsRoleDefault: false,
+  };
+}
+
 async function showUserModal(userId = null) {
   const modal = document.getElementById('user-modal');
   const form = document.getElementById('user-form');
@@ -1741,7 +3048,27 @@ async function showUserModal(userId = null) {
         document.getElementById('user-street-number').value = user.street_number || '';
         document.getElementById('user-city').value = user.city || '';
         document.getElementById('user-zip').value = user.zip || '';
-        document.getElementById('user-license-plan').value = (user.license_plan || 'free').toLowerCase();
+        populateLicensePlanSelect('user-license-plan', user.role || 'user', user.license_plan || 'free', {
+          includeBlank: false,
+        });
+        const ent = Array.isArray(user.workspace_entitlements)
+          ? user.workspace_entitlements.map((x) => String(x || '').toLowerCase())
+          : null;
+        const uWs = document.getElementById('user-ws-user');
+        const sWs = document.getElementById('user-ws-service');
+        const dWs = document.getElementById('user-ws-default');
+        if (uWs && sWs) {
+          if (ent && ent.length) {
+            uWs.checked = ent.includes('user');
+            sWs.checked = ent.includes('service');
+          } else {
+            applyDefaultUserWorkspaceCheckboxesFromRole();
+          }
+        }
+        if (dWs) {
+          const ud = String(user.workspace_ui_default || '').toLowerCase();
+          dWs.value = ud === 'service' || ud === 'user' ? ud : '';
+        }
         passwordInput.value = '';
       }
     } catch (error) {
@@ -1754,7 +3081,10 @@ async function showUserModal(userId = null) {
     form.reset();
     document.getElementById('user-id').value = '';
     passwordInput.required = true;
-    document.getElementById('user-license-plan').value = 'free';
+    populateLicensePlanSelect('user-license-plan', document.getElementById('user-role')?.value || 'user', 'free', {
+      includeBlank: false,
+    });
+    applyDefaultUserWorkspaceCheckboxesFromRole();
   }
   
   modal.classList.remove('hidden');
@@ -1791,21 +3121,37 @@ async function saveUser(event) {
   if (password) {
     userData.password = password;
   }
+
+  const wsp = collectUserWorkspaceSavePayload(userData.role);
+  if (wsp.error) {
+    showGlobalError(wsp.error);
+    return;
+  }
   
   try {
     let responseData = null;
     if (userId) {
+      userData.workspace_entitlements = wsp.workspace_entitlements;
+      userData.workspace_ui_default = wsp.workspace_ui_default;
       responseData = await apiRequest('PATCH', `/admin-api/users/${userId}`, userData);
-      const planLabel = (responseData?.license_plan || userData.license_plan || 'free').toUpperCase();
-      showSuccess(`Údaj byl upraven adminem: uživatel (licence: ${planLabel})`);
+      const planLabel = formatAdminLicensePlanLabel(responseData?.license_plan || userData.license_plan || 'free', userData.role);
+      const wEnt = Array.isArray(responseData?.workspace_entitlements) ? responseData.workspace_entitlements.join(' + ') : '';
+      const wMsg = wEnt ? ` Režimy v aplikaci: ${wEnt}.` : '';
+      showSuccess(`Údaj byl upraven (licence: ${planLabel}).${wMsg} Uživatel uvidí změnu po obnovení stránky v aplikaci nebo při příštím načtení účtu.`);
     } else {
       if (!password) {
         showGlobalError('Heslo je povinné při vytváření uživatele');
         return;
       }
+      if (!wsp.sameAsRoleDefault) {
+        userData.workspace_entitlements = wsp.workspace_entitlements;
+        userData.workspace_ui_default = wsp.workspace_ui_default;
+      }
       responseData = await apiRequest('POST', '/admin-api/users', userData);
-      const planLabel = (responseData?.license_plan || userData.license_plan || 'free').toUpperCase();
-      showSuccess(`Uživatel byl vytvořen (licence: ${planLabel})`);
+      const planLabel = formatAdminLicensePlanLabel(responseData?.license_plan || userData.license_plan || 'free', userData.role);
+      const wEnt = Array.isArray(responseData?.workspace_entitlements) ? responseData.workspace_entitlements.join(' + ') : '';
+      const wMsg = wEnt ? ` Režimy: ${wEnt}.` : '';
+      showSuccess(`Uživatel byl vytvořen (licence: ${planLabel}).${wMsg}`);
     }
     
     closeUserModal(true);
@@ -1820,6 +3166,92 @@ function stopEventSafely(evt) {
   if (!evt || typeof evt !== 'object') return;
   if (typeof evt.preventDefault === 'function') evt.preventDefault();
   if (typeof evt.stopPropagation === 'function') evt.stopPropagation();
+}
+
+let _adminReasonModalResolve = null;
+let _adminReasonEscapeHandler = null;
+
+function _teardownAdminInterventionReasonModal() {
+  if (_adminReasonEscapeHandler) {
+    document.removeEventListener('keydown', _adminReasonEscapeHandler, true);
+    _adminReasonEscapeHandler = null;
+  }
+  const modal = document.getElementById('admin-intervention-reason-modal');
+  if (modal) {
+    modal.classList.add('hidden');
+  }
+}
+
+function cancelAdminInterventionReasonModal() {
+  const resolve = _adminReasonModalResolve;
+  _adminReasonModalResolve = null;
+  _teardownAdminInterventionReasonModal();
+  if (resolve) {
+    resolve(null);
+  }
+}
+
+function submitAdminInterventionReasonModal() {
+  const textarea = document.getElementById('admin-reason-modal-input');
+  const errEl = document.getElementById('admin-reason-modal-error');
+  const trimmed = String(textarea?.value || '').trim();
+  if (trimmed.length < 3) {
+    if (errEl) {
+      errEl.textContent =
+        'Důvod je příliš krátký: po odebrání mezer na začátku a konci musí text mít alespoň 3 znaky (stačí jedna krátká věta, ne „tři důvody“).';
+      errEl.classList.remove('hidden');
+    }
+    return;
+  }
+  if (errEl) {
+    errEl.textContent = '';
+    errEl.classList.add('hidden');
+  }
+  const resolve = _adminReasonModalResolve;
+  _adminReasonModalResolve = null;
+  _teardownAdminInterventionReasonModal();
+  if (resolve) {
+    resolve(trimmed);
+  }
+}
+
+/** Vlastní modal místo window.prompt — prompt u otevřeného fullscreen modalu často nefunguje. */
+function promptAdminReason(message) {
+  if (_adminReasonModalResolve) {
+    showGlobalError('Dialog důvodu je již otevřený; nejdřív ho dokončete nebo zrušte.');
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const modal = document.getElementById('admin-intervention-reason-modal');
+    const ctx = document.getElementById('admin-reason-modal-context');
+    const textarea = document.getElementById('admin-reason-modal-input');
+    const errEl = document.getElementById('admin-reason-modal-error');
+    if (!modal || !textarea) {
+      resolve(null);
+      return;
+    }
+    _adminReasonModalResolve = resolve;
+    if (ctx) {
+      ctx.textContent = message || '';
+    }
+    textarea.value = '';
+    if (errEl) {
+      errEl.textContent = '';
+      errEl.classList.add('hidden');
+    }
+    modal.classList.remove('hidden');
+    _adminReasonEscapeHandler = (ev) => {
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        cancelAdminInterventionReasonModal();
+      }
+    };
+    document.addEventListener('keydown', _adminReasonEscapeHandler, true);
+    requestAnimationFrame(() => {
+      textarea.focus();
+    });
+  });
 }
 
 async function editUser(eventOrUserId, maybeUserId = null) {
@@ -1838,9 +3270,11 @@ async function deleteUser(eventOrUserId, maybeUserId = null, maybeUserEmail = nu
   if (hasEvent) {
     stopEventSafely(eventOrUserId);
   }
-  if (!confirm(`Opravdu chcete smazat uživatele ${userEmail}?`)) {
+  const reason = await promptAdminReason(`Mazání uživatele ${userEmail} je destruktivní akce.`);
+  if (!reason) {
     return;
   }
+  if (!confirm(`Potvrdit smazání uživatele ${userEmail}?\n\nDůvod: ${reason}`)) return;
   
   try {
     await apiRequest('DELETE', `/admin-api/users/${userId}`);
@@ -1875,10 +3309,10 @@ async function loadVehicles() {
     }
     
     container.innerHTML = vehicles.map(vehicle => {
-      const createdDate = vehicle.created_at ? new Date(vehicle.created_at).toLocaleDateString('cs-CZ') : '-';
+      const createdDate = formatDate(vehicle.created_at, '-');
       const vehicleName = vehicle.nickname || `${vehicle.brand || ''} ${vehicle.model || ''}`.trim() || 'Bez názvu';
       return `
-        <div class="card" data-vehicle-id="${vehicle.id}">
+        <div class="card" data-vehicle-id="${vehicle.id}" onclick="maybeOpenVehicleSupportView(event, ${vehicle.id})" style="cursor: pointer;">
           <div class="card-header">
             <h3 class="card-title">🚗 ${vehicleName}</h3>
             <span class="card-id">#${vehicle.id}</span>
@@ -1911,9 +3345,10 @@ async function loadVehicles() {
               <span class="card-value">${createdDate}</span>
             </div>
           </div>
-          <div class="card-actions">
-            <button class="btn-edit" onclick="editVehicle(${vehicle.id})">✏️ Upravit</button>
-            <button class="btn-danger" onclick="deleteVehicle(${vehicle.id}, '${vehicleName.replace(/'/g, "\\'")}')">🗑️ Smazat</button>
+          <div class="card-actions" onclick="event.stopPropagation();">
+            <button type="button" class="btn-secondary btn-small" onclick="openVehicleSupportViewModal(${vehicle.id})">🔍 Podpora</button>
+            <button type="button" class="btn-edit" onclick="editVehicle(${vehicle.id})">✏️ Upravit</button>
+            <button type="button" class="btn-danger" onclick="deleteVehicle(${vehicle.id}, '${vehicleName.replace(/'/g, "\\'")}')">🗑️ Smazat</button>
           </div>
         </div>
       `;
@@ -2051,7 +3486,7 @@ async function loadServices() {
     }
     
     container.innerHTML = services.map(service => {
-      const createdDate = service.created_at ? new Date(service.created_at).toLocaleDateString('cs-CZ') : '-';
+      const createdDate = formatDate(service.created_at, '-');
       return `
         <div class="card" data-service-id="${service.id}">
           <div class="card-header">
@@ -2080,6 +3515,10 @@ async function loadServices() {
             <div class="card-field">
               <span class="card-label">Registrován</span>
               <span class="card-value">${createdDate}</span>
+            </div>
+            <div class="card-field">
+              <span class="card-label">Úložiště (data)</span>
+              <span class="card-value" title="Odhad podle tenant_id — stejné u účtů se stejným tenantem.">${escapeHtml(formatUserDiskHuman(service) ?? '—')}</span>
             </div>
           </div>
           <div class="card-actions">
@@ -2289,8 +3728,8 @@ async function deleteService(serviceId, serviceName) {
   }
   
   try {
-    await apiRequest('DELETE', `/admin-api/services/${serviceId}`);
-    showSuccess('Servis byl smazán');
+    const data = await apiRequest('DELETE', `/admin-api/services/${serviceId}`);
+    showSuccess(data?.message || 'Servis byl odstraněn ze seznamu');
     loadServices();
     loadOverview();
   } catch (error) {
@@ -2301,6 +3740,107 @@ async function deleteService(serviceId, serviceName) {
 // ============================================
 // RECORDS CRUD
 // ============================================
+
+async function loadDeletedServiceRecords() {
+  const container = document.getElementById('records-deleted-container');
+  if (!container) return;
+  container.innerHTML = '<div class="loading">Načítám archivované záznamy…</div>';
+  try {
+    const baseParams = { limit: 200, offset: 0 };
+    const attempts = [
+      { label: 'archived-service-records', path: '/admin-api/archived-service-records', params: { ...baseParams } },
+      { label: 'records-deleted-only', path: '/admin-api/records', params: { ...baseParams, deleted_only: true } },
+      { label: 'records-deleted', path: '/admin-api/records/deleted', params: { ...baseParams } },
+    ];
+    let data = null;
+    const attemptErrors = [];
+    for (const { label, path, params } of attempts) {
+      try {
+        const payload = await apiRequest('GET', withQueryParams(path, params));
+        if (payload && Array.isArray(payload.items)) {
+          data = payload;
+          break;
+        }
+        if (payload && Array.isArray(payload.records) && payload.items === undefined) {
+          attemptErrors.push(`${label}: API vrátilo běžný seznam (chybí podpora archivu na serveru)`);
+        }
+      } catch (err) {
+        attemptErrors.push(`${label}: ${err?.message || String(err)}`);
+      }
+    }
+
+    if (!data || !Array.isArray(data.items)) {
+      const hint = attemptErrors.length
+        ? `<ul style="margin:0.5rem 0 0 1rem;">${attemptErrors.map((e) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>`
+        : '';
+      container.innerHTML = `<div class="error">Archiv se nepodařilo načíst. Nasaďte backend s endpointem <code>/admin-api/archived-service-records</code> a restartujte službu.${hint}</div>`;
+      return;
+    }
+
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (data?.error && !items.length) {
+      container.innerHTML = `<div class="error">${escapeHtml(data.error)}</div>`;
+      return;
+    }
+    if (!items.length) {
+      container.innerHTML = '<div class="empty">Žádné archivované servisní záznamy</div>';
+      return;
+    }
+    const rows = items
+      .map((row) => {
+        const del = row.deleted_at ? formatDate(row.deleted_at, '-') : '-';
+        const perf = row.performed_at ? formatDate(row.performed_at, '-') : '-';
+        const reason = escapeHtml(String(row.deletion_reason || '—'));
+        const desc = escapeHtml(String(row.description_preview || ''));
+        const vehicle = escapeHtml(String(row.vehicle_label || ''));
+        const rid = Number(row.record_id);
+        return `
+          <tr>
+            <td><strong>#${rid}</strong></td>
+            <td>${vehicle}</td>
+            <td>${perf}</td>
+            <td>${del}</td>
+            <td>${reason}</td>
+            <td style="max-width: 320px; white-space: normal; font-size: 0.9rem;">${desc}</td>
+            <td><button type="button" class="btn-primary btn-sm" onclick="restoreAdminServiceRecord(${rid})">Obnovit</button></td>
+          </tr>`;
+      })
+      .join('');
+    container.innerHTML = `
+      <table class="tool-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Vozidlo</th>
+            <th>Provedeno</th>
+            <th>Archivováno</th>
+            <th>Důvod</th>
+            <th>Popis</th>
+            <th>Akce</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } catch (error) {
+    container.innerHTML = `<div class="error">Chyba: ${escapeHtml(error.message || String(error))}</div>`;
+    console.error('loadDeletedServiceRecords', error);
+  }
+}
+
+async function restoreAdminServiceRecord(recordId) {
+  if (!recordId || !confirm(`Obnovit archivovaný servisní záznam #${recordId}?`)) return;
+  try {
+    const data = await apiRequest('POST', `/admin-api/records/${recordId}/restore`);
+    showSuccess(data?.message || 'Záznam byl obnoven');
+    await Promise.all([loadRecords(), loadDeletedServiceRecords(), loadOverview()]);
+    if (currentSection === 'global-admin') {
+      await loadGlobalAdmin();
+    }
+    await reopenUserDetailIfNeeded();
+  } catch (error) {
+    console.error('restoreAdminServiceRecord', error);
+  }
+}
 
 async function loadRecords() {
   const container = document.getElementById('records-cards-container');
@@ -2319,7 +3859,7 @@ async function loadRecords() {
     }
     
     container.innerHTML = records.map(record => {
-      const performedDate = record.performed_at ? new Date(record.performed_at).toLocaleDateString('cs-CZ') : '-';
+      const performedDate = formatDate(record.performed_at, '-');
       const serviceLabel = record.user_name || record.user_email || (record.user_id ? `#${record.user_id}` : '-');
       const vehicleLabel = record.vehicle_nickname
         || `${record.vehicle_brand || ''} ${record.vehicle_model || ''}`.trim()
@@ -2365,7 +3905,7 @@ async function loadRecords() {
           </div>
           <div class="card-actions">
             <button class="btn-edit" onclick="editRecord(${record.id})">✏️ Upravit</button>
-            <button class="btn-danger" onclick="deleteRecord(${record.id})">🗑️ Smazat</button>
+            <button class="btn-danger" onclick="deleteRecord(${record.id})" title="Soft archivace — lze obnovit">Archivovat</button>
           </div>
         </div>
       `;
@@ -2599,14 +4139,16 @@ async function editRecord(recordId) {
 }
 
 async function deleteRecord(recordId) {
-  if (!confirm('Opravdu chcete smazat tento záznam?')) {
+  if (!confirm(
+    'Archivovat tento servisní záznam? Záznam zmizí z běžného přehledu, ale půjde obnovit v sekci „Archivované servisní záznamy“.',
+  )) {
     return;
   }
-  
+
   try {
     await apiRequest('DELETE', `/admin-api/records/${recordId}`);
-    showSuccess('Záznam byl smazán');
-    await Promise.all([loadRecords(), loadOverview()]);
+    showSuccess('Záznam byl archivován (lze obnovit v sekci Archivované servisní záznamy)');
+    await Promise.all([loadRecords(), loadDeletedServiceRecords(), loadOverview()]);
     if (currentSection === 'global-admin') {
       await loadGlobalAdmin();
     }
@@ -2628,10 +4170,22 @@ async function loadAuditLog() {
   try {
     const entityType = document.getElementById('audit-entity-type')?.value || '';
     const action = document.getElementById('audit-action')?.value || '';
+    const actor = document.getElementById('audit-actor')?.value || '';
+    const entityId = document.getElementById('audit-entity-id')?.value || '';
+    const severity = document.getElementById('audit-severity')?.value || '';
+    const dateFrom = document.getElementById('audit-date-from')?.value || '';
+    const dateTo = document.getElementById('audit-date-to')?.value || '';
     
-    let url = '/admin-api/audit?limit=100';
-    if (entityType) url += `&entity_type=${entityType}`;
-    if (action) url += `&action=${action}`;
+    const url = withQueryParams('/admin-api/audit', {
+      limit: 150,
+      entity_type: entityType || null,
+      action: action || null,
+      actor: actor || null,
+      entity_id: entityId || null,
+      severity: severity || null,
+      date_from: dateFrom ? new Date(dateFrom).toISOString() : null,
+      date_to: dateTo ? new Date(dateTo).toISOString() : null,
+    });
     
     const auditData = await apiRequest('GET', url);
     const logs = auditData.logs || [];
@@ -2649,29 +4203,167 @@ async function loadAuditLog() {
         </div>
       </div>
       ${logs.map(log => {
-      const timestamp = log.timestamp ? new Date(log.timestamp).toLocaleString('cs-CZ') : '-';
+      const timestamp = log.timestamp ? formatDateTime(log.timestamp) : '-';
       const actor = log.actor_email || `Uživatel #${log.actor_user_id || '?'}`;
       const actionText = getActionText(log.action || '');
       const entityType = log.entity_type || '?';
       const entityId = log.entity_id || '';
+      const severity = log.severity || 'info';
       
       return `
-        <div class="audit-log-item">
+        <div class="audit-log-item audit-severity-${escapeHtml(severity)}">
           <div class="audit-log-header">
             <span class="audit-log-time">${timestamp}</span>
+            <span class="status-pill">${escapeHtml(severity)}</span>
             <span class="audit-log-project">${log.source_project || '?'}</span>
           </div>
           <div class="audit-log-content">
-            <strong>${actor}</strong> ${actionText} <strong>${entityType}</strong>
-            ${entityId ? `#${entityId}` : ''}
+            <strong>${escapeHtml(actor)}</strong> ${escapeHtml(actionText)} <strong>${escapeHtml(entityType)}</strong>
+            ${entityId ? `#${escapeHtml(entityId)}` : ''}
           </div>
-          ${log.details ? `<div class="audit-log-details">${log.details}</div>` : ''}
+          ${log.ip ? `<div class="audit-log-details">IP: ${escapeHtml(log.ip)}</div>` : ''}
+          ${log.details ? `<div class="audit-log-details">${escapeHtml(log.details)}</div>` : ''}
         </div>
       `;
     }).join('')}`;
     
   } catch (error) {
     listEl.innerHTML = `<div class="error">Chyba při načítání: ${error.message}</div>`;
+  }
+}
+
+async function exportAuditLogCsv() {
+  const entityType = document.getElementById('audit-entity-type')?.value || '';
+  const action = document.getElementById('audit-action')?.value || '';
+  const actor = document.getElementById('audit-actor')?.value || '';
+  const entityId = document.getElementById('audit-entity-id')?.value || '';
+  const severity = document.getElementById('audit-severity')?.value || '';
+  const dateFrom = document.getElementById('audit-date-from')?.value || '';
+  const dateTo = document.getElementById('audit-date-to')?.value || '';
+  const url = withQueryParams('/admin-api/audit', {
+    limit: 500,
+    entity_type: entityType || null,
+    action: action || null,
+    actor: actor || null,
+    entity_id: entityId || null,
+    severity: severity || null,
+    date_from: dateFrom ? new Date(dateFrom).toISOString() : null,
+    date_to: dateTo ? new Date(dateTo).toISOString() : null,
+    export: 'csv',
+  });
+  try {
+    const token = getAuthToken();
+    const response = await fetch(`${API_BASE}${url}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) {
+      throw new Error(`Export selhal (${response.status})`);
+    }
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `admin-audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+  } catch (error) {
+    showGlobalError(error.message || String(error));
+  }
+}
+
+async function loadSupportInbox() {
+  const listEl = document.getElementById('support-inbox-list');
+  const summaryEl = document.getElementById('support-inbox-summary');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="loading">Načítám podporu...</div>';
+  try {
+    const data = await apiRequest('GET', '/admin-api/support-inbox?limit=150');
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (summaryEl) {
+      const unique = new Set(items.map((item) => item.email).filter(Boolean)).size;
+      summaryEl.innerHTML = `
+        <span class="global-admin-chip"><span>Požadavky</span><strong>${items.length.toLocaleString('cs-CZ')}</strong></span>
+        <span class="global-admin-chip"><span>Unikátní účty</span><strong>${unique.toLocaleString('cs-CZ')}</strong></span>
+      `;
+    }
+    if (!items.length) {
+      listEl.innerHTML = '<div class="empty">Zatím žádné požadavky podpory.</div>';
+      return;
+    }
+    listEl.innerHTML = `
+      <table class="tool-table">
+        <thead><tr><th>Čas</th><th>Uživatel</th><th>Kategorie</th><th>Předmět</th><th>IP</th><th>Akce</th></tr></thead>
+        <tbody>
+          ${items.map((row) => `
+            <tr>
+              <td>${escapeHtml(formatDateTime(row.created_at))}</td>
+              <td>${escapeHtml(row.email || '-')}</td>
+              <td>${escapeHtml(row.category || '-')}</td>
+              <td>${escapeHtml(row.subject || '-')}</td>
+              <td>${escapeHtml(row.ip_address || '-')}</td>
+              <td>${row.customer_id ? `<button class="btn-secondary btn-sm" type="button" onclick="openUserDetail(${Number(row.customer_id)}, 'timeline')">Detail účtu</button>` : '-'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (error) {
+    listEl.innerHTML = `<div class="error">Chyba při načítání podpory: ${escapeHtml(error.message || String(error))}</div>`;
+  }
+}
+
+async function loadSecurityPanel() {
+  const el = document.getElementById('security-admin-panel');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Načítám bezpečnostní stav...</div>';
+  try {
+    const data = await apiRequest('GET', '/admin-api/security-status');
+    const counters = data.counters || {};
+    const allowlist = data.allowlist || {};
+    const blocks = Array.isArray(data.active_blocks) ? data.active_blocks : [];
+    const events = Array.isArray(data.latest_security_events) ? data.latest_security_events : [];
+    el.innerHTML = `
+      <div class="security-status-grid">
+        <article class="security-status-card">
+          <span>Aktuální IP admina</span>
+          <strong>${escapeHtml(data.current_ip || '-')}</strong>
+          <small>Porovnejte s allowlistem před ostrým nasazením.</small>
+        </article>
+        <article class="security-status-card ${allowlist.configured ? 'is-ok' : 'is-warning'}">
+          <span>ADMIN_NETWORK_ALLOWLIST</span>
+          <strong>${allowlist.configured ? 'Nastaven' : 'Nenastaven'}</strong>
+          <small>${allowlist.configured ? escapeHtml((allowlist.entries || []).join(', ')) : 'Admin není omezený IP allowlistem.'}</small>
+        </article>
+        <article class="security-status-card">
+          <span>Failed login / 24 h</span>
+          <strong>${Number(counters.failed_logins_24h || 0).toLocaleString('cs-CZ')}</strong>
+          <small>Rate limited: ${Number(counters.rate_limited_24h || 0).toLocaleString('cs-CZ')}</small>
+        </article>
+        <article class="security-status-card">
+          <span>Aktivní blokace IP</span>
+          <strong>${Number(counters.blocked_ips_active || 0).toLocaleString('cs-CZ')}</strong>
+          <small>Source probes: ${Number(counters.source_probes_24h || 0).toLocaleString('cs-CZ')}</small>
+        </article>
+      </div>
+      <div class="admin-today-grid">
+        <article class="admin-work-card">
+          <h3>Aktivní blokované IP</h3>
+          ${blocks.length ? blocks.map((row) => `
+            <div class="admin-work-row"><div><strong>${escapeHtml(row.ip_address || '-')}</strong><span>${escapeHtml(row.reason || '-')} · ${escapeHtml(formatDateTime(row.blocked_at))}</span></div></div>
+          `).join('') : '<div class="empty">Žádná aktivní ruční blokace IP.</div>'}
+        </article>
+        <article class="admin-work-card">
+          <h3>Poslední bezpečnostní události</h3>
+          ${events.length ? events.slice(0, 20).map((row) => `
+            <div class="admin-work-row"><div><strong>${escapeHtml(row.event_type || '-')}</strong><span>${escapeHtml(row.user_email || '-')} · ${escapeHtml(row.ip_address || '-')} · ${escapeHtml(formatDateTime(row.created_at))}</span></div></div>
+          `).join('') : '<div class="empty">Žádné bezpečnostní události.</div>'}
+        </article>
+      </div>
+    `;
+  } catch (error) {
+    el.innerHTML = `<div class="error">Chyba při načítání bezpečnosti: ${escapeHtml(error.message || String(error))}</div>`;
   }
 }
 
@@ -2768,6 +4460,7 @@ async function loadSettings() {
   try {
     const response = await apiRequest('GET', '/admin-api/settings');
     allSettings = response.settings || {};
+    loadSettingsSourcePanel();
     
     // Zobrazit první kategorii
     showSettingsCategory('general');
@@ -2779,6 +4472,50 @@ async function loadSettings() {
     errorEl.textContent = `Chyba při načítání nastavení: ${error.message}`;
     errorEl.classList.remove('hidden');
     console.error('Error loading settings:', error);
+  }
+}
+
+async function loadSettingsSourcePanel() {
+  const el = document.getElementById('settings-source-panel');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Načítám zdroje nastavení...</div>';
+  try {
+    const data = await apiRequest('GET', '/admin-api/settings/effective');
+    const envRows = Array.isArray(data.env) ? data.env : [];
+    const restartCount = envRows.filter((row) => row.requires_restart).length;
+    el.innerHTML = `
+      <div class="settings-source-head">
+        <div>
+          <strong>Zdroje nastavení</strong>
+          <span>Runtime změny se ukládají do ${escapeHtml(data.settings_file || '-')}</span>
+        </div>
+        <div class="settings-source-badges">
+          <span>${envRows.length} env položek</span>
+          <span>${restartCount} vyžaduje restart</span>
+        </div>
+      </div>
+      <details>
+        <summary>Zobrazit .env / process nastavení</summary>
+        <div class="tool-table-wrap">
+          <table class="tool-table">
+            <thead><tr><th>Klíč</th><th>Hodnota</th><th>Zdroj</th><th>Restart</th><th>Editace</th></tr></thead>
+            <tbody>
+              ${envRows.map((row) => `
+                <tr>
+                  <td>${escapeHtml(row.key || '-')}</td>
+                  <td>${escapeHtml(String(row.value ?? ''))}</td>
+                  <td>${escapeHtml(row.source || '-')}</td>
+                  <td>${row.requires_restart ? 'ANO' : 'NE'}</td>
+                  <td>${row.editable_in_admin ? 'Admin' : '.env'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    `;
+  } catch (error) {
+    el.innerHTML = `<div class="error">Nepodařilo se načíst zdroje nastavení: ${escapeHtml(error.message || String(error))}</div>`;
   }
 }
 
@@ -2798,6 +4535,88 @@ function showSettingsCategory(category) {
   renderSettingsCategory(category);
 }
 
+async function refreshSettingsNotificationsOverview() {
+  const body = document.getElementById('settings-notifications-overview-body');
+  if (!body) return;
+  body.innerHTML = '<div class="setting-description">Načítám přehled…</div>';
+  try {
+    const data = await apiRequest(
+      'GET',
+      '/admin-api/settings/system-notifications-overview?limit=40',
+      null,
+      { silentGlobalError: true },
+    );
+    const dbItems = Array.isArray(data.database_items) ? data.database_items : [];
+    let html = '';
+
+    html += '<div class="settings-notification-section"><strong>Z konfigurace údržby (virtuální řádek)</strong>';
+    if (data.runtime_maintenance_active && data.runtime_maintenance_preview) {
+      const r = data.runtime_maintenance_preview;
+      html += `<div class="settings-notification-runtime-preview">${escapeHtml(String(r.title || ''))} — ${escapeHtml(String(r.message || ''))}</div>`;
+    } else {
+      html +=
+        '<div class="setting-description">Nepublikováno nebo mimo zadané období / prázdný text / vypnuté oznámení.</div>';
+    }
+    html += '</div>';
+
+    html +=
+      '<div class="settings-notification-section" style="margin-top:16px"><strong>Z databáze (broadcast)</strong>';
+    html += '<div id="settings-notifications-db-table" class="tool-table-wrap"></div>';
+    html += '</div>';
+
+    body.innerHTML = html;
+
+    renderControlCenterTable(
+      'settings-notifications-db-table',
+      [
+        { key: 'id', label: 'ID', render: (row) => escapeHtml(String(row.id)) },
+        {
+          key: 'is_active',
+          label: 'Aktivní',
+          render: (row) =>
+            row.is_active ? '<span style="color:#15803d">ano</span>' : '<span style="color:#b45309">ne</span>',
+        },
+        {
+          key: 'target',
+          label: 'Cílení',
+          render: (row) =>
+            escapeHtml(`${row.target_type || '-'}${row.target_value ? ':' + row.target_value : ''}`),
+        },
+        { key: 'title', label: 'Titulek', render: (row) => escapeHtml(row.title || '-') },
+        {
+          key: 'message',
+          label: 'Zpráva',
+          render: (row) => escapeHtml(String(row.message || '').slice(0, 140)),
+        },
+        { key: 'created_at', label: 'Vytvořeno', render: (row) => escapeHtml(formatDateTime(row.created_at)) },
+        {
+          key: 'created_by_email',
+          label: 'Odeslal / zdroj',
+          render: (row) => escapeHtml(row.created_by_email || '-'),
+        },
+        {
+          key: '_actions',
+          label: 'Akce',
+          render: (row) => {
+            const id = Number(row.id);
+            if (!Number.isFinite(id) || id <= 0) return '-';
+            if (!row.is_active) return '<span style="color:#64748b">—</span>';
+            return `<button type="button" class="btn-secondary js-sys-notif-off" style="padding:4px 10px;font-size:12px;cursor:pointer" data-sys-notif-id="${id}">Vypnout</button>`;
+          },
+        },
+      ],
+      dbItems,
+    );
+  } catch (error) {
+    const msg = error?.message || String(error);
+    const hint404 =
+      String(msg).includes('Not Found') || String(msg).includes('404')
+        ? `<p class="setting-description" style="margin-top:10px">Endpoint přehledu oznámení na serveru chybí – nasaďte aktuální kód aplikace a <strong>restartujte backend</strong>. Ostatní nastavení fungují i bez něj.</p>`
+        : '';
+    body.innerHTML = `<div class="error">${escapeHtml(msg)}</div>${hint404}`;
+  }
+}
+
 function renderSettingsCategory(category) {
   const container = document.getElementById('settings-categories');
   const categorySettings = allSettings[category] || {};
@@ -2811,8 +4630,44 @@ function renderSettingsCategory(category) {
           settings: [
             { key: 'app_name', label: 'Název aplikace', type: 'text', desc: 'Název aplikace' },
             { key: 'app_version', label: 'Verze', type: 'text', desc: 'Verze aplikace' },
-            { key: 'app_description', label: 'Popis', type: 'textarea', desc: 'Popis aplikace' },
-            { key: 'maintenance_mode', label: 'Režim údržby', type: 'checkbox', desc: 'Zapnout režim údržby' }
+            { key: 'app_description', label: 'Popis', type: 'textarea', desc: 'Popis aplikace' }
+          ]
+        },
+        {
+          title: 'Údržba a oznámení',
+          settings: [
+            {
+              key: 'maintenance_notice_enabled',
+              label: 'Oznámení o údržbě',
+              type: 'checkbox',
+              desc:
+                'Text z admin_settings (stejné ID u všech uživatelů). Jednorázové zprávy s vlastním ID v databázi (např. id 15) se zveřejňují v Developer Control Center → karta Notifications → Odeslat broadcast; v auditu akcí je záznam notifications.broadcast.'
+            },
+            { key: 'maintenance_notice_title', label: 'Nadpis', type: 'text', desc: 'Nadpis v seznamu (např. Oznámení)' },
+            {
+              key: 'maintenance_notice_message',
+              label: 'Text pro uživatele',
+              type: 'textarea',
+              desc: 'Např. plánovaná odstávka, žádost o zálohu dat'
+            },
+            {
+              key: 'maintenance_notice_period_start',
+              label: 'Zobrazovat od (datum)',
+              type: 'date',
+              desc: 'Volitelné; prázdné = hned. Formát RRRR-MM-DD'
+            },
+            {
+              key: 'maintenance_notice_period_end',
+              label: 'Zobrazovat do (datum)',
+              type: 'date',
+              desc: 'Volitelné; prázdné = bez konce. Formát RRRR-MM-DD'
+            },
+            {
+              key: 'maintenance_mode',
+              label: 'Kompletní blokace aplikace',
+              type: 'checkbox',
+              desc: 'Všichni uživatelé uvidí chybu 503 (odstávka). Admin panel (admin-api) zůstane dostupný.'
+            }
           ]
         }
       ]
@@ -3038,6 +4893,10 @@ function renderSettingsCategory(category) {
           html += `<option value="${escapeHtml(opt)}" ${selected}>${escapeHtml(opt)}</option>`;
         });
         html += `</select>`;
+      } else if (setting.type === 'date') {
+        const idAttr = `setting-${escapeHtml(category)}-${escapeHtml(setting.key)}`;
+        const dateVal = String(value || '').slice(0, 10);
+        html += `<input type="date" id="${idAttr}" data-category="${escapeHtml(category)}" data-key="${escapeHtml(setting.key)}" value="${escapeHtml(dateVal)}">`;
       } else if (setting.type === 'textarea') {
         const idAttr = `setting-${escapeHtml(category)}-${escapeHtml(setting.key)}`;
         html += `<textarea id="${idAttr}" data-category="${escapeHtml(category)}" data-key="${escapeHtml(setting.key)}" rows="3">${escapeHtml(String(value))}</textarea>`;
@@ -3052,18 +4911,37 @@ function renderSettingsCategory(category) {
     
     html += `</div>`;
   });
-  
+
+  if (category === 'general') {
+    html += `<div class="settings-group settings-notifications-overview">`;
+    html += `<h4>Přehled oznámení v aplikaci</h4>`;
+    html +=
+      `<div class="setting-description">Záznamy v databázi: ruční broadcast (Developer Control Center; v sloupci „Odeslal“ je e-mail vývojáře), automatické z aplikace (<strong>SPRÁVA VOZIDEL</strong>) nebo virtuální řádek údržby z konfigurace výše. U řádků s kladným ID použijte <strong>Vypnout</strong>. Nový broadcast jen <strong>developer_admin</strong> → Control Center → Notifications.</div>`;
+    html += `<div id="settings-notifications-overview-body" class="settings-notifications-overview-body"></div>`;
+    html +=
+      `<button type="button" class="btn-secondary settings-notifications-refresh-btn" style="margin-top:12px">Obnovit přehled</button>`;
+    html += `</div>`;
+  }
+
   html += `</div></div>`;
-  
+
   container.innerHTML = html;
-  
+
+  container.querySelector('.settings-notifications-refresh-btn')?.addEventListener('click', () => {
+    void refreshSettingsNotificationsOverview();
+  });
+
   // Přidat event listenery pro checkboxy
   container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-    cb.addEventListener('change', function() {
+    cb.addEventListener('change', function () {
       const label = this.nextElementSibling;
       label.textContent = this.checked ? 'Zapnuto' : 'Vypnuto';
     });
   });
+
+  if (category === 'general') {
+    void refreshSettingsNotificationsOverview();
+  }
 }
 
 async function saveAllSettings() {
@@ -3233,7 +5111,7 @@ function normalizeLicenseStatus(value) {
 }
 
 function isPaidLicenseUser(user) {
-  const plan = String(user?.license_plan || 'free').toLowerCase();
+  const plan = getLicensePlanBase(user?.license_plan || 'free');
   const status = normalizeLicenseStatus(user?.license_status);
   const hasPaid = Boolean(user?.has_paid);
   if (['expired', 'inactive', 'suspended'].includes(status)) {
@@ -3243,7 +5121,7 @@ function isPaidLicenseUser(user) {
 }
 
 function isUnpaidProblemUser(user) {
-  const plan = String(user?.license_plan || 'free').toLowerCase();
+  const plan = getLicensePlanBase(user?.license_plan || 'free');
   const status = normalizeLicenseStatus(user?.license_status);
   if (['expired', 'inactive', 'suspended'].includes(status)) {
     return true;
@@ -4152,6 +6030,7 @@ async function refreshControlCenterOverview() {
   initControlCenterModuleColumns();
   initControlCenterDetailsBehavior();
   initControlCenterDraftPreviewBindings();
+  initControlCenterBroadcastComposer();
 
   await Promise.all([
     loadControlCenterUsersSnapshot(),
@@ -4673,7 +6552,9 @@ async function restoreControlCenterBackup() {
     return;
   }
 
-  if (!confirm('Restore může přepsat data. Pokračovat?')) return;
+  const reason = await promptAdminReason('Restore backupu může přepsat data.');
+  if (!reason) return;
+  if (!confirm(`Restore může přepsat data. Pokračovat?\n\nDůvod: ${reason}`)) return;
   setControlCenterLoading('cc-backup-result');
 
   try {
@@ -4956,11 +6837,18 @@ async function loadControlCenterUserInsight() {
     const data = await apiRequest('GET', `/admin-api/control-center/user-insight/${userId}`);
     controlCenterCurrentInsight = data;
     setControlCenterState('insight', data);
+    const insightUser = data?.user || {};
     const license = data?.license || {};
     const presence = data?.presence || {};
     const paymentsSummary = data?.payments_summary || {};
+    populateLicensePlanSelect(
+      'cc-license-plan',
+      insightUser.role || 'user',
+      license.current_plan || insightUser.license_plan || '',
+      { includeBlank: true, blankLabel: 'beze změny' }
+    );
     const summaryRows = [
-      { key: 'plan', label: 'Plan', value: escapeHtml((license.current_plan || '-').toUpperCase()) },
+      { key: 'plan', label: 'Plan', value: escapeHtml(formatAdminLicensePlanLabel(license.current_plan || '-', data?.user?.role || 'user')) },
       { key: 'status', label: 'Status', value: escapeHtml(license.status || '-') },
       { key: 'source', label: 'Zdroj', value: escapeHtml(license.source_of_activation || '-') },
       { key: 'purchase', label: 'Purchase', value: formatDateTime(license.purchase_date) },
@@ -5014,6 +6902,7 @@ async function loadControlCenterUserInsight() {
   } catch (error) {
     controlCenterCurrentInsight = null;
     setControlCenterState('insight', null);
+    populateLicensePlanSelect('cc-license-plan', 'user', '', { includeBlank: true, blankLabel: 'beze změny' });
     clearControlCenterTable('cc-insight-summary');
     clearControlCenterTable('cc-insight-payments-table');
     setControlCenterResult('cc-insight-result', { error: error.message });
@@ -5030,10 +6919,12 @@ async function disableUserFromControlCenter() {
     showGlobalError('Nejprve vyberte user ID.');
     return;
   }
-  if (!confirm(`Pozastavit účet uživatele #${userId}?`)) return;
+  const reason = await promptAdminReason(`Pozastavení účtu #${userId}.`);
+  if (!reason) return;
+  if (!confirm(`Pozastavit účet uživatele #${userId}?\n\nDůvod: ${reason}`)) return;
   setControlCenterLoading('cc-insight-result');
   try {
-    const data = await apiRequest('POST', `/admin-api/control-center/users/${userId}/disable`, { reason: 'admin_control_center' });
+    const data = await apiRequest('POST', `/admin-api/control-center/users/${userId}/disable`, { reason });
     setControlCenterResult('cc-insight-result', data);
     showSuccess('Účet byl pozastaven');
     await Promise.all([loadUsers(), loadControlCenterUsersSnapshot(), loadControlCenterUserInsight()]);
@@ -5048,10 +6939,12 @@ async function enableUserFromControlCenter() {
     showGlobalError('Nejprve vyberte user ID.');
     return;
   }
-  if (!confirm(`Aktivovat účet uživatele #${userId}?`)) return;
+  const reason = await promptAdminReason(`Aktivace účtu #${userId}.`);
+  if (!reason) return;
+  if (!confirm(`Aktivovat účet uživatele #${userId}?\n\nDůvod: ${reason}`)) return;
   setControlCenterLoading('cc-insight-result');
   try {
-    const data = await apiRequest('POST', `/admin-api/control-center/users/${userId}/enable`, { reason: 'admin_control_center' });
+    const data = await apiRequest('POST', `/admin-api/control-center/users/${userId}/enable`, { reason });
     setControlCenterResult('cc-insight-result', data);
     showSuccess('Účet byl aktivován');
     await Promise.all([loadUsers(), loadControlCenterUsersSnapshot(), loadControlCenterUserInsight()]);
@@ -5066,10 +6959,12 @@ async function forceLogoutFromControlCenter() {
     showGlobalError('Nejprve vyberte user ID.');
     return;
   }
-  if (!confirm(`Ukončit všechny relace uživatele #${userId}?`)) return;
+  const reason = await promptAdminReason(`Force logout účtu #${userId}.`);
+  if (!reason) return;
+  if (!confirm(`Ukončit všechny relace uživatele #${userId}?\n\nDůvod: ${reason}`)) return;
   setControlCenterLoading('cc-insight-result');
   try {
-    const data = await apiRequest('POST', `/admin-api/control-center/users/${userId}/force-logout`, { reason: 'admin_control_center' });
+    const data = await apiRequest('POST', `/admin-api/control-center/users/${userId}/force-logout`, { reason });
     setControlCenterResult('cc-insight-result', data);
     showSuccess('Relace uživatele byly ukončeny');
     await loadControlCenterUserInsight();
@@ -5116,13 +7011,15 @@ async function updateUserLicenseFromControlCenter() {
     showGlobalError('Vyberte alespoň jednu změnu licence (plan/status).');
     return;
   }
+  const reason = await promptAdminReason(`Změna licence účtu #${userId}.`);
+  if (!reason) return;
   setControlCenterLoading('cc-insight-result');
   try {
     const data = await apiRequest('POST', `/admin-api/control-center/users/${userId}/license`, {
       plan: plan || null,
       status: status || null,
       source: 'developer_override',
-      reason: 'admin_control_center',
+      reason,
     });
     setControlCenterResult('cc-insight-result', data);
     showSuccess('Licence byla aktualizována');
@@ -5132,13 +7029,101 @@ async function updateUserLicenseFromControlCenter() {
   }
 }
 
+const CC_NOTIFICATION_HTML_MARKER_JS = '__TOOZH_NOTIFY_HTML_v1\n';
+
+function ccStripNotificationMarker(raw) {
+  const s = String(raw ?? '');
+  return s.startsWith(CC_NOTIFICATION_HTML_MARKER_JS) ? s.slice(CC_NOTIFICATION_HTML_MARKER_JS.length) : s;
+}
+
+/** Bezpečný textový výřez zprávy pro tabulku (bez HTML výstupu). */
+function ccNotificationPlainPreviewForTable(row) {
+  const raw = row?.message ?? '';
+  const kind =
+    row?.message_kind || (String(raw).startsWith(CC_NOTIFICATION_HTML_MARKER_JS) ? 'html' : 'plain');
+  let t = '';
+  if (kind !== 'html') {
+    t = String(raw).replace(/\s+/g, ' ').trim();
+  } else {
+    const div = document.createElement('div');
+    div.innerHTML = ccStripNotificationMarker(raw);
+    t = String(div.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+  if (t.length > 220) return `${t.slice(0, 217)}…`;
+  return t || '—';
+}
+
+function syncCcBroadcastLivePreview() {
+  const editor = document.getElementById('cc-broadcast-editor');
+  const titleInput = document.getElementById('cc-broadcast-title');
+  const previewTitle = document.getElementById('cc-broadcast-preview-title');
+  const previewMsg = document.getElementById('cc-broadcast-preview-msg');
+  const previewMeta = document.getElementById('cc-broadcast-preview-meta');
+  if (!previewTitle || !previewMsg) return;
+
+  const tit = String(titleInput?.value || '').trim() || 'Oznámení';
+  previewTitle.textContent = tit;
+
+  const rawHtml = String(editor?.innerHTML || '').trim().replace(/^<br\s*\/?>$/i, '');
+  const plain = String(editor?.innerText || '')
+    .replace(/\u200b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  editor?.classList.toggle('is-empty', plain.length === 0);
+
+  if (!plain.length) {
+    previewMsg.innerHTML =
+      '<span class="cc-broadcast-preview-placeholder">Začněte psát výše…</span>';
+  } else {
+    previewMsg.innerHTML = rawHtml;
+  }
+
+  if (previewMeta) {
+    const today = formatDate(new Date().toISOString(), '');
+    previewMeta.textContent = today ? today : '';
+  }
+}
+
+function initControlCenterBroadcastComposer() {
+  const moduleRoot = document.getElementById('cc-module-notifications');
+  const editor = document.getElementById('cc-broadcast-editor');
+  const toolbar = moduleRoot?.querySelector('.cc-broadcast-toolbar');
+  const titleEl = document.getElementById('cc-broadcast-title');
+  if (!editor || !moduleRoot || editor.dataset.ccComposerBound === '1') return;
+  editor.dataset.ccComposerBound = '1';
+
+  syncCcBroadcastLivePreview();
+
+  toolbar?.addEventListener('mousedown', (ev) => {
+    const btn = ev.target.closest('[data-cc-cmd]');
+    if (!btn || !toolbar.contains(btn)) return;
+    ev.preventDefault();
+    const cmd = btn.getAttribute('data-cc-cmd');
+    editor.focus({ preventScroll: true });
+    try {
+      document.execCommand(cmd, false, null);
+    } catch (_) {
+      /* ignore */
+    }
+    syncCcBroadcastLivePreview();
+  });
+
+  editor.addEventListener('input', syncCcBroadcastLivePreview);
+  titleEl?.addEventListener('input', syncCcBroadcastLivePreview);
+}
+
 async function broadcastControlCenterNotification() {
-  const message = (document.getElementById('cc-broadcast-message')?.value || '').trim();
+  const editor = document.getElementById('cc-broadcast-editor');
+  const visible = String(editor?.innerText || '')
+    .replace(/\u200b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const messageHtml = String(editor?.innerHTML || '').trim();
   const title = (document.getElementById('cc-broadcast-title')?.value || '').trim();
   const targetType = (document.getElementById('cc-broadcast-target-type')?.value || 'all').trim();
   const targetValueRaw = (document.getElementById('cc-broadcast-target-value')?.value || '').trim();
-  if (!message || message.length < 3) {
-    showGlobalError('Zpráva musí mít alespoň 3 znaky.');
+  if (visible.length < 3) {
+    showGlobalError('Zpráva musí mít alespoň 3 viditelné znaky.');
     return;
   }
   let targetValue = targetValueRaw || null;
@@ -5148,7 +7133,8 @@ async function broadcastControlCenterNotification() {
   setControlCenterLoading('cc-notifications-result');
   try {
     const data = await apiRequest('POST', '/admin-api/control-center/notifications/broadcast', {
-      message,
+      message: messageHtml,
+      rich: true,
       title: title || null,
       target_type: targetType,
       target_value: targetValue,
@@ -5157,6 +7143,10 @@ async function broadcastControlCenterNotification() {
     setControlCenterResult('cc-notifications-result', data);
     showSuccess('Broadcast byl odeslán');
     setControlCenterText('cc-notifications-target-preview', targetValue ? `${targetType}:${targetValue}` : targetType);
+    if (editor) {
+      editor.innerHTML = '';
+      syncCcBroadcastLivePreview();
+    }
     await loadControlCenterNotifications();
   } catch (error) {
     setControlCenterResult('cc-notifications-result', { error: error.message });
@@ -5164,6 +7154,7 @@ async function broadcastControlCenterNotification() {
 }
 
 async function loadControlCenterNotifications() {
+  initControlCenterBroadcastComposer();
   setControlCenterLoading('cc-notifications-result', ['cc-notifications-table']);
   try {
     const data = await apiRequest('GET', '/admin-api/control-center/notifications?limit=50');
@@ -5175,13 +7166,22 @@ async function loadControlCenterNotifications() {
         { key: 'id', label: '#' },
         { key: 'target_type', label: 'Target', render: (row) => `${escapeHtml(row.target_type || '-')}${row.target_value ? `:${escapeHtml(row.target_value)}` : ''}` },
         { key: 'severity', label: 'Severity', render: (row) => escapeHtml(row.severity || 'info') },
+        { key: 'message_kind', label: 'Obsah', render: (row) => escapeHtml(row.message_kind === 'html' ? 'html' : 'text') },
         { key: 'title', label: 'Titulek', render: (row) => escapeHtml(row.title || '-') },
-        { key: 'message', label: 'Zpráva', render: (row) => escapeHtml(row.message || '-') },
+        {
+          key: 'message',
+          label: 'Zpráva',
+          render: (row) => escapeHtml(ccNotificationPlainPreviewForTable(row)),
+        },
         { key: 'created_at', label: 'Vytvořeno', render: (row) => formatDateTime(row.created_at) },
       ],
       items,
     );
     setControlCenterResult('cc-notifications-result', data);
+    const details = document.getElementById('cc-notifications-details');
+    if (details && items.length > 0) {
+      details.open = true;
+    }
   } catch (error) {
     clearControlCenterTable('cc-notifications-table');
     setControlCenterResult('cc-notifications-result', { error: error.message });
@@ -5248,7 +7248,7 @@ async function openControlCenterProblemUsers() {
     [
       { key: 'id', label: 'User ID', render: (row) => formatNumber(row.id || 0) },
       { key: 'email', label: 'Email', render: (row) => escapeHtml(row.email || '-') },
-      { key: 'license_plan', label: 'Plan', render: (row) => escapeHtml(String(row.license_plan || 'free').toUpperCase()) },
+      { key: 'license_plan', label: 'Plan', render: (row) => escapeHtml(formatAdminLicensePlanLabel(row.license_plan || 'free', row.role || 'user')) },
       { key: 'license_status', label: 'Licence status', render: (row) => escapeHtml(String(row.license_status || 'active')) },
       { key: 'has_paid', label: 'Has paid', render: (row) => row.has_paid ? 'ANO' : 'NE' },
       { key: 'last_paid_at', label: 'Poslední platba', render: (row) => formatDateTime(row.last_paid_at) },
@@ -5306,6 +7306,7 @@ function handleAdminLogout() {
 }
 
 function showLoginScreen() {
+  stopAdminNavbarClock();
   closeAllControlCenterDetails();
   closeAdminMobileNav();
   document.getElementById('login-screen').classList.remove('hidden');
@@ -5322,6 +7323,10 @@ function showDashboard() {
   hideGlobalError();
   closeAdminMobileNav();
 
+  startAdminNavbarClock();
+
+  initSysNotificationDeactivateDelegation();
+
   initSectionViewModes();
   
   // Inicializovat navigaci
@@ -5336,14 +7341,560 @@ function showDashboard() {
 }
 
 // ============================================
+// ADMIN VEHICLE SUPPORT VIEW (read-only + corrections)
+// ============================================
+
+const VEHICLE_SUPPORT_VEHICLE_FIELDS = [
+  'nickname',
+  'brand',
+  'model',
+  'year',
+  'plate',
+  'vin',
+  'engine',
+  'fuel',
+  'body_type',
+  'notes',
+  'stk_valid_until',
+  'insurance_provider',
+  'insurance_valid_until',
+  'tyres_info',
+  'current_mileage_km',
+  'last_stk_mileage_km',
+  'orv_number',
+];
+const VEHICLE_SUPPORT_SERVICE_FIELDS = ['description', 'mileage', 'note', 'performed_at'];
+const VEHICLE_SUPPORT_REMINDER_FIELDS = ['text', 'due_date'];
+
+/** Čitelné popisky pro snapshot (jen UI; backend zůstává beze změny). */
+const VEHICLE_SUPPORT_FIELD_LABELS = {
+  owner_user_id: 'ID uživatele (vlastník)',
+  tenant_id: 'Tenant ID',
+  account_email_masked: 'E-mail (maskovaný)',
+  support_note: 'Poznámka',
+  id: 'ID',
+  nickname: 'Přezdívka',
+  brand: 'Značka',
+  model: 'Model',
+  year: 'Rok',
+  plate: 'SPZ',
+  vin: 'VIN',
+  engine: 'Motor',
+  fuel: 'Palivo',
+  body_type: 'Karoserie',
+  notes: 'Poznámka',
+  status: 'Stav',
+  stk_valid_until: 'STK do',
+  insurance_provider: 'Pojišťovna',
+  insurance_valid_until: 'POV do',
+  orv_number: 'Číslo ORV',
+  data_trust_state: 'Důvěra dat',
+  created_at: 'Vytvořeno',
+  updated_at: 'Upraveno',
+  tyres_info: 'Pneumatiky',
+  current_mileage_km: 'Aktuální km',
+  last_stk_mileage_km: 'Km při STK',
+  mileage_checked_at: 'Km zkontrolováno',
+  latest_stk_odometer_km: 'STK tachometr (km)',
+  latest_stk_odometer_date: 'STK tachometr (datum)',
+  latest_stk_sync_at: 'STK sync',
+  latest_stk_source: 'STK zdroj',
+  latest_stk_import_status: 'STK import',
+};
+
+let vehicleSupportContext = { vehicleId: null, snapshot: null };
+
+function labelSupportField(key) {
+  return VEHICLE_SUPPORT_FIELD_LABELS[key] || key;
+}
+
+(function initVehicleSupportTocNav() {
+  const modal = document.getElementById('vehicle-support-modal');
+  const toc = modal && modal.querySelector('.vehicle-support-toc');
+  if (!toc) return;
+  toc.addEventListener('click', (e) => {
+    const a = e.target.closest('a.vehicle-support-toc-link');
+    if (!a) return;
+    e.preventDefault();
+    const id = (a.getAttribute('href') || '').replace(/^#/, '');
+    if (!id) return;
+    const target = document.getElementById(id);
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+})();
+
+function maybeOpenVehicleSupportView(event, vehicleId) {
+  if (event.target.closest('.card-actions')) return;
+  openVehicleSupportViewModal(vehicleId);
+}
+
+function formatSupportScalar(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function renderSupportKeyValueRows(data) {
+  if (!data || typeof data !== 'object') return '<p class="muted vehicle-support-empty">—</p>';
+  const parts = [];
+  Object.keys(data).forEach((key) => {
+    const label = escapeHtml(labelSupportField(key));
+    const val = escapeHtml(formatSupportScalar(data[key]));
+    parts.push(
+      `<div class="vehicle-support-kv-row"><span class="vehicle-support-kv-key">${label}</span><span class="vehicle-support-kv-val">${val}</span></div>`,
+    );
+  });
+  return `<div class="vehicle-support-kv-grid">${parts.join('')}</div>`;
+}
+
+function renderSupportTable(headers, rows) {
+  if (!rows || rows.length === 0) return '<p class="muted vehicle-support-empty">Žádné záznamy</p>';
+  const th = headers.map((h) => `<th>${escapeHtml(h.label)}</th>`).join('');
+  const body = rows
+    .map((row) => {
+      const tds = headers.map((h) => `<td>${escapeHtml(formatSupportScalar(row[h.key]))}</td>`).join('');
+      return `<tr>${tds}</tr>`;
+    })
+    .join('');
+  return `<div class="vehicle-support-table-wrap"><table class="vehicle-support-table"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function openVehicleSupportPhotoLightbox(imageSrc, captionText) {
+  const lb = document.getElementById('vehicle-support-photo-lightbox');
+  const imgEl = document.getElementById('vehicle-support-photo-lightbox-img');
+  const capEl = document.getElementById('vehicle-support-photo-lightbox-caption');
+  if (!lb || !imgEl || !imageSrc) return;
+  imgEl.src = imageSrc;
+  const cap = (captionText || '').trim();
+  imgEl.alt = cap || 'Fotografie vozidla';
+  if (capEl) {
+    if (cap) {
+      capEl.textContent = cap;
+      capEl.classList.remove('hidden');
+    } else {
+      capEl.textContent = '';
+      capEl.classList.add('hidden');
+    }
+  }
+  lb.classList.remove('hidden');
+}
+
+function closeVehicleSupportPhotoLightbox() {
+  const lb = document.getElementById('vehicle-support-photo-lightbox');
+  const imgEl = document.getElementById('vehicle-support-photo-lightbox-img');
+  if (!lb) return;
+  lb.classList.add('hidden');
+  if (imgEl) {
+    imgEl.removeAttribute('src');
+    imgEl.alt = '';
+  }
+  const capEl = document.getElementById('vehicle-support-photo-lightbox-caption');
+  if (capEl) {
+    capEl.textContent = '';
+    capEl.classList.add('hidden');
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const lb = document.getElementById('vehicle-support-photo-lightbox');
+  if (lb && !lb.classList.contains('hidden')) {
+    closeVehicleSupportPhotoLightbox();
+  }
+});
+
+function wireVehicleSupportPhotoClicks(root) {
+  if (!root) return;
+  root.querySelectorAll('.vehicle-support-photo-card img').forEach((img) => {
+    if (!img.getAttribute('data-support-photo')) return;
+    img.style.cursor = 'pointer';
+    img.setAttribute('tabindex', '0');
+    img.setAttribute('role', 'button');
+    img.setAttribute('aria-label', 'Zvětšit náhled fotografie');
+    const card = img.closest('.vehicle-support-photo-card');
+    const meta = card && card.querySelector('.vehicle-support-photo-meta');
+    const caption = meta ? meta.textContent.trim() : '';
+    const open = () => {
+      if (!img.src) return;
+      openVehicleSupportPhotoLightbox(img.src, caption);
+    };
+    img.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      open();
+    });
+    img.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        open();
+      }
+    });
+  });
+}
+
+async function hydrateVehicleSupportPhotos(root) {
+  const token = getAuthToken();
+  if (!root || !token) return;
+  const imgs = root.querySelectorAll('img[data-support-photo]');
+  const tasks = Array.from(imgs).map(async (img) => {
+    const rel = img.getAttribute('data-support-photo');
+    if (!rel) return;
+    try {
+      const res = await fetch(API_BASE + rel, {
+        headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        img.replaceWith(document.createTextNode('(náhled nedostupný)'));
+        return;
+      }
+      const blob = await res.blob();
+      img.src = URL.createObjectURL(blob);
+    } catch {
+      img.replaceWith(document.createTextNode('(náhled nedostupný)'));
+    }
+  });
+  await Promise.all(tasks);
+  wireVehicleSupportPhotoClicks(root);
+}
+
+function renderVehicleSupportSnapshot(data) {
+  const ownerEl = document.getElementById('vehicle-support-owner');
+  const basicEl = document.getElementById('vehicle-support-basic');
+  const techEl = document.getElementById('vehicle-support-technical');
+  const photosEl = document.getElementById('vehicle-support-photos');
+  const docsEl = document.getElementById('vehicle-support-documents');
+  const recEl = document.getElementById('vehicle-support-records');
+  const remEl = document.getElementById('vehicle-support-reminders');
+  const accEl = document.getElementById('vehicle-support-access');
+  const tachoEl = document.getElementById('vehicle-support-tacho');
+  const auditEl = document.getElementById('vehicle-support-audit');
+  if (!ownerEl || !data) return;
+
+  ownerEl.innerHTML = renderSupportKeyValueRows(data.owner_context || {});
+  basicEl.innerHTML = renderSupportKeyValueRows(data.vehicle || {});
+
+  const tech = data.technical_data || {};
+  let techHtml = renderSupportKeyValueRows({
+    tyres_info: tech.tyres_info,
+    current_mileage_km: tech.current_mileage_km,
+    last_stk_mileage_km: tech.last_stk_mileage_km,
+    mileage_checked_at: tech.mileage_checked_at,
+    latest_stk_odometer_km: tech.latest_stk_odometer_km,
+    latest_stk_odometer_date: tech.latest_stk_odometer_date,
+    latest_stk_sync_at: tech.latest_stk_sync_at,
+    latest_stk_source: tech.latest_stk_source,
+    latest_stk_import_status: tech.latest_stk_import_status,
+  });
+  if (tech.vehicle_technical_overview) {
+    techHtml += `<h4 class="vehicle-support-subheading">Technický přehled (JSON)</h4><pre class="vehicle-support-json-block">${escapeHtml(
+      JSON.stringify(tech.vehicle_technical_overview, null, 2),
+    )}</pre>`;
+  }
+  techEl.innerHTML = techHtml;
+
+  const photos = data.photos || [];
+  if (photos.length === 0) {
+    photosEl.innerHTML = '<p class="muted vehicle-support-empty">Žádné fotografie</p>';
+  } else {
+    photosEl.innerHTML = `<div class="vehicle-support-photos-grid">${photos
+      .map((p) => {
+        const src = p.preview_url_admin || '';
+        return `<div class="vehicle-support-photo-card"><img data-support-photo="${escapeHtml(src)}" alt="" /><div class="vehicle-support-photo-meta">#${escapeHtml(
+          String(p.id),
+        )} · ${escapeHtml(p.role || '')} · ${escapeHtml(p.photo_kind || '')}</div></div>`;
+      })
+      .join('')}</div>`;
+    hydrateVehicleSupportPhotos(photosEl);
+  }
+
+  docsEl.innerHTML = renderSupportTable(
+    [
+      { key: 'id', label: 'ID' },
+      { key: 'document_type', label: 'Typ' },
+      { key: 'document_id', label: 'Dokument' },
+      { key: 'status', label: 'Stav' },
+      { key: 'finalized_at', label: 'Finalizováno' },
+    ],
+    data.documents || [],
+  );
+
+  recEl.innerHTML = renderSupportTable(
+    [
+      { key: 'id', label: 'ID' },
+      { key: 'performed_at', label: 'Provedeno' },
+      { key: 'mileage', label: 'Km' },
+      { key: 'description', label: 'Popis' },
+      { key: 'record_status', label: 'Stav' },
+    ],
+    data.service_records || [],
+  );
+
+  remEl.innerHTML = renderSupportTable(
+    [
+      { key: 'id', label: 'ID' },
+      { key: 'type', label: 'Typ' },
+      { key: 'due_date', label: 'Termín' },
+      { key: 'text', label: 'Text' },
+      { key: 'is_completed', label: 'Hotovo' },
+    ],
+    data.reminders || [],
+  );
+
+  accEl.innerHTML = renderSupportTable(
+    [
+      { key: 'id', label: 'ID' },
+      { key: 'service_customer_id', label: 'Servis (účet ID)' },
+      { key: 'status', label: 'Stav' },
+      { key: 'created_at', label: 'Vytvořeno' },
+    ],
+    data.service_access || [],
+  );
+
+  tachoEl.innerHTML = renderSupportTable(
+    [
+      { key: 'entry_kind', label: 'Druh' },
+      { key: 'id', label: 'ID' },
+      { key: 'check_date', label: 'Datum kontroly' },
+      { key: 'inspection_date', label: 'Datum (STK)' },
+      { key: 'mileage_km', label: 'Km' },
+      { key: 'odometer_km', label: 'Km (STK řádek)' },
+      { key: 'source', label: 'Zdroj' },
+      { key: 'status', label: 'Stav' },
+      { key: 'imported_at', label: 'Import' },
+    ],
+    data.tachometer_history || [],
+  );
+
+  auditEl.innerHTML = renderSupportTable(
+    [
+      { key: 'id', label: 'ID' },
+      { key: 'action', label: 'Akce' },
+      { key: 'entity_type', label: 'Entita' },
+      { key: 'occurred_at', label: 'Čas' },
+      { key: 'actor_user_id', label: 'Actor' },
+    ],
+    data.audit_log || [],
+  );
+}
+
+async function openVehicleSupportViewModal(vehicleId) {
+  const modal = document.getElementById('vehicle-support-modal');
+  const loading = document.getElementById('vehicle-support-loading');
+  const err = document.getElementById('vehicle-support-error');
+  const body = document.getElementById('vehicle-support-body');
+  if (!modal || !loading || !err || !body) return;
+  vehicleSupportContext.vehicleId = Number(vehicleId);
+  vehicleSupportContext.snapshot = null;
+  modal.classList.remove('hidden');
+  loading.classList.remove('hidden');
+  err.classList.add('hidden');
+  err.textContent = '';
+  body.classList.add('hidden');
+  try {
+    const data = await apiRequest('GET', `/admin-api/vehicles/${vehicleId}/detail-snapshot`);
+    vehicleSupportContext.snapshot = data;
+    renderVehicleSupportSnapshot(data);
+    loading.classList.add('hidden');
+    body.classList.remove('hidden');
+  } catch (e) {
+    loading.classList.add('hidden');
+    err.textContent = e.message || String(e);
+    err.classList.remove('hidden');
+  }
+}
+
+function closeVehicleSupportModal() {
+  const modal = document.getElementById('vehicle-support-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function refreshVehicleSupportSnapshot() {
+  if (!vehicleSupportContext.vehicleId) return;
+  await openVehicleSupportViewModal(vehicleSupportContext.vehicleId);
+}
+
+function syncVehicleSupportTargetIdUi() {
+  const entEl = document.getElementById('vsc-target-entity');
+  const wrap = document.getElementById('vsc-target-id-wrap');
+  const inp = document.getElementById('vsc-target-id');
+  if (!entEl || !wrap || !inp) return;
+  const ent = entEl.value;
+  if (ent === 'vehicle') {
+    wrap.classList.add('hidden');
+    inp.required = false;
+    inp.value = '';
+  } else {
+    wrap.classList.remove('hidden');
+    inp.required = true;
+  }
+}
+
+function syncVehicleSupportCorrectionFields() {
+  const ent = document.getElementById('vsc-target-entity')?.value || 'vehicle';
+  const sel = document.getElementById('vsc-field');
+  if (!sel) return;
+  let fields = VEHICLE_SUPPORT_VEHICLE_FIELDS;
+  if (ent === 'service_record') fields = VEHICLE_SUPPORT_SERVICE_FIELDS;
+  if (ent === 'reminder') fields = VEHICLE_SUPPORT_REMINDER_FIELDS;
+  sel.innerHTML = fields.map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('');
+}
+
+function readVehicleSupportOldValueForForm() {
+  const snap = vehicleSupportContext.snapshot;
+  if (!snap) return '';
+  const ent = document.getElementById('vsc-target-entity')?.value || 'vehicle';
+  const field = document.getElementById('vsc-field')?.value;
+  const targetId = document.getElementById('vsc-target-id')?.value;
+  if (!field) return '';
+  if (ent === 'vehicle') {
+    const v = snap.vehicle ? snap.vehicle[field] : undefined;
+    return formatSupportScalar(v);
+  }
+  if (ent === 'service_record') {
+    const id = Number(targetId);
+    const row = (snap.service_records || []).find((r) => Number(r.id) === id);
+    return row ? formatSupportScalar(row[field]) : '';
+  }
+  if (ent === 'reminder') {
+    const id = Number(targetId);
+    const row = (snap.reminders || []).find((r) => Number(r.id) === id);
+    return row ? formatSupportScalar(row[field]) : '';
+  }
+  return '';
+}
+
+function updateVehicleSupportOldValueField() {
+  const el = document.getElementById('vsc-old-value');
+  if (!el) return;
+  el.value = readVehicleSupportOldValueForForm();
+}
+
+function openVehicleSupportCorrectionDialog() {
+  if (!vehicleSupportContext.snapshot || !vehicleSupportContext.vehicleId) {
+    showGlobalError('Nejdříve načtěte náhled vozidla.');
+    return;
+  }
+  const modal = document.getElementById('vehicle-support-correction-modal');
+  const form = document.getElementById('vehicle-support-correction-form');
+  const err = document.getElementById('vsc-form-error');
+  if (!modal || !form || !err) return;
+  form.reset();
+  err.classList.add('hidden');
+  err.textContent = '';
+  document.getElementById('vsc-target-entity').value = 'vehicle';
+  document.getElementById('vsc-notify-user').checked = true;
+  syncVehicleSupportTargetIdUi();
+  syncVehicleSupportCorrectionFields();
+  updateVehicleSupportOldValueField();
+  modal.classList.remove('hidden');
+}
+
+function closeVehicleSupportCorrectionModal() {
+  const modal = document.getElementById('vehicle-support-correction-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function submitVehicleSupportCorrection(event) {
+  event.preventDefault();
+  const err = document.getElementById('vsc-form-error');
+  const submit = document.getElementById('vsc-submit');
+  if (!vehicleSupportContext.vehicleId) return;
+  err.classList.add('hidden');
+  err.textContent = '';
+  const targetEntity = document.getElementById('vsc-target-entity').value;
+  const targetIdRaw = document.getElementById('vsc-target-id').value;
+  const field = document.getElementById('vsc-field').value;
+  const oldValue = document.getElementById('vsc-old-value').value;
+  const newValue = document.getElementById('vsc-new-value').value;
+  const reason = document.getElementById('vsc-reason').value.trim();
+  const notifyUser = document.getElementById('vsc-notify-user').checked;
+  if (!reason) {
+    err.textContent = 'Vyplňte důvod změny.';
+    err.classList.remove('hidden');
+    return;
+  }
+  if (targetEntity !== 'vehicle' && !targetIdRaw) {
+    err.textContent = 'Vyplňte ID cílového záznamu.';
+    err.classList.remove('hidden');
+    return;
+  }
+  submit.disabled = true;
+  try {
+    const payload = {
+      target_entity: targetEntity,
+      target_id: targetEntity === 'vehicle' ? null : String(targetIdRaw),
+      field,
+      old_value: oldValue,
+      new_value: newValue,
+      reason,
+      notify_user: notifyUser,
+    };
+    const res = await apiRequest(
+      'POST',
+      `/admin-api/vehicles/${vehicleSupportContext.vehicleId}/corrections`,
+      payload,
+    );
+    closeVehicleSupportCorrectionModal();
+    if (res.notification_status === 'sent') {
+      showSuccess('Oprava byla provedena, zapsána do auditu a uživatel byl informován e-mailem.');
+    } else if (res.notification_status === 'failed') {
+      showSuccess(
+        'Oprava byla provedena, ale e-mailové oznámení selhalo. Stav byl zapsán do auditu.',
+      );
+    } else {
+      showSuccess('Oprava byla provedena a zapsána do auditu (oznámení uživateli vynecháno nebo nedostupné).');
+    }
+    await refreshVehicleSupportSnapshot();
+  } catch (e) {
+    err.textContent = e.message || String(e);
+    err.classList.remove('hidden');
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+function initVehicleSupportCorrectionForm() {
+  const ent = document.getElementById('vsc-target-entity');
+  const field = document.getElementById('vsc-field');
+  const tid = document.getElementById('vsc-target-id');
+  if (!ent || !field || !tid) return;
+  ent.addEventListener('change', () => {
+    syncVehicleSupportTargetIdUi();
+    syncVehicleSupportCorrectionFields();
+    updateVehicleSupportOldValueField();
+    document.getElementById('vsc-new-value').value = '';
+  });
+  field.addEventListener('change', () => {
+    updateVehicleSupportOldValueField();
+    document.getElementById('vsc-new-value').value = '';
+  });
+  tid.addEventListener('input', () => {
+    updateVehicleSupportOldValueField();
+  });
+  syncVehicleSupportTargetIdUi();
+  syncVehicleSupportCorrectionFields();
+}
+
+// ============================================
 // INITIALIZATION
 // ============================================
 
 window.addEventListener('DOMContentLoaded', () => {
   const token = getAuthToken();
+  initVehicleSupportCorrectionForm();
 
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
+      closeVehicleSupportCorrectionModal();
+      closeVehicleSupportModal();
       closeAdminMobileNav();
       closeAllControlCenterDetails();
     }
@@ -5360,6 +7911,24 @@ window.addEventListener('DOMContentLoaded', () => {
     syncControlCenterDetailsOverlayState();
   });
   
+  const userRoleSelect = document.getElementById('user-role');
+  if (userRoleSelect && userRoleSelect.dataset.wsBound !== '1') {
+    userRoleSelect.addEventListener('change', () => {
+      populateLicensePlanSelect('user-license-plan', userRoleSelect.value || 'user', document.getElementById('user-license-plan')?.value || '', {
+        includeBlank: false,
+      });
+      if (!document.getElementById('user-id')?.value) {
+        applyDefaultUserWorkspaceCheckboxesFromRole();
+      }
+    });
+    userRoleSelect.dataset.wsBound = '1';
+  }
+
+  populateLicensePlanSelect('user-license-plan', userRoleSelect?.value || 'user', document.getElementById('user-license-plan')?.value || 'free', {
+    includeBlank: false,
+  });
+  populateLicensePlanSelect('cc-license-plan', 'user', '', { includeBlank: true, blankLabel: 'beze změny' });
+
   if (token) {
     // Zkusit načíst uživatele - pokud selže (token neplatný), zobrazit přihlášení
     apiRequest('GET', '/admin-api/users')

@@ -4,7 +4,8 @@ Testy pro VIN decode endpoint
 import pytest
 from fastapi.testclient import TestClient
 from src.server.main import app
-from uuid import uuid4
+
+from tests.api.integration_accounts import CI_DEFAULT_PASSWORD, CI_VIN_DECODE
 
 client = TestClient(app)
 
@@ -12,15 +13,24 @@ client = TestClient(app)
 @pytest.fixture(scope="module")
 def vin_auth_headers():
     """Získá JWT token pro VIN endpoint testy (endpoint vyžaduje autentizaci)."""
-    email = f"vin_test_{uuid4().hex[:10]}@example.com"
-    password = "testpass123"
+    email = CI_VIN_DECODE
+    password = CI_DEFAULT_PASSWORD
 
     register_response = client.post(
         "/user/register",
         json={"email": email, "password": password, "name": "VIN Test User"},
     )
-    assert register_response.status_code == 200
-    token = register_response.json()["access_token"]
+    if register_response.status_code == 200:
+        token = register_response.json()["access_token"]
+        return {"Authorization": f"Bearer {token}"}
+
+    assert register_response.status_code == 400
+    login_response = client.post(
+        "/user/login",
+        json={"email": email, "password": password},
+    )
+    assert login_response.status_code == 200
+    token = login_response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 
 

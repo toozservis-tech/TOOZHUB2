@@ -5,7 +5,9 @@ Všechny endpointy pod prefixem /api/v1/
 from fastapi import APIRouter
 
 from . import (
+    tutorials,
     vehicles,
+    vehicle_image,
     service_records,
     analytics,
     service_intake,
@@ -28,8 +30,13 @@ from . import (
 # Hlavní router pro v1 API
 api_router = APIRouter(prefix="/api/v1", tags=["api-v1"])
 
-# Zahrnout všechny sub-routery
+# vehicle_lifecycle (/vehicles/...) musí být před vehicles.router — jinak koncovky jako
+# POST /vehicles/transfer-technical-refresh-before-claim kolidují s GET /vehicles/{vehicle_id}
+# (Starlette PARTIAL match → HTTP 405 Method Not Allowed na POST).
+api_router.include_router(vehicle_lifecycle.router)
+api_router.include_router(tutorials.router)
 api_router.include_router(vehicles.router)
+api_router.include_router(vehicle_image.router)
 api_router.include_router(service_records.router)
 api_router.include_router(analytics.router)  # Náklady, kategorie, měsíční trendy
 api_router.include_router(service_intake.router)
@@ -37,7 +44,6 @@ api_router.include_router(reservations.router)
 api_router.include_router(reminders.router)
 api_router.include_router(reminder_settings.router)  # Nastavení připomínek
 api_router.include_router(services.router)
-api_router.include_router(vehicle_lifecycle.router)
 api_router.include_router(service_workspace.router)  # Servisní centrum (klienti + doklady)
 api_router.include_router(ai.router)
 api_router.include_router(bot.router)  # AI Asistent Bot

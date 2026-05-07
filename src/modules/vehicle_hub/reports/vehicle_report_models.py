@@ -128,6 +128,8 @@ class VehicleServiceReportPayload:
     mileage_timeline: VehicleReportMileageTimeline = field(default_factory=VehicleReportMileageTimeline)
     owner: Optional[VehicleReportOwner] = None
     verification_qr_payload: Optional[str] = None
+    # Předávací odkaz pro nového vlastníka (jen v PDF při prodeji); neúčastní se hashování dokumentu.
+    new_owner_claim_qr_payload: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

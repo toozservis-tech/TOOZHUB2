@@ -3,7 +3,8 @@ MDČR API klient pro získání dat o vozidlech
 Používá dataovozidlech.cz API (oficiální databáze vozidel MDČR)
 """
 import logging
-from typing import Optional
+import os
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 import httpx
 import urllib.parse
@@ -12,6 +13,122 @@ import re
 from .models import VehicleDecodedData
 
 logger = logging.getLogger(__name__)
+
+
+def _should_log_mdcr_shape() -> bool:
+    v = os.getenv("MDCR_TECH_OVERVIEW_SHAPE_LOG", "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
+def _ascii_fold_key(s: str) -> str:
+    import unicodedata
+
+    nk = unicodedata.normalize("NFKD", s)
+    return "".join(c.lower() for c in nk if not unicodedata.combining(c))
+
+
+def _find_mdcr_value(data: Dict[str, Any], *keys: str, default=None):
+    """Najde hodnotu i v mělkých vnořených skupinách typu Karoserie -> Barva."""
+    normalized_keys = {_ascii_fold_key(str(key)): key for key in keys}
+    for key in keys:
+        if isinstance(data, dict) and data.get(key) is not None:
+            return data[key]
+
+    def walk(value: Any, depth: int = 0):
+        if depth > 3:
+            return None
+        if isinstance(value, dict):
+            for raw_key, raw_value in value.items():
+                folded = _ascii_fold_key(str(raw_key))
+                if folded in normalized_keys and raw_value is not None:
+                    return raw_value
+                found = walk(raw_value, depth + 1)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for item in value:
+                found = walk(item, depth + 1)
+                if found is not None:
+                    return found
+        return None
+
+    found_value = walk(data)
+    return default if found_value is None else found_value
+
+
+def _nested_key_paths_depth(obj: Any, prefix: str = "", depth: int = 0, max_depth: int = 3) -> List[str]:
+    """Klíčové cesty do hloubky max_depth (pro bezpečný profil odpovědi MDČR)."""
+    paths: List[str] = []
+
+    def walk(o: Any, pre: str, d: int) -> None:
+        if d >= max_depth:
+            return
+        if isinstance(o, dict):
+            for k, v in o.items():
+                seg = f"{pre}.{k}" if pre else str(k)
+                if isinstance(v, (dict, list)):
+                    walk(v, seg, d + 1)
+                else:
+                    paths.append(seg)
+        elif isinstance(o, list):
+            for i, it in enumerate(o[:50]):
+                seg = f"{pre}[{i}]"
+                if isinstance(it, (dict, list)):
+                    walk(it, seg, d + 1)
+                else:
+                    paths.append(seg)
+
+    walk(obj, prefix, depth)
+    return paths
+
+
+def _mdcr_shape_flag_presence(data: Dict[str, Any]) -> Dict[str, bool]:
+    """Orientační přítomnost skupin polí (bez logování hodnot)."""
+    ks = {_ascii_fold_key(str(k)) for k in data.keys()}
+
+    def has_sub(*parts: str) -> bool:
+        return any(all(p in fk for p in parts) for fk in ks)
+
+    return {
+        "vykon_kw_like": has_sub("motor", "vykon") or has_sub("maxvykon"),
+        "objem_like": has_sub("zdvih") or has_sub("objem"),
+        "palivo": has_sub("palivo"),
+        "typ_motoru": has_sub("motor") and has_sub("typ"),
+        "emise": has_sub("emise") or has_sub("co2"),
+        "spotreba": has_sub("spotreb"),
+        "hmotnosti": has_sub("hmotnost"),
+        "rozmery": has_sub("rozmer") or has_sub("rozvor"),
+        "barva": has_sub("barva"),
+        "mist": has_sub("mist"),
+        "tp_orv": has_sub("cislotp") or has_sub("cisloorv"),
+        "stk_like": has_sub("prohlidka") or has_sub("stk"),
+        "prvni_registrace": has_sub("prvni") and has_sub("registr"),
+    }
+
+
+def log_mdcr_payload_shape_summary(*, vin_masked: str, http_status: int, data: Optional[Dict[str, Any]]) -> None:
+    """
+    Bezpečný vývojářský profil odpovědi MDČR — bez API klíče, bez celého těla, bez VIN celého.
+    Zapnutí: MDCR_TECH_OVERVIEW_SHAPE_LOG=1
+    """
+    if not _should_log_mdcr_shape():
+        return
+    if data is None:
+        logger.info("[MDČR][shape] vin=%s http=%s keys_top=[] empty=true", vin_masked, http_status)
+        return
+    top_keys = sorted(list(data.keys()))
+    nested = _nested_key_paths_depth(data, max_depth=3)[:400]
+    flags = _mdcr_shape_flag_presence(data)
+    logger.info(
+        "[MDČR][shape] vin=%s http=%s top_n=%s nested_paths_sample_n=%s flags=%s top_keys=%s",
+        vin_masked,
+        http_status,
+        len(top_keys),
+        len(nested),
+        flags,
+        top_keys[:80],
+    )
+    logger.info("[MDČR][shape] nested_paths_sample=%s", nested[:120])
 
 
 def parse_date_like(date_value) -> Optional[str]:
@@ -96,7 +213,6 @@ def parse_date_like(date_value) -> Optional[str]:
         return str(date_value) if date_value else None
 
 # Načíst config proměnné - podporujeme více variant názvů pro zpětnou kompatibilitu
-import os
 # DŮLEŽITÉ: Podporujeme oba názvy (nové i legacy) pro zpětnou kompatibilitu
 # Preferujeme nové názvy, ale fallback na staré pokud nové nejsou nastavené
 try:
@@ -194,8 +310,18 @@ async def fetch_vehicle_by_vin_from_mdcr(vin: str) -> Optional[VehicleDecodedDat
         logger.info(f"[MDČR] Data typ: {type(data)}")
         if isinstance(data, dict):
             logger.info(f"[MDČR] Data klíče ({len(data.keys())}): {list(data.keys())[:30]}")
+            log_mdcr_payload_shape_summary(
+                vin_masked=f"{normalized_vin[:8]}…",
+                http_status=int(response.status_code),
+                data=dict(data),
+            )
         else:
             logger.warning(f"[MDČR] Data není dict, ale {type(data)}")
+            log_mdcr_payload_shape_summary(
+                vin_masked=f"{normalized_vin[:8]}…",
+                http_status=int(response.status_code),
+                data=None,
+            )
         
         # Mapování API dat na VehicleDecodedData
         result = VehicleDecodedData(
@@ -206,10 +332,7 @@ async def fetch_vehicle_by_vin_from_mdcr(vin: str) -> Optional[VehicleDecodedDat
         # Helper funkce pro bezpečné získání hodnoty s fallbacky
         def get_value(*keys, default=None):
             """Zkusí najít hodnotu v data pomocí více variant klíčů"""
-            for key in keys:
-                if data.get(key) is not None:
-                    return data[key]
-            return default
+            return _find_mdcr_value(data, *keys, default=default)
         
         # Tovární značka (make/brand)
         make_val = (
@@ -235,6 +358,17 @@ async def fetch_vehicle_by_vin_from_mdcr(vin: str) -> Optional[VehicleDecodedDat
         )
         if body_type_val:
             result.body_type = str(body_type_val)
+
+        color_val = (
+            get_value(
+                "Barva", "barva", "BarvaKaroserie", "barvaKaroserie",
+                "KaroserieBarva", "karoserieBarva", "BodyColor", "bodyColor",
+                "Color", "color", "Colour", "colour",
+            )
+            or result.exterior_color
+        )
+        if color_val:
+            result.exterior_color = str(color_val)
         
         # Rok výroby - zkusit více zdrojů
         year_val = None
@@ -577,6 +711,8 @@ async def fetch_vehicle_by_vin_from_mdcr(vin: str) -> Optional[VehicleDecodedDat
             extra_records_parts.append(f"Počet míst: {result.seats}")
         if result.body_type:
             extra_records_parts.append(f"Druh vozidla: {result.body_type}")
+        if result.exterior_color:
+            extra_records_parts.append(f"Barva karoserie: {result.exterior_color}")
         if result.first_registration_date:
             extra_records_parts.append(f"Datum první registrace: {result.first_registration_date}")
         
@@ -668,10 +804,7 @@ async def fetch_vehicle_by_plate_from_mdcr(plate: str) -> Optional[VehicleDecode
         # Helper funkce pro bezpečné získání hodnoty s fallbacky
         def get_value(*keys, default=None):
             """Zkusí najít hodnotu v data pomocí více variant klíčů"""
-            for key in keys:
-                if data.get(key) is not None:
-                    return data[key]
-            return default
+            return _find_mdcr_value(data, *keys, default=default)
         
         # VIN z API
         vin_val = get_value("VIN", "vin")
@@ -703,6 +836,17 @@ async def fetch_vehicle_by_plate_from_mdcr(plate: str) -> Optional[VehicleDecode
         )
         if body_type_val:
             result.body_type = str(body_type_val)
+
+        color_val = (
+            get_value(
+                "Barva", "barva", "BarvaKaroserie", "barvaKaroserie",
+                "KaroserieBarva", "karoserieBarva", "BodyColor", "bodyColor",
+                "Color", "color", "Colour", "colour",
+            )
+            or result.exterior_color
+        )
+        if color_val:
+            result.exterior_color = str(color_val)
         
         # Rok výroby
         year_val = get_value("RokVyroby", "rokVyroby", "Rok_Vyroby", "year", "Year", "production_year", "ProductionYear")
@@ -1042,8 +1186,18 @@ async def fetch_vehicle_by_plate_from_mdcr(plate: str) -> Optional[VehicleDecode
         logger.info(f"[MDČR] Data typ: {type(data)}")
         if isinstance(data, dict):
             logger.info(f"[MDČR] Data klíče ({len(data.keys())}): {list(data.keys())[:30]}")
+            log_mdcr_payload_shape_summary(
+                vin_masked=f"{normalized_vin[:8]}…",
+                http_status=int(response.status_code),
+                data=dict(data),
+            )
         else:
             logger.warning(f"[MDČR] Data není dict, ale {type(data)}")
+            log_mdcr_payload_shape_summary(
+                vin_masked=f"{normalized_vin[:8]}…",
+                http_status=int(response.status_code),
+                data=None,
+            )
         
         # Mapování API dat na VehicleDecodedData
         result = VehicleDecodedData(
@@ -1054,10 +1208,7 @@ async def fetch_vehicle_by_plate_from_mdcr(plate: str) -> Optional[VehicleDecode
         # Helper funkce pro bezpečné získání hodnoty s fallbacky
         def get_value(*keys, default=None):
             """Zkusí najít hodnotu v data pomocí více variant klíčů"""
-            for key in keys:
-                if data.get(key) is not None:
-                    return data[key]
-            return default
+            return _find_mdcr_value(data, *keys, default=default)
         
         # Tovární značka (make/brand)
         make_val = (
@@ -1083,6 +1234,17 @@ async def fetch_vehicle_by_plate_from_mdcr(plate: str) -> Optional[VehicleDecode
         )
         if body_type_val:
             result.body_type = str(body_type_val)
+
+        color_val = (
+            get_value(
+                "Barva", "barva", "BarvaKaroserie", "barvaKaroserie",
+                "KaroserieBarva", "karoserieBarva", "BodyColor", "bodyColor",
+                "Color", "color", "Colour", "colour",
+            )
+            or result.exterior_color
+        )
+        if color_val:
+            result.exterior_color = str(color_val)
         
         # Rok výroby - zkusit více zdrojů
         year_val = None
@@ -1425,6 +1587,8 @@ async def fetch_vehicle_by_plate_from_mdcr(plate: str) -> Optional[VehicleDecode
             extra_records_parts.append(f"Počet míst: {result.seats}")
         if result.body_type:
             extra_records_parts.append(f"Druh vozidla: {result.body_type}")
+        if result.exterior_color:
+            extra_records_parts.append(f"Barva karoserie: {result.exterior_color}")
         if result.first_registration_date:
             extra_records_parts.append(f"Datum první registrace: {result.first_registration_date}")
         
@@ -1516,10 +1680,7 @@ async def fetch_vehicle_by_plate_from_mdcr(plate: str) -> Optional[VehicleDecode
         # Helper funkce pro bezpečné získání hodnoty s fallbacky
         def get_value(*keys, default=None):
             """Zkusí najít hodnotu v data pomocí více variant klíčů"""
-            for key in keys:
-                if data.get(key) is not None:
-                    return data[key]
-            return default
+            return _find_mdcr_value(data, *keys, default=default)
         
         # VIN z API
         vin_val = get_value("VIN", "vin")
@@ -1551,6 +1712,17 @@ async def fetch_vehicle_by_plate_from_mdcr(plate: str) -> Optional[VehicleDecode
         )
         if body_type_val:
             result.body_type = str(body_type_val)
+
+        color_val = (
+            get_value(
+                "Barva", "barva", "BarvaKaroserie", "barvaKaroserie",
+                "KaroserieBarva", "karoserieBarva", "BodyColor", "bodyColor",
+                "Color", "color", "Colour", "colour",
+            )
+            or result.exterior_color
+        )
+        if color_val:
+            result.exterior_color = str(color_val)
         
         # Rok výroby
         year_val = get_value("RokVyroby", "rokVyroby", "Rok_Vyroby", "year", "Year", "production_year", "ProductionYear")
@@ -1829,3 +2001,41 @@ async def fetch_vehicle_by_plate_from_mdcr(plate: str) -> Optional[VehicleDecode
         logger.error(f"[MDČR] Neočekávaná chyba při volání API podle SPZ: {e}", exc_info=True)
         return None
 
+
+def fetch_mdcr_vehicle_raw_data_sync(vin: str) -> Optional[Dict[str, Any]]:
+    """
+    Synchronní stažení surového slovníku Data z MDČR API (stejný endpoint jako async VIN fetch).
+    Používá se pro strukturovaný technický přehled — bez změny chování async dekodéru.
+    """
+    normalized_vin = vin.strip().upper().replace(" ", "").replace("-", "")
+    if not DATAOVO_API_KEY or not DATAOVO_API_BASE_URL:
+        logger.debug("[MDČR][sync] API není nakonfigurováno — přeskakuji raw fetch")
+        return None
+    url = f"{DATAOVO_API_BASE_URL}?vin={urllib.parse.quote(normalized_vin)}"
+    headers = {"api_key": DATAOVO_API_KEY, "Accept": "application/json"}
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(url, headers=headers)
+        if response.status_code != 200:
+            logger.warning("[MDČR][sync] HTTP %s pro VIN %s", response.status_code, normalized_vin[:8])
+            return None
+        api_response = response.json()
+        if api_response.get("Success") is False:
+            return None
+        status = api_response.get("Status")
+        success = api_response.get("Success")
+        if (status != 1 and success is not True) or "Data" not in api_response:
+            return None
+        data = api_response["Data"]
+        if isinstance(data, dict):
+            dd = dict(data)
+            log_mdcr_payload_shape_summary(
+                vin_masked=f"{normalized_vin[:8]}…",
+                http_status=int(response.status_code),
+                data=dd,
+            )
+            return dd
+    except Exception as exc:
+        logger.warning("[MDČR][sync] raw fetch selhal: %s", exc, exc_info=False)
+        return None
+    return None

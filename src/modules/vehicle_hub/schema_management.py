@@ -146,6 +146,10 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
             "vehicle_removal_events",
         },
         "columns": {
+            "customers": {
+                "partner_catalog_approved",
+                "partner_public_profile",
+            },
             "vehicle_qr_tokens": {
                 "token",
                 "public_mode",
@@ -185,6 +189,13 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
                 "due_at",
                 "cancelled_at",
                 "notes",
+                "extra_json",
+                "fakturyweb_code",
+                "fakturyweb_number",
+                "fakturyweb_status",
+                "fakturyweb_pdf_url",
+                "fakturyweb_exported_at",
+                "fakturyweb_last_sync_at",
             },
             "service_invoice_lines": {
                 "description",
@@ -249,8 +260,34 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
         "columns": {"reservations": {"source_platform"}},
     },
     "subscriptions": {
-        "tables": {"licenses", "license_subscriptions", "license_payment_transactions"},
-        "columns": {"license_subscriptions": {"credit_balance_halers"}},
+        "tables": {
+            "licenses",
+            "license_subscriptions",
+            "license_payment_transactions",
+            "payment_events",
+            "license_audit_log",
+        },
+        "columns": {
+            "license_subscriptions": {
+                "credit_balance_halers",
+                "provider_init_transaction_id",
+                "recurring_ready",
+                "recurring_block_reason",
+                "last_recurring_attempt_at",
+                "last_recurring_result",
+            },
+            "license_payment_transactions": {
+                "subscription_id",
+                "payment_type",
+                "parent_provider_transaction_id",
+                "parent_init_recurring_id",
+                "period_start",
+                "period_end",
+                "raw_provider_payload_hash",
+                "provider_response_code",
+                "provider_response_message",
+            },
+        },
     },
     "push": {
         "tables": {"push_subscriptions"},
@@ -264,13 +301,29 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
             "security_access_logs",
             "security_blocked_ips",
             "customer_deletion_labels",
+            "demo_access_leads",
+            "demo_access_tokens",
         },
         "columns": {
-            "customers": {"admin_ordinal"},
+            "customers": {
+                "admin_ordinal",
+                "workspace_entitlements",
+                "workspace_ui_default",
+                "account_status",
+                "email_verified_at",
+                "email_verification_token_hash",
+                "email_verification_expires_at",
+                "email_verification_sent_at",
+                "phone_e164",
+                "phone_verified_at",
+                "registration_ip",
+                "registration_user_agent",
+                "registration_risk_flags",
+            },
         },
     },
     "admin_audit": {
-        "tables": {"developer_action_audit_logs"},
+        "tables": {"developer_action_audit_logs", "admin_customer_change_events"},
     },
 }
 

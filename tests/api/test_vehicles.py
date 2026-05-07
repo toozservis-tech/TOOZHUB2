@@ -134,11 +134,10 @@ def test_update_vehicle(api_url, authenticated_headers, cleanup_test_data):
 
 
 def test_delete_vehicle(api_url, authenticated_headers):
-    """Test odebrání vozidla z profilu bez fyzického smazání historie"""
+    """Odebrání vozidla přes lifecycle (archivace); přímé DELETE je zablokované."""
     if not authenticated_headers:
         pytest.skip("No auth token available")
-    
-    # Vytvořit vozidlo
+
     vehicle_data = {
         "nickname": "Test Vehicle Delete",
         "plate": "TEST999",
@@ -147,32 +146,49 @@ def test_delete_vehicle(api_url, authenticated_headers):
         "year": 2020,
         "stk_valid_until": VALID_STK_DATE,
     }
-    
+
     create_response = requests.post(
         f"{api_url}/api/v1/vehicles",
         json=vehicle_data,
         headers=authenticated_headers,
-        timeout=5
+        timeout=5,
     )
     assert create_response.status_code == 200
     vehicle_id = create_response.json()["id"]
-    
-    # Smazat
-    response = requests.delete(
+
+    blocked = requests.delete(
         f"{api_url}/api/v1/vehicles/{vehicle_id}",
         headers=authenticated_headers,
-        timeout=5
+        timeout=5,
     )
-    
-    assert response.status_code == 200
-    payload = response.json()
-    assert "odebráno z vašeho profilu" in payload["message"].lower()
+    assert blocked.status_code == 409
 
-    # Ověřit, že už není v aktivním seznamu vozidel uživatele
+    init = requests.post(
+        f"{api_url}/api/v1/vehicles/{vehicle_id}/remove/init",
+        json={"reason_code": "ceased"},
+        headers=authenticated_headers,
+        timeout=15,
+    )
+    assert init.status_code == 200
+
+    confirm = requests.post(
+        f"{api_url}/api/v1/vehicles/{vehicle_id}/remove/confirm",
+        json={
+            "reason_code": "ceased",
+            "followup_answer": {"note": "api test zánik"},
+        },
+        headers=authenticated_headers,
+        timeout=60,
+    )
+    assert confirm.status_code == 200
+    payload = confirm.json()
+    assert payload.get("removed") is True
+    assert payload.get("history_preserved") is True
+
     list_response = requests.get(
         f"{api_url}/api/v1/vehicles",
         headers=authenticated_headers,
-        timeout=5
+        timeout=5,
     )
     assert list_response.status_code == 200
     vehicles = list_response.json()

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Float, ForeignKey, Boolean, Date, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Float, ForeignKey, Boolean, Date, Text, UniqueConstraint, JSON, Numeric
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -74,6 +74,17 @@ class Customer(Base):
     # role uživatele
     role = Column(String, default="user", nullable=False)  # user, service, admin
 
+    # Zobrazit v uživatelském adresáři servisních partnerů (schválený servis / adminem vytvořený účet).
+    partner_catalog_approved = Column(Boolean, nullable=False, default=False)
+
+    # Veřejný textový profil servisu (JSON) pro katalog partnerů — vyplňuje servis ve workspace.
+    partner_public_profile = Column(Text, nullable=True)
+
+    # Volitelné rozšíření: JSON pole ["user","service"] — které URL/API režimy jsou povoleny (mimo výchozí odvození z role).
+    workspace_entitlements = Column(Text, nullable=True)
+    # Při dvou režimech: výchozí /api/me cesta (user|service); NULL = user pokud oba.
+    workspace_ui_default = Column(String(8), nullable=True)
+
     # nastavení připomínek (JSON string)
     reminder_settings = Column(Text, nullable=True)
     
@@ -94,6 +105,18 @@ class Customer(Base):
     admin_ordinal = Column(Integer, nullable=True, index=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Ověření identity / stav účtu (antifraud registrace)
+    account_status = Column(String(40), nullable=False, default="pending_email_verification")
+    email_verified_at = Column(DateTime, nullable=True)
+    email_verification_token_hash = Column(String(128), nullable=True, index=True)
+    email_verification_expires_at = Column(DateTime, nullable=True)
+    email_verification_sent_at = Column(DateTime, nullable=True)
+    phone_e164 = Column(String(20), nullable=True)
+    phone_verified_at = Column(DateTime, nullable=True)
+    registration_ip = Column(String(128), nullable=True)
+    registration_user_agent = Column(Text, nullable=True)
+    registration_risk_flags = Column(JSON, nullable=True)
 
 
 class CustomerDeletionLabel(Base):
@@ -389,6 +412,8 @@ class Vehicle(Base):
     data_trust_state = Column(String, nullable=True, index=True)
     notes = Column(String, nullable=True)
     photo_path = Column(Text, nullable=True)  # Legacy: relativní cesta v vehicle_photos/ (migrace → vehicle_photo_assets)
+    catalog_image_id = Column(String(64), nullable=True, index=True)
+    catalog_image_url = Column(Text, nullable=True)
     primary_photo_asset_id = Column(
         Integer,
         ForeignKey("vehicle_photo_assets.id"),
@@ -405,6 +430,7 @@ class Vehicle(Base):
     latest_stk_source = Column(String, nullable=True)
     latest_stk_import_status = Column(String, nullable=True)
     tyres_info = Column(Text, nullable=True)  # Informace o pneumatikách
+    vehicle_technical_overview = Column(JSON, nullable=True)
     insurance_provider = Column(String, nullable=True)  # Pojišťovna
     insurance_valid_until = Column(Date, nullable=True)  # Datum konce pojištění
     status = Column(String(32), nullable=False, default="active", index=True)
@@ -457,6 +483,45 @@ class VehiclePhotoAsset(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     deleted_at = Column(DateTime, nullable=True, index=True)
     sort_order = Column(Integer, nullable=False, default=0)
+
+
+class VehicleCatalogImage(Base):
+    """Cache ilustračních katalogových fotek oddělená od reálných fotek vozidla."""
+
+    __tablename__ = "vehicle_catalog_images"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "image_hash",
+            name="uq_vehicle_catalog_images_provider_image_hash",
+        ),
+    )
+
+    id = Column(String(64), primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    make = Column(String, nullable=False)
+    model = Column(String, nullable=False)
+    normalized_make = Column(String, nullable=True, index=True)
+    normalized_model = Column(String, nullable=True, index=True)
+    year = Column(Integer, nullable=True, index=True)
+    year_from = Column(Integer, nullable=True)
+    year_to = Column(Integer, nullable=True)
+    body_type = Column(String, nullable=True, index=True)
+    color_bucket = Column(String, nullable=True, index=True)
+    image_url = Column(Text, nullable=False)
+    thumbnail_url = Column(Text, nullable=True)
+    source_url = Column(Text, nullable=True)
+    source_domain = Column(String, nullable=True)
+    provider = Column(String(32), nullable=False, index=True)
+    provider_payload_json = Column(Text, nullable=True)
+    image_hash = Column(String(64), nullable=True, index=True)
+    score = Column(Integer, nullable=False, default=0, index=True)
+    is_representative = Column(Boolean, nullable=False, default=True, index=True)
+    is_verified_real_vehicle = Column(Boolean, nullable=False, default=False)
+    license_note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=True, index=True)
 
 
 class GlobalAuditLog(Base):
@@ -744,6 +809,7 @@ class VehicleTachometerHistoryEntry(Base):
     inspection_type = Column(String, nullable=True)
     source = Column(String, nullable=False, default="kontrolatachometru.cz")
     status = Column(String, nullable=False, default="imported", index=True)
+    read_only = Column(Boolean, nullable=False, default=True, index=True)
     summary = Column(Text, nullable=True)
     findings_summary = Column(Text, nullable=True)
     findings_items_json = Column(Text, nullable=True)
@@ -936,6 +1002,14 @@ class ServiceInvoice(Base):
     due_at = Column(DateTime, nullable=True, index=True)
     cancelled_at = Column(DateTime, nullable=True, index=True)
     notes = Column(Text, nullable=True)
+    extra_json = Column(Text, nullable=True)
+
+    fakturyweb_code = Column(String(128), nullable=True, index=True)
+    fakturyweb_number = Column(String(64), nullable=True, index=True)
+    fakturyweb_status = Column(String(64), nullable=True)
+    fakturyweb_pdf_url = Column(Text, nullable=True)
+    fakturyweb_exported_at = Column(DateTime, nullable=True, index=True)
+    fakturyweb_last_sync_at = Column(DateTime, nullable=True, index=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -1148,6 +1222,9 @@ class LicenseSubscription(Base):
     pending_plan_change = Column(String, nullable=True)  # free/basic/premium
 
     init_recurring_id = Column(String, nullable=True, index=True)
+    provider_init_transaction_id = Column(String, nullable=True, index=True)
+    recurring_ready = Column(Boolean, nullable=False, default=False)
+    recurring_block_reason = Column(String, nullable=True)
 
     # Kreditní saldo v haléřích:
     # kladné = kredit uživatele, záporné = nedoplatek/debt.
@@ -1161,6 +1238,8 @@ class LicenseSubscription(Base):
     cancel_requested_at = Column(DateTime, nullable=True)
     last_payment_at = Column(DateTime, nullable=True)
     last_trans_id = Column(String, nullable=True)
+    last_recurring_attempt_at = Column(DateTime, nullable=True)
+    last_recurring_result = Column(String, nullable=True)
     failed_renewal_attempts = Column(Integer, nullable=False, default=0)
 
     # Dedup notifikačních odeslání
@@ -1185,23 +1264,68 @@ class LicensePaymentTransaction(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    subscription_id = Column(Integer, ForeignKey("license_subscriptions.id"), nullable=True, index=True)
 
     provider = Column(String, nullable=False, default="comgate", index=True)
     trans_id = Column(String, nullable=True, unique=True, index=True)
     ref_id = Column(String, nullable=True, index=True)
+    payment_type = Column(String, nullable=True, index=True)
+    parent_provider_transaction_id = Column(String, nullable=True, index=True)
+    parent_init_recurring_id = Column(String, nullable=True, index=True)
 
     plan = Column(String, nullable=True, index=True)
     billing_period = Column(String, nullable=True)
+    period_start = Column(DateTime, nullable=True, index=True)
+    period_end = Column(DateTime, nullable=True, index=True)
 
     amount_halers = Column(Integer, nullable=True)
     currency = Column(String, nullable=True, default="CZK")
     event_type = Column(String, nullable=False, default="unknown", index=True)
     provider_status = Column(String, nullable=True, index=True)
+    raw_provider_payload_hash = Column(String(64), nullable=True, index=True)
+    provider_response_code = Column(String(64), nullable=True)
+    provider_response_message = Column(Text, nullable=True)
 
     payload_json = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class PaymentEvent(Base):
+    """Sanitized provider events for idempotent billing audit."""
+    __tablename__ = "payment_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    payment_id = Column(Integer, ForeignKey("license_payment_transactions.id"), nullable=True, index=True)
+
+    provider = Column(String, nullable=False, default="comgate", index=True)
+    event_type = Column(String, nullable=False, index=True)
+    provider_transaction_id = Column(String, nullable=True, index=True)
+    payload_hash = Column(String(64), nullable=True, index=True)
+    sanitized_payload_json = Column(Text, nullable=True)
+    received_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    processed_at = Column(DateTime, nullable=True, index=True)
+    processing_status = Column(String, nullable=False, default="received", index=True)
+    error_message = Column(Text, nullable=True)
+
+
+class LicenseAuditLog(Base):
+    """Dedicated billing/license lifecycle audit."""
+    __tablename__ = "license_audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    subscription_id = Column(Integer, ForeignKey("license_subscriptions.id"), nullable=True, index=True)
+    action = Column(String(128), nullable=False, index=True)
+    old_status = Column(String(64), nullable=True)
+    new_status = Column(String(64), nullable=True)
+    reason = Column(Text, nullable=True)
+    actor_type = Column(String(32), nullable=False, default="system", index=True)
+    ip_address = Column(String(128), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 class EmailNotificationLog(Base):
@@ -1273,6 +1397,26 @@ class SecurityAccessLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+class AdminCustomerChangeEvent(Base):
+    """
+    Změny účtu provedené z developer adminu — přehled pro e-mailovou informaci uživatele.
+    Každý řádek = jedna logická změna; notified_at vyplní odeslání souhrnu.
+    """
+
+    __tablename__ = "admin_customer_change_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    admin_email = Column(String(255), nullable=True, index=True)
+    change_key = Column(String(128), nullable=False, index=True)
+    summary_line = Column(Text, nullable=False)
+    detail_text = Column(Text, nullable=True)
+    payload_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    notified_at = Column(DateTime, nullable=True, index=True)
+    notified_to_email = Column(String(255), nullable=True)
+
+
 class DeveloperActionAuditLog(Base):
     """
     Immutabilní audit log vývojářských/admin akcí.
@@ -1293,6 +1437,35 @@ class DeveloperActionAuditLog(Base):
 
     request_ip = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class DemoAccessLead(Base):
+    """Kontakt a audit veřejného přístupu k ukázkovému účtu (email + IP, souhlas)."""
+
+    __tablename__ = "demo_access_leads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    visitor_email = Column(String(255), nullable=False, index=True)
+    client_ip = Column(String(128), nullable=True, index=True)
+    user_agent = Column(Text, nullable=True)
+    contact_consent = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class DemoAccessToken(Base):
+    """Jednorázový odkaz do ukázky: e-mail + IP při žádosti, náhodný token (hash v DB)."""
+
+    __tablename__ = "demo_access_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    visitor_email = Column(String(255), nullable=False, index=True)
+    request_ip = Column(String(128), nullable=True, index=True)
+    user_agent = Column(Text, nullable=True)
+    contact_consent = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    consumed_at = Column(DateTime, nullable=True)
 
 
 class SecurityBlockedIp(Base):
@@ -1468,3 +1641,137 @@ class CustomerCommand(Base):
     
     # Vztahy
     vehicle = relationship("Vehicle", foreign_keys=[vehicle_id])
+
+
+class UserTutorialProgress(Base):
+    """Stav dokončení interaktivních návodů (bez vozidlových osobních údajů)."""
+
+    __tablename__ = "user_tutorial_progress"
+    __table_args__ = (
+        UniqueConstraint("customer_id", "tutorial_id", name="uq_user_tutorial_progress_customer_tutorial"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    tutorial_id = Column(String(96), nullable=False, index=True)
+    step_id = Column(String(160), nullable=True)
+    status = Column(String(32), nullable=False, index=True)  # in_progress | completed | skipped
+    last_failure_code = Column(String(80), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    customer = relationship("Customer", foreign_keys=[customer_id])
+
+
+class TutorialAuditLog(Base):
+    """Auditní záznamy návodů (metadata bez VIN/SPZ/obsahu formulářů)."""
+
+    __tablename__ = "tutorial_audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    tutorial_id = Column(String(96), nullable=False, index=True)
+    step_id = Column(String(160), nullable=True, index=True)
+    status = Column(String(48), nullable=False, index=True)
+    failure_code = Column(String(80), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    customer = relationship("Customer", foreign_keys=[customer_id])
+
+
+class ServiceFakturywebSettings(Base):
+    """Izolované nastavení FakturyWeb API pro testovací workspace integraci (servis)."""
+
+    __tablename__ = "service_fakturyweb_settings"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "service_workspace_id", name="uq_service_fakturyweb_settings_tenant_workspace"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    service_workspace_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+
+    email = Column(String(320), nullable=False)
+    encrypted_api_key = Column(Text, nullable=False)
+    api_key_mask = Column(String(64), nullable=True)
+
+    supplier_mode = Column(String(32), nullable=False, default="manual")  # saved_company | manual
+    d_id = Column(String(64), nullable=True)
+
+    default_due_days = Column(Integer, nullable=False, default=7)
+    default_payment = Column(String(32), nullable=False, default="prevod")
+    default_currency = Column(String(16), nullable=False, default="Kč")
+    default_style = Column(String(32), nullable=False, default="styl_7")
+    default_qr = Column(Integer, nullable=False, default=1)
+    test_mode_default = Column(Boolean, nullable=False, default=True)
+
+    custom_d_name = Column(String(255), nullable=True)
+    custom_d_street = Column(String(255), nullable=True)
+    custom_d_city = Column(String(255), nullable=True)
+    custom_d_zip = Column(String(32), nullable=True)
+    custom_d_state = Column(String(64), nullable=True)
+    custom_d_ico = Column(String(32), nullable=True)
+    custom_d_dic = Column(String(32), nullable=True)
+    custom_d_email = Column(String(320), nullable=True)
+    custom_d_phone = Column(String(64), nullable=True)
+    custom_d_web = Column(String(255), nullable=True)
+    custom_d_bankaccount = Column(String(128), nullable=True)
+
+    last_test_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class ServiceFakturywebInvoice(Base):
+    """Lokální záznam testovací faktury vytvořené přes FakturyWeb API (E2E test sekce)."""
+
+    __tablename__ = "service_fakturyweb_invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    service_workspace_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    created_by_user_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+
+    fakturyweb_code = Column(String(128), nullable=False, index=True)
+    fakturyweb_number = Column(String(64), nullable=True, index=True)
+    test_mode = Column(Boolean, nullable=False, default=True)
+
+    customer_name = Column(String(512), nullable=True)
+    customer_email = Column(String(320), nullable=True)
+
+    issue_date = Column(Date, nullable=True)
+    due_date = Column(Date, nullable=True)
+    amount_estimated = Column(Numeric(12, 2), nullable=True)
+
+    local_status = Column(String(32), nullable=False, default="created", index=True)
+    remote_status_raw = Column(Text, nullable=True)
+    pdf_url = Column(Text, nullable=True)
+    last_synced_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class ServiceFakturywebAuditLog(Base):
+    """Audit volání FakturyWeb workspace API (bez citlivých dat)."""
+
+    __tablename__ = "service_fakturyweb_audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+
+    action = Column(String(64), nullable=False, index=True)
+    local_invoice_id = Column(Integer, ForeignKey("service_fakturyweb_invoices.id"), nullable=True, index=True)
+
+    endpoint = Column(String(255), nullable=False)
+    request_hash = Column(String(64), nullable=False, index=True)
+    response_status = Column(String(32), nullable=True)
+    response_status_id = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

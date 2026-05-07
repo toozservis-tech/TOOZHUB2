@@ -99,6 +99,11 @@ body.service-shell-app .content.page-container {
   box-shadow: var(--service-shadow);
   padding: 22px 28px;
   margin-bottom: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
 }
 
 .service-shell-brandline,
@@ -191,6 +196,7 @@ body.service-shell-app.service-shell-theme-light .service-shell-toolbar .workspa
 .service-shell-nav {
   flex-wrap: wrap;
   gap: 8px;
+  flex: 1 1 100%;
 }
 
 .service-shell-nav-section {

@@ -3,6 +3,35 @@ import { expect, test, type Page } from '@playwright/test';
 
 const attachmentFixturePath = path.join(__dirname, 'fixtures', 'sample-service-note.txt');
 
+/**
+ * Otevře modal detailu záznamu přes window.showServiceRecordDetail (stejná data jako accordion řádek).
+ */
+async function openServiceRecordDetailModal(page: Page, descriptionSubstring?: string): Promise<void> {
+  const scope = page.locator('#vehicleDetailModal');
+  let item = descriptionSubstring
+    ? scope.locator('.service-history-item').filter({ hasText: descriptionSubstring }).first()
+    : scope.locator('.service-history-item').first();
+  if (descriptionSubstring && (await item.count()) === 0) {
+    item = scope.locator('.service-history-item').first();
+  }
+  await expect(item).toBeVisible({ timeout: 20_000 });
+  const rid = await item.getAttribute('data-record-id');
+  const vid = await item.getAttribute('data-vehicle-id');
+  if (!rid || !vid) {
+    throw new Error('openServiceRecordDetailModal: chybí data-record-id nebo data-vehicle-id');
+  }
+  await page.evaluate(
+    async ({ recordId, vehicleId }) => {
+      const w = window as unknown as {
+        showServiceRecordDetail: (r: number, v: number) => Promise<void>;
+      };
+      await w.showServiceRecordDetail(Number(recordId), Number(vehicleId));
+    },
+    { recordId: rid, vehicleId: vid },
+  );
+  await expect(page.locator('#serviceRecordDetailModal')).toBeVisible({ timeout: 15_000 });
+}
+
 function attachFatalErrorCollector(page: Page): string[] {
   const fatalMessages: string[] = [];
   const ignoredConsolePatterns = [
@@ -97,12 +126,22 @@ async function openFirstVehicleDetail(page: Page): Promise<void> {
   await expect(page.locator('#vehicleDetailModal')).toBeVisible({ timeout: 10_000 });
 }
 
+async function openVehicleServisSectionInDetailModal(page: Page): Promise<void> {
+  const modal = page.locator('#vehicleDetailModal');
+  await expect(modal).toBeVisible({ timeout: 10_000 });
+  const servisDock = modal.locator('button.vehicle-detail-dock-btn[data-vehicle-detail-tab="service"]');
+  await expect(servisDock).toBeVisible({ timeout: 10_000 });
+  await servisDock.click();
+  await expect(modal.locator('.service-history-list')).toBeVisible({ timeout: 20_000 });
+}
+
 async function ensureAtLeastOneServiceRecord(page: Page): Promise<void> {
   await openFirstVehicleDetail(page);
-  const firstServiceTile = page.locator('.service-record-tile').first();
-  const hasServiceTile = (await firstServiceTile.count()) > 0;
-  if (hasServiceTile) {
-    await expect(firstServiceTile).toBeVisible({ timeout: 15_000 });
+  await openVehicleServisSectionInDetailModal(page);
+  const firstHistoryItem = page.locator('#vehicleDetailModal .service-history-item').first();
+  const hasHistoryItem = (await firstHistoryItem.count()) > 0;
+  if (hasHistoryItem) {
+    await expect(firstHistoryItem).toBeVisible({ timeout: 15_000 });
     return;
   }
 
@@ -124,7 +163,8 @@ async function ensureAtLeastOneServiceRecord(page: Page): Promise<void> {
   await expect(page.locator('#addServiceRecordModal')).toBeHidden({ timeout: 20_000 });
 
   await openFirstVehicleDetail(page);
-  await expect(page.locator('.service-record-tile').first()).toBeVisible({ timeout: 20_000 });
+  await openVehicleServisSectionInDetailModal(page);
+  await expect(page.locator('#vehicleDetailModal .service-history-item').first()).toBeVisible({ timeout: 20_000 });
 }
 
 test.describe('Critical Authenticated Smoke', () => {
@@ -191,17 +231,14 @@ test.describe('Critical Authenticated Smoke', () => {
     await expect(page.locator('#addServiceRecordModal')).toBeHidden({ timeout: 20_000 });
 
     await openFirstVehicleDetail(page);
+    await openVehicleServisSectionInDetailModal(page);
 
     const pdfExportButton = page.locator('button.vehicle-service-btn.pdf').first();
     await expect(pdfExportButton).toBeVisible({ timeout: 10_000 });
 
-    let serviceTile = page.locator('.service-record-tile').filter({ hasText: createdDescription }).first();
-    if (!(await serviceTile.count())) {
-      serviceTile = page.locator('.service-record-tile').first();
-    }
-    await expect(serviceTile).toBeVisible({ timeout: 20_000 });
-    await serviceTile.click();
-    await expect(page.locator('#serviceRecordDetailModal')).toBeVisible({ timeout: 10_000 });
+    const historyRow = page.locator('#vehicleDetailModal .service-history-item').filter({ hasText: createdDescription }).first();
+    await expect(historyRow).toBeVisible({ timeout: 20_000 });
+    await openServiceRecordDetailModal(page, createdDescription);
 
     const attachmentButton = page.locator('.record-attachments-item').first();
     await expect(attachmentButton).toBeVisible({ timeout: 10_000 });
@@ -247,10 +284,8 @@ test.describe('Critical Authenticated Smoke', () => {
     await ensureLoggedDashboard(page);
     await ensureAtLeastOneServiceRecord(page);
 
-    const firstTile = page.locator('.service-record-tile').first();
-    await expect(firstTile).toBeVisible({ timeout: 15_000 });
-    await firstTile.click();
-    await expect(page.locator('#serviceRecordDetailModal')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#vehicleDetailModal .service-history-item').first()).toBeVisible({ timeout: 15_000 });
+    await openServiceRecordDetailModal(page);
 
     await page.locator('#serviceRecordDetailModal button:has-text("✏️ Upravit")').click();
     await expect(page.locator('#addServiceRecordModal')).toBeVisible({ timeout: 10_000 });
@@ -304,8 +339,7 @@ test.describe('Critical Authenticated Smoke', () => {
       await expect(page.locator('#addServiceRecordModal')).toBeHidden({ timeout: 10_000 });
 
       await ensureAtLeastOneServiceRecord(page);
-      await page.locator('.service-record-tile').first().click();
-      await expect(page.locator('#serviceRecordDetailModal')).toBeVisible({ timeout: 10_000 });
+      await openServiceRecordDetailModal(page);
 
       const detailModalContent = page.locator('#serviceRecordDetailModal .vehicle-modal-content');
       await expect(detailModalContent).toBeVisible({ timeout: 10_000 });

@@ -1,10 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { ensureTestUser, getBaseUrl } from './helpers';
+import { recycleCiEmailsQuiet } from './recycle-ci-emails';
 
 test.describe('License clickthrough', () => {
   test('should thoroughly click through license UI and collect API results', async ({ page }) => {
     const baseUrl = getBaseUrl();
-    const email = `e2e.license.${Date.now()}@example.com`;
+    const email = (process.env.E2E_LICENSE_EMAIL || 'e2e.license.clickthrough@example.com').toLowerCase();
+    recycleCiEmailsQuiet([email]);
     const password = 'E2eTest123!';
     const apiEvents: Array<{ method: string; status: number; url: string }> = [];
     const upgradeAlerts: string[] = [];

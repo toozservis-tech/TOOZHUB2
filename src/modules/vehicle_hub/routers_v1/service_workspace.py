@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from src.core.branding import APP_DISPLAY_NAME
 from src.core.config import DATA_DIR, FRONTEND_BASE_URL
+from src.core.datetime_cz import naive_utc_to_iso_z, prague_today
 from src.modules.email_client.service import EmailService
 from src.modules.email_client.templates import render_email_layout, render_panel
 from ..audit_log import write_global_audit_log
@@ -52,6 +53,10 @@ from ..models import (
 from ..orv_scans import apply_orv_scan_to_vehicle
 from ..ownership import ensure_vehicle_owner_assignment, get_owned_vehicle, get_owned_vehicle_rows, get_primary_vehicle_owner
 from ..schema_management import assert_module_ready
+from ..partner_public_profile import (
+    partner_public_profile_from_db,
+    partner_public_profile_to_stored_json,
+)
 from ..service_access import (
     create_or_update_vehicle_service_link,
     get_active_vehicle_service_link,
@@ -62,6 +67,7 @@ from ..service_access import (
     resolve_vehicle_for_lookup,
     vehicle_label,
 )
+from ..user_in_app_notifications import notify_owner_service_access_requested
 from ..vehicle_public_history import (
     build_public_history_page_url,
     build_vehicle_qr_signature,
@@ -70,7 +76,12 @@ from ..vehicle_public_history import (
     render_vehicle_qr_svg,
 )
 from .auth import get_current_user
-from .reminders import apply_reminder_completion_update, is_recurring_reminder
+from .reminders import (
+    apply_reminder_completion_update,
+    check_and_send_reminder_notifications,
+    is_recurring_reminder,
+    _to_naive_utc,
+)
 from .schemas import (
     ServiceAccessRequestCreateV1,
     ServiceApprovedVehicleListOutV1,
@@ -91,6 +102,26 @@ Jakákoliv změna musí projít production auditem.
 router = APIRouter(prefix="/services/workspace", tags=["service-workspace-v1"])
 
 ALLOWED_SOURCE_TYPES = {"invoice", "delivery_note", "work_order", "receipt", "manual"}
+
+
+class PartnerPublicProfileOutV1(BaseModel):
+    tagline: str = ""
+    about: str = ""
+    services_offered: list[str] = Field(default_factory=list)
+    equipment: list[str] = Field(default_factory=list)
+    opening_hours: str = ""
+    brands: list[str] = Field(default_factory=list)
+
+
+class PartnerPublicProfileUpdateV1(BaseModel):
+    tagline: str = Field("", max_length=280)
+    about: str = Field("", max_length=4000)
+    services_offered: list[str] = Field(default_factory=list, max_length=40)
+    equipment: list[str] = Field(default_factory=list, max_length=40)
+    opening_hours: str = Field("", max_length=500)
+    brands: list[str] = Field(default_factory=list, max_length=30)
+
+
 SERVICE_DOCS_DIR = DATA_DIR / "service_workspace_docs"
 SERVICE_DOCS_DIR.mkdir(parents=True, exist_ok=True)
 SERVICE_RECORD_ATTACHMENTS_DIR = DATA_DIR / "service_record_attachments"
@@ -197,8 +228,9 @@ def _normalize_email(value: str) -> str:
 
 
 def _require_service_workspace_role(current_user: Customer) -> None:
-    role = str(getattr(current_user, "role", "") or "").lower()
-    if role not in {"service", "admin", "developer_admin"}:
+    from src.modules.vehicle_hub.workspace_entitlements import customer_has_service_workspace_access
+
+    if not customer_has_service_workspace_access(current_user):
         raise HTTPException(status_code=403, detail="Servisní centrum je dostupné pouze pro servisní účty.")
 
 
@@ -2405,6 +2437,37 @@ def _build_ingestion_response(
     }
 
 
+@router.get("/partner-public-profile", response_model=PartnerPublicProfileOutV1)
+def get_partner_public_profile(
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Texty a seznamy, které servis zobrazuje majitelům vozidel v katalogu partnerů."""
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+    raw = getattr(current_user, "partner_public_profile", None)
+    return PartnerPublicProfileOutV1(**partner_public_profile_from_db(raw))
+
+
+@router.put("/partner-public-profile", response_model=PartnerPublicProfileOutV1)
+def put_partner_public_profile(
+    payload: PartnerPublicProfileUpdateV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+    try:
+        blob = partner_public_profile_to_stored_json(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    current_user.partner_public_profile = blob
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+    return PartnerPublicProfileOutV1(**partner_public_profile_from_db(current_user.partner_public_profile))
+
+
 @router.get("/customers")
 def list_service_customers(
     current_user: Customer = Depends(get_current_user),
@@ -2937,6 +3000,16 @@ def create_service_access_request(
         updated_at=datetime.utcnow(),
     )
     db.add(request_row)
+    try:
+        notify_owner_service_access_requested(
+            db,
+            owner_customer_id=int(owner_customer.id),
+            service=current_user,
+            vehicle=vehicle,
+            request_message=request_row.request_message,
+        )
+    except Exception as exc:
+        print(f"[SERVICE_WORKSPACE] In-app oznámení majiteli o žádosti o přístup selhalo: {exc}")
     db.commit()
     db.refresh(request_row)
     return {
@@ -2965,6 +3038,7 @@ def list_approved_service_vehicles(
         .filter(
             VehicleServiceLink.service_customer_id == current_user.id,
             VehicleServiceLink.status == "approved",
+            VehicleModel.status != "archived",
         )
         .order_by(VehicleServiceLink.updated_at.desc(), VehicleServiceLink.id.desc())
         .all()
@@ -4094,14 +4168,14 @@ def list_service_workspace_reminders(
                 "type": reminder.type,
                 "text": reminder.text,
                 "due_date": reminder.due_date.isoformat() if reminder.due_date else None,
-                "notify_at": reminder.notify_at.isoformat() if reminder.notify_at else None,
+                "notify_at": naive_utc_to_iso_z(reminder.notify_at),
                 "notification_method": reminder.notification_method,
                 "is_completed": bool(reminder.is_completed),
                 "is_manual": bool(reminder.is_manual),
                 "is_recurring": bool(is_recurring_reminder(reminder)),
                 "recurrence_group_id": getattr(reminder, "recurrence_group_id", None),
                 "recurrence_index": getattr(reminder, "recurrence_index", None),
-                "created_at": reminder.created_at.isoformat() if reminder.created_at else None,
+                "created_at": naive_utc_to_iso_z(reminder.created_at),
                 "service_account_id": current_user.id,
             }
         )
@@ -4136,7 +4210,7 @@ def create_service_workspace_reminder(
         type=_normalize_service_reminder_type(payload.type),
         text=str(payload.text or "").strip(),
         due_date=payload.due_date,
-        notify_at=payload.notify_at,
+        notify_at=_to_naive_utc(payload.notify_at),
         notification_method=_normalize_service_reminder_notification_method(payload.notification_method),
         last_notified_at=None,
         is_manual=True,
@@ -4147,6 +4221,19 @@ def create_service_workspace_reminder(
 
     db.commit()
     db.refresh(reminder)
+
+    try:
+        now_utc = datetime.utcnow()
+        today = prague_today()
+        should_sweep = False
+        if reminder.notify_at and now_utc >= _to_naive_utc(reminder.notify_at):
+            should_sweep = True
+        elif reminder.due_date is not None and reminder.due_date <= today:
+            should_sweep = True
+        if should_sweep:
+            check_and_send_reminder_notifications(db)
+    except Exception as sweep_exc:
+        print(f"[REMINDERS] Service workspace create reminder sweep failed (non-fatal): {sweep_exc}")
 
     return {
         "id": reminder.id,
@@ -4161,14 +4248,14 @@ def create_service_workspace_reminder(
         "type": reminder.type,
         "text": reminder.text,
         "due_date": reminder.due_date.isoformat() if reminder.due_date else None,
-        "notify_at": reminder.notify_at.isoformat() if reminder.notify_at else None,
+        "notify_at": naive_utc_to_iso_z(reminder.notify_at),
         "notification_method": reminder.notification_method,
         "is_completed": bool(reminder.is_completed),
         "is_manual": bool(reminder.is_manual),
         "is_recurring": bool(is_recurring_reminder(reminder)),
         "recurrence_group_id": getattr(reminder, "recurrence_group_id", None),
         "recurrence_index": getattr(reminder, "recurrence_index", None),
-        "created_at": reminder.created_at.isoformat() if reminder.created_at else None,
+        "created_at": naive_utc_to_iso_z(reminder.created_at),
         "service_account_id": current_user.id,
     }
 
@@ -4244,14 +4331,14 @@ def get_service_workspace_reminder_detail(
             "type": reminder.type,
             "text": reminder.text if disclosure == "full" else None,
             "due_date": reminder.due_date.isoformat() if reminder.due_date else None,
-            "notify_at": reminder.notify_at.isoformat() if reminder.notify_at else None,
+            "notify_at": naive_utc_to_iso_z(reminder.notify_at),
             "notification_method": reminder.notification_method,
             "is_completed": bool(reminder.is_completed),
             "is_manual": bool(reminder.is_manual),
             "is_recurring": bool(is_recurring_reminder(reminder)),
             "recurrence_group_id": getattr(reminder, "recurrence_group_id", None),
             "recurrence_index": getattr(reminder, "recurrence_index", None),
-            "created_at": reminder.created_at.isoformat() if reminder.created_at else None,
+            "created_at": naive_utc_to_iso_z(reminder.created_at),
             "customer_linked": linked_customer,
             "vehicle_access_approved": approved_vehicle if vehicle else None,
         }
@@ -4296,6 +4383,7 @@ def update_service_workspace_reminder(
         raise HTTPException(status_code=404, detail="Připomínka nebyla nalezena.")
 
     fields_set = set(getattr(payload, "model_fields_set", set()) or set())
+    schedule_reset = False
 
     if payload.type is not None:
         reminder.type = _normalize_service_reminder_type(payload.type)
@@ -4303,15 +4391,34 @@ def update_service_workspace_reminder(
         reminder.text = str(payload.text or "").strip()
     if "due_date" in fields_set:
         reminder.due_date = payload.due_date
+        schedule_reset = True
     if "notify_at" in fields_set:
-        reminder.notify_at = payload.notify_at
+        reminder.notify_at = _to_naive_utc(payload.notify_at)
+        schedule_reset = True
     if "notification_method" in fields_set:
         reminder.notification_method = _normalize_service_reminder_notification_method(payload.notification_method)
     if "is_completed" in fields_set and payload.is_completed is not None:
         apply_reminder_completion_update(reminder, bool(payload.is_completed))
 
+    if schedule_reset:
+        reminder.last_notified_at = None
+
     db.commit()
     db.refresh(reminder)
+
+    if schedule_reset:
+        try:
+            now_utc = datetime.utcnow()
+            today = prague_today()
+            should_sweep = False
+            if reminder.notify_at and now_utc >= _to_naive_utc(reminder.notify_at):
+                should_sweep = True
+            elif reminder.due_date is not None and reminder.due_date <= today:
+                should_sweep = True
+            if should_sweep:
+                check_and_send_reminder_notifications(db)
+        except Exception as sweep_exc:
+            print(f"[REMINDERS] Service workspace update reminder sweep failed (non-fatal): {sweep_exc}")
 
     customer = db.query(Customer).filter(Customer.id == reminder.customer_id).first()
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == reminder.vehicle_id).first() if reminder.vehicle_id else None
@@ -4331,14 +4438,14 @@ def update_service_workspace_reminder(
         "type": reminder.type,
         "text": reminder.text,
         "due_date": reminder.due_date.isoformat() if reminder.due_date else None,
-        "notify_at": reminder.notify_at.isoformat() if reminder.notify_at else None,
+        "notify_at": naive_utc_to_iso_z(reminder.notify_at),
         "notification_method": reminder.notification_method,
         "is_completed": bool(reminder.is_completed),
         "is_manual": bool(reminder.is_manual),
         "is_recurring": bool(is_recurring_reminder(reminder)),
         "recurrence_group_id": getattr(reminder, "recurrence_group_id", None),
         "recurrence_index": getattr(reminder, "recurrence_index", None),
-        "created_at": reminder.created_at.isoformat() if reminder.created_at else None,
+        "created_at": naive_utc_to_iso_z(reminder.created_at),
         "service_account_id": current_user.id,
     }
 

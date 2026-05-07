@@ -336,3 +336,22 @@ struct VehicleInspectionHistoryDocument: Identifiable, Hashable {
     let internalProxyURL: String?
 }
 
+// MARK: - Vehicle removal (archival / handover)
+
+struct VehicleRemovalTransferPayload: Codable, Hashable {
+    let token: String?
+    let qrPayload: String?
+}
+
+struct VehicleRemovalConfirmResponse: Codable, Hashable {
+    let removed: Bool?
+    let vehicleId: Int?
+    let reasonCode: String?
+    let digitalReportDocumentId: Int?
+    let digitalReportDocumentUid: String?
+    let digitalReportUrl: String?
+    let archiveBundlePath: String?
+    let transfer: VehicleRemovalTransferPayload?
+    let historyPreserved: Bool?
+}
+

@@ -101,6 +101,23 @@ def get_current_user_optional(
         return None
 
 
+def require_service_workspace():
+    """
+    Servisní intake a podobné endpointy: role service nebo explicitní entitlement / admin.
+    """
+    from src.modules.vehicle_hub.workspace_entitlements import customer_has_service_workspace_access
+
+    def checker(current_user: Customer = Depends(get_current_user)) -> Customer:
+        if not customer_has_service_workspace_access(current_user):
+            raise HTTPException(
+                status_code=403,
+                detail="Přístup zamítnut. Požadován servisní pracovní režim.",
+            )
+        return current_user
+
+    return checker
+
+
 def require_role(required_role: str):
     """
     Dependency pro kontrolu role uživatele.

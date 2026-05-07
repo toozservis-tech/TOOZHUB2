@@ -3,6 +3,7 @@ Servisní faktury (Fáze 1): draft / issued / cancelled, číslování při vyst
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Optional
 
@@ -11,8 +12,11 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from src.core import config
+
 from ..audit_log import write_global_audit_log
 from ..database import get_db
+from ..fakturyweb_client import FakturyWebClient, FakturyWebConfig, FakturyWebError
 from ..models import (
     Customer,
     ServiceCustomerLink,
@@ -194,6 +198,15 @@ def _serialize_invoice(
         "due_at": inv.due_at.isoformat() if inv.due_at else None,
         "cancelled_at": inv.cancelled_at.isoformat() if inv.cancelled_at else None,
         "notes": inv.notes,
+        "extra": _parse_invoice_extra(inv.extra_json),
+        "fakturyweb": {
+            "code": inv.fakturyweb_code,
+            "number": inv.fakturyweb_number,
+            "status": inv.fakturyweb_status,
+            "pdf_url": inv.fakturyweb_pdf_url,
+            "exported_at": inv.fakturyweb_exported_at.isoformat() if inv.fakturyweb_exported_at else None,
+            "last_sync_at": inv.fakturyweb_last_sync_at.isoformat() if inv.fakturyweb_last_sync_at else None,
+        },
         "created_at": inv.created_at.isoformat() if inv.created_at else None,
         "updated_at": inv.updated_at.isoformat() if inv.updated_at else None,
         "customer_label": customer_label,
@@ -254,6 +267,7 @@ class ServiceInvoiceCreateRequest(BaseModel):
     currency: str = Field(default="CZK", max_length=8)
     due_at: Optional[datetime] = None
     notes: Optional[str] = Field(default=None, max_length=8000)
+    extra: dict[str, Any] = Field(default_factory=dict)
     lines: list[ServiceInvoiceLineIn] = Field(default_factory=list)
 
 
@@ -263,7 +277,13 @@ class ServiceInvoiceUpdateRequest(BaseModel):
     currency: Optional[str] = Field(default=None, max_length=8)
     due_at: Optional[datetime] = None
     notes: Optional[str] = Field(default=None, max_length=8000)
+    extra: Optional[dict[str, Any]] = None
     lines: Optional[list[ServiceInvoiceLineIn]] = None
+
+
+class FakturyWebExportRequest(BaseModel):
+    force: bool = False
+    apitest: Optional[bool] = None
 
 
 def _status_label(status: str) -> str:
@@ -271,6 +291,120 @@ def _status_label(status: str) -> str:
         str(status or "").lower(),
         str(status or ""),
     )
+
+
+def _parse_invoice_extra(raw: Optional[str]) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _clean_invoice_extra(value: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    allowed_scalars = {
+        "invoice_type",
+        "payment_method",
+        "issue_date",
+        "delivery_date",
+        "variable_symbol",
+        "constant_symbol",
+        "specific_symbol",
+        "order_number",
+        "issued_by",
+        "language",
+        "style",
+        "rounding",
+        "qr",
+        "already_paid",
+        "internal_note",
+        "customer_note",
+        "supplier_name",
+        "supplier_ico",
+        "supplier_dic",
+        "supplier_street",
+        "supplier_city",
+        "supplier_zip",
+        "supplier_state",
+        "supplier_email",
+        "supplier_phone",
+        "supplier_bankaccount",
+        "supplier_bank",
+        "supplier_iban",
+        "supplier_swift",
+        "customer_name",
+        "customer_ico",
+        "customer_dic",
+        "customer_street",
+        "customer_city",
+        "customer_zip",
+        "customer_state",
+        "customer_email",
+    }
+    cleaned: dict[str, Any] = {}
+    for key in allowed_scalars:
+        if key not in value:
+            continue
+        raw = value.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, bool):
+            cleaned[key] = raw
+            continue
+        if isinstance(raw, (int, float)):
+            cleaned[key] = raw
+            continue
+        text = str(raw).strip()
+        if text:
+            cleaned[key] = text[:8000] if key in {"internal_note", "customer_note"} else text[:255]
+    tags = value.get("tags")
+    if isinstance(tags, list):
+        cleaned["tags"] = [str(item).strip()[:80] for item in tags if str(item).strip()][:20]
+    elif isinstance(tags, str):
+        cleaned["tags"] = [item.strip()[:80] for item in tags.split(",") if item.strip()][:20]
+    return cleaned
+
+
+def _invoice_extra_json(value: Optional[dict[str, Any]]) -> Optional[str]:
+    cleaned = _clean_invoice_extra(value)
+    if not cleaned:
+        return None
+    return json.dumps(cleaned, ensure_ascii=False, sort_keys=True)
+
+
+def _invoice_type_code(value: Any) -> int:
+    raw = str(value or "1").strip().lower()
+    mapping = {
+        "invoice": 1,
+        "regular": 1,
+        "faktura": 1,
+        "advance": 2,
+        "zalohova": 2,
+        "credit_note": 3,
+        "dobropis": 3,
+        "debit_note": 4,
+        "vrubopis": 4,
+        "payment_receipt": 5,
+        "receipt": 5,
+    }
+    if raw in mapping:
+        return mapping[raw]
+    try:
+        numeric = int(raw)
+    except Exception:
+        return 1
+    return numeric if numeric in {1, 2, 3, 4, 5} else 1
+
+
+def _fakturyweb_date(value: Any, fallback: Optional[datetime] = None) -> Optional[str]:
+    raw = str(value or "").strip()
+    if raw:
+        return raw[:10]
+    return _date_only(fallback)
 
 
 def _pdf_payload(
@@ -296,6 +430,7 @@ def _pdf_payload(
     if str(invoice.status) == "cancelled":
         doc_status = "Zrušený doklad"
 
+    extra = _parse_invoice_extra(invoice.extra_json)
     return {
         "id": int(invoice.id),
         "invoice_number": invoice.invoice_number,
@@ -308,12 +443,149 @@ def _pdf_payload(
         "due_at_label": invoice.due_at.strftime("%d.%m.%Y %H:%M") if invoice.due_at else "-",
         "customer_label": (customer.name or customer.email) if customer else "-",
         "vehicle_label": vehicle_label,
+        "payment_method": extra.get("payment_method") or "prevod",
+        "variable_symbol": extra.get("variable_symbol") or "",
+        "order_number": extra.get("order_number") or "",
         "currency": invoice.currency or "CZK",
         "subtotal": invoice.subtotal,
         "tax_total": invoice.tax_total,
         "total": invoice.total,
         "notes": invoice.notes,
         "lines": [_serialize_line(ln) for ln in sorted(lines, key=lambda x: (x.sort_order, x.id))],
+    }
+
+
+def _fakturyweb_config(*, api_test_override: Optional[bool] = None) -> FakturyWebConfig:
+    return FakturyWebConfig(
+        base_url=config.FAKTURYWEB_API_BASE_URL,
+        email=config.FAKTURYWEB_EMAIL,
+        api_key=config.FAKTURYWEB_API_KEY,
+        api_test=config.FAKTURYWEB_API_TEST if api_test_override is None else bool(api_test_override),
+        supplier_id=config.FAKTURYWEB_SUPPLIER_ID or None,
+    )
+
+
+def _fakturyweb_client(*, api_test_override: Optional[bool] = None) -> FakturyWebClient:
+    return FakturyWebClient(_fakturyweb_config(api_test_override=api_test_override))
+
+
+def _date_only(value: Optional[datetime]) -> Optional[str]:
+    return value.strftime("%Y-%m-%d") if value else None
+
+
+def _cz_currency(value: Optional[str]) -> str:
+    raw = str(value or "CZK").strip()
+    return "Kč" if raw.upper() == "CZK" else raw
+
+
+def _customer_street(customer: Optional[Customer]) -> str:
+    if not customer:
+        return ""
+    return " ".join(
+        part for part in [getattr(customer, "street", None), getattr(customer, "street_number", None)] if part
+    ).strip()
+
+
+def _build_fakturyweb_payload(
+    db: Session,
+    *,
+    invoice: ServiceInvoice,
+    lines: list[ServiceInvoiceLine],
+    service_customer: Customer,
+    api_test_override: Optional[bool] = None,
+) -> dict[str, Any]:
+    customer = db.query(Customer).filter(Customer.id == int(invoice.customer_id)).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Zákazník faktury nebyl nalezen.")
+
+    fw_config = _fakturyweb_config(api_test_override=api_test_override)
+    extra = _parse_invoice_extra(invoice.extra_json)
+    has_vat_lines = any(float(getattr(line, "tax_rate", 0) or 0) > 0 for line in lines)
+    supplier: dict[str, Any]
+    if fw_config.supplier_id:
+        supplier = {"d_id": fw_config.supplier_id}
+    else:
+        supplier_name = str(extra.get("supplier_name") or service_customer.name or "").strip()
+        if not supplier_name:
+            raise HTTPException(
+                status_code=422,
+                detail="Servisní účet nemá vyplněný název dodavatele a FAKTURYWEB_SUPPLIER_ID není nastaven.",
+            )
+        supplier = {
+            "d_name": supplier_name,
+            "d_street": extra.get("supplier_street") or _customer_street(service_customer),
+            "d_city": extra.get("supplier_city") or getattr(service_customer, "city", None) or "",
+            "d_zip": extra.get("supplier_zip") or getattr(service_customer, "zip", None) or "",
+            "d_state": extra.get("supplier_state") or "Česká republika",
+            "d_ico": extra.get("supplier_ico") or getattr(service_customer, "ico", None) or "",
+            "d_dic": extra.get("supplier_dic") or getattr(service_customer, "dic", None) or "",
+            "d_vatpayer": 1 if (getattr(service_customer, "dic", None) or has_vat_lines) else 0,
+            "d_viewpayer": 1,
+            "d_email": extra.get("supplier_email") or getattr(service_customer, "email", None) or "",
+            "d_phone": extra.get("supplier_phone") or getattr(service_customer, "phone", None) or "",
+            "d_bankaccount": extra.get("supplier_bankaccount") or "",
+            "d_bank": extra.get("supplier_bank") or "",
+            "d_iban": extra.get("supplier_iban") or "",
+            "d_swift": extra.get("supplier_swift") or "",
+        }
+
+    issue_date = _fakturyweb_date(extra.get("issue_date"), invoice.issued_at) or datetime.utcnow().strftime("%Y-%m-%d")
+    delivery_date = _fakturyweb_date(extra.get("delivery_date"), invoice.issued_at) or issue_date
+    due_date = _date_only(invoice.due_at)
+    invoice_number = str(invoice.invoice_number or "").strip()
+    fakturyweb_invoice: dict[str, Any] = {
+        "f_vs": str(extra.get("variable_symbol") or "".join(ch for ch in invoice_number if ch.isdigit())[:10] or invoice.id),
+        "f_date_issue": issue_date,
+        "f_date_delivery": delivery_date,
+        "f_ks": str(extra.get("constant_symbol") or ""),
+        "f_ss": str(extra.get("specific_symbol") or ""),
+        "f_issued_by": str(extra.get("issued_by") or ""),
+        "f_payment": str(extra.get("payment_method") or "prevod"),
+        "f_currency": _cz_currency(invoice.currency),
+        "f_type": _invoice_type_code(extra.get("invoice_type")),
+        "f_paid": extra.get("already_paid") or "",
+        "f_rounding": int(extra.get("rounding") or 0),
+        "f_style": str(extra.get("style") or "standard"),
+        "f_language": str(extra.get("language") or "CS"),
+        "f_qr": 1 if extra.get("qr", True) is not False else 0,
+        "f_note": extra.get("customer_note") or invoice.notes or "",
+        "f_internal_note": extra.get("internal_note") or f"TooZ Hub service_invoice_id={int(invoice.id)}",
+        "f_order": str(extra.get("order_number") or ""),
+        "f_tags": extra.get("tags") or [],
+        "f_custom": str(invoice.id)[:50],
+    }
+    if due_date:
+        fakturyweb_invoice["f_date_due"] = due_date
+    if invoice_number.isdigit():
+        fakturyweb_invoice["f_number"] = invoice_number
+
+    return {
+        "key": fw_config.api_key,
+        "email": fw_config.email,
+        "apitest": 1 if fw_config.api_test else 0,
+        "d": supplier,
+        "o": {
+            "o_name": extra.get("customer_name") or customer.name or customer.email,
+            "o_street": extra.get("customer_street") or _customer_street(customer),
+            "o_city": extra.get("customer_city") or getattr(customer, "city", None) or "",
+            "o_zip": extra.get("customer_zip") or getattr(customer, "zip", None) or "",
+            "o_state": extra.get("customer_state") or "Česká republika",
+            "o_ico": extra.get("customer_ico") or getattr(customer, "ico", None) or "",
+            "o_dic": extra.get("customer_dic") or getattr(customer, "dic", None) or "",
+            "o_email": extra.get("customer_email") or getattr(customer, "email", None) or "",
+        },
+        "f": fakturyweb_invoice,
+        "p": [
+            {
+                "p_text": line.description,
+                "p_quantity": line.quantity,
+                "p_unit": line.unit,
+                "p_price": line.unit_price,
+                "p_vat": line.tax_rate,
+                "p_custom": str(line.id)[:50],
+            }
+            for line in sorted(lines, key=lambda x: (x.sort_order, x.id))
+        ],
     }
 
 
@@ -378,6 +650,7 @@ def create_service_invoice(
         currency=str(payload.currency or "CZK").strip()[:8] or "CZK",
         due_at=payload.due_at,
         notes=(str(payload.notes).strip() if payload.notes else None),
+        extra_json=_invoice_extra_json(payload.extra),
     )
     db.add(inv)
     db.flush()
@@ -468,6 +741,8 @@ def update_service_invoice(
         inv.due_at = payload.due_at
     if "notes" in fields_set:
         inv.notes = str(payload.notes).strip() if payload.notes else None
+    if "extra" in fields_set:
+        inv.extra_json = _invoice_extra_json(payload.extra)
 
     if "lines" in fields_set and payload.lines is not None:
         db.query(ServiceInvoiceLine).filter(ServiceInvoiceLine.invoice_id == int(inv.id)).delete(
@@ -523,7 +798,15 @@ def issue_service_invoice(
 
     inv.invoice_number = _allocate_invoice_number(db, tenant_id=int(inv.tenant_id))
     inv.status = "issued"
-    inv.issued_at = datetime.utcnow()
+    extra = _parse_invoice_extra(inv.extra_json)
+    issue_date = _fakturyweb_date(extra.get("issue_date"))
+    if issue_date:
+        try:
+            inv.issued_at = datetime.fromisoformat(issue_date)
+        except Exception:
+            inv.issued_at = datetime.utcnow()
+    else:
+        inv.issued_at = datetime.utcnow()
     db.flush()
     _audit(
         db,
@@ -534,6 +817,125 @@ def issue_service_invoice(
     )
     db.commit()
     db.refresh(inv)
+    customer_label, vehicle_label = _resolve_invoice_labels(db, inv=inv)
+    return _serialize_invoice(inv, lines, customer_label=customer_label, vehicle_label=vehicle_label)
+
+
+@router.get("/fakturyweb/status")
+def get_fakturyweb_integration_status(
+    current_user: Customer = Depends(get_current_user),
+):
+    _require_service_invoice_role(current_user)
+    fw_config = _fakturyweb_config()
+    return {
+        "configured": fw_config.configured,
+        "base_url": fw_config.base_url,
+        "email": fw_config.email if fw_config.email else None,
+        "api_test": fw_config.api_test,
+        "supplier_id_configured": bool(fw_config.supplier_id),
+    }
+
+
+@router.post("/invoices/{invoice_id}/fakturyweb/export")
+def export_service_invoice_to_fakturyweb(
+    invoice_id: int,
+    payload: FakturyWebExportRequest | None = None,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_invoice_role(current_user)
+    _ensure_service_invoices_schema(db)
+
+    payload = payload or FakturyWebExportRequest()
+    inv = _get_invoice_for_service(db, current_user=current_user, invoice_id=invoice_id)
+    if str(inv.status) != "issued":
+        raise HTTPException(status_code=409, detail="Do FakturyWeb lze odeslat pouze vystavenou fakturu.")
+    if inv.fakturyweb_code and not payload.force:
+        raise HTTPException(status_code=409, detail="Faktura už je ve FakturyWeb exportovaná.")
+
+    lines = (
+        db.query(ServiceInvoiceLine)
+        .filter(ServiceInvoiceLine.invoice_id == int(inv.id))
+        .order_by(ServiceInvoiceLine.sort_order, ServiceInvoiceLine.id)
+        .all()
+    )
+    if not lines:
+        raise HTTPException(status_code=422, detail="Faktura musí obsahovat alespoň jednu položku.")
+
+    fw_payload = _build_fakturyweb_payload(
+        db,
+        invoice=inv,
+        lines=lines,
+        service_customer=current_user,
+        api_test_override=payload.apitest,
+    )
+    try:
+        result = _fakturyweb_client(api_test_override=payload.apitest).create_invoice(fw_payload)
+    except FakturyWebError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"FakturyWeb export selhal: {exc}") from exc
+
+    inv.fakturyweb_code = str(result.get("code") or "").strip() or inv.fakturyweb_code
+    inv.fakturyweb_number = str(result.get("number") or "").strip() or inv.fakturyweb_number
+    inv.fakturyweb_status = "created"
+    inv.fakturyweb_exported_at = datetime.utcnow()
+    inv.fakturyweb_last_sync_at = inv.fakturyweb_exported_at
+    db.flush()
+    _audit(
+        db,
+        invoice=inv,
+        action="invoice_fakturyweb_exported",
+        actor=current_user,
+        metadata={"fakturyweb_code": inv.fakturyweb_code, "fakturyweb_number": inv.fakturyweb_number},
+    )
+    db.commit()
+    db.refresh(inv)
+    customer_label, vehicle_label = _resolve_invoice_labels(db, inv=inv)
+    return _serialize_invoice(inv, lines, customer_label=customer_label, vehicle_label=vehicle_label)
+
+
+@router.post("/invoices/{invoice_id}/fakturyweb/sync")
+def sync_service_invoice_from_fakturyweb(
+    invoice_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_invoice_role(current_user)
+    _ensure_service_invoices_schema(db)
+
+    inv = _get_invoice_for_service(db, current_user=current_user, invoice_id=invoice_id)
+    if not inv.fakturyweb_code:
+        raise HTTPException(status_code=409, detail="Faktura zatím nemá FakturyWeb kód.")
+
+    try:
+        detail = _fakturyweb_client().invoice_status(str(inv.fakturyweb_code))
+        pdf_info = _fakturyweb_client().invoice_pdf_info(str(inv.fakturyweb_code))
+    except FakturyWebError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"FakturyWeb synchronizace selhala: {exc}") from exc
+
+    inv.fakturyweb_status = str(detail.get("invoice_paid") or detail.get("invoice_status") or "synced")
+    inv.fakturyweb_number = str(detail.get("invoice_number") or pdf_info.get("number") or inv.fakturyweb_number or "")
+    inv.fakturyweb_pdf_url = str(pdf_info.get("url") or inv.fakturyweb_pdf_url or "")
+    inv.fakturyweb_last_sync_at = datetime.utcnow()
+    db.flush()
+    _audit(
+        db,
+        invoice=inv,
+        action="invoice_fakturyweb_synced",
+        actor=current_user,
+        metadata={"fakturyweb_status": inv.fakturyweb_status, "fakturyweb_number": inv.fakturyweb_number},
+    )
+    db.commit()
+    db.refresh(inv)
+    lines = (
+        db.query(ServiceInvoiceLine)
+        .filter(ServiceInvoiceLine.invoice_id == int(inv.id))
+        .order_by(ServiceInvoiceLine.sort_order, ServiceInvoiceLine.id)
+        .all()
+    )
     customer_label, vehicle_label = _resolve_invoice_labels(db, inv=inv)
     return _serialize_invoice(inv, lines, customer_label=customer_label, vehicle_label=vehicle_label)
 

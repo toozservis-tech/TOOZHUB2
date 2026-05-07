@@ -38,7 +38,11 @@ def resolve_storage_file(photos_root: Path, storage_key: str | None) -> Path | N
     candidate = (photos_root / key).resolve()
     if not str(candidate).startswith(str(base)):
         return None
-    if not candidate.is_file():
+    try:
+        if not candidate.is_file():
+            return None
+    except OSError:
+        # NFS / špatné oprávnění: nesmí shodit API (seznam vozidel apod.)
         return None
     return candidate
 

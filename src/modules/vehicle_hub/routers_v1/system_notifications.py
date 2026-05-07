@@ -14,6 +14,9 @@ from ..database import get_db
 from ..models import Customer, SystemNotification, License
 from ..schema_management import assert_module_ready
 from .auth import get_current_user
+from src.server.maintenance_runtime_notice import build_maintenance_runtime_notification_item
+from src.server.system_notification_markup import notification_message_kind
+from src.server.runtime_settings import load_runtime_settings
 
 router = APIRouter(prefix="/system-notifications", tags=["system-notifications"])
 
@@ -68,6 +71,7 @@ def list_system_notifications(
                 "id": row.id,
                 "title": row.title,
                 "message": row.message,
+                "message_kind": notification_message_kind(row.message),
                 "severity": row.severity or "info",
                 "target_type": row.target_type,
                 "target_value": row.target_value,
@@ -75,6 +79,13 @@ def list_system_notifications(
                 "expires_at": row.expires_at.isoformat() if row.expires_at else None,
             }
         )
+
+    runtime_settings_loaded = load_runtime_settings()
+    maintenance_item = build_maintenance_runtime_notification_item(runtime_settings_loaded)
+    if maintenance_item:
+        items.insert(0, maintenance_item)
+        if len(items) > safe_limit:
+            items = items[:safe_limit]
 
     return {
         "items": items,

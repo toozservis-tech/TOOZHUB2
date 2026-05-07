@@ -653,76 +653,154 @@ def create_orv_scan_record(
     *,
     db: Session,
     current_user: Customer,
-    front_image_base64: str,
-    back_image_base64: str,
-    front_image_mime_type: str | None,
-    back_image_mime_type: str | None,
-    source: str | None,
+    front_image_base64: str | None = None,
+    back_image_base64: str | None = None,
+    front_image_mime_type: str | None = None,
+    back_image_mime_type: str | None = None,
+    single_orv_image_base64: str | None = None,
+    single_orv_image_mime_type: str | None = None,
+    source: str | None = None,
 ) -> VehicleORVScan:
     tenant_id = getattr(current_user, "tenant_id", None)
     if tenant_id is None:
         raise HTTPException(status_code=403, detail="Uživatel nemá přiřazený tenant.")
 
     overall_started = time.perf_counter()
+    single_raw = (single_orv_image_base64 or "").strip()
 
-    decode_started = time.perf_counter()
-    front_bytes = _decode_base64_image(front_image_base64)
-    back_bytes = _decode_base64_image(back_image_base64)
-    if not front_bytes or not back_bytes:
-        raise HTTPException(status_code=422, detail="Pro zpracování ORV jsou povinné obě strany dokladu.")
-    decode_duration_ms = round((time.perf_counter() - decode_started) * 1000, 1)
+    if single_raw:
+        decode_started = time.perf_counter()
+        raw_bytes = _decode_base64_image(single_raw)
+        if not raw_bytes:
+            raise HTTPException(status_code=422, detail="ORV snímek je prázdný.")
+        decode_duration_ms = round((time.perf_counter() - decode_started) * 1000, 1)
 
-    normalize_started = time.perf_counter()
-    front_bytes = _normalize_orv_image_bytes(front_bytes, side="přední")
-    back_bytes = _normalize_orv_image_bytes(back_bytes, side="zadní")
-    normalize_duration_ms = round((time.perf_counter() - normalize_started) * 1000, 1)
+        normalize_started = time.perf_counter()
+        front_bytes = _normalize_orv_image_bytes(raw_bytes, side="ORV")
+        back_bytes = front_bytes
+        normalize_duration_ms = round((time.perf_counter() - normalize_started) * 1000, 1)
 
-    scan = VehicleORVScan(
-        tenant_id=tenant_id,
-        initiated_by_customer_id=getattr(current_user, "id", None),
-        source=str(source or "ios_orv_scan").strip() or "ios_orv_scan",
-        status="processing",
-        trust_state="scanned_unverified",
-        front_captured=True,
-        back_captured=True,
-    )
-    db.add(scan)
-    db.flush()
+        mime_front = str(single_orv_image_mime_type or "image/jpeg").strip() or "image/jpeg"
+        mime_back = mime_front
 
-    scan.front_image_path = _store_scan_image(
-        tenant_id=tenant_id,
-        scan_id=scan.id,
-        side="front",
-        content=front_bytes,
-        mime_type=front_image_mime_type,
-    )
-    scan.back_image_path = _store_scan_image(
-        tenant_id=tenant_id,
-        scan_id=scan.id,
-        side="back",
-        content=back_bytes,
-        mime_type=back_image_mime_type,
-    )
-    scan.front_image_hash = _compute_sha256(front_bytes)
-    scan.back_image_hash = _compute_sha256(back_bytes)
+        scan = VehicleORVScan(
+            tenant_id=tenant_id,
+            initiated_by_customer_id=getattr(current_user, "id", None),
+            source=str(source or "ios_orv_scan").strip() or "ios_orv_scan",
+            status="processing",
+            trust_state="scanned_unverified",
+            front_captured=True,
+            back_captured=True,
+        )
+        db.add(scan)
+        db.flush()
 
-    logger.info(
-        "[ORV_PARSE] scan_id=%s tenant_id=%s decode_ms=%.1f normalize_ms=%.1f front_bytes=%s back_bytes=%s",
-        scan.id,
-        tenant_id,
-        decode_duration_ms,
-        normalize_duration_ms,
-        len(front_bytes),
-        len(back_bytes),
-    )
+        scan.front_image_path = _store_scan_image(
+            tenant_id=tenant_id,
+            scan_id=scan.id,
+            side="front",
+            content=front_bytes,
+            mime_type=mime_front,
+        )
+        scan.back_image_path = _store_scan_image(
+            tenant_id=tenant_id,
+            scan_id=scan.id,
+            side="back",
+            content=back_bytes,
+            mime_type=mime_back,
+        )
+        digest = _compute_sha256(front_bytes)
+        scan.front_image_hash = digest
+        scan.back_image_hash = digest
 
-    front_ocr_started = time.perf_counter()
-    front_text = _extract_ocr_text(front_bytes, f"{_safe_file_stem(scan.source)}_front.jpg", front_image_mime_type or "image/jpeg")
-    front_ocr_duration_ms = round((time.perf_counter() - front_ocr_started) * 1000, 1)
+        logger.info(
+            "[ORV_PARSE] single_card scan_id=%s tenant_id=%s decode_ms=%.1f normalize_ms=%.1f bytes=%s",
+            scan.id,
+            tenant_id,
+            decode_duration_ms,
+            normalize_duration_ms,
+            len(front_bytes),
+        )
 
-    back_ocr_started = time.perf_counter()
-    back_text = _extract_ocr_text(back_bytes, f"{_safe_file_stem(scan.source)}_back.jpg", back_image_mime_type or "image/jpeg")
-    back_ocr_duration_ms = round((time.perf_counter() - back_ocr_started) * 1000, 1)
+        front_ocr_started = time.perf_counter()
+        combined = _extract_ocr_text(
+            front_bytes,
+            f"{_safe_file_stem(scan.source)}_single.jpg",
+            mime_front,
+        )
+        front_ocr_duration_ms = round((time.perf_counter() - front_ocr_started) * 1000, 1)
+        back_ocr_duration_ms = 0.0
+        # Jedna sada řádků pro obě „strany“ — druhou předáme prázdnou, aby se při výpočtu VIN
+        # nezdvojovaly řádky (regex by jinak bral např. „E TMBJF73…“ místo čistého VIN).
+        front_text = combined
+        back_text = ""
+    else:
+        decode_started = time.perf_counter()
+        front_bytes = _decode_base64_image((front_image_base64 or "").strip())
+        back_bytes = _decode_base64_image((back_image_base64 or "").strip())
+        if not front_bytes or not back_bytes:
+            raise HTTPException(status_code=422, detail="Pro zpracování ORV jsou povinné obě strany dokladu.")
+        decode_duration_ms = round((time.perf_counter() - decode_started) * 1000, 1)
+
+        normalize_started = time.perf_counter()
+        front_bytes = _normalize_orv_image_bytes(front_bytes, side="přední")
+        back_bytes = _normalize_orv_image_bytes(back_bytes, side="zadní")
+        normalize_duration_ms = round((time.perf_counter() - normalize_started) * 1000, 1)
+
+        scan = VehicleORVScan(
+            tenant_id=tenant_id,
+            initiated_by_customer_id=getattr(current_user, "id", None),
+            source=str(source or "ios_orv_scan").strip() or "ios_orv_scan",
+            status="processing",
+            trust_state="scanned_unverified",
+            front_captured=True,
+            back_captured=True,
+        )
+        db.add(scan)
+        db.flush()
+
+        scan.front_image_path = _store_scan_image(
+            tenant_id=tenant_id,
+            scan_id=scan.id,
+            side="front",
+            content=front_bytes,
+            mime_type=front_image_mime_type,
+        )
+        scan.back_image_path = _store_scan_image(
+            tenant_id=tenant_id,
+            scan_id=scan.id,
+            side="back",
+            content=back_bytes,
+            mime_type=back_image_mime_type,
+        )
+        scan.front_image_hash = _compute_sha256(front_bytes)
+        scan.back_image_hash = _compute_sha256(back_bytes)
+
+        logger.info(
+            "[ORV_PARSE] scan_id=%s tenant_id=%s decode_ms=%.1f normalize_ms=%.1f front_bytes=%s back_bytes=%s",
+            scan.id,
+            tenant_id,
+            decode_duration_ms,
+            normalize_duration_ms,
+            len(front_bytes),
+            len(back_bytes),
+        )
+
+        front_ocr_started = time.perf_counter()
+        front_text = _extract_ocr_text(
+            front_bytes,
+            f"{_safe_file_stem(scan.source)}_front.jpg",
+            front_image_mime_type or "image/jpeg",
+        )
+        front_ocr_duration_ms = round((time.perf_counter() - front_ocr_started) * 1000, 1)
+
+        back_ocr_started = time.perf_counter()
+        back_text = _extract_ocr_text(
+            back_bytes,
+            f"{_safe_file_stem(scan.source)}_back.jpg",
+            back_image_mime_type or "image/jpeg",
+        )
+        back_ocr_duration_ms = round((time.perf_counter() - back_ocr_started) * 1000, 1)
 
     parse_started = time.perf_counter()
     parsed = parse_orv_payload(front_text, back_text)

@@ -6,24 +6,34 @@ import json
 import math
 import time
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest, urlopen
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
-from src.core.branding import APP_SERVER_PRODUCT_TOKEN
-from src.core.rbac import is_admin
+from src.core.branding import APP_DISPLAY_NAME, APP_SERVER_PRODUCT_TOKEN
+from src.core.rbac import ROLE_SERVICE, is_admin, normalize_role
 from ..database import get_db
-from ..models import Customer, ServiceAccessRequest, ServiceCustomerLink, ServiceVehicleAccess, Vehicle, VehicleServiceLink
-from ..ownership import get_owned_vehicle, get_owned_vehicle_ids
+from ..models import (
+    Customer,
+    ServiceAccessRequest,
+    ServiceCustomerLink,
+    ServiceVehicleAccess,
+    Vehicle,
+    VehicleServiceLink,
+)
+from ..ownership import get_customer_by_email, get_owned_vehicle, get_owned_vehicle_ids
+from ..partner_public_profile import partner_public_profile_from_db
 from ..schema_management import assert_module_ready
 from ..service_access import create_or_update_vehicle_service_link, revoke_vehicle_service_link, vehicle_label
+from ..user_in_app_notifications import notify_service_access_decided
 from .auth import get_current_user
 from .schemas import (
+    ConnectServiceByEmailRequestV1,
     ServiceAccessRequestCreateV1,
     ServiceAccessRequestDecisionV1,
     ServiceAccessRequestListOutV1,
@@ -42,6 +52,7 @@ _SERVICE_GEOLOOKUP_URL = (
     "https://nominatim.openstreetmap.org/search?format=jsonv2&accept-language=cs&limit=1&q={query}"
 )
 _SERVICE_GEOLOOKUP_TIMEOUT_SEC = 1.8
+_DEFAULT_OWNER_DISCOVERY_RADIUS_KM = 50.0
 _SERVICE_GEOLOOKUP_MAX_NEW_LOOKUPS_PER_REQUEST = 25
 
 
@@ -244,6 +255,99 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return round(r * c, 1)
 
 
+def _partner_ico_key(ico: Optional[str]) -> Optional[str]:
+    digits = "".join(ch for ch in str(ico or "") if ch.isdigit())
+    return digits or None
+
+
+def _partner_phone_key(phone: Optional[str]) -> Optional[str]:
+    """Číslo bez formátování (CZ: odstranění +420 / úvodní 0)."""
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if not digits:
+        return None
+    if digits.startswith("420") and len(digits) >= 11:
+        digits = digits[3:]
+    if digits.startswith("0") and len(digits) >= 10:
+        digits = digits[1:]
+    if len(digits) >= 8:
+        return digits
+    return None
+
+
+def _partner_cluster_union(services: List[Customer]) -> dict[int, int]:
+    """Sloučí id do clusterů podle shodného IČO nebo telefonu (častý duplicitní pár v DB)."""
+    ids = [int(s.id) for s in services]
+    parent = {i: i for i in ids}
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    key_members: dict[str, list[int]] = {}
+    for svc in services:
+        sid = int(svc.id)
+        keys: list[str] = []
+        ik = _partner_ico_key(svc.ico)
+        if ik:
+            keys.append(f"ico:{ik}")
+        pk = _partner_phone_key(svc.phone)
+        if pk:
+            keys.append(f"ph:{pk}")
+        if not keys:
+            keys.append(f"id:{sid}")
+        for k in keys:
+            key_members.setdefault(k, []).append(sid)
+
+    for members in key_members.values():
+        if len(members) < 2:
+            continue
+        head = members[0]
+        for other in members[1:]:
+            union(head, other)
+
+    return {i: find(i) for i in ids}
+
+
+def _dedupe_discovery_services_for_owner(
+    services: List[Customer],
+) -> tuple[List[Customer], dict[int, set[int]]]:
+    """
+    Sloučí duplicitní servisní účty stejné firmy (stejné IČO a/nebo telefon).
+
+    Kanonický záznam pro zobrazení = řádek s **nejnižším customers.id** (typicky první
+    oficiální servis z adminu, např. firemní e-mail). Propojení a počty vozidel se agregují
+    napříč celou skupinou při sestavování odpovědi.
+    """
+    if not services:
+        return [], {}
+    if len(services) == 1:
+        sid = int(services[0].id)
+        return services, {sid: {sid}}
+
+    id_to_customer = {int(s.id): s for s in services}
+    roots = _partner_cluster_union(services)
+    clusters: dict[int, list[Customer]] = {}
+    for sid, root in roots.items():
+        clusters.setdefault(root, []).append(id_to_customer[sid])
+
+    out: list[Customer] = []
+    cluster_members: dict[int, set[int]] = {}
+    for group in clusters.values():
+        member_ids = {int(c.id) for c in group}
+        primary = min(group, key=lambda c: int(c.id))
+        pid = int(primary.id)
+        out.append(primary)
+        cluster_members[pid] = member_ids
+    return out, cluster_members
+
+
 @router.get("")
 def get_services(
     current_user: Customer = Depends(get_current_user),
@@ -287,6 +391,12 @@ def get_services_catalog(
     request: Request,
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
+    radius_km: float = Query(
+        _DEFAULT_OWNER_DISCOVERY_RADIUS_KM,
+        ge=0,
+        le=500,
+        description="Majitel vozidla: max. vzdálenost v km (0 = bez filtru).",
+    ),
 ):
     """
     Canonical katalog servisů pro uživatelské UI.
@@ -294,7 +404,12 @@ def get_services_catalog(
     Stejně jako discovery vychází z backendové pravdy `customers.role=service`
     a vrací konzistentní výsledek pro všechny běžné uživatele.
     """
-    return get_services_discovery(request=request, current_user=current_user, db=db)
+    return get_services_discovery(
+        request=request,
+        current_user=current_user,
+        db=db,
+        radius_km=radius_km,
+    )
 
 
 @router.get("/my-contacts")
@@ -457,6 +572,16 @@ def resolve_service_access_request(
             request_row.status = "rejected"
 
         request_row.updated_at = datetime.utcnow()
+        try:
+            notify_service_access_decided(
+                db,
+                service_customer_id=int(service.id),
+                vehicle=vehicle,
+                approved=(decision == "approved"),
+                owner=current_user,
+            )
+        except Exception as exc:
+            print(f"[SERVICES] In-app oznámení servisu o rozhodnutí žádosti selhalo: {exc}")
         db.commit()
         return {
             "resolved": True,
@@ -789,25 +914,127 @@ def disconnect_my_service_contact(
         raise HTTPException(status_code=500, detail=f"Nepodařilo se servis odpojit: {exc}") from exc
 
 
+def _notify_service_link_from_customer_email(*, service: Customer, customer: Customer) -> bool:
+    """Informuje servis e-mailem, že si jej zákazník přidal jako kontakt."""
+    try:
+        from src.modules.email_client.service import EmailService
+
+        svc = EmailService()
+        if not svc.is_configured():
+            return False
+        to_email = str(service.email or "").strip().lower()
+        if not to_email or "@" not in to_email:
+            return False
+        cust_label = (customer.name or "").strip() or customer.email or "Zákazník"
+        subject = f"[{APP_DISPLAY_NAME}] Propojení účtu — žádost od zákazníka"
+        body = (
+            f"Dobrý den,\n\n"
+            f"zákazník {cust_label} ({customer.email}) v aplikaci {APP_DISPLAY_NAME} "
+            f"potvrdil propojení s vaším servisním účtem.\n\n"
+            f"Přihlaste se do servisního přehledu a zkontrolujte přístup klientů.\n\n"
+            f"Tým {APP_DISPLAY_NAME}\n"
+        )
+        return bool(svc.send_simple_email(to_email, subject, body, html_body=None))
+    except Exception as exc:
+        print(f"[SERVICES] Oznámení servisu o propojení selhalo: {exc}")
+        return False
+
+
+@router.post("/connect-by-email")
+def connect_my_account_to_service_by_email(
+    payload: ConnectServiceByEmailRequestV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Majitel vozidla zadá e-mail registrovaného servisu — účty se propojí (stejně jako při vzájemné pozvánce).
+    """
+    _ensure_services_schema(db)
+    actor_role = normalize_role(current_user.role)
+    if actor_role == ROLE_SERVICE:
+        raise HTTPException(status_code=403, detail="Tuto akci lze použít jen z uživatelského účtu.")
+
+    tenant_id = getattr(current_user, "tenant_id", None)
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Uživatel nemá přiřazený tenant")
+
+    target_email = _normalize_email(payload.service_email)
+    if not target_email:
+        raise HTTPException(status_code=422, detail="Zadejte platný e-mail servisu.")
+
+    if target_email == _normalize_email(current_user.email):
+        raise HTTPException(status_code=400, detail="Nelze propojit účet sám se sebou.")
+
+    service = get_customer_by_email(db, target_email)
+    if not service or normalize_role(service.role) != ROLE_SERVICE:
+        raise HTTPException(
+            status_code=404,
+            detail="Servis s tímto e-mailem není v aplikaci jako aktivní servisní účet evidován.",
+        )
+
+    if not service.password_hash:
+        raise HTTPException(status_code=400, detail="Tento servisní účet ještě není aktivní.")
+
+    if not bool(getattr(service, "partner_catalog_approved", False)):
+        raise HTTPException(
+            status_code=400,
+            detail="Tento servis není ve veřejném adresáři schválených partnerů. Použijte údaje od ověřeného servisu nebo kontaktujte podporu.",
+        )
+
+    try:
+        _upsert_service_customer_link(
+            db,
+            service_customer_id=int(service.id),
+            service_tenant_id=service.tenant_id,
+            target_customer=current_user,
+            note="Propojeno podle e-mailu servisu z adresáře partnerů",
+        )
+        db.commit()
+        email_sent = _notify_service_link_from_customer_email(service=service, customer=current_user)
+        return {
+            "linked": True,
+            "service_id": int(service.id),
+            "service_name": service.name or service.email,
+            "email_sent": email_sent,
+            "message": (
+                "Účty jsou propojeny. Servis byl informován e-mailem."
+                if email_sent
+                else "Účty jsou propojeny. Oznámení e-mailem se nepodařilo odeslat (zkontrolujte SMTP)."
+            ),
+        }
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Nepodařilo se propojit účty: {exc}") from exc
+
+
 @router.get("/discovery")
 def get_services_discovery(
     request: Request,
     current_user: Customer = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    radius_km: float = Query(
+        _DEFAULT_OWNER_DISCOVERY_RADIUS_KM,
+        ge=0,
+        le=500,
+        description="Majitel vozidla: max. vzdálenost v km od polohy (hlavičky / profil). 0 = bez omezení.",
+    ),
 ):
     """
     Katalog aktivních servisů pro uživatele.
 
-    - Vrací servisní účty (role=service/developer_admin).
-    - Pokud má uživatel aktivní propojení se servisem, je tento servis zahrnut i mimo standardní filtr.
-    - Pokud je dostupná poloha uživatele (X-Geo-Lat/Lon), seřadí podle vzdálenosti.
-    - Fallback: pokud uživatel nemá GPS hlavičky, zkusí se geokódovat jeho profilová adresa.
+    - Vrací servisní účty (role=service, případně developer_admin u interních výpisů).
+    - Majitelé vozidel: jen účty schválené do veřejného adresáře (`partner_catalog_approved`)
+      a účty s aktivním propojením; nikoli developer_admin ani neověřené servisy.
+    - Majitel vozidla: pokud je známá reference poloha, výchozí filtr **do radius_km km**
+      (výchozí 50 km); **propojené** servisy jsou vždy zahrnuty i mimo kruh.
+    - Interně: servisní účty mají výpis omezený na vlastní tenant; propojení nadále přidá výjimku.
+    - Geolokační řazení jako dříve (hlavičky / profilová adresa).
     """
     _ensure_services_schema(db)
 
     linked_service_ids: set[int] = set()
-    role_key = str(getattr(current_user, "role", "") or "").strip().lower()
-    if role_key not in {"service"}:
+    actor_role = normalize_role(current_user.role)
+    if actor_role != ROLE_SERVICE:
         linked_rows = (
             db.query(ServiceCustomerLink.service_customer_id)
             .filter(
@@ -818,27 +1045,41 @@ def get_services_discovery(
         )
         linked_service_ids = {int(service_id) for (service_id,) in linked_rows if service_id is not None}
 
-    query = db.query(Customer).filter(Customer.role.in_(["service", "developer_admin"]))
+    if actor_role == ROLE_SERVICE or _is_admin_role(current_user.role):
+        query = db.query(Customer).filter(Customer.role.in_(["service", "developer_admin"]))
+    else:
+        owner_parts = [
+            and_(
+                Customer.role == "service",
+                Customer.partner_catalog_approved.is_(True),
+            )
+        ]
+        if linked_service_ids:
+            owner_parts.append(Customer.id.in_(list(linked_service_ids)))
+        query = db.query(Customer).filter(or_(*owner_parts))
 
     if not _is_admin_role(current_user.role):
         tenant_id = getattr(current_user, "tenant_id", None)
         if not tenant_id:
             raise HTTPException(status_code=403, detail="Uživatel nemá přiřazený tenant")
-        if linked_service_ids:
-            query = query.filter(or_(Customer.tenant_id == tenant_id, Customer.id.in_(list(linked_service_ids))))
-        else:
-            query = query.filter(Customer.tenant_id == tenant_id)
+        if actor_role == ROLE_SERVICE:
+            if linked_service_ids:
+                query = query.filter(or_(Customer.tenant_id == tenant_id, Customer.id.in_(list(linked_service_ids))))
+            else:
+                query = query.filter(Customer.tenant_id == tenant_id)
 
     if linked_service_ids:
         query = query.filter(or_(Customer.password_hash.isnot(None), Customer.id.in_(list(linked_service_ids))))
     else:
         query = query.filter(Customer.password_hash.isnot(None))
 
+    query = query.filter(Customer.is_deleted.is_(False))
+
     services = query.order_by(Customer.name.asc(), Customer.email.asc()).all()
 
-    active_access_counts: dict[int, int] = {}
-    if role_key not in {"service"} and services:
-        rows = (
+    vehicle_access_counts: dict[int, int] = {}
+    if actor_role != ROLE_SERVICE and services:
+        access_rows = (
             db.query(
                 ServiceVehicleAccess.service_customer_id,
                 func.count(ServiceVehicleAccess.id),
@@ -850,11 +1091,38 @@ def get_services_discovery(
             .group_by(ServiceVehicleAccess.service_customer_id)
             .all()
         )
-        active_access_counts = {
+        vehicle_access_counts = {
             int(service_id): int(count or 0)
-            for service_id, count in rows
+            for service_id, count in access_rows
             if service_id is not None
         }
+        vsl_rows = (
+            db.query(
+                VehicleServiceLink.service_customer_id,
+                func.count(VehicleServiceLink.id),
+            )
+            .filter(
+                VehicleServiceLink.owner_customer_id == current_user.id,
+                VehicleServiceLink.status == "approved",
+            )
+            .group_by(VehicleServiceLink.service_customer_id)
+            .all()
+        )
+        for service_id, cnt in vsl_rows:
+            if service_id is None:
+                continue
+            sid = int(service_id)
+            v = int(cnt or 0)
+            prev = int(vehicle_access_counts.get(sid, 0))
+            vehicle_access_counts[sid] = max(prev, v)
+
+    partner_clusters: dict[int, set[int]] = {
+        int(s.id): {int(s.id)} for s in services
+    }
+    if actor_role != ROLE_SERVICE and not _is_admin_role(current_user.role):
+        services, partner_clusters = _dedupe_discovery_services_for_owner(services)
+
+    active_access_counts = vehicle_access_counts
 
     reference_coords = _extract_client_coordinates(request)
     reference_source = "browser"
@@ -891,6 +1159,11 @@ def get_services_discovery(
         if ref_lat is not None and ref_lon is not None and lat is not None and lon is not None:
             distance_km = _haversine_km(ref_lat, ref_lon, lat, lon)
 
+        sid = int(service.id)
+        members = partner_clusters.get(sid, {sid})
+        row_linked = any(mid in linked_service_ids for mid in members)
+        row_vehicles = sum(int(vehicle_access_counts.get(mid, 0)) for mid in members)
+
         rows.append(
             {
                 "id": service.id,
@@ -905,13 +1178,33 @@ def get_services_discovery(
                 "distance_km": distance_km,
                 "has_precise_distance": distance_km is not None,
                 "coordinates": {"lat": lat, "lon": lon} if lat is not None and lon is not None else None,
-                "is_linked": service.id in linked_service_ids,
-                "shared_vehicles_count": int(active_access_counts.get(int(service.id), 0)),
+                "is_linked": row_linked,
+                "shared_vehicles_count": row_vehicles,
                 "created_at": service.created_at.isoformat() if service.created_at else None,
+                "partner_public_profile": partner_public_profile_from_db(
+                    getattr(service, "partner_public_profile", None)
+                ),
             }
         )
 
     rows.sort(key=lambda item: (item["distance_km"] is None, item["distance_km"] or 10**9, (item.get("name") or "").lower()))
+
+    apply_radius = (
+        actor_role != ROLE_SERVICE
+        and not _is_admin_role(current_user.role)
+        and ref_lat is not None
+        and ref_lon is not None
+        and float(radius_km) > 0
+    )
+    eff_radius = float(radius_km) if apply_radius else None
+    if apply_radius:
+        rmax = float(radius_km)
+        rows = [
+            r
+            for r in rows
+            if bool(r.get("is_linked"))
+            or (r.get("distance_km") is not None and float(r["distance_km"]) <= rmax)
+        ]
 
     return {
         "meta": {
@@ -920,6 +1213,8 @@ def get_services_discovery(
             "reference_source": reference_source if reference_coords else "none",
             "reference_coordinates": {"lat": ref_lat, "lon": ref_lon} if reference_coords else None,
             "distance_sorted": bool(reference_coords),
+            "discovery_radius_km": eff_radius,
+            "within_radius_filter": bool(apply_radius),
         },
         "services": rows,
     }

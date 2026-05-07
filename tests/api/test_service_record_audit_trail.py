@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import json
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
@@ -125,7 +126,7 @@ def test_service_record_update_preserves_previous_state(
     assert full_rows[0][3] == "update"
 
 
-def test_service_record_delete_is_soft_delete_and_audited(
+def test_service_record_delete_via_public_api_forbidden(
     db_context,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,36 +143,19 @@ def test_service_record_delete_is_soft_delete_and_audited(
 
     monkeypatch.setattr(service_records_router, "can_access_vehicle", lambda *_: True)
 
-    payload = service_records_router.delete_service_record(
-        vehicle_id=vehicle.id,
-        record_id=record.id,
-        current_user=current_user,
-        db=db,
-    )
+    with pytest.raises(HTTPException) as exc_info:
+        service_records_router.delete_service_record(
+            vehicle_id=vehicle.id,
+            record_id=record.id,
+            current_user=current_user,
+            db=db,
+        )
 
-    assert payload["message"] == "Servisní záznam byl archivován"
+    assert exc_info.value.status_code == 403
+    assert "nelze odstranit" in (exc_info.value.detail or "").lower()
+
     db.refresh(record)
-    assert record.is_deleted is True
-    assert record.deleted_at is not None
-    assert record.deleted_by_user_id == current_user.id
-
-    rows = db.execute(
-        text(
-            """
-            SELECT action, previous_snapshot_json, new_snapshot_json
-            FROM service_record_audit_logs
-            WHERE service_record_id = :record_id
-            ORDER BY id DESC
-            """
-        ),
-        {"record_id": record.id},
-    ).fetchall()
-    assert rows
-    assert rows[0][0] == "delete"
-    previous_snapshot = json.loads(rows[0][1])
-    new_snapshot = json.loads(rows[0][2])
-    assert previous_snapshot["is_deleted"] is False
-    assert new_snapshot["is_deleted"] is True
+    assert record.is_deleted is False
 
 
 def test_service_record_approved_or_locked_cannot_be_updated(

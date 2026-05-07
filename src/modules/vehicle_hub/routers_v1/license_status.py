@@ -4,6 +4,7 @@ License Status API - endpoint pro získání informací o licenci
 from __future__ import annotations
 
 import calendar
+import hashlib
 import json
 import logging
 import os
@@ -24,8 +25,11 @@ from ..audit_log import write_global_audit_log
 from ..database import get_db
 from ..models import (
     Customer,
+    License,
+    LicenseAuditLog,
     LicensePaymentTransaction,
     LicenseSubscription,
+    PaymentEvent,
 )
 from ..schema_management import assert_module_ready
 from src.server.runtime_settings import (
@@ -51,7 +55,7 @@ _COMGATE_REF_PREFIX = "L"
 _COMGATE_REF_TENANT_WIDTH = 6
 _COMGATE_REF_NONCE_WIDTH = 8
 _COMGATE_REF_MAX_TENANT_ID = (36 ** _COMGATE_REF_TENANT_WIDTH) - 1
-_SUBSCRIPTION_PLAN_SET = {"free", "basic", "premium"}
+_SUBSCRIPTION_PLAN_SET = {"free", "basic", "premium", "lifetime"}
 _SUBSCRIPTION_PERIOD_SET = {"monthly", "yearly"}
 _SUBSCRIPTION_STATUS_SET = {
     "active",
@@ -71,6 +75,35 @@ _SUBSCRIPTION_REQUIRED_COLUMNS = {
     },
 }
 _SCHEMA_READY = False
+_COMGATE_ALLOWED_PAYLOAD_KEYS = {
+    "merchant",
+    "test",
+    "price",
+    "curr",
+    "label",
+    "refId",
+    "refid",
+    "transId",
+    "transid",
+    "status",
+    "method",
+    "account",
+    "fee",
+    "paymentErrorReason",
+    "paymenterrorreason",
+    "code",
+    "message",
+    "_non_recurring_fallback",
+    "_test_fallback_non_recurring",
+}
+_COMGATE_RECURRING_ID_KEYS = (
+    "initRecurringId",
+    "initrecurringid",
+    "init_recurring_id",
+    "recurringId",
+    "recurringid",
+    "recurring_id",
+)
 
 
 class LicenseStatusResponse(BaseModel):
@@ -94,6 +127,7 @@ class LicenseStatusResponse(BaseModel):
     costs_tracking_enabled: bool = False
     statistics_enabled: bool = False
     sharing_with_service_enabled: bool = False
+    is_lifetime: bool = False
     subscription: Optional["SubscriptionStatusResponse"] = None
 
 
@@ -104,6 +138,9 @@ class LicenseUpgradeRequest(BaseModel):
 class SubscriptionStatusResponse(BaseModel):
     status: str
     auto_renew_enabled: bool
+    recurring_ready: bool = False
+    recurring_state_label: Optional[str] = None
+    recurring_block_reason: Optional[str] = None
     billing_period: Optional[str] = None
     current_period_end: Optional[str] = None
     next_charge_at: Optional[str] = None
@@ -507,6 +544,45 @@ def _safe_int(value: object) -> Optional[int]:
         return None
 
 
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _payload_hash(payload: Optional[Dict[str, object]]) -> Optional[str]:
+    if payload is None:
+        return None
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def sanitize_comgate_payload(payload: Optional[Dict[str, object]]) -> Dict[str, object]:
+    if not isinstance(payload, dict):
+        return {}
+
+    sanitized: Dict[str, object] = {}
+    for key in _COMGATE_ALLOWED_PAYLOAD_KEYS:
+        if key in payload and payload.get(key) not in (None, ""):
+            sanitized[key] = payload.get(key)
+
+    code = payload.get("provider_response_code", payload.get("code"))
+    message = payload.get("provider_response_message", payload.get("message"))
+    if code not in (None, ""):
+        sanitized["provider_response_code"] = code
+    if message not in (None, ""):
+        sanitized["provider_response_message"] = message
+
+    # Neztrácíme recurring diagnostiku, ale neukládáme citlivý payload.
+    recurring_id = None
+    for key in _COMGATE_RECURRING_ID_KEYS:
+        candidate = str(payload.get(key) or "").strip()
+        if candidate:
+            recurring_id = candidate
+            break
+    if recurring_id:
+        sanitized["initRecurringId"] = recurring_id
+
+    return sanitized
+
+
 def _utcnow() -> datetime:
     return datetime.utcnow()
 
@@ -759,11 +835,17 @@ def _load_subscription_runtime_config() -> Dict[str, object]:
             get_runtime_setting_text(
                 "comgate",
                 "recurring_url",
-                os.getenv("COMGATE_RECURRING_URL", "https://payments.comgate.cz/v2.0/recurring")
-                or "https://payments.comgate.cz/v2.0/recurring",
+                os.getenv("COMGATE_RECURRING_URL", "https://payments.comgate.cz/v1.0/recurring")
+                or "https://payments.comgate.cz/v1.0/recurring",
                 settings=runtime_settings,
             )
-            or "https://payments.comgate.cz/v2.0/recurring"
+            or "https://payments.comgate.cz/v1.0/recurring"
+        ),
+        "recurring_enabled": get_runtime_setting_bool(
+            "comgate",
+            "recurring_enabled",
+            _env_flag("COMGATE_RECURRING_ENABLED", True),
+            settings=runtime_settings,
         ),
         "grace_days": max(
             1,
@@ -813,6 +895,28 @@ def _normalize_subscription_status(value: Optional[str]) -> str:
     return normalized
 
 
+def _detect_recurring_url_version(url: Optional[str]) -> str:
+    raw = str(url or "").strip().lower()
+    if "/v2.0/" in raw:
+        return "v2.0"
+    if "/v1.0/" in raw:
+        return "v1.0"
+    return "unknown"
+
+
+def _subscription_recurring_state_label(subscription: LicenseSubscription) -> str:
+    recurring_ready = bool(getattr(subscription, "recurring_ready", False))
+    auto_renew_enabled = bool(subscription.auto_renew_enabled)
+    init_recurring_id = str(subscription.init_recurring_id or "").strip()
+    if auto_renew_enabled and recurring_ready and init_recurring_id:
+        return "active"
+    if auto_renew_enabled and not recurring_ready:
+        return "pending_initial_card_payment"
+    if not auto_renew_enabled and recurring_ready:
+        return "inactive"
+    return "not_available"
+
+
 def _serialize_subscription(
     subscription: Optional[LicenseSubscription],
     *,
@@ -825,6 +929,9 @@ def _serialize_subscription(
             return {
                 "status": "legacy_manual",
                 "auto_renew_enabled": False,
+                "recurring_ready": False,
+                "recurring_state_label": "pending_initial_card_payment",
+                "recurring_block_reason": "missing_subscription",
                 "billing_period": None,
                 "current_period_end": None,
                 "next_charge_at": None,
@@ -839,6 +946,9 @@ def _serialize_subscription(
     return {
         "status": _normalize_subscription_status(subscription.status),
         "auto_renew_enabled": bool(subscription.auto_renew_enabled),
+        "recurring_ready": bool(getattr(subscription, "recurring_ready", False)),
+        "recurring_state_label": _subscription_recurring_state_label(subscription),
+        "recurring_block_reason": getattr(subscription, "recurring_block_reason", None),
         "billing_period": subscription.billing_period,
         "current_period_end": _to_iso(period_end),
         "next_charge_at": _to_iso(subscription.next_charge_at),
@@ -870,15 +980,109 @@ def _upsert_subscription(db: Session, tenant_id: int) -> LicenseSubscription:
     return subscription
 
 
+def _write_license_audit(
+    db: Session,
+    *,
+    tenant_id: int,
+    subscription_id: Optional[int],
+    action: str,
+    old_status: Optional[str] = None,
+    new_status: Optional[str] = None,
+    reason: Optional[str] = None,
+    actor_type: str = "system",
+    user_id: Optional[int] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> None:
+    db.add(
+        LicenseAuditLog(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            subscription_id=subscription_id,
+            action=(action or "")[:128],
+            old_status=old_status,
+            new_status=new_status,
+            reason=reason,
+            actor_type=(actor_type or "system")[:32],
+            ip_address=ip_address,
+            user_agent=user_agent,
+            created_at=_utcnow(),
+        )
+    )
+
+
+def _record_payment_event(
+    db: Session,
+    *,
+    payment_id: Optional[int],
+    provider: str,
+    event_type: str,
+    provider_transaction_id: Optional[str],
+    raw_payload: Optional[Dict[str, object]],
+    processing_status: str,
+    error_message: Optional[str] = None,
+) -> PaymentEvent:
+    sanitized_payload = sanitize_comgate_payload(raw_payload)
+    event = PaymentEvent(
+        payment_id=payment_id,
+        provider=provider,
+        event_type=event_type,
+        provider_transaction_id=provider_transaction_id,
+        payload_hash=_payload_hash(raw_payload),
+        sanitized_payload_json=_canonical_json(sanitized_payload)[:20000] if sanitized_payload else None,
+        received_at=_utcnow(),
+        processed_at=_utcnow(),
+        processing_status=processing_status,
+        error_message=error_message,
+    )
+    db.add(event)
+    db.flush()
+    return event
+
+
+def extract_init_recurring_id(
+    status_payload: Optional[Dict[str, object]],
+    callback_payload: Optional[Dict[str, object]],
+    payment_row: Optional[LicensePaymentTransaction],
+) -> Optional[str]:
+    for source in (status_payload, callback_payload):
+        if not isinstance(source, dict):
+            continue
+        for key in _COMGATE_RECURRING_ID_KEYS:
+            candidate = str(source.get(key) or "").strip()
+            if candidate:
+                return candidate
+
+    if payment_row:
+        payload_json = str(payment_row.payload_json or "").strip()
+        if payload_json:
+            try:
+                payload = json.loads(payload_json)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = None
+            if isinstance(payload, dict):
+                for key in _COMGATE_RECURRING_ID_KEYS:
+                    candidate = str(payload.get(key) or "").strip()
+                    if candidate:
+                        return candidate
+    return None
+
+
 def _record_payment_transaction(
     db: Session,
     *,
+    subscription_id: Optional[int] = None,
     tenant_id: int,
     provider: str,
     trans_id: Optional[str],
     ref_id: Optional[str],
+    payment_type: Optional[str],
+    parent_provider_transaction_id: Optional[str] = None,
+    parent_init_recurring_id: Optional[str] = None,
     plan: Optional[str],
     billing_period: Optional[str],
+    period_start: Optional[datetime] = None,
+    period_end: Optional[datetime] = None,
     amount_halers: Optional[int],
     currency: Optional[str],
     event_type: str,
@@ -900,17 +1104,30 @@ def _record_payment_transaction(
         )
         db.add(tx)
     tx.tenant_id = tenant_id
+    tx.subscription_id = subscription_id
     tx.provider = provider
     tx.ref_id = ref_id
+    tx.payment_type = payment_type
+    tx.parent_provider_transaction_id = parent_provider_transaction_id
+    tx.parent_init_recurring_id = parent_init_recurring_id
     tx.plan = plan
     tx.billing_period = billing_period
+    tx.period_start = period_start
+    tx.period_end = period_end
     tx.amount_halers = amount_halers
     tx.currency = currency
     tx.event_type = event_type
     tx.provider_status = provider_status
     if payload is not None:
-        tx.payload_json = json.dumps(payload, ensure_ascii=False)[:20000]
+        sanitized_payload = sanitize_comgate_payload(payload)
+        tx.payload_json = _canonical_json(sanitized_payload)[:20000] if sanitized_payload else None
+        tx.raw_provider_payload_hash = _payload_hash(payload)
+        tx.provider_response_code = str(payload.get("provider_response_code") or payload.get("code") or "")[:64] or None
+        tx.provider_response_message = str(
+            payload.get("provider_response_message") or payload.get("message") or ""
+        )[:2000] or None
     tx.updated_at = _utcnow()
+    db.flush()
     return tx
 
 
@@ -1022,26 +1239,29 @@ def _activate_subscription_from_paid_payment(
     init_recurring_id: Optional[str],
 ) -> LicenseSubscription:
     paid_at = _utcnow()
-    # Nejprve nastavíme feature/licenci.
     upgrade_license_plan(db, tenant_id, plan)
 
     subscription = _upsert_subscription(db, tenant_id)
+    previous_status = _normalize_subscription_status(subscription.status)
     subscription.provider = "comgate"
     subscription.status = "active"
     subscription.plan_current = plan
     subscription.billing_period = billing_period
-    subscription.auto_renew_enabled = True
+    subscription.auto_renew_enabled = bool(init_recurring_id)
     subscription.pending_plan_change = None
     subscription.credit_balance_halers = 0
-    if init_recurring_id:
-        subscription.init_recurring_id = str(init_recurring_id).strip()
+    subscription.init_recurring_id = str(init_recurring_id).strip() if init_recurring_id else None
+    subscription.provider_init_transaction_id = trans_id
+    subscription.recurring_ready = bool(init_recurring_id)
+    subscription.recurring_block_reason = None if init_recurring_id else "missing_init_recurring_id"
     subscription.current_period_start = paid_at
     subscription.current_period_end = _add_billing_period(paid_at, billing_period)
-    subscription.next_charge_at = subscription.current_period_end
+    subscription.next_charge_at = subscription.current_period_end if subscription.auto_renew_enabled else None
     subscription.grace_until = None
     subscription.cancel_requested_at = None
     subscription.last_payment_at = paid_at
     subscription.last_trans_id = trans_id
+    subscription.last_recurring_result = "ready" if init_recurring_id else "missing_init_recurring_id"
     subscription.failed_renewal_attempts = 0
     subscription.notified_renewal_failed_at = None
     subscription.notified_grace_end_at = None
@@ -1050,8 +1270,28 @@ def _activate_subscription_from_paid_payment(
     subscription.notified_period_d1_at = None
     subscription.updated_at = paid_at
     db.add(subscription)
-    db.commit()
-    db.refresh(subscription)
+    db.flush()
+    _write_license_audit(
+        db,
+        tenant_id=tenant_id,
+        subscription_id=subscription.id,
+        action="subscription_activated",
+        old_status=previous_status,
+        new_status="active",
+        reason="initial_payment_paid",
+        actor_type="provider",
+    )
+    if not init_recurring_id:
+        _write_license_audit(
+            db,
+            tenant_id=tenant_id,
+            subscription_id=subscription.id,
+            action="missing_init_recurring_id",
+            old_status="active",
+            new_status="active",
+            reason="initial_payment_paid_without_recurring_reference",
+            actor_type="provider",
+        )
     return subscription
 
 
@@ -1067,6 +1307,7 @@ def _activate_legacy_manual_subscription_from_paid_payment(
     upgrade_license_plan(db, tenant_id, plan)
 
     subscription = _upsert_subscription(db, tenant_id)
+    previous_status = _normalize_subscription_status(subscription.status)
     subscription.provider = "comgate"
     subscription.status = "legacy_manual"
     subscription.plan_current = plan
@@ -1074,6 +1315,9 @@ def _activate_legacy_manual_subscription_from_paid_payment(
     subscription.auto_renew_enabled = False
     subscription.pending_plan_change = None
     subscription.init_recurring_id = None
+    subscription.provider_init_transaction_id = trans_id
+    subscription.recurring_ready = False
+    subscription.recurring_block_reason = "missing_init_recurring_id"
     subscription.credit_balance_halers = int(subscription.credit_balance_halers or 0)
     subscription.current_period_start = paid_at
     subscription.current_period_end = _add_billing_period(paid_at, billing_period)
@@ -1082,6 +1326,7 @@ def _activate_legacy_manual_subscription_from_paid_payment(
     subscription.cancel_requested_at = None
     subscription.last_payment_at = paid_at
     subscription.last_trans_id = trans_id
+    subscription.last_recurring_result = "manual_only"
     subscription.failed_renewal_attempts = 0
     subscription.notified_renewal_failed_at = None
     subscription.notified_grace_end_at = None
@@ -1090,8 +1335,17 @@ def _activate_legacy_manual_subscription_from_paid_payment(
     subscription.notified_period_d1_at = None
     subscription.updated_at = paid_at
     db.add(subscription)
-    db.commit()
-    db.refresh(subscription)
+    db.flush()
+    _write_license_audit(
+        db,
+        tenant_id=tenant_id,
+        subscription_id=subscription.id,
+        action="subscription_activated",
+        old_status=previous_status,
+        new_status="legacy_manual",
+        reason="fallback_or_manual_payment",
+        actor_type="provider",
+    )
     return subscription
 
 
@@ -1115,10 +1369,14 @@ def _apply_legacy_quote_without_payment(
     subscription.auto_renew_enabled = False
     subscription.pending_plan_change = None
     subscription.init_recurring_id = None
+    subscription.provider_init_transaction_id = None
+    subscription.recurring_ready = False
+    subscription.recurring_block_reason = "legacy_manual_proration"
     subscription.next_charge_at = None
     subscription.grace_until = None
     subscription.cancel_requested_at = None
     subscription.failed_renewal_attempts = 0
+    subscription.last_recurring_result = "manual_only"
     subscription.credit_balance_halers = int(quote.get("balance_after_halers") or 0)
 
     if keep_period_boundaries:
@@ -1141,12 +1399,16 @@ def _apply_legacy_quote_without_payment(
 
     _record_payment_transaction(
         db=db,
+        subscription_id=subscription.id,
         tenant_id=tenant_id,
         provider="comgate",
         trans_id=None,
         ref_id=None,
+        payment_type="manual_renewal",
         plan=target_plan,
         billing_period=billing_period,
+        period_start=subscription.current_period_start,
+        period_end=subscription.current_period_end,
         amount_halers=0,
         currency="CZK",
         event_type="legacy_quote_applied_no_payment",
@@ -1188,12 +1450,16 @@ def _apply_legacy_quote_after_paid_callback(
     subscription.auto_renew_enabled = False
     subscription.pending_plan_change = None
     subscription.init_recurring_id = None
+    subscription.provider_init_transaction_id = trans_id
+    subscription.recurring_ready = False
+    subscription.recurring_block_reason = "legacy_manual_proration"
     subscription.next_charge_at = None
     subscription.grace_until = None
     subscription.cancel_requested_at = None
     subscription.failed_renewal_attempts = 0
     subscription.last_payment_at = now
     subscription.last_trans_id = trans_id
+    subscription.last_recurring_result = "manual_only"
     subscription.credit_balance_halers = int(balance_after_halers)
 
     if keep_period_boundaries:
@@ -1217,6 +1483,53 @@ def _apply_legacy_quote_after_paid_callback(
     return subscription
 
 
+def _apply_recurring_payment_success(
+    db: Session,
+    *,
+    subscription: LicenseSubscription,
+    plan: str,
+    billing_period: str,
+    trans_id: str,
+    period_start: Optional[datetime],
+    period_end: Optional[datetime],
+) -> LicenseSubscription:
+    now = _utcnow()
+    previous_status = _normalize_subscription_status(subscription.status)
+    effective_start = period_start or subscription.current_period_end or now
+    effective_end = period_end or _add_billing_period(effective_start, billing_period)
+    if subscription.current_period_end and subscription.current_period_end >= effective_end:
+        return subscription
+
+    upgrade_license_plan(db, int(subscription.tenant_id), plan)
+    subscription.status = "active"
+    subscription.plan_current = plan
+    subscription.billing_period = billing_period
+    subscription.current_period_start = effective_start
+    subscription.current_period_end = effective_end
+    subscription.next_charge_at = effective_end if subscription.auto_renew_enabled else None
+    subscription.grace_until = None
+    subscription.last_payment_at = now
+    subscription.last_trans_id = trans_id
+    subscription.failed_renewal_attempts = 0
+    subscription.recurring_ready = bool(subscription.init_recurring_id)
+    subscription.recurring_block_reason = None if subscription.recurring_ready else "missing_init_recurring_id"
+    subscription.last_recurring_result = "paid"
+    subscription.updated_at = now
+    db.add(subscription)
+    db.flush()
+    _write_license_audit(
+        db,
+        tenant_id=int(subscription.tenant_id),
+        subscription_id=subscription.id,
+        action="recurring_payment_paid",
+        old_status=previous_status,
+        new_status="active",
+        reason="provider_callback_paid",
+        actor_type="provider",
+    )
+    return subscription
+
+
 def _subscription_notification_stamp_field(days: int) -> Optional[str]:
     if days == 14:
         return "notified_period_d14_at"
@@ -1233,6 +1546,7 @@ def _build_renewal_ref_id(tenant_id: int, plan: str, billing_period: str = "mont
 
 def _charge_subscription_recurring(
     *,
+    db: Session,
     cfg: Dict[str, object],
     runtime_cfg: Dict[str, object],
     subscription: LicenseSubscription,
@@ -1240,6 +1554,14 @@ def _charge_subscription_recurring(
     plan: str,
     billing_period: str,
 ) -> Dict[str, object]:
+    status = _normalize_subscription_status(subscription.status)
+    if not bool(runtime_cfg.get("recurring_enabled", True)):
+        return {"ok": False, "reason": "recurring_disabled_by_config"}
+    if not bool(subscription.auto_renew_enabled):
+        return {"ok": False, "reason": "auto_renew_disabled"}
+    if status in {"canceled"}:
+        return {"ok": False, "reason": "subscription_inactive"}
+
     init_recurring_id = str(subscription.init_recurring_id or "").strip()
     if not init_recurring_id:
         return {"ok": False, "reason": "missing_init_recurring_id"}
@@ -1247,6 +1569,32 @@ def _charge_subscription_recurring(
     price = _price_for_plan(cfg, plan, billing_period)
     if price <= 0:
         return {"ok": False, "reason": "missing_price"}
+
+    now = _utcnow()
+    period_start = subscription.current_period_end or now
+    if period_start < now - timedelta(days=3):
+        period_start = now
+    period_end = _add_billing_period(period_start, billing_period)
+
+    existing_period_tx = (
+        db.query(LicensePaymentTransaction)
+        .filter(
+            LicensePaymentTransaction.subscription_id == subscription.id,
+            LicensePaymentTransaction.payment_type == "recurring",
+            LicensePaymentTransaction.period_start == period_start,
+            LicensePaymentTransaction.period_end == period_end,
+            LicensePaymentTransaction.provider_status.in_(["PENDING", "PAID", "AUTHORIZED"]),
+        )
+        .first()
+    )
+    if existing_period_tx:
+        return {
+            "ok": False,
+            "reason": "duplicate_period_charge",
+            "existing_trans_id": existing_period_tx.trans_id,
+            "period_start": period_start,
+            "period_end": period_end,
+        }
 
     recurring_payload = {
         "merchant": str(cfg["merchant"]),
@@ -1258,6 +1606,12 @@ def _charge_subscription_recurring(
         "refId": _build_renewal_ref_id(tenant_id, plan, billing_period),
         "test": "1" if bool(cfg["test_mode"]) else "0",
     }
+    account = str(cfg.get("account") or "").strip()
+    name = str(cfg.get("name") or "").strip()
+    if account:
+        recurring_payload["account"] = account
+    if name:
+        recurring_payload["name"] = name
 
     recurring_result = _post_comgate(str(runtime_cfg["recurring_url"]), recurring_payload)
     if str(recurring_result.get("code", "")) != "0":
@@ -1265,6 +1619,8 @@ def _charge_subscription_recurring(
             "ok": False,
             "reason": recurring_result.get("message") or "recurring_create_failed",
             "provider_payload": recurring_result,
+            "period_start": period_start,
+            "period_end": period_end,
         }
 
     trans_id = str(recurring_result.get("transId") or "").strip()
@@ -1273,6 +1629,8 @@ def _charge_subscription_recurring(
             "ok": False,
             "reason": "missing_trans_id",
             "provider_payload": recurring_result,
+            "period_start": period_start,
+            "period_end": period_end,
         }
 
     status_result = _post_comgate(
@@ -1291,6 +1649,8 @@ def _charge_subscription_recurring(
             "reason": f"status_{payment_status or 'unknown'}",
             "trans_id": trans_id,
             "provider_payload": status_result,
+            "period_start": period_start,
+            "period_end": period_end,
         }
 
     paid_price = _safe_int(status_result.get("price"))
@@ -1300,6 +1660,8 @@ def _charge_subscription_recurring(
             "reason": "price_mismatch",
             "trans_id": trans_id,
             "provider_payload": status_result,
+            "period_start": period_start,
+            "period_end": period_end,
         }
 
     return {
@@ -1307,6 +1669,10 @@ def _charge_subscription_recurring(
         "trans_id": trans_id,
         "paid_price": paid_price if paid_price is not None else price,
         "provider_payload": status_result,
+        "period_start": period_start,
+        "period_end": period_end,
+        "parent_init_recurring_id": init_recurring_id,
+        "parent_provider_transaction_id": subscription.provider_init_transaction_id or subscription.last_trans_id,
     }
 
 
@@ -1341,6 +1707,9 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
     for subscription in subscriptions:
         try:
             tenant_id = int(subscription.tenant_id)
+            lic = db.query(License).filter(License.tenant_id == tenant_id).first()
+            if lic and str(lic.plan or "").lower() == "lifetime":
+                continue
             plan = _normalize_plan_soft(subscription.plan_current, default="free")
             billing_period = _normalize_billing_period_soft(subscription.billing_period, default="monthly")
             status = _normalize_subscription_status(subscription.status)
@@ -1428,6 +1797,7 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     continue
 
                 result = _charge_subscription_recurring(
+                    db=db,
                     cfg=cfg,
                     runtime_cfg=runtime_cfg,
                     subscription=subscription,
@@ -1435,15 +1805,21 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     plan=plan,
                     billing_period=billing_period,
                 )
+                subscription.last_recurring_attempt_at = now
+                subscription.last_recurring_result = str(result.get("reason") or ("paid" if result.get("ok") else "failed"))[:255]
+                reason = str(result.get("reason") or "")
+                if reason in {"duplicate_period_charge", "recurring_disabled_by_config", "auto_renew_disabled", "subscription_inactive"}:
+                    db.add(subscription)
+                    db.commit()
+                    continue
                 if result.get("ok"):
                     trans_id = str(result.get("trans_id") or "").strip()
                     resolved_plan = _normalize_plan(subscription.pending_plan_change or plan)
                     upgrade_license_plan(db, tenant_id, resolved_plan)
-                    period_start = subscription.current_period_end or now
-                    if period_start < now - timedelta(days=3):
-                        period_start = now
-                    period_end = _add_billing_period(period_start, billing_period)
+                    period_start = result.get("period_start") or subscription.current_period_end or now
+                    period_end = result.get("period_end") or _add_billing_period(period_start, billing_period)
 
+                    previous_status = _normalize_subscription_status(subscription.status)
                     subscription.status = "active"
                     subscription.plan_current = resolved_plan
                     subscription.pending_plan_change = None
@@ -1454,24 +1830,51 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     subscription.last_trans_id = trans_id
                     subscription.failed_renewal_attempts = 0
                     subscription.grace_until = None
+                    subscription.recurring_ready = True
+                    subscription.recurring_block_reason = None
                     subscription.notified_renewal_failed_at = None
                     subscription.notified_period_d14_at = None
                     subscription.notified_period_d7_at = None
                     subscription.notified_period_d1_at = None
                     subscription.updated_at = now
-                    _record_payment_transaction(
+                    tx = _record_payment_transaction(
                         db,
+                        subscription_id=subscription.id,
                         tenant_id=tenant_id,
                         provider="comgate",
                         trans_id=trans_id,
                         ref_id=str((result.get("provider_payload") or {}).get("refId") or ""),
+                        payment_type="recurring",
+                        parent_provider_transaction_id=str(result.get("parent_provider_transaction_id") or "") or None,
+                        parent_init_recurring_id=str(result.get("parent_init_recurring_id") or "") or None,
                         plan=resolved_plan,
                         billing_period=billing_period,
+                        period_start=period_start,
+                        period_end=period_end,
                         amount_halers=_safe_int(result.get("paid_price")),
                         currency=str(cfg["currency"]),
                         event_type="renewal_paid",
                         provider_status="PAID",
                         payload=result.get("provider_payload"),
+                    )
+                    _record_payment_event(
+                        db,
+                        payment_id=tx.id,
+                        provider="comgate",
+                        event_type="recurring_status_paid",
+                        provider_transaction_id=trans_id,
+                        raw_payload=result.get("provider_payload"),
+                        processing_status="processed",
+                    )
+                    _write_license_audit(
+                        db,
+                        tenant_id=tenant_id,
+                        subscription_id=subscription.id,
+                        action="recurring_payment_paid",
+                        old_status=previous_status,
+                        new_status="active",
+                        reason="recurring_charge_paid",
+                        actor_type="system",
                     )
                     db.add(subscription)
                     db.commit()
@@ -1479,24 +1882,54 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     continue
 
                 # failure -> grace mode
+                previous_status = _normalize_subscription_status(subscription.status)
                 subscription.status = "grace"
                 subscription.failed_renewal_attempts = int(subscription.failed_renewal_attempts or 0) + 1
                 if subscription.grace_until is None or subscription.grace_until < now:
                     subscription.grace_until = now + timedelta(days=int(runtime_cfg["grace_days"]))
+                if reason == "missing_init_recurring_id":
+                    subscription.recurring_ready = False
+                    subscription.recurring_block_reason = "missing_init_recurring_id"
                 subscription.updated_at = now
-                _record_payment_transaction(
+                tx = _record_payment_transaction(
                     db,
+                    subscription_id=subscription.id,
                     tenant_id=tenant_id,
                     provider="comgate",
                     trans_id=str(result.get("trans_id") or "") or None,
                     ref_id=None,
+                    payment_type="recurring",
+                    parent_provider_transaction_id=str(subscription.provider_init_transaction_id or subscription.last_trans_id or "") or None,
+                    parent_init_recurring_id=str(subscription.init_recurring_id or "") or None,
                     plan=plan,
                     billing_period=billing_period,
+                    period_start=result.get("period_start"),
+                    period_end=result.get("period_end"),
                     amount_halers=_price_for_plan(cfg, plan, billing_period),
                     currency=str(cfg["currency"]),
                     event_type="renewal_failed",
-                    provider_status=str(result.get("reason") or "FAILED"),
-                    payload=result.get("provider_payload") if isinstance(result.get("provider_payload"), dict) else {"reason": result.get("reason")},
+                    provider_status=reason or "FAILED",
+                    payload=result.get("provider_payload") if isinstance(result.get("provider_payload"), dict) else {"reason": reason},
+                )
+                _record_payment_event(
+                    db,
+                    payment_id=tx.id,
+                    provider="comgate",
+                    event_type="recurring_status_failed",
+                    provider_transaction_id=str(result.get("trans_id") or "") or None,
+                    raw_payload=result.get("provider_payload") if isinstance(result.get("provider_payload"), dict) else {"reason": reason},
+                    processing_status="processed",
+                    error_message=reason or "FAILED",
+                )
+                _write_license_audit(
+                    db,
+                    tenant_id=tenant_id,
+                    subscription_id=subscription.id,
+                    action="recurring_payment_failed",
+                    old_status=previous_status,
+                    new_status="grace",
+                    reason=reason or "FAILED",
+                    actor_type="system",
                 )
                 if subscription.notified_renewal_failed_at is None:
                     payload = _send_subscription_notification(
@@ -1610,6 +2043,7 @@ def cancel_subscription_endpoint(
     if _normalize_subscription_status(subscription.status) == "canceled":
         raise HTTPException(status_code=400, detail="Předplatné je již ukončeno.")
 
+    previous_status = _normalize_subscription_status(subscription.status)
     subscription.auto_renew_enabled = False
     subscription.status = "cancel_at_period_end"
     subscription.cancel_requested_at = _utcnow()
@@ -1617,6 +2051,17 @@ def cancel_subscription_endpoint(
     subscription.pending_plan_change = "free"
     subscription.updated_at = _utcnow()
     db.add(subscription)
+    _write_license_audit(
+        db,
+        tenant_id=int(tenant_id),
+        subscription_id=subscription.id,
+        action="auto_renew_disabled",
+        old_status=previous_status,
+        new_status="cancel_at_period_end",
+        reason="user_requested_cancel",
+        actor_type="user",
+        user_id=getattr(current_user, "id", None),
+    )
     db.commit()
 
     status = get_license_status(db, tenant_id, current_user.email)
@@ -1645,6 +2090,7 @@ def resume_subscription_endpoint(
     if not str(subscription.init_recurring_id or "").strip():
         raise HTTPException(status_code=409, detail="Předplatné nelze obnovit bez recurring tokenu. Proveďte novou platbu.")
 
+    previous_status = _normalize_subscription_status(subscription.status)
     subscription.auto_renew_enabled = True
     subscription.status = "active"
     subscription.cancel_requested_at = None
@@ -1654,6 +2100,17 @@ def resume_subscription_endpoint(
         subscription.next_charge_at = subscription.current_period_end
     subscription.updated_at = _utcnow()
     db.add(subscription)
+    _write_license_audit(
+        db,
+        tenant_id=int(tenant_id),
+        subscription_id=subscription.id,
+        action="auto_renew_enabled",
+        old_status=previous_status,
+        new_status="active",
+        reason="user_requested_resume",
+        actor_type="user",
+        user_id=getattr(current_user, "id", None),
+    )
     db.commit()
 
     status = get_license_status(db, tenant_id, current_user.email)
@@ -1760,6 +2217,7 @@ def create_comgate_checkout(
 
     _ensure_subscription_schema(db)
     cfg = _load_comgate_config()
+    runtime_cfg = _load_subscription_runtime_config()
     if not cfg["configured"]:
         raise HTTPException(
             status_code=503,
@@ -1841,13 +2299,14 @@ def create_comgate_checkout(
         "lang": str(cfg["lang"]),
         "email": str(current_user.email),
         "fullName": full_name,
-        "initRecurring": "true",
         "test": "1" if bool(cfg["test_mode"]) else "0",
         "url_paid": _build_frontend_return_url(plan, "paid", effective_billing_period),
         "url_cancelled": _build_frontend_return_url(plan, "cancelled", effective_billing_period),
         "url_pending": _build_frontend_return_url(plan, "pending", effective_billing_period),
         "url_result": f"{_request_backend_public_url(request)}/api/v1/license/comgate/result",
     }
+    if bool(runtime_cfg.get("recurring_enabled", True)):
+        create_payload["initRecurring"] = "true"
     if phone:
         create_payload["phone"] = phone
 
@@ -1906,12 +2365,14 @@ def create_comgate_checkout(
     if legacy_quote:
         tx_payload["legacy_quote"] = legacy_quote
 
-    _record_payment_transaction(
+    tx = _record_payment_transaction(
         db=db,
+        subscription_id=subscription.id if subscription else None,
         tenant_id=tenant_id_int,
         provider="comgate",
         trans_id=trans_id,
         ref_id=ref_id,
+        payment_type="initial",
         plan=plan,
         billing_period=effective_billing_period,
         amount_halers=price,
@@ -1927,6 +2388,28 @@ def create_comgate_checkout(
         ),
         provider_status="PENDING_FALLBACK" if fallback_non_recurring else "PENDING",
         payload=tx_payload,
+    )
+    _record_payment_event(
+        db,
+        payment_id=tx.id,
+        provider="comgate",
+        event_type="checkout_created",
+        provider_transaction_id=trans_id,
+        raw_payload=tx_payload,
+        processing_status="processed",
+    )
+    _write_license_audit(
+        db,
+        tenant_id=tenant_id_int,
+        subscription_id=subscription.id if subscription else None,
+        action="checkout_created",
+        old_status=_normalize_subscription_status(subscription.status) if subscription else None,
+        new_status=_normalize_subscription_status(subscription.status) if subscription else None,
+        reason="comgate_checkout_created",
+        actor_type="user",
+        user_id=getattr(current_user, "id", None),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
     )
     db.commit()
 
@@ -1975,10 +2458,6 @@ async def comgate_result(
     if not trans_id:
         return PlainTextResponse("MISSING_TRANS_ID", status_code=400)
 
-    if _is_trans_already_paid(db, trans_id):
-        logger.info("[COMGATE] Duplicate paid callback ignored transId=%s", trans_id)
-        return PlainTextResponse("OK_DUPLICATE", status_code=200)
-
     status_result = _post_comgate(
         str(cfg["status_url"]),
         {
@@ -1990,10 +2469,53 @@ async def comgate_result(
     )
     if str(status_result.get("code", "")) != "0":
         logger.warning("[COMGATE] Status check failed for transId=%s payload=%s", trans_id, status_result)
+        _record_payment_event(
+            db,
+            payment_id=None,
+            provider="comgate",
+            event_type="callback_status_unconfirmed",
+            provider_transaction_id=trans_id,
+            raw_payload=status_result,
+            processing_status="ignored",
+            error_message="status_not_confirmed",
+        )
+        db.commit()
         return PlainTextResponse("STATUS_NOT_CONFIRMED", status_code=200)
 
     payment_status = str(status_result.get("status") or "").strip().upper()
-    if payment_status not in {"PAID", "AUTHORIZED"}:
+    existing_checkout_tx = (
+        db.query(LicensePaymentTransaction)
+        .filter(LicensePaymentTransaction.trans_id == trans_id)
+        .first()
+    )
+    if _is_trans_already_paid(db, trans_id):
+        logger.info("[COMGATE] Duplicate paid callback ignored transId=%s", trans_id)
+        _record_payment_event(
+            db,
+            payment_id=existing_checkout_tx.id if existing_checkout_tx else None,
+            provider="comgate",
+            event_type="callback_duplicate_ignored",
+            provider_transaction_id=trans_id,
+            raw_payload=status_result,
+            processing_status="ignored_duplicate",
+        )
+        db.commit()
+        return PlainTextResponse("OK_DUPLICATE", status_code=200)
+
+    if payment_status != "PAID":
+        _record_payment_event(
+            db,
+            payment_id=existing_checkout_tx.id if existing_checkout_tx else None,
+            provider="comgate",
+            event_type=f"callback_status_{payment_status.lower() or 'unknown'}",
+            provider_transaction_id=trans_id,
+            raw_payload=status_result,
+            processing_status="ignored",
+        )
+        if existing_checkout_tx:
+            existing_checkout_tx.provider_status = payment_status
+            db.add(existing_checkout_tx)
+        db.commit()
         return PlainTextResponse("IGNORED", status_code=200)
 
     resolved_plan = _resolve_plan_from_status_payload(status_result)
@@ -2024,11 +2546,6 @@ async def comgate_result(
         )
         return PlainTextResponse("PERIOD_MISMATCH", status_code=200)
 
-    existing_checkout_tx = (
-        db.query(LicensePaymentTransaction)
-        .filter(LicensePaymentTransaction.trans_id == trans_id)
-        .first()
-    )
     configured_price = _price_for_plan(cfg, resolved_plan, resolved_billing_period)
     tx_expected_price = (
         int(existing_checkout_tx.amount_halers)
@@ -2091,14 +2608,10 @@ async def comgate_result(
 
     legacy_quote = _legacy_quote_payload_from_checkout_tx(existing_checkout_tx)
     fallback_non_recurring_checkout = _checkout_is_non_recurring_fallback(existing_checkout_tx)
+    payment_type = str(getattr(existing_checkout_tx, "payment_type", "") or "").strip().lower() or "initial"
 
     try:
-        init_recurring_id = str(
-            status_result.get("initRecurringId")
-            or status_result.get("initrecurringid")
-            or payload.get("initRecurringId")
-            or ""
-        ).strip() or None
+        init_recurring_id = extract_init_recurring_id(status_result, payload, existing_checkout_tx)
         if legacy_quote:
             subscription = _upsert_subscription(db, tenant_id)
             subscription = _apply_legacy_quote_after_paid_callback(
@@ -2108,6 +2621,35 @@ async def comgate_result(
                 quote=legacy_quote,
                 trans_id=trans_id,
                 paid_amount_halers=paid_price if paid_price is not None else expected_price,
+            )
+        elif payment_type == "recurring" and existing_checkout_tx and existing_checkout_tx.subscription_id:
+            subscription = (
+                db.query(LicenseSubscription)
+                .filter(LicenseSubscription.id == existing_checkout_tx.subscription_id)
+                .first()
+            )
+            if not subscription:
+                logger.warning("[COMGATE] Missing subscription for recurring transId=%s", trans_id)
+                _record_payment_event(
+                    db,
+                    payment_id=existing_checkout_tx.id,
+                    provider="comgate",
+                    event_type="callback_missing_subscription",
+                    provider_transaction_id=trans_id,
+                    raw_payload=status_result,
+                    processing_status="error",
+                    error_message="missing_subscription",
+                )
+                db.commit()
+                return PlainTextResponse("MISSING_SUBSCRIPTION", status_code=200)
+            subscription = _apply_recurring_payment_success(
+                db,
+                subscription=subscription,
+                plan=resolved_plan,
+                billing_period=resolved_billing_period,
+                trans_id=trans_id,
+                period_start=existing_checkout_tx.period_start,
+                period_end=existing_checkout_tx.period_end,
             )
         elif init_recurring_id:
             subscription = _activate_subscription_from_paid_payment(
@@ -2129,27 +2671,58 @@ async def comgate_result(
             )
         else:
             logger.warning("[COMGATE] Missing initRecurringId for transId=%s", trans_id)
-            return PlainTextResponse("MISSING_INIT_RECURRING_ID", status_code=200)
+            subscription = _activate_subscription_from_paid_payment(
+                db,
+                tenant_id=tenant_id,
+                plan=resolved_plan,
+                billing_period=resolved_billing_period,
+                trans_id=trans_id,
+                init_recurring_id=None,
+            )
         paid_tx_payload: Dict[str, object] = dict(status_result)
         if legacy_quote:
             paid_tx_payload["legacy_quote"] = legacy_quote
-        _record_payment_transaction(
+        if init_recurring_id:
+            paid_tx_payload["initRecurringId"] = init_recurring_id
+        tx = _record_payment_transaction(
             db,
+            subscription_id=subscription.id if subscription else None,
             tenant_id=tenant_id,
             provider="comgate",
             trans_id=trans_id,
             ref_id=ref_id_from_status,
+            payment_type=payment_type,
+            parent_provider_transaction_id=(
+                str(existing_checkout_tx.parent_provider_transaction_id or "") or None
+                if existing_checkout_tx else None
+            ),
+            parent_init_recurring_id=(
+                str(existing_checkout_tx.parent_init_recurring_id or init_recurring_id or "") or None
+                if existing_checkout_tx else (str(init_recurring_id or "") or None)
+            ),
             plan=resolved_plan,
             billing_period=resolved_billing_period,
+            period_start=getattr(existing_checkout_tx, "period_start", None),
+            period_end=getattr(existing_checkout_tx, "period_end", None),
             amount_halers=paid_price if paid_price is not None else expected_price,
             currency=str(status_result.get("curr") or cfg["currency"]),
-            event_type="paid_confirmed",
+            event_type="renewal_paid" if payment_type == "recurring" else "paid_confirmed",
             provider_status=payment_status,
             payload=paid_tx_payload,
+        )
+        _record_payment_event(
+            db,
+            payment_id=tx.id,
+            provider="comgate",
+            event_type="callback_paid_confirmed",
+            provider_transaction_id=trans_id,
+            raw_payload=paid_tx_payload,
+            processing_status="processed",
         )
         if subscription.notified_first_payment_at is None:
             is_legacy_manual = _normalize_subscription_status(subscription.status) == "legacy_manual"
             is_legacy_quote_payment = bool(legacy_quote)
+            is_recurring_ready = bool(subscription.auto_renew_enabled and getattr(subscription, "recurring_ready", False))
             is_non_recurring_fallback_payment = bool(
                 is_legacy_manual
                 and not is_legacy_quote_payment
@@ -2162,9 +2735,17 @@ async def comgate_result(
                 email_subject=f"{APP_DISPLAY_NAME}: předplatné aktivní",
                 email_text=(
                     (
-                        f"Platba byla potvrzena a plán {resolved_plan.upper()} je aktivní. "
-                        "Od této chvíle je zapnuté automatické měsíční/roční prodloužení podle vybraného období. "
-                        "V sekci Licence můžete kdykoli zrušit automatické prodloužení k datu konce období."
+                        (
+                            f"Platba byla potvrzena a plán {resolved_plan.upper()} je aktivní. "
+                            "Od této chvíle je zapnuté automatické měsíční/roční prodloužení podle vybraného období. "
+                            "V sekci Licence můžete kdykoli zrušit automatické prodloužení k datu konce období."
+                        )
+                        if is_recurring_ready
+                        else (
+                            f"Platba byla potvrzena a plán {resolved_plan.upper()} je aktivní. "
+                            "Automatické obnovení se zatím nezapnulo, protože chybí recurring reference z Comgate. "
+                            "Pro zapnutí auto-obnovy bude potřeba nová kartová platba."
+                        )
                     )
                     if not is_legacy_manual
                     else (
@@ -2193,7 +2774,11 @@ async def comgate_result(
                 push_title="Předplatné aktivní",
                 push_body=(
                     (
-                        f"Plán {resolved_plan.upper()} je aktivní. V sekci Licence můžete spravovat auto-obnovu nebo změnit plán."
+                        (
+                            f"Plán {resolved_plan.upper()} je aktivní. V sekci Licence můžete spravovat auto-obnovu nebo změnit plán."
+                            if is_recurring_ready
+                            else f"Plán {resolved_plan.upper()} je aktivní, ale auto-obnova zatím není připravená."
+                        )
                     )
                     if not is_legacy_manual
                     else (

@@ -33,6 +33,11 @@ def render_service_invoice_pdf(payload: Mapping[str, object]) -> bytes:
     line(f"Stav dokladu: {payload.get('status_label') or payload.get('status') or '-'}", size=10, gap=5)
     line(f"Datum vystavení: {payload.get('issued_at_label') or '-'}", size=10, gap=5)
     line(f"Splatnost: {payload.get('due_at_label') or '-'}", size=10, gap=5)
+    if payload.get("variable_symbol"):
+        line(f"Variabilní symbol: {payload.get('variable_symbol')}", size=10, gap=5)
+    if payload.get("order_number"):
+        line(f"Objednávka: {payload.get('order_number')}", size=10, gap=5)
+    line(f"Platba: {payload.get('payment_method') or 'prevod'}", size=10, gap=5)
     line(f"Odběratel: {payload.get('customer_label') or '-'}", size=10, gap=5)
     if payload.get("vehicle_label"):
         line(f"Vozidlo: {payload.get('vehicle_label')}", size=10, gap=5)

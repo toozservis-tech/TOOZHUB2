@@ -10,6 +10,7 @@ struct VehiclesView: View {
     @State private var showAddVehicle = false
     @State private var editVehicle: Vehicle?
     @State private var selectedVehicleForDetail: Vehicle?
+    @State private var vehiclePendingRemoval: Vehicle?
 
     private var selectedMode: VehicleCardMode {
         get { VehicleCardMode(rawValue: vehicleListModeRawValue) ?? .grid }
@@ -97,6 +98,19 @@ struct VehiclesView: View {
                     VehicleDetailView(vehicleId: vehicle.id)
                 }
             }
+            .sheet(item: $vehiclePendingRemoval) { vehicle in
+                VehicleRemovalSheet(vehicleId: vehicle.id, vehicleLabel: vehicle.displayName) { vid, reasonCode, followup in
+                    guard let token = env.authManager.token else {
+                        throw APIError.serverError("Nejste přihlášeni.")
+                    }
+                    return try await viewModel.removeVehicleFromAccount(
+                        id: vid,
+                        reasonCode: reasonCode,
+                        followup: followup,
+                        token: token
+                    )
+                }
+            }
             .sheet(item: $editVehicle) { vehicle in
                 AddOrEditVehicleSheet(vehicle: vehicle, existingVehicles: viewModel.vehicles) { request in
                     guard let token = env.authManager.token else { return }
@@ -149,8 +163,7 @@ struct VehiclesView: View {
                 .buttonStyle(InlineChipButtonStyle(isSelected: true))
 
                 Button("Odebrat z profilu") {
-                    guard let token = env.authManager.token else { return }
-                    Task { await viewModel.deleteVehicle(id: vehicle.id, token: token) }
+                    vehiclePendingRemoval = vehicle
                 }
                 .buttonStyle(InlineChipButtonStyle(isSelected: false))
             }

@@ -75,16 +75,15 @@ final class VehiclesViewModel: ObservableObject {
         }
     }
 
-    func deleteVehicle(id: Int, token: String) async {
-        do {
-            try await featureService.deleteVehicle(id: id, token: token)
-            await loadIfNeeded(token: token, force: true)
-        } catch {
-            self.error = UserFacingErrorMapper.message(
-                for: error,
-                context: .account,
-                fallback: "Vozidlo se nepodařilo odebrat z profilu."
-            )
-        }
+    func removeVehicleFromAccount(id: Int, reasonCode: String, followup: [String: String], token: String) async throws -> VehicleRemovalConfirmResponse {
+        let response = try await featureService.removeVehicleFromAccount(
+            id: id,
+            reasonCode: reasonCode,
+            followupAnswer: followup,
+            token: token
+        )
+        await loadIfNeeded(token: token, force: true)
+        self.error = nil
+        return response
     }
 }

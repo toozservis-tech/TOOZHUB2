@@ -20,6 +20,14 @@ _settings_cache_mtime_ns: int | None = None
 _cache_lock = Lock()
 
 
+def invalidate_runtime_settings_cache() -> None:
+    """Po zápisu administrátorského JSON zrušit čtení z cache."""
+    global _settings_cache_mtime_ns, _settings_cache
+    with _cache_lock:
+        _settings_cache = {}
+        _settings_cache_mtime_ns = None
+
+
 def _normalize_loaded_payload(payload: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
     if not isinstance(payload, dict):
         return {}

@@ -1,7 +1,12 @@
 import { expect, test } from '@playwright/test';
 
+import { recycleCiEmailsQuiet } from './recycle-ci-emails';
+
 const adminEmail = process.env.E2E_ADMIN_EMAIL || '';
 const adminPassword = process.env.E2E_ADMIN_PASSWORD || '';
+/** Pevné testovací účty CC (před suite uvolníme slot v DB). */
+const CC_TEST_EMAIL = (process.env.E2E_CC_TEST_EMAIL || 'e2e.cc.control-center@example.com').toLowerCase();
+const CC_POSTUNBLOCK_EMAIL = (process.env.E2E_CC_POSTUNBLOCK_EMAIL || 'e2e.cc.post-unblock@example.com').toLowerCase();
 const responsiveViewports = [
   { label: '390x844', width: 390, height: 844 },
   { label: '412x915', width: 412, height: 915 },
@@ -67,6 +72,10 @@ async function loginAdmin(page: any): Promise<void> {
 }
 
 test.describe('Admin Smoke', () => {
+  test.beforeAll(() => {
+    recycleCiEmailsQuiet([CC_TEST_EMAIL, CC_POSTUNBLOCK_EMAIL]);
+  });
+
   test('admin login screen stays usable on mobile/tablet viewports', async ({ page }) => {
     for (const viewport of responsiveViewports) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -247,7 +256,7 @@ test.describe('Admin Smoke', () => {
     test.skip(!adminEmail || !adminPassword, 'E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD are required for admin smoke.');
 
     const unique = Date.now();
-    const testEmail = `e2e.cc.${unique}@example.com`;
+    const testEmail = CC_TEST_EMAIL;
     const testPassword = 'TestPass123!';
     let activeUserPassword = testPassword;
     const testName = `CC User ${unique}`;
@@ -499,7 +508,7 @@ test.describe('Admin Smoke', () => {
       await expect(page.locator('#cc-security-result')).not.toContainText('"loading": true', { timeout: 15_000 });
     }
 
-    const postUnblockEmail = `e2e.postunblock.${unique}@example.com`;
+    const postUnblockEmail = CC_POSTUNBLOCK_EMAIL;
     const postUnblockPassword = `PostUnblock-${unique}!Aa1`;
     const postUnblockRegister = await request.post('/user/register', {
       data: {

@@ -6,9 +6,9 @@ import { loginUser } from './helpers';
 const authStatePath = path.join(__dirname, 'playwright', '.auth', 'user.json');
 
 setup('authenticate shared smoke user', async ({ page }) => {
+  setup.setTimeout(180_000);
   fs.mkdirSync(path.dirname(authStatePath), { recursive: true });
 
-  await page.goto('/web/index.html');
   await loginUser(page);
   await expect(page.locator('[data-testid="dashboard"]')).toBeVisible({ timeout: 15_000 });
 

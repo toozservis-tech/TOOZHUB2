@@ -66,14 +66,18 @@ def test_smtp_config():
     print("Test připojení k SMTP serveru...")
     try:
         import smtplib
-        
+        import ssl
+
+        tls_ctx = ssl.create_default_context()
         if SMTP_PORT == 465:
             print(f"Připojuji se k {SMTP_HOST}:{SMTP_PORT} (SSL)...")
-            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10)
+            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10, context=tls_ctx)
         else:
             print(f"Připojuji se k {SMTP_HOST}:{SMTP_PORT} (STARTTLS)...")
             server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10)
-            server.starttls()
+            server.ehlo()
+            server.starttls(context=tls_ctx)
+            server.ehlo()
         
         print("Připojení úspěšné!")
         print()

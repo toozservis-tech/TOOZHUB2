@@ -10,7 +10,7 @@ import requests
 
 from ..database import get_db
 from ..models import Customer
-from .auth import get_current_user
+from .auth import get_current_user_optional
 
 router = APIRouter(prefix="/ares", tags=["ares-lookup-v1"])
 
@@ -30,17 +30,13 @@ class AresLookupResponse(BaseModel):
 @router.get("/{ico}", response_model=AresLookupResponse)
 def lookup_ares(
     ico: str,
-    current_user: Customer = Depends(get_current_user),
+    current_user: Optional[Customer] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
     """
-    ARES lookup podle IČO pro auto-fill formulářů
-    
-    Args:
-        ico: IČO firmy (8 číslic)
-        
-    Returns:
-        AresLookupResponse s daty z ARES
+    ARES lookup podle IČO pro auto-fill formulářů.
+    Dostupné i bez přihlášení (stránka registrace), u přihlášeného tenanta
+    stále platí licenční příznak ares_enabled.
     """
     import logging
     from fastapi import HTTPException
@@ -48,14 +44,15 @@ def lookup_ares(
     
     logger = logging.getLogger(__name__)
     
-    # KROK 1: Zkontrolovat feature flag
-    tenant_id = getattr(current_user, 'tenant_id', None)
-    if tenant_id:
-        try:
-            assert_feature(db, tenant_id, "ares")
-        except HTTPException as e:
-            logger.warning(f"[ARES_LOOKUP] ARES disabled for tenant_id={tenant_id}")
-            raise
+    # Při přihlášeném účtu kontrola feature; anonymní = povoleno (pouze veřejné údaje z ARES)
+    if current_user is not None:
+        tenant_id = getattr(current_user, "tenant_id", None)
+        if tenant_id:
+            try:
+                assert_feature(db, tenant_id, "ares")
+            except HTTPException as e:
+                logger.warning(f"[ARES_LOOKUP] ARES disabled for tenant_id={tenant_id}")
+                raise
     
     ico_clean = ico.strip().replace(' ', '')
     

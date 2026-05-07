@@ -8,21 +8,17 @@ from sqlalchemy import func
 
 from src.modules.vehicle_hub.database import SessionLocal
 from src.modules.vehicle_hub.models import Customer
-
-
-def _unique_email(prefix: str) -> str:
-    return f"{prefix}_{uuid4().hex[:10]}@example.com"
+from tests.api.integration_accounts import (
+    CI_API_BUYER,
+    CI_API_OWNER_INTAKE,
+    CI_API_SELLER,
+    CI_API_SERVICE_INTAKE,
+    ensure_user_token,
+)
 
 
 def _register_user(api_url: str, *, email: str, name: str) -> tuple[str, int]:
-    response = requests.post(
-        f"{api_url}/user/register",
-        json={"email": email, "password": "testpass123", "name": name, "phone": "+420123456789"},
-        timeout=8,
-    )
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    return payload["access_token"], int(payload["user"]["id"])
+    return ensure_user_token(api_url, email, name=name)
 
 
 def _promote_user_to_service(email: str) -> None:
@@ -60,8 +56,8 @@ def _create_vehicle(api_url: str, token: str, *, plate: str, vin: str) -> int:
 
 
 def test_transfer_token_claim_preserves_history(api_url):
-    seller_token, _seller_id = _register_user(api_url, email=_unique_email("seller"), name="Seller")
-    buyer_token, _buyer_id = _register_user(api_url, email=_unique_email("buyer"), name="Buyer")
+    seller_token, _seller_id = _register_user(api_url, email=CI_API_SELLER, name="Seller")
+    buyer_token, _buyer_id = _register_user(api_url, email=CI_API_BUYER, name="Buyer")
     plate = f"TR{uuid4().hex[:5].upper()}"[:7]
     vin = _vin()
     vehicle_id = _create_vehicle(api_url, seller_token, plate=plate, vin=vin)
@@ -77,7 +73,8 @@ def test_transfer_token_claim_preserves_history(api_url):
 
     public_response = requests.get(f"{api_url}/api/public/vehicle-transfer/{transfer_token}", timeout=8)
     assert public_response.status_code == 200, public_response.text
-    assert public_response.json()["vehicle"]["spz_current"] == plate
+    assert "spz_masked" in public_response.json().get("vehicle", {})
+    assert "requires_login" in public_response.json()
 
     claim_response = requests.post(
         f"{api_url}/api/public/vehicle-transfer/{transfer_token}/claim",
@@ -95,8 +92,8 @@ def test_transfer_token_claim_preserves_history(api_url):
 
 
 def test_service_intake_blocks_final_record_until_access_approved(api_url):
-    owner_token, _owner_id = _register_user(api_url, email=_unique_email("owner_intake"), name="Owner Intake")
-    service_token, service_id = _register_user(api_url, email=_unique_email("service_intake"), name="Service Intake")
+    owner_token, _owner_id = _register_user(api_url, email=CI_API_OWNER_INTAKE, name="Owner Intake")
+    service_token, service_id = _register_user(api_url, email=CI_API_SERVICE_INTAKE, name="Service Intake")
     db = SessionLocal()
     try:
         service = db.query(Customer).filter(Customer.id == service_id).first()

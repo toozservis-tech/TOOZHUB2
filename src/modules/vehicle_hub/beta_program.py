@@ -790,7 +790,7 @@ def refresh_beta_metrics_for_participant(
     feedback_summary = _feedback_stats(db, participant.id)
 
     if participant.applicant_type in {"service", "company"} and tenant_id is not None:
-        vehicles_created_count = db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id).count()
+        vehicles_created_count = db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id, Vehicle.status != "archived").count()
         service_records_count = db.query(ServiceRecord).filter(ServiceRecord.tenant_id == tenant_id).count()
         reservations_count = db.query(Reservation).filter(Reservation.tenant_id == tenant_id).count()
     else:

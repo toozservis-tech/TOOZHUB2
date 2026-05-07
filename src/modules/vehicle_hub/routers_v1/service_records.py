@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 import base64
 import binascii
-import hashlib
+import os
 from io import BytesIO
 import json
 import mimetypes
@@ -16,12 +16,13 @@ import secrets
 import unicodedata
 from urllib.parse import quote
 
+import requests
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import Any, List, Optional
-from sqlalchemy import desc, nullslast
+from sqlalchemy import desc, func, nullslast
 
 from src.core.config import DATA_DIR
 from src.core.rbac import is_admin, is_service
@@ -47,11 +48,25 @@ from ..models import (
     VehicleTachometerHistoryEntry,
 )
 from ..schema_management import assert_module_ready
-from ..service_access import attach_service_access_to_record, forbid_service_record_mutation, require_service_vehicle_link
+from ..service_access import attach_service_access_to_record, require_service_vehicle_link
+from ..service_record_snapshot import service_record_audit_snapshot as _service_record_snapshot
+from ..service_record_snapshot import snapshot_json_and_hash as _snapshot_json_and_hash
+from ..service_record_view import (
+    assert_viewer_may_mutate_service_record,
+    find_record_for_attachment_storage_key,
+    viewer_augmentation_for_service_record_api,
+    viewer_policy_applies_for_customer_workspace,
+    viewer_record_same_ownership_era,
+)
 from ..reports.vehicle_report_access import resolve_report_mode
 from ..reports.vehicle_report_builder import build_vehicle_service_report_payload
+from ..services.vehicle_large_technical_certificate_storage import (
+    regenerate_vehicle_large_technical_certificate_pdf,
+    technical_certificate_generated_at,
+)
 from ..reports.vehicle_report_pdf import render_vehicle_service_report_pdf
 from ..reports.vehicle_report_verification import finalize_vehicle_report_document
+from ...licensing.service import FREE_SERVICE_RECORDS_LIMIT, get_license_status
 from .auth import get_current_user, can_access_vehicle
 from .schemas import ServiceRecordCreateV1, ServiceRecordUpdateV1, ServiceRecordOutV1
 from .service_workspace import (
@@ -77,6 +92,8 @@ ALLOWED_ATTACHMENT_EXTENSIONS = {
     ".webp",
     ".bmp",
     ".gif",
+    ".heic",
+    ".heif",
 }
 MILEAGE_RE = re.compile(r"(?<!\d)(\d{1,3}(?:[ .]\d{3}){1,2}|\d{4,7})\s*km\b", re.IGNORECASE)
 MILEAGE_KEYWORD_RE = re.compile(
@@ -113,49 +130,131 @@ SUSPICIOUS_SUMMARY_PATTERNS = [
 SERVICE_RECORD_STATUSES = {"draft", "submitted", "approved", "locked"}
 SERVICE_RECORD_IMMUTABLE_STATUSES = {"approved", "locked"}
 
-
-def _service_record_snapshot(record: ServiceRecordModel) -> dict[str, Any]:
-    return {
-        "id": record.id,
-        "tenant_id": record.tenant_id,
-        "vehicle_id": record.vehicle_id,
-        "user_id": record.user_id,
-        "customer_id": getattr(record, "customer_id", None),
-        "service_id": getattr(record, "service_id", None),
-        "work_order_id": getattr(record, "work_order_id", None),
-        "quote_id": getattr(record, "quote_id", None),
-        "performed_at": record.performed_at.isoformat() if record.performed_at else None,
-        "mileage": record.mileage,
-        "description": record.description,
-        "price": record.price,
-        "note": record.note,
-        "category": record.category,
-        "attachments": record.attachments,
-        "next_service_due_date": (
-            record.next_service_due_date.isoformat() if record.next_service_due_date else None
-        ),
-        "record_status": getattr(record, "record_status", "draft"),
-        "service_type": getattr(record, "service_type", None),
-        "recommended_next_service_text": getattr(record, "recommended_next_service_text", None),
-        "recommended_next_service_date": (
-            record.recommended_next_service_date.isoformat()
-            if getattr(record, "recommended_next_service_date", None)
-            else None
-        ),
-        "notes_customer_visible": getattr(record, "notes_customer_visible", None),
-        "total_price": getattr(record, "total_price", None),
-        "created_by_ai": bool(record.created_by_ai),
-        "is_deleted": bool(getattr(record, "is_deleted", False)),
-        "deleted_at": record.deleted_at.isoformat() if getattr(record, "deleted_at", None) else None,
-        "deleted_by_user_id": getattr(record, "deleted_by_user_id", None),
-        "deletion_reason": getattr(record, "deletion_reason", None),
-    }
+SERVICE_RECORD_DESC_EDIT_MARKER = "\n\n(* původní záznam: "
 
 
-def _snapshot_json_and_hash(snapshot: dict[str, Any]) -> tuple[str, str]:
-    snapshot_json = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
-    snapshot_hash = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
-    return snapshot_json, snapshot_hash
+def _enforce_free_service_record_limit(
+    db: Session,
+    *,
+    tenant_id: int,
+    user_email: Optional[str],
+) -> None:
+    license_status = get_license_status(db, tenant_id, user_email)
+    if str(license_status.get("plan") or "").strip().lower() != "free":
+        return
+
+    records_count = int(
+        db.query(func.count(ServiceRecordModel.id)).filter(
+            ServiceRecordModel.tenant_id == tenant_id,
+            ServiceRecordModel.is_deleted.is_(False),
+        ).scalar() or 0
+    )
+    if records_count >= FREE_SERVICE_RECORDS_LIMIT:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Ve verzi Free můžete uložit pouze 1 servisní záznam. "
+                "Pro další záznamy přejděte na licenci Basic."
+            ),
+        )
+
+
+SERVICE_RECORD_DESC_EDIT_SUFFIX = " *)"
+
+
+def _split_service_record_description_annotation(description: str) -> tuple[str, str | None]:
+    """Oddělí hlavní text a volitelný transparentní odkaz na předchozí znění."""
+    raw = (description or "").strip()
+    if SERVICE_RECORD_DESC_EDIT_MARKER in raw:
+        idx = raw.rfind(SERVICE_RECORD_DESC_EDIT_MARKER)
+        main = raw[:idx].strip()
+        tail = raw[idx + len(SERVICE_RECORD_DESC_EDIT_MARKER) :]
+        if tail.endswith(SERVICE_RECORD_DESC_EDIT_SUFFIX):
+            previous = tail[: -len(SERVICE_RECORD_DESC_EDIT_SUFFIX)].strip()
+            return main, previous
+    return raw, None
+
+
+def _normalize_service_description_for_compare(text: str) -> str:
+    s = unicodedata.normalize("NFKC", (text or "").strip().lower())
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"[.,;:\-–—/\\|·]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _llm_service_descriptions_materially_differ(old_main: str, new_main: str) -> bool | None:
+    """
+    Volitelné porovnání přes OpenAI (OPENAI_API_KEY).
+    Vrací None, pokud LLM nelze použít — pak se použije heuristika níže.
+    """
+    key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if not key:
+        return None
+    model = (os.getenv("OPENAI_SERVICE_RECORD_COMPARE_MODEL") or "gpt-4o-mini").strip()
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            timeout=22,
+            json={
+                "model": model,
+                "temperature": 0,
+                "max_tokens": 6,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Jsi kontrolor editací servisního popisu vozidla. Odpověz přesně ANO nebo NE.\n"
+                            "ANO = nový text mění význam, rozsah prací nebo fakta oproti původnímu.\n"
+                            "NE = pouze pravopis, interpunkce, diakritika, formulace se stejným významem, "
+                            "přeskupení stejných údajů."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": f"PŮVODNÍ:\n{old_main}\n\nNOVÝ:\n{new_main}\n\nMění se význam podstatně? Odpověz ANO nebo NE.",
+                    },
+                ],
+            },
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        text = str(payload.get("choices", [{}])[0].get("message", {}).get("content", "")).strip().upper()
+        if text.startswith("ANO") or text.startswith("YES"):
+            return True
+        if text.startswith("NE") or text.startswith("NO"):
+            return False
+    except Exception:
+        pass
+    return None
+
+
+def _service_descriptions_materially_differ(old_main: str, new_main: str) -> bool:
+    old_main = (old_main or "").strip()
+    new_main = (new_main or "").strip()
+    if old_main == new_main:
+        return False
+    llm = _llm_service_descriptions_materially_differ(old_main, new_main)
+    if llm is not None:
+        return llm
+    return _normalize_service_description_for_compare(old_main) != _normalize_service_description_for_compare(
+        new_main
+    )
+
+
+def _merge_service_record_description_update(previous_full: str, incoming_text: str) -> str:
+    """
+    Uloží nový popis; při podstatné změně připojí transparentní odkaz na předchozí znění.
+    Při pouze stylistické úpravě vrátí čistý text bez patičky.
+    """
+    incoming_text = (incoming_text or "").strip()
+    previous_full = (previous_full or "").strip()
+    main_prev, _ = _split_service_record_description_annotation(previous_full)
+    new_main, _ = _split_service_record_description_annotation(incoming_text)
+    if not _service_descriptions_materially_differ(main_prev, new_main):
+        return new_main
+    return f"{new_main}{SERVICE_RECORD_DESC_EDIT_MARKER}{main_prev}{SERVICE_RECORD_DESC_EDIT_SUFFIX}"
 
 
 def _normalize_record_status(raw_value: Optional[str], *, default: str = "draft") -> str:
@@ -163,6 +262,24 @@ def _normalize_record_status(raw_value: Optional[str], *, default: str = "draft"
     if value not in SERVICE_RECORD_STATUSES:
         raise HTTPException(status_code=422, detail="Neplatný stav servisního záznamu.")
     return value
+
+
+def _attachment_request_looks_like_image(*, file_name: str, file_mime_type: str) -> bool:
+    """Fotodokumentace u záznamu nepatří k „exportu dokumentů / PDF“ — povolíme i ve FREE tarifu."""
+    mime = str(file_mime_type or "").lower().strip()
+    if mime.startswith("image/"):
+        return True
+    ext = Path(str(file_name or "")).suffix.lower()
+    return ext in {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".bmp",
+        ".heic",
+        ".heif",
+    }
 
 
 def _require_documents_plan(db: Session, *, tenant_id: Optional[int]) -> None:
@@ -188,6 +305,17 @@ def _assert_record_is_mutable(record: ServiceRecordModel) -> None:
             status_code=409,
             detail="Schválený nebo uzamčený servisní záznam už nelze upravovat.",
         )
+
+
+def _serialize_service_record_out_v1(
+    db: Session,
+    vehicle_id: int,
+    current_user: Customer,
+    record: ServiceRecordModel,
+) -> ServiceRecordOutV1:
+    merged = ServiceRecordOutV1.model_validate(record).model_dump()
+    merged.update(viewer_augmentation_for_service_record_api(db, vehicle_id, current_user, record))
+    return ServiceRecordOutV1(**merged)
 
 
 def _assert_current_user_can_edit_record(current_user: Customer, record: ServiceRecordModel) -> None:
@@ -263,15 +391,25 @@ class DocumentsHubTachometerItemV1(BaseModel):
     detail_url: str
 
 
+class DocumentsHubTechnicalCertificateItemV1(BaseModel):
+    vehicle_id: int
+    vehicle_name: str
+    document_title: str = "Velký technický průkaz"
+    download_url: str
+    generated_at: Optional[datetime] = None
+
+
 class DocumentsHubSummaryOutV1(BaseModel):
     scope: str
     vehicles_total: int
     attachments_total: int
     reports_total: int
     tachometer_documents_total: int
+    technical_certificates_total: int = 0
     attachments: list[DocumentsHubAttachmentItemV1] = []
     reports: list[DocumentsHubReportItemV1] = []
     tachometer_documents: list[DocumentsHubTachometerItemV1] = []
+    technical_certificates: list[DocumentsHubTechnicalCertificateItemV1] = []
 
 
 def _sanitize_file_stem(filename: str) -> str:
@@ -493,6 +631,11 @@ def _decode_base64_payload(payload: str) -> bytes:
         return b""
     if raw.startswith("data:") and "," in raw:
         raw = raw.split(",", 1)[1]
+    # RFC 2045 občas zalomí base64; klienti také vkládají mezery
+    raw = re.sub(r"\s+", "", raw)
+    pad = (-len(raw)) % 4
+    if pad:
+        raw = raw + ("=" * pad)
     try:
         return base64.b64decode(raw, validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -522,6 +665,8 @@ def _store_attachment_for_vehicle(
     if not extension:
         if mime_type == "application/pdf":
             extension = ".pdf"
+        elif mime_type in {"image/heic", "image/heif", "image/heic-sequence"}:
+            extension = ".heic"
         elif mime_type.startswith("image/"):
             extension = ".jpg"
         elif mime_type.startswith("text/"):
@@ -940,6 +1085,11 @@ def create_service_record(
 
         # Tenant kontext je povinný - primárně z vozidla, fallback z uživatele (legacy) a nakonec tenant 1
         tenant_id = vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1
+        _enforce_free_service_record_limit(
+            db,
+            tenant_id=tenant_id,
+            user_email=getattr(current_user, "email", None),
+        )
 
         access_link = None
         owner_customer = get_primary_vehicle_owner(db, vehicle)
@@ -1002,7 +1152,7 @@ def create_service_record(
         db.commit()
         db.refresh(record)
         
-        return record
+        return _serialize_service_record_out_v1(db, vehicle_id, current_user, record)
     except HTTPException:
         raise
     except Exception as e:
@@ -1027,7 +1177,10 @@ def upload_service_record_attachment(
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
-    _require_documents_plan(db, tenant_id=vehicle.tenant_id)
+    if not _attachment_request_looks_like_image(
+        file_name=payload.file_name, file_mime_type=payload.file_mime_type
+    ):
+        _require_documents_plan(db, tenant_id=vehicle.tenant_id)
 
     content = _decode_base64_payload(payload.file_content_base64)
     attachment_meta = _store_attachment_for_vehicle(
@@ -1065,6 +1218,12 @@ def create_service_record_from_document(
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
     _require_documents_plan(db, tenant_id=vehicle.tenant_id)
+    tenant_id = vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1
+    _enforce_free_service_record_limit(
+        db,
+        tenant_id=tenant_id,
+        user_email=getattr(current_user, "email", None),
+    )
 
     source_type = str(payload.source_type or "invoice").strip().lower()
     if source_type not in ALLOWED_SOURCE_TYPES:
@@ -1281,6 +1440,13 @@ def download_service_record_attachment(
     if expected_segment not in f"/{normalized_key}":
         raise HTTPException(status_code=403, detail="Příloha nepatří k tomuto vozidlu.")
 
+    owning_record = find_record_for_attachment_storage_key(db, vehicle_id, normalized_key)
+    if owning_record is not None and not viewer_record_same_ownership_era(db, vehicle_id, current_user, owning_record):
+        raise HTTPException(
+            status_code=403,
+            detail="Doklady předchozích majitelů nejsou z důvodu ochrany soukromí dostupné.",
+        )
+
     attachment_file = _resolve_attachment_file(normalized_key)
     if not attachment_file or not attachment_file.is_file():
         raise HTTPException(status_code=404, detail="Příloha nebyla nalezena.")
@@ -1316,6 +1482,7 @@ def get_documents_hub_summary(
             attachments_total=0,
             reports_total=0,
             tachometer_documents_total=0,
+            technical_certificates_total=0,
         )
 
     vehicles = (
@@ -1339,6 +1506,9 @@ def get_documents_hub_summary(
     attachment_items: list[DocumentsHubAttachmentItemV1] = []
     for record in attachment_records:
         vehicle = vehicle_by_id.get(int(record.vehicle_id))
+        if viewer_policy_applies_for_customer_workspace(current_user):
+            if not viewer_record_same_ownership_era(db, int(record.vehicle_id), current_user, record):
+                continue
         for attachment in _parse_attachments_payload(record.attachments):
             download_url = str(
                 attachment.get("download_url")
@@ -1447,15 +1617,31 @@ def get_documents_hub_summary(
         if len(tachometer_items) >= tachometer_limit:
             break
 
+    technical_certificate_items = [
+        DocumentsHubTechnicalCertificateItemV1(
+            vehicle_id=int(v.id),
+            vehicle_name=_vehicle_display_name(v),
+            document_title="Velký technický průkaz",
+            download_url=f"/api/v1/vehicles/{int(v.id)}/documents/large-technical-certificate.pdf",
+            generated_at=technical_certificate_generated_at(
+                tenant_id=int(v.tenant_id),
+                vehicle_id=int(v.id),
+            ),
+        )
+        for v in sorted(vehicles, key=lambda item: (_vehicle_display_name(item).lower(), int(item.id)))
+    ]
+
     return DocumentsHubSummaryOutV1(
         scope=scope,
         vehicles_total=len(vehicle_ids),
         attachments_total=len(attachment_items),
         reports_total=len(vehicle_ids),
         tachometer_documents_total=len(tachometer_items),
+        technical_certificates_total=len(technical_certificate_items),
         attachments=attachment_items,
         reports=report_items,
         tachometer_documents=tachometer_items,
+        technical_certificates=technical_certificate_items,
     )
 
 
@@ -1540,542 +1726,71 @@ def export_vehicle_report_pdf(
 def generate_service_records_pdf(
     vehicle_id: int,
     current_user: Customer = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
-    Vygeneruje PDF s historií servisních záznamů pro vozidlo.
-    
-    PDF obsahuje:
-    - Hlavičku s informacemi o vozidle (název, VIN, SPZ, atd.)
-    - Seznam všech servisních záznamů
-    - Pod každým záznamem poznámku menším písmem
+    PDF servisní historie ke stažení — stejný renderer a vizuální styl jako digitální výpis,
+    aby byl výstup konzistentní (tabulky, rámečky, časová osa km, graf). Dříve samostatná
+    ReportLab šablona zapisovala do data/pdfs a mohla selhat na oprávněních; výstup jde přímo z paměti.
     """
+    assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+    _require_documents_plan(db, tenant_id=vehicle.tenant_id)
+
     try:
-        from fastapi.responses import FileResponse
-        from pathlib import Path
-        from datetime import datetime, date
-        
-        # Kontrola přístupu k vozidlu
-        if not can_access_vehicle(vehicle_id, current_user, db):
-            raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
-        
-        # Načíst vozidlo
-        vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
-        if not vehicle:
-            raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
-        _require_documents_plan(db, tenant_id=vehicle.tenant_id)
+        resolved_mode = resolve_report_mode(
+            db=db,
+            vehicle=vehicle,
+            current_user=current_user,
+            requested_mode=None,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-        write_global_audit_log(
-            db,
-            entity_type="vehicle",
-            entity_id=int(vehicle_id),
-            action="pdf_export",
-            actor_user_id=getattr(current_user, "id", None),
-            actor_role=getattr(current_user, "role", None),
-            tenant_id=getattr(vehicle, "tenant_id", None),
-            metadata={"endpoint": "vehicles_pdf"},
-        )
-        db.commit()
-        
-        # Načíst všechny záznamy - řadit podle data (nejstarší první pro PDF)
-        records = db.query(ServiceRecordModel).filter(
-            ServiceRecordModel.vehicle_id == vehicle_id,
-            ServiceRecordModel.is_deleted.is_(False),
-        ).order_by(nullslast(ServiceRecordModel.performed_at.asc())).all()
-        mileage_timeline_points = collect_vehicle_mileage_timeline_points(db, vehicle_id)
-        mileage_timeline_summary = summarize_mileage_timeline(mileage_timeline_points)
-        
-        # Zkontrolovat, zda je dostupný ReportLab
-        try:
-            from reportlab.lib.pagesizes import A4
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.units import mm
-            from reportlab.lib import colors
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.platypus import Image as ReportLabImage, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-            from reportlab.lib.enums import TA_LEFT, TA_CENTER
-            REPORTLAB_AVAILABLE = True
-        except ImportError:
-            REPORTLAB_AVAILABLE = False
-            raise HTTPException(
-                status_code=500,
-                detail="Generování PDF není dostupné. ReportLab není nainstalován."
-            )
-        
-        # Vytvořit PDF
-        from src.core.config import PDF_DIR
-        PDF_DIR.mkdir(parents=True, exist_ok=True)
-        
-        # Název souboru - zajistit ASCII kompatibilitu
-        vehicle_name = vehicle.nickname or vehicle.plate or f"vozidlo_{vehicle_id}"
-        # Odstranit diakritiku a speciální znaky pro název souboru
-        import unicodedata
-        safe_name = unicodedata.normalize('NFKD', str(vehicle_name))
-        safe_name = ''.join(c for c in safe_name if not unicodedata.combining(c))
-        # Převést na ASCII - odstranit všechny ne-ASCII znaky
-        safe_name = safe_name.encode('ascii', 'ignore').decode('ascii')
-        safe_name = "".join(c for c in safe_name if c.isalnum() or c in (' ', '-', '_')).strip()
-        safe_name = safe_name.replace(' ', '_')[:50]  # Omezit délku
-        if not safe_name:  # Pokud by bylo prázdné, použít výchozí
-            safe_name = f"vozidlo_{vehicle_id}"
-        filename = f"servisni_zaznamy_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        pdf_path = PDF_DIR / filename
-        
-        # Pomocná funkce pro escape HTML a UTF-8
-        def escape_html(text):
-            """Escape HTML znaků a zajistí UTF-8 kompatibilitu"""
-            if text is None:
-                return ""
-            text = str(text)
-            # Escape HTML znaků - důležité pro ReportLab Paragraph
-            text = text.replace('&', '&amp;')
-            text = text.replace('<', '&lt;')
-            text = text.replace('>', '&gt;')
-            text = text.replace('"', '&quot;')
-            text = text.replace("'", '&#39;')
-            # Odstranit LaTeX matematické symboly, které ReportLab může interpretovat špatně
-            text = text.replace('$', '')
-            text = text.replace('\\', '')
-            return text
-        
-        # Pomocná funkce pro formátování čísel bez LaTeX
-        def format_number(num):
-            """Formátuje číslo bez LaTeX matematických symbolů"""
-            if num is None:
-                return ""
-            try:
-                # Použít jednoduché formátování s mezerou jako oddělovač tisíců
-                return f"{num:,.0f}".replace(',', ' ')
-            except (ValueError, TypeError):
-                return str(num)
-        
-        # Vytvořit PDF dokument s footerem
-        def add_footer(canvas_obj, doc):
-            """Přidá footer s datem a číslem stránky"""
-            canvas_obj.saveState()
-            canvas_obj.setFont('Helvetica', 8)
-            canvas_obj.setFillColor(colors.HexColor('#64748b'))
-            
-            # Datum generování - bez českých znaků pro drawString
-            gen_date = datetime.now().strftime('%d.%m.%Y %H:%M')
-            footer_text = f"Vygenerovano: {gen_date}"
-            canvas_obj.drawString(20*mm, 15*mm, footer_text)
-            
-            # Číslo stránky
-            page_num = canvas_obj.getPageNumber()
-            canvas_obj.drawRightString(190*mm, 15*mm, f"Stranka {page_num}")
-            
-            canvas_obj.restoreState()
-        
-        # Zajistit, že cesta k PDF je ASCII-safe (pro Windows kompatibilitu)
-        pdf_path_str = str(pdf_path)
-        try:
-            # Zkusit vytvořit PDF s UTF-8 cestou
-            doc = SimpleDocTemplate(
-                pdf_path_str, 
-                pagesize=A4,
-                rightMargin=20*mm,
-                leftMargin=20*mm,
-                topMargin=30*mm,
-                bottomMargin=25*mm
-            )
-        except (UnicodeEncodeError, OSError) as e:
-            # Pokud selže, použít ASCII-safe cestu
-            import tempfile
-            temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf', dir=str(PDF_DIR))
-            temp_pdf.close()
-            pdf_path = Path(temp_pdf.name)
-            doc = SimpleDocTemplate(
-                str(pdf_path), 
-                pagesize=A4,
-                rightMargin=20*mm,
-                leftMargin=20*mm,
-                topMargin=30*mm,
-                bottomMargin=25*mm
-            )
-        story = []
-        styles = getSampleStyleSheet()
-        
-        # Profesionální barvy
-        primary_color = colors.HexColor('#0f172a')  # Tmavě modrá
-        secondary_color = colors.HexColor('#1e40af')  # Modrá
-        accent_color = colors.HexColor('#3b82f6')  # Světle modrá
-        text_color = colors.HexColor('#1e293b')  # Tmavě šedá
-        light_gray = colors.HexColor('#f8fafc')  # Velmi světle šedá
-        border_color = colors.HexColor('#e2e8f0')  # Světle šedá
-        muted_text = colors.HexColor('#64748b')  # Šedá
-        
-        # Vlastní styly
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=24,
-            textColor=primary_color,
-            spaceAfter=8,
-            spaceBefore=0,
-            alignment=TA_CENTER,
-            fontName='Helvetica-Bold'
-        )
-        
-        subtitle_style = ParagraphStyle(
-            'CustomSubtitle',
-            parent=styles['Normal'],
-            fontSize=10,
-            textColor=muted_text,
-            spaceAfter=20,
-            alignment=TA_CENTER,
-            fontName='Helvetica'
-        )
-        
-        heading_style = ParagraphStyle(
-            'CustomHeading',
-            parent=styles['Heading2'],
-            fontSize=16,
-            textColor=primary_color,
-            spaceAfter=12,
-            spaceBefore=20,
-            fontName='Helvetica-Bold',
-            borderWidth=0,
-            borderPadding=0
-        )
-        
-        normal_style = ParagraphStyle(
-            'CustomNormal',
-            parent=styles['Normal'],
-            fontSize=10,
-            textColor=text_color,
-            spaceAfter=8,
-            leading=14,
-            fontName='Helvetica'
-        )
-        
-        note_style = ParagraphStyle(
-            'CustomNote',
-            parent=styles['Normal'],
-            fontSize=9,
-            textColor=muted_text,
-            spaceAfter=10,
-            leftIndent=15,
-            leading=12,
-            fontName='Helvetica-Oblique'
-        )
-        
-        record_title_style = ParagraphStyle(
-            'RecordTitle',
-            parent=styles['Normal'],
-            fontSize=11,
-            textColor=primary_color,
-            spaceAfter=4,
-            fontName='Helvetica-Bold',
-            leading=14
-        )
+    write_global_audit_log(
+        db,
+        entity_type="vehicle",
+        entity_id=int(vehicle_id),
+        action="pdf_export",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=getattr(vehicle, "tenant_id", None),
+        metadata={"endpoint": "vehicles_pdf", "renderer": "vehicle_service_report_pdf"},
+    )
+    db.commit()
 
-        body_small_style = ParagraphStyle(
-            'BodySmall',
-            parent=styles['Normal'],
-            fontSize=9,
-            textColor=muted_text,
-            spaceAfter=8,
-            leading=12,
-            fontName='Helvetica'
-        )
-        
-        # Hlavička s dekorativním pruhem
-        header_table_data = [
-            [Paragraph("<b>HISTORIE SERVISNÍCH ZÁZNAMŮ</b>", title_style)]
-        ]
-        header_table = Table(header_table_data, colWidths=[170*mm])
-        header_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), secondary_color),
-            ('TEXTCOLOR', (0, 0), (-1, -1), colors.white),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTSIZE', (0, 0), (-1, -1), 24),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 15),
-            ('TOPPADDING', (0, 0), (-1, -1), 15),
-            ('LEFTPADDING', (0, 0), (-1, -1), 10),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-        ]))
-        story.append(header_table)
-        story.append(Spacer(1, 15))
-        
-        # Tabulka s informacemi o vozidle - profesionální design
-        vehicle_data = []
-        if vehicle.nickname:
-            vehicle_data.append(["Název vozidla", escape_html(vehicle.nickname)])
-        if vehicle.brand:
-            vehicle_data.append(["Značka", escape_html(vehicle.brand)])
-        if vehicle.model:
-            vehicle_data.append(["Model", escape_html(vehicle.model)])
-        if vehicle.year:
-            vehicle_data.append(["Rok výroby", str(vehicle.year)])
-        if vehicle.vin:
-            vehicle_data.append(["VIN", escape_html(vehicle.vin)])
-        if vehicle.plate:
-            vehicle_data.append(["SPZ", escape_html(vehicle.plate)])
-        if vehicle.engine:
-            vehicle_data.append(["Motor", escape_html(vehicle.engine)])
-        
-        if vehicle_data:
-            # Přidat prázdný řádek pro lepší vzhled
-            vehicle_table = Table(vehicle_data, colWidths=[60*mm, 110*mm])
-            vehicle_table.setStyle(TableStyle([
-                # Hlavička (první řádek)
-                ('BACKGROUND', (0, 0), (0, -1), light_gray),
-                ('TEXTCOLOR', (0, 0), (0, -1), primary_color),
-                ('TEXTCOLOR', (1, 0), (1, -1), text_color),
-                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-                ('ALIGN', (1, 0), (1, -1), 'LEFT'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-                ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
-                ('TOPPADDING', (0, 0), (-1, -1), 10),
-                ('LEFTPADDING', (0, 0), (-1, -1), 12),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-                ('GRID', (0, 0), (-1, -1), 1, border_color),
-                ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, light_gray]),
-            ]))
-            story.append(vehicle_table)
-            story.append(Spacer(1, 25))
-        
-        # Souhrn (pokud jsou záznamy)
-        if records:
-            total_price = sum(r.price or 0 for r in records)
-            total_records = len(records)
-            # Formátovat cenu bez LaTeX matematických symbolů
-            if total_price > 0:
-                price_str = format_number(total_price)
-                price_display = f"{price_str} Kč"
-            else:
-                price_display = "Nezadáno"
-            summary_data = [
-                ["Celkový počet záznamů", str(total_records)],
-                ["Celková cena servisů", price_display]
-            ]
-            summary_table = Table(summary_data, colWidths=[100*mm, 70*mm])
-            summary_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), accent_color),
-                ('TEXTCOLOR', (0, 0), (-1, -1), colors.white),
-                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 11),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
-                ('TOPPADDING', (0, 0), (-1, -1), 10),
-                ('LEFTPADDING', (0, 0), (-1, -1), 12),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-            ]))
-            story.append(summary_table)
-            story.append(Spacer(1, 20))
+    payload = build_vehicle_service_report_payload(
+        db=db,
+        vehicle=vehicle,
+        current_user=current_user,
+        mode=resolved_mode,
+    )
+    payload, _document_row = finalize_vehicle_report_document(
+        db=db,
+        vehicle=vehicle,
+        current_user=current_user,
+        payload=payload,
+    )
+    pdf_content = render_vehicle_service_report_pdf(payload)
 
-        story.append(Paragraph("Vývoj stavu km", heading_style))
-        story.append(Paragraph(
-            "Časová osa z tabulky vehicle_mileage (ruční/STK zápisy km), servisních záznamů (performed_at + km), servisních příjmů a historie STK / tachometru. Body jsou seřazeny vzestupně podle data; anomálie jsou auditně označeny, bez úpravy hodnot.",
-            subtitle_style,
-        ))
+    brand = _ascii_slug(str(vehicle.brand or ""), fallback="VOZIDLO")
+    model_name = _ascii_slug(str(vehicle.model or ""), fallback="DETAIL")
+    vin = re.sub(r"[^A-Za-z0-9._-]+", "", str(vehicle.vin or "").strip()) or f"id-{vehicle.id}"
+    filename = f"servisni-historie-{brand}-{model_name}-{vin}.pdf"
+    safe_filename_ascii = filename.encode("ascii", "ignore").decode("ascii") or f"servisni-historie-{vehicle.id}.pdf"
+    safe_filename_utf8 = quote(filename, safe="")
+    content_disposition = f'attachment; filename="{safe_filename_ascii}"; filename*=UTF-8\'\'{safe_filename_utf8}'
 
-        if not mileage_timeline_points:
-            story.append(Paragraph(
-                "Pro graf nejsou k dispozici žádné body s datem a stavem km.",
-                body_small_style,
-            ))
-        else:
-            chart_png = render_mileage_timeline_chart_png(mileage_timeline_points)
-            chart_buffer = BytesIO(chart_png)
-            chart_buffer.name = "mileage_timeline.png"
-            chart = ReportLabImage(chart_buffer, width=170 * mm, height=96 * mm)
-            story.append(chart)
-            story.append(Spacer(1, 12))
-
-            first_point = mileage_timeline_summary["first_point"]
-            last_point = mileage_timeline_summary["last_point"]
-            summary_table_data = [
-                ["První známý stav km", f"{format_number(first_point.mileage_km)} km ({escape_html(first_point.date.strftime('%d.%m.%Y'))})"],
-                ["Poslední známý stav km", f"{format_number(last_point.mileage_km)} km ({escape_html(last_point.date.strftime('%d.%m.%Y'))})"],
-                ["Počet použitých bodů", str(mileage_timeline_summary["point_count"])],
-                ["Počet detekovaných anomálií", str(mileage_timeline_summary["anomaly_point_count"])],
-            ]
-            mileage_summary_table = Table(summary_table_data, colWidths=[60 * mm, 110 * mm])
-            mileage_summary_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (0, -1), light_gray),
-                ('TEXTCOLOR', (0, 0), (0, -1), primary_color),
-                ('TEXTCOLOR', (1, 0), (1, -1), text_color),
-                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-                ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-                ('TOPPADDING', (0, 0), (-1, -1), 8),
-                ('LEFTPADDING', (0, 0), (-1, -1), 10),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-                ('GRID', (0, 0), (-1, -1), 0.5, border_color),
-            ]))
-            story.append(mileage_summary_table)
-            story.append(Spacer(1, 10))
-
-            anomaly_counts = mileage_timeline_summary["anomaly_counts"]
-            if anomaly_counts:
-                anomaly_parts = []
-                if anomaly_counts.get("rollback"):
-                    anomaly_parts.append(f"poklesy: {anomaly_counts['rollback']}")
-                if anomaly_counts.get("suspicious_jump"):
-                    anomaly_parts.append(f"velké skoky: {anomaly_counts['suspicious_jump']}")
-                if anomaly_counts.get("duplicate"):
-                    anomaly_parts.append(f"duplicity: {anomaly_counts['duplicate']}")
-                anomaly_summary_text = "Detekované odchylky: " + ", ".join(anomaly_parts) + "."
-                story.append(Paragraph(anomaly_summary_text, body_small_style))
-
-            story.append(Paragraph("Graf vychází z dostupných evidovaných hodnot km.", body_small_style))
-            story.append(Paragraph("Podezřelé odchylky v časové ose jsou v reportu označeny.", body_small_style))
-            story.append(Spacer(1, 12))
-        
-        # Seznam záznamů
-        story.append(Paragraph("SERVISNÍ ZÁZNAMY", heading_style))
-        
-        if not records:
-            empty_style = ParagraphStyle(
-                'EmptyStyle',
-                parent=styles['Normal'],
-                fontSize=11,
-                textColor=muted_text,
-                spaceAfter=20,
-                alignment=TA_CENTER,
-                fontName='Helvetica-Oblique'
-            )
-            story.append(Paragraph("Zatím nebyly přidány žádné servisní záznamy.", empty_style))
-        else:
-            # Kategorie mapování (bez emoji pro lepší kompatibilitu)
-            category_map = {
-                'OLEJ': 'Olej',
-                'BRZDY': 'Brzdy',
-                'PNEU': 'Pneumatiky',
-                'STK': 'STK',
-                'DIAGNOSTIKA': 'Diagnostika',
-                'FILTRY': 'Filtry',
-                'CHLADICI': 'Chladicí systém',
-                'VYFUK': 'Výfuk',
-                'OSVETLENI': 'Osvětlení',
-                'KAROSERIE': 'Karoserie',
-                'INTERIER': 'Interiér',
-                'ELEKTRIKA': 'Elektrika',
-                'KLIMATIZACE': 'Klimatizace',
-                'PREVENTIVNI': 'Preventivní',
-                'OPRAVA': 'Oprava',
-                'JINE': 'Jiné'
-            }
-            
-            for i, record in enumerate(records, 1):
-                # Datum
-                if record.performed_at:
-                    try:
-                        if isinstance(record.performed_at, datetime):
-                            date_str = record.performed_at.strftime('%d.%m.%Y %H:%M')
-                        elif isinstance(record.performed_at, date):
-                            date_str = record.performed_at.strftime('%d.%m.%Y')
-                        else:
-                            date_str = str(record.performed_at)
-                    except (AttributeError, TypeError):
-                        date_str = 'Nezadáno'
-                else:
-                    date_str = 'Nezadáno'
-                
-                # Kategorie
-                category_display = category_map.get(record.category, record.category or 'Jiné')
-                
-                # Popis - escape HTML pro UTF-8
-                description = escape_html(record.description or 'Bez popisu')
-                
-                # Hlavní řádek záznamu
-                record_title = f"<b>{i}. {escape_html(category_display)}</b>"
-                story.append(Paragraph(record_title, record_title_style))
-                
-                # Popis
-                story.append(Paragraph(description, normal_style))
-                
-                # Detaily v tabulce
-                details_data = []
-                if record.mileage:
-                    mileage_str = format_number(record.mileage)
-                    details_data.append(["Nájezd", f"{mileage_str} km"])
-                if record.price:
-                    price_str = format_number(record.price)
-                    details_data.append(["Cena", f"{price_str} Kč"])
-                details_data.append(["Datum", escape_html(date_str)])
-                
-                if details_data:
-                    details_table = Table(details_data, colWidths=[40*mm, 130*mm])
-                    details_table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (0, -1), light_gray),
-                        ('TEXTCOLOR', (0, 0), (0, -1), muted_text),
-                        ('TEXTCOLOR', (1, 0), (1, -1), text_color),
-                        ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-                        ('ALIGN', (1, 0), (1, -1), 'LEFT'),
-                        ('FONTNAME', (0, 0), (0, -1), 'Helvetica'),
-                        ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-                        ('FONTSIZE', (0, 0), (-1, -1), 9),
-                        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                        ('TOPPADDING', (0, 0), (-1, -1), 6),
-                        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-                        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-                        ('GRID', (0, 0), (-1, -1), 0.5, border_color),
-                    ]))
-                    story.append(details_table)
-                
-                # Poznámka (pokud existuje) - escape HTML
-                if record.note:
-                    note_text = escape_html(record.note)
-                    story.append(Paragraph(f"Poznámka: {note_text}", note_style))
-                
-                # Oddělovač (kromě posledního)
-                if i < len(records):
-                    story.append(Spacer(1, 12))
-        
-        # Vytvořit PDF s footerem
-        doc.build(story, onFirstPage=add_footer, onLaterPages=add_footer)
-        
-        # Vrátit soubor s Content-Disposition headerem
-        from fastapi.responses import Response
-        from urllib.parse import quote
-        
-        with open(pdf_path, 'rb') as f:
-            pdf_content = f.read()
-        
-        # Kódovat název souboru pro Content-Disposition header (RFC 5987)
-        # Použít ASCII-safe název a UTF-8 encoded verzi
-        safe_filename_ascii = filename.encode('ascii', 'ignore').decode('ascii')
-        safe_filename_utf8 = quote(filename, safe='')
-        
-        # Content-Disposition s podporou UTF-8 (RFC 5987)
-        content_disposition = f'attachment; filename="{safe_filename_ascii}"; filename*=UTF-8\'\'{safe_filename_utf8}'
-        
-        return Response(
-            content=pdf_content,
-            media_type='application/pdf',
-            headers={
-                'Content-Disposition': content_disposition
-            }
-        )
-    except HTTPException:
-        raise
-    except UnicodeEncodeError as e:
-        print(f"[SERVICE_RECORDS] Unicode encoding error generating PDF for vehicle {vehicle_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Chyba při generování PDF: Problém s kódováním znaků. Zkuste použít název vozidla bez diakritiky."
-        )
-    except Exception as e:
-        print(f"[SERVICE_RECORDS] Error generating PDF for vehicle {vehicle_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        # Zkusit získat více informací o chybě
-        error_msg = str(e)
-        if 'latin-1' in error_msg or 'codec' in error_msg.lower():
-            error_msg = "Chyba kódování: Text obsahuje znaky, které nelze zakódovat. Zkuste použít název vozidla bez diakritiky."
-        raise HTTPException(status_code=500, detail=f"Chyba při generování PDF: {error_msg}")
+    return Response(
+        content=pdf_content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": content_disposition},
+    )
 
 
 @router.get("/{vehicle_id}/export/pdf")
@@ -2084,8 +1799,56 @@ def export_vehicle_pdf_alias(
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Stejný výstup jako ``GET /vehicles/{vehicle_id}/pdf`` (ReportLab)."""
+    """Stejný výstup jako ``GET /vehicles/{vehicle_id}/pdf``."""
     return generate_service_records_pdf(vehicle_id, current_user, db)
+
+
+@router.get("/{vehicle_id}/documents/large-technical-certificate.pdf")
+def export_large_technical_certificate_pdf(
+    vehicle_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Informační PDF ve stylu klasického „velkého“ technického průkazu (hlavička Správa vozidel).
+    Nahrazuje státní doklad pouze jako přehled dat v aplikaci.
+    """
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+    _require_documents_plan(db, tenant_id=vehicle.tenant_id)
+
+    write_global_audit_log(
+        db,
+        entity_type="vehicle",
+        entity_id=int(vehicle_id),
+        action="large_technical_certificate_export",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=getattr(vehicle, "tenant_id", None),
+        metadata={"endpoint": "large_technical_certificate_pdf", "renderer": "large_technical_certificate_pdf"},
+    )
+    db.commit()
+
+    pdf_content = regenerate_vehicle_large_technical_certificate_pdf(vehicle)
+
+    brand = _ascii_slug(str(vehicle.brand or ""), fallback="VOZIDLO")
+    model_name = _ascii_slug(str(vehicle.model or ""), fallback="MODEL")
+    plate = _ascii_slug(str(vehicle.plate or ""), fallback="SPZ")
+    vin = re.sub(r"[^A-Za-z0-9._-]+", "", str(vehicle.vin or "").strip()) or f"id-{vehicle.id}"
+    filename = f"velky-technicny-prukaz-{brand}-{model_name}-{plate}-{vin}.pdf"
+    safe_filename_ascii = filename.encode("ascii", "ignore").decode("ascii") or f"velky-tp-{vehicle.id}.pdf"
+    safe_filename_utf8 = quote(filename, safe="")
+    content_disposition = f'attachment; filename="{safe_filename_ascii}"; filename*=UTF-8\'\'{safe_filename_utf8}'
+
+    return Response(
+        content=pdf_content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": content_disposition},
+    )
 
 
 @router.get("/{vehicle_id}/records", response_model=List[ServiceRecordOutV1])
@@ -2109,8 +1872,8 @@ def get_service_records(
         if not include_deleted:
             query = query.filter(ServiceRecordModel.is_deleted.is_(False))
         records = query.order_by(nullslast(desc(ServiceRecordModel.performed_at))).all()
-        
-        return records
+
+        return [_serialize_service_record_out_v1(db, vehicle_id, current_user, r) for r in records]
     except HTTPException:
         raise
     except Exception as e:
@@ -2150,7 +1913,7 @@ def get_service_record(
             db.commit()
             db.refresh(record)
 
-        return record
+        return _serialize_service_record_out_v1(db, vehicle_id, current_user, record)
     except HTTPException:
         raise
     except Exception as e:
@@ -2188,18 +1951,20 @@ def update_service_record(
         if bool(getattr(record, "is_deleted", False)):
             raise HTTPException(status_code=409, detail="Archivovaný servisní záznam nelze upravovat")
         _assert_record_is_mutable(record)
+        assert_viewer_may_mutate_service_record(db, vehicle_id, current_user, record)
         _assert_current_user_can_edit_record(current_user, record)
 
         previous_snapshot = _service_record_snapshot(record)
         previous_status = _normalize_record_status(getattr(record, "record_status", None), default="draft")
-        
         # Aktualizace polí
         if record_data.performed_at is not None:
             record.performed_at = record_data.performed_at
-        if record_data.mileage is not None:
-            record.mileage = record_data.mileage
+        # Nájezd u existujícího záznamu je neměnný (důvěra v doklad); hodnota zůstává z DB.
         if record_data.description is not None:
-            record.description = record_data.description
+            record.description = _merge_service_record_description_update(
+                str(record.description or ""),
+                record_data.description,
+            )
         if record_data.price is not None:
             record.price = record_data.price
         if record_data.note is not None:
@@ -2268,7 +2033,7 @@ def update_service_record(
         db.commit()
         db.refresh(record)
         
-        return record
+        return _serialize_service_record_out_v1(db, vehicle_id, current_user, record)
     except HTTPException:
         raise
     except Exception as e:
@@ -2287,78 +2052,13 @@ def delete_service_record(
     db: Session = Depends(get_db)
 ):
     """
-    Archivuje servisní záznam bez fyzického smazání.
-    POZOR: Záznamy vytvořené AI asistentem (created_by_ai=True) nelze archivovat.
+    Mazání servisních záznamů není podporováno. Záznam lze pouze upravit (PUT).
+    Obnovu archivovaných záznamů provádí administrátor přes admin rozhraní.
     """
-    try:
-        assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
-        if not is_admin(getattr(current_user, "role", None)):
-            raise HTTPException(
-                status_code=403,
-                detail="Servisní historie je neměnná: záznamy lze pouze přidávat. Odstranění je vyhrazeno administrátorovi.",
-            )
-        # Kontrola přístupu k vozidlu
-        if not can_access_vehicle(vehicle_id, current_user, db):
-            raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
-        forbid_service_record_mutation(current_user)
-
-        record = db.query(ServiceRecordModel).filter(
-            ServiceRecordModel.id == record_id,
-            ServiceRecordModel.vehicle_id == vehicle_id
-        ).first()
-
-        if not record:
-            raise HTTPException(status_code=404, detail="Servisní záznam nenalezen")
-        if bool(getattr(record, "is_deleted", False)):
-            return {"message": "Servisní záznam je již archivovaný"}
-        
-        # Zakázat mazání záznamů vytvořených AI asistentem
-        if record.created_by_ai:
-            raise HTTPException(
-                status_code=403,
-                detail="Záznam vytvořený AI asistentem nelze smazat. Můžete ho pouze upravit."
-            )
-
-        previous_snapshot = _service_record_snapshot(record)
-        record.is_deleted = True
-        record.deleted_at = datetime.utcnow()
-        record.deleted_by_user_id = getattr(current_user, "id", None)
-        record.deletion_reason = "user_delete"
-        new_snapshot = _service_record_snapshot(record)
-        previous_snapshot_json, _ = _snapshot_json_and_hash(previous_snapshot)
-        new_snapshot_json, snapshot_hash = _snapshot_json_and_hash(new_snapshot)
-        record.snapshot_hash = snapshot_hash
-        db.add(
-            ServiceRecordAuditLog(
-                tenant_id=record.tenant_id,
-                service_record_id=record.id,
-                vehicle_id=record.vehicle_id,
-                changed_by_user_id=getattr(current_user, "id", None),
-                action="delete",
-                previous_snapshot_json=previous_snapshot_json,
-                new_snapshot_json=new_snapshot_json,
-                snapshot_hash=snapshot_hash,
-                change_reason="user_delete",
-            )
-        )
-        write_global_audit_log(
-            db,
-            entity_type="service_record",
-            entity_id=int(record_id),
-            action="service_record_archive_admin",
-            actor_user_id=getattr(current_user, "id", None),
-            actor_role=getattr(current_user, "role", None),
-            tenant_id=int(record.tenant_id),
-            metadata={"vehicle_id": int(vehicle_id)},
-        )
-        db.commit()
-        
-        return {"message": "Servisní záznam byl archivován"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        print(f"[SERVICE_RECORDS] Error deleting record {record_id} for vehicle {vehicle_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při mazání servisního záznamu: {str(e)}")
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "Servisní záznam nelze odstranit. Upravte ho přes úpravu záznamu. "
+            "Pokud potřebujete obnovit dříve archivovaný záznam, kontaktujte podporu."
+        ),
+    )

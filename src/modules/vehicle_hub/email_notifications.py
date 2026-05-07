@@ -11,6 +11,7 @@ from datetime import date, datetime
 from sqlalchemy.orm import Session
 
 from src.core.branding import APP_DISPLAY_NAME
+from src.core.datetime_cz import prague_today
 from src.modules.email_client.templates import build_app_url, render_email_layout, render_panel
 
 # Import přímo z service.py, aby se zabránilo importu GUI komponenty
@@ -59,6 +60,10 @@ def _add_email_log(
 
 
 def _app_index_url() -> str:
+    return build_app_url("/web/index.html")
+
+
+def _service_workspace_url() -> str:
     return build_app_url("/web/index.html")
 
 
@@ -112,7 +117,7 @@ def send_reminder_email(
     }
     reminder_type_display = reminder_type_map.get(reminder.type, reminder.type)
     
-    today = date.today()
+    today = prague_today()
     days_until = (reminder.due_date - today).days if reminder.due_date else None
     
     if days_until == 0:
@@ -259,7 +264,7 @@ def send_reminder_created_email(
     reminder_type_display = reminder_type_map.get(reminder.type, reminder.type)
     
     # Vypočítat dny do termínu
-    today = date.today()
+    today = prague_today()
     if reminder.due_date:
         days_until = (reminder.due_date - today).days
         if days_until < 0:
@@ -410,50 +415,50 @@ def send_reservation_created_email(
         getattr(service, "tenant_id", None),
     )
     customer_waiting_text = (
-        "Rezervace čeká na potvrzení servisem. Servisu jsme poslali žádost o přiřazení klienta k rezervaci."
+        "Objednávka servisu čeká na potvrzení servisem. Servisu jsme poslali žádost o přiřazení klienta k této objednávce."
         if requires_service_link_confirmation
-        else "Rezervace čeká na potvrzení servisem. Obdržíte další e-mail po potvrzení."
+        else "Objednávka servisu čeká na potvrzení servisem. Obdržíte další e-mail po potvrzení."
     )
     
     # E-mail pro zákazníka
     if customer.notify_email:
-        subject = f"✅ Rezervace vytvořena - {vehicle_name}"
+        subject = f"✅ Objednávka servisu vytvořena - {vehicle_name}"
         
         html_body = render_email_layout(
-            title="Rezervace vytvořena",
+            title="Objednávka servisu vytvořena",
             subtitle="Žádost byla uložena a čeká na další krok.",
             intro="Dobrý den,",
             paragraphs=[customer_waiting_text],
             panels=[
                 render_panel(
-                    title="Detaily rezervace",
+                    title="Detaily objednávky",
                     rows=[
                         ("Vozidlo", vehicle_name),
                         ("Servis", service.name or service.email),
                         ("Typ servisu", reservation.service_type or "Neuvedeno"),
                         ("Datum a čas", start_datetime_str),
                         ("Stav", "Čeká na potvrzení"),
-                        ("Poznámka", reservation.note or "Bez poznámky"),
+                        ("Popis závady / poznámka k vozidlu", reservation.note or "Bez poznámky"),
                     ],
                     accent="#10b981",
                     tone="#f0fdf4",
                 )
             ],
-            cta_label="Zobrazit rezervaci",
+            cta_label="Otevřít objednávku",
             cta_url=_app_index_url(),
             accent="#f59e0b",
         )
         
         text_body = f"""Dobrý den,
 
-Vaše rezervace byla úspěšně vytvořena:
+Vaše objednávka servisu byla úspěšně vytvořena:
 
 Vozidlo: {vehicle_name}
 Servis: {service.name or service.email}
 Typ servisu: {reservation.service_type or 'Neuvedeno'}
 Datum a čas: {start_datetime_str}
 Status: Čeká na potvrzení
-{f'Poznámka: {reservation.note}' if reservation.note else ''}
+{f'Popis závady / poznámka k vozidlu: {reservation.note}' if reservation.note else ''}
 
 {customer_waiting_text}
 
@@ -501,62 +506,90 @@ Zobrazit rezervaci: {_app_index_url()}
     
     # E-mail pro servis
     if service.email:
+        customer_display_name = customer.name or customer.email or "Klient"
+        reply_to_recipients = [customer.email] if getattr(customer, "email", None) else None
+        customer_mailto = f"mailto:{customer.email}" if getattr(customer, "email", None) else ""
+
         if requires_service_link_confirmation and service_link_claim_url:
-            subject = f"🔔 Nová rezervace – potvrďte propojení klienta ({vehicle_name})"
+            subject = f"🔔 Nová objednávka servisu – potvrďte propojení klienta ({vehicle_name})"
         else:
-            subject = f"🔔 Nová rezervace - {vehicle_name}"
+            subject = f"🔔 Nová objednávka servisu - {vehicle_name}"
 
         service_intro = (
-            "byla vytvořena nová rezervace. Klient ještě není propojen se servisním účtem, proto prosím nejprve potvrďte přiřazení jedním klikem."
+            "přišla nová objednávka servisu. Klient ještě není propojen se servisním účtem, proto prosím nejprve potvrďte přiřazení jedním klikem."
             if requires_service_link_confirmation
-            else "byla vytvořena nová rezervace:"
-        )
-        service_action_html = (
-            f"""
-        <div style="text-align: center;">
-            <a href="{service_link_claim_url}" class="button">Přiřadit klienta k rezervaci</a>
-        </div>
-        <p style="font-size:13px; color:#64748b;">Pokud tlačítko nefunguje, otevřete odkaz ručně:<br><a href="{service_link_claim_url}">{service_link_claim_url}</a></p>
-"""
-            if requires_service_link_confirmation and service_link_claim_url
-            else ""
+            else "přišla nová objednávka servisu z aplikace Správa vozidel:"
         )
         service_action_text = (
             f"Potvrzení propojení: {service_link_claim_url}"
             if requires_service_link_confirmation and service_link_claim_url
-            else "Prosím potvrďte nebo zrušte rezervaci v administračním panelu."
+            else "Objednávku můžete potvrdit, dokončit nebo zrušit přímo v aplikaci. Na klienta můžete odpovědět rovnou e-mailem."
         )
+
+        action_links = []
+        if customer_mailto:
+            action_links.append(
+                f'<a href="{customer_mailto}" style="display:inline-block; margin:0 8px 8px 0; background:#ffffff; color:#1d4ed8; text-decoration:none; font-weight:700; padding:12px 18px; border-radius:12px; border:1px solid #bfdbfe;">Odpovědět klientovi</a>'
+            )
+        action_links.append(
+            f'<a href="{_service_workspace_url()}" style="display:inline-block; margin:0 8px 8px 0; background:#1d4ed8; color:#ffffff; text-decoration:none; font-weight:700; padding:12px 18px; border-radius:12px;">Spravovat objednávku v aplikaci</a>'
+        )
+        if requires_service_link_confirmation and service_link_claim_url:
+            action_links.insert(
+                0,
+                f'<a href="{service_link_claim_url}" style="display:inline-block; margin:0 8px 8px 0; background:#f59e0b; color:#111827; text-decoration:none; font-weight:700; padding:12px 18px; border-radius:12px;">Přiřadit klienta k objednávce</a>'
+            )
+        service_action_html = f"""
+        <div style="margin-top:8px;">
+          {''.join(action_links)}
+        </div>
+        """
         
         html_body = render_email_layout(
-            title="Nová rezervace",
-            subtitle="Oznámení pro servisní účet.",
+            title="Nová objednávka servisu",
+            subtitle="Nový lead z uživatelské aplikace čeká na zpracování.",
             intro="Dobrý den,",
             paragraphs=[
                 service_intro,
                 (
-                    "Po potvrzení propojení bude rezervace viditelná v servisním přehledu."
+                    "Po potvrzení propojení bude objednávka viditelná v servisním přehledu a můžete navázat další správu vozidla."
                     if requires_service_link_confirmation and service_link_claim_url
-                    else "Prosím potvrďte nebo zrušte rezervaci v administračním panelu."
+                    else "Objednávku můžete rovnou otevřít v aplikaci, odpovědět klientovi e-mailem nebo ji potvrdit při dalším kroku v systému."
                 ),
             ],
             panels=[
                 render_panel(
-                    title="Detaily rezervace",
+                    title="Detaily objednávky",
                     rows=[
-                        ("Zákazník", customer.name or customer.email),
+                        ("Zákazník", customer_display_name),
+                        ("E-mail klienta", customer.email or "Neuvedeno"),
                         ("Vozidlo", vehicle_name),
                         ("Typ servisu", reservation.service_type or "Neuvedeno"),
                         ("Datum a čas", start_datetime_str),
-                        ("Poznámka", reservation.note or "Bez poznámky"),
+                        ("Popis závady / poznámka k vozidlu", reservation.note or "Bez poznámky"),
                     ],
                     accent="#3b82f6",
+                    tone="#eff6ff",
+                ),
+                render_panel(
+                    title="Další krok",
+                    message=(
+                        "Na tuto zprávu můžete odpovědět a e-mail půjde přímo klientovi."
+                        if customer_mailto
+                        else "Objednávku otevřete v aplikaci a navážete další komunikaci se zákazníkem."
+                    ),
+                    raw_html=service_action_html,
+                    accent="#2563eb",
                     tone="#eff6ff",
                 ),
                 *(
                     [
                         render_panel(
                             title="Potvrzení propojení",
-                            message=f"Odkaz pro rychlé přiřazení klienta:\n{service_link_claim_url}",
+                            message=(
+                                "Klient ještě není propojen se servisním účtem. Potvrďte přiřazení jedním klikem a objednávka se zařadí do plného servisního workflow.\n\n"
+                                f"Odkaz pro rychlé přiřazení klienta:\n{service_link_claim_url}"
+                            ),
                             accent="#f59e0b",
                             tone="#fff7ed",
                         )
@@ -565,22 +598,29 @@ Zobrazit rezervaci: {_app_index_url()}
                     else []
                 ),
             ],
-            cta_label="Otevřít admin panel",
-            cta_url=build_app_url("/web_admin/"),
+            cta_label="Otevřít objednávky v aplikaci",
+            cta_url=_service_workspace_url(),
             accent="#f59e0b",
+            footer_note=(
+                "Tato zpráva obsahuje novou objednávku servisu z aplikace Správa vozidel. "
+                "Pokud ještě aplikaci nepoužíváte v plném rozsahu, otevřete ji a spravujte objednávky, zákazníky i další navazující práci na jednom místě."
+            ),
         )
         
         text_body = f"""Dobrý den,
 
-byla vytvořena nová rezervace:
+byla vytvořena nová objednávka servisu:
 
-Zákazník: {customer.name or customer.email}
+Zákazník: {customer_display_name}
+E-mail klienta: {customer.email or 'Neuvedeno'}
 Vozidlo: {vehicle_name}
 Typ servisu: {reservation.service_type or 'Neuvedeno'}
 Datum a čas: {start_datetime_str}
-{f'Poznámka: {reservation.note}' if reservation.note else ''}
+{f'Popis závady / poznámka k vozidlu: {reservation.note}' if reservation.note else ''}
 
 {service_action_text}
+
+Správa objednávky v aplikaci: {_service_workspace_url()}
 
 S pozdravem,
 {APP_DISPLAY_NAME}
@@ -591,7 +631,8 @@ S pozdravem,
                 to=[service.email],
                 subject=subject,
                 body=text_body,
-                html_body=html_body
+                html_body=html_body,
+                reply_to=reply_to_recipients,
             )
             email_service.send_email(message)
             

@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Správa vozidel – Developer Admin Dashboard</title>
-  <link rel="stylesheet" href="admin.css?v=20260421a" />
+  <title>Správa vozidel – Admin Dashboard</title>
+  <link rel="stylesheet" href="admin.css?v=20260503notifications" />
 </head>
 <body>
   <!-- Přihlašovací obrazovka -->
   <div id="login-screen" class="hidden">
     <div class="login-container">
       <h1>🚗 Správa vozidel</h1>
-      <h2>Developer Admin Dashboard</h2>
+      <h2>Admin Dashboard</h2>
       <form id="login-form" onsubmit="handleAdminLogin(event); return false;">
         <div class="form-group">
           <label for="admin-email">Email:</label>
@@ -33,7 +33,7 @@
     <nav class="navbar">
       <div class="navbar-brand">
         <span class="logo">🚗</span>
-        <span class="brand-text">Správa vozidel – Developer Admin</span>
+        <span class="brand-text">Správa vozidel – Admin</span>
       </div>
       <button
         id="admin-mobile-menu-toggle"
@@ -52,6 +52,7 @@
         <span id="summary-services" class="stat-badge" title="Otevřít sekci Servisy">🛠 Servisy: <strong>0</strong></span>
         <span id="summary-records" class="stat-badge" title="Otevřít sekci Záznamy">📋 Záznamy: <strong>0</strong></span>
       </div>
+      <time id="adminNavbarClock" class="navbar-digital-clock" datetime="" title="Čas v Česku (Europe/Prague)">--:--:--</time>
       <button id="logout-btn" class="btn-logout" onclick="handleAdminLogout()">Odhlásit se</button>
     </nav>
 
@@ -62,12 +63,20 @@
       <aside id="adminSidebar" class="sidebar">
         <nav class="sidebar-nav">
           <button data-section="overview" class="nav-item active">
-            <span class="nav-icon">📊</span>
-            <span class="nav-text">Přehled</span>
+            <span class="nav-icon">📌</span>
+            <span class="nav-text">Co řešit dnes</span>
+          </button>
+          <button data-section="app-center" class="nav-item">
+            <span class="nav-icon">🧩</span>
+            <span class="nav-text">Centrum aplikace</span>
           </button>
           <button data-section="global-admin" class="nav-item">
             <span class="nav-icon">🧭</span>
             <span class="nav-text">Globální dohled</span>
+          </button>
+          <button data-section="demo-access" class="nav-item">
+            <span class="nav-icon">🎯</span>
+            <span class="nav-text">Ukázka (demo)</span>
           </button>
           <button data-section="users" class="nav-item">
             <span class="nav-icon">👥</span>
@@ -76,6 +85,14 @@
           <button data-section="vehicles" class="nav-item">
             <span class="nav-icon">🚗</span>
             <span class="nav-text">Vozidla</span>
+          </button>
+          <button data-section="mdcr-open-data" class="nav-item">
+            <span class="nav-icon">🏛</span>
+            <span class="nav-text">MDČR data</span>
+          </button>
+          <button data-section="vehicle-lifecycle" class="nav-item">
+            <span class="nav-icon">🔁</span>
+            <span class="nav-text">Převody a archiv</span>
           </button>
           <button data-section="services" class="nav-item">
             <span class="nav-icon">🛠</span>
@@ -89,6 +106,14 @@
             <span class="nav-icon">📜</span>
             <span class="nav-text">Audit log</span>
           </button>
+          <button data-section="support" class="nav-item">
+            <span class="nav-icon">💬</span>
+            <span class="nav-text">Podpora</span>
+          </button>
+          <button data-section="security" class="nav-item">
+            <span class="nav-icon">🛡</span>
+            <span class="nav-text">Bezpečnost</span>
+          </button>
           <div class="nav-divider"></div>
           <button data-section="system" class="nav-item">
             <span class="nav-icon">⚙️</span>
@@ -100,7 +125,7 @@
           </button>
           <button data-section="control-center" class="nav-item">
             <span class="nav-icon">🧠</span>
-            <span class="nav-text">Developer Control Center</span>
+            <span class="nav-text">Developer nástroje</span>
           </button>
         </nav>
       </aside>
@@ -112,7 +137,11 @@
         <!-- Sekce: Přehled -->
         <section id="section-overview" class="content-section active">
           <div class="section-header">
-            <h1>Přehled systému</h1>
+            <h1>Co řešit dnes</h1>
+            <button class="btn-primary" type="button" onclick="loadOverview()">Obnovit přehled</button>
+          </div>
+          <div id="admin-today-panel" class="admin-today-panel">
+            <div class="loading">Načítám pracovní přehled...</div>
           </div>
           <div id="overview-stats" class="stats-grid">
             <!-- Naplní se JavaScriptem -->
@@ -122,6 +151,20 @@
           </div>
           <div id="recent-activity" class="activity-list">
             <!-- Naplní se JavaScriptem -->
+          </div>
+        </section>
+
+        <section id="section-app-center" class="content-section">
+          <div class="section-header">
+            <div>
+              <h1>Centrum aplikace</h1>
+              <p class="section-subtitle">Mapa všech důležitých funkcí aplikace, jejich stav a rychlé admin akce bez zásahu do kódu.</p>
+            </div>
+            <button class="btn-primary" type="button" onclick="loadAppCenter()">Obnovit centrum</button>
+          </div>
+          <div id="app-center-summary" class="global-admin-summary"></div>
+          <div id="app-center-grid" class="app-center-grid">
+            <div class="loading">Načítám centrum aplikace...</div>
           </div>
         </section>
 
@@ -153,6 +196,33 @@
           <div id="global-admin-results" class="global-admin-results">
             <div class="loading">Načítám globální dohled...</div>
           </div>
+        </section>
+
+        <!-- Sekce: Veřejná ukázka (odeslané odkazy) -->
+        <section id="section-demo-access" class="content-section">
+          <div class="section-header">
+            <div>
+              <h1>Ukázka aplikace (demo)</h1>
+              <p class="section-subtitle">
+                E-maily, na které byl odeslán jednorázový odkaz do interaktivní ukázky (po vyplnění formuláře na veřejné stránce).
+                Slouží k přehledu, kdo o ukázku požádal a zda odkaz použil.
+              </p>
+            </div>
+            <button class="btn-primary" type="button" onclick="loadDemoAccessLeads()">Obnovit</button>
+          </div>
+          <div class="section-toolbar">
+            <input
+              type="text"
+              id="demo-access-search"
+              class="search-input"
+              placeholder="🔍 Filtrovat podle části e-mailu…"
+              onkeydown="if (event.key === 'Enter') { event.preventDefault(); loadDemoAccessLeads(); }"
+            />
+            <button class="btn-secondary" type="button" onclick="loadDemoAccessLeads()">Filtrovat</button>
+          </div>
+          <div id="demo-access-summary" class="global-admin-summary"></div>
+          <p id="demo-access-note" class="panel-subtle hidden" style="margin: 0 0 12px;"></p>
+          <div id="demo-access-table" class="tool-table-wrap"></div>
         </section>
 
         <!-- Sekce: Uživatelé -->
@@ -195,6 +265,18 @@
           </div>
           <div id="vehicles-cards-container" class="cards-grid">
             <!-- Naplní se JavaScriptem -->
+          </div>
+        </section>
+
+        <!-- Sekce: Převody a archiv vozidel -->
+        <section id="section-vehicle-lifecycle" class="content-section">
+          <div class="section-header">
+            <h1>Převody a archiv vozidel</h1>
+            <button type="button" class="btn-secondary" onclick="loadVehicleLifecycleSection()">Obnovit</button>
+          </div>
+          <p class="panel-subtle">Odebraná a převáděná vozidla — odděleně od aktivního seznamu vozidel.</p>
+          <div id="vehicle-lifecycle-table" class="tool-table-wrap">
+            <div class="loading">Načíst klepnutím na Obnovit.</div>
           </div>
         </section>
 
@@ -243,6 +325,19 @@
           <div id="records-cards-container" class="cards-grid">
             <!-- Naplní se JavaScriptem -->
           </div>
+          <details class="admin-deleted-records-block" style="margin-top: 1.5rem;">
+            <summary style="cursor: pointer; font-weight: 600;">Archivované servisní záznamy (obnova)</summary>
+            <p class="section-subtitle" style="margin: 0.5rem 0 1rem;">
+              Záznamy archivované z adminu lze vrátit do aplikace (API <code>/admin-api/archived-service-records</code>).
+              Tvrdé smazání vozidla v adminu nelze aplikací vrátit — pouze ze zálohy databáze.
+            </p>
+            <div class="section-toolbar" style="margin-bottom: 0.75rem;">
+              <button type="button" class="btn-secondary" onclick="loadDeletedServiceRecords()">Obnovit seznam</button>
+            </div>
+            <div id="records-deleted-container" class="tool-table-wrap">
+              <div class="empty">Klikněte na „Obnovit seznam“ pro načtení archivovaných záznamů.</div>
+            </div>
+          </details>
         </section>
 
         <!-- Sekce: Audit log -->
@@ -251,9 +346,14 @@
             <h1>Audit log</h1>
           </div>
           <div class="section-toolbar">
+            <input id="audit-date-from" type="datetime-local" class="filter-input" title="Od" />
+            <input id="audit-date-to" type="datetime-local" class="filter-input" title="Do" />
+            <input id="audit-actor" type="text" class="search-input" placeholder="Admin / role / IP" />
+            <input id="audit-entity-id" type="number" min="1" class="filter-input" placeholder="Entity ID" />
             <select id="audit-entity-type" class="filter-select" title="Filtrovat podle typu entity">
               <option value="">Všechny typy</option>
               <option value="user">Uživatelé</option>
+              <option value="customer">Customer</option>
               <option value="vehicle">Vozidla</option>
               <option value="service">Servisy</option>
               <option value="service_record">Servisní záznamy</option>
@@ -263,11 +363,99 @@
               <option value="CREATE_RESERVATION">Vytvoření rezervace</option>
               <option value="CREATE_REMINDER">Vytvoření připomínky</option>
             </select>
+            <select id="audit-severity" class="filter-select" title="Závažnost">
+              <option value="">Všechny závažnosti</option>
+              <option value="critical">Kritické</option>
+              <option value="warning">Upozornění</option>
+              <option value="info">Info</option>
+            </select>
             <button class="btn-secondary" onclick="loadAuditLog()">Filtrovat</button>
+            <button class="btn-secondary" onclick="exportAuditLogCsv()">Export CSV</button>
           </div>
           <div id="audit-log-list" class="audit-log-list">
             <!-- Naplní se JavaScriptem -->
           </div>
+        </section>
+
+        <section id="section-support" class="content-section">
+          <div class="section-header">
+            <div>
+              <h1>Podpora</h1>
+              <p class="section-subtitle">Požadavky uživatelů odeslané z aplikace, bez hledání v technických logách.</p>
+            </div>
+            <button class="btn-primary" type="button" onclick="loadSupportInbox()">Obnovit podporu</button>
+          </div>
+          <div id="support-inbox-summary" class="global-admin-summary"></div>
+          <div id="support-inbox-list" class="tool-table-wrap">
+            <div class="loading">Načítám podporu...</div>
+          </div>
+        </section>
+
+        <section id="section-security" class="content-section">
+          <div class="section-header">
+            <div>
+              <h1>Bezpečnost admina</h1>
+              <p class="section-subtitle">Aktuální IP, allowlist, blokované IP a poslední bezpečnostní události.</p>
+            </div>
+            <button class="btn-primary" type="button" onclick="loadSecurityPanel()">Obnovit bezpečnost</button>
+          </div>
+          <div id="security-admin-panel" class="security-admin-panel">
+            <div class="loading">Načítám bezpečnostní stav...</div>
+          </div>
+        </section>
+
+        <section id="section-mdcr-open-data" class="content-section">
+          <div class="section-header">
+            <div>
+              <h1>MDČR otevřená data</h1>
+              <p class="section-subtitle">Import údajů o vozidle podle VIN z otevřených dat STK/SME: platnost STK, výsledek prohlídky, tachometr, značka/model, stanice a protokol.</p>
+            </div>
+            <button class="btn-primary" type="button" onclick="loadMdcrOpenData()">Obnovit stav</button>
+          </div>
+          <div id="mdcr-open-data-status" class="global-admin-summary"></div>
+          <div class="mdcr-explain-panel">
+            <strong>Jak to číst:</strong>
+            tato obrazovka nevolá neveřejnou Kontrolu tachometru. Čte konkrétní distribuční XML/GZIP soubor z MDČR otevřených dat. Pokud VIN nenajde, znamená to hlavně to, že není v právě zvoleném souboru nebo v nastaveném limitu.
+          </div>
+          <div id="mdcr-legal-panel" class="mdcr-legal-panel">
+            <div class="loading">Načítám právní rámec a zdroje dat...</div>
+          </div>
+          <div class="mdcr-open-data-layout">
+            <article class="tool-card mdcr-open-data-card">
+              <h3>🏛 Zdroj MDČR / data.gov.cz</h3>
+              <p>Ministerstvo neposkytuje API ke Kontrole tachometru. Tady používáme otevřený dataset prohlídek STK/SME a párujeme jej jen na vozidla, která už v aplikaci mají VIN.</p>
+              <label for="mdcr-source-url">Distribuční URL datasetu</label>
+              <input id="mdcr-source-url" class="search-input" type="url" placeholder="https://istp.data.md.gov.cz/api/data/..." />
+              <p class="panel-subtle">Každá URL je konkrétní distribuční soubor. Pro úplné ověření VIN použij správný denní soubor z data.gov.cz nebo smaž limit.</p>
+              <div class="mdcr-open-data-options">
+                <label>Limit záznamů <input id="mdcr-limit" class="filter-input" type="number" min="1" value="500" /></label>
+                <label><input id="mdcr-update-profile" type="checkbox" checked /> Aktualizovat kartu vozidla</label>
+              </div>
+              <label for="mdcr-vin-lookup">VIN pro kontrolu dat</label>
+              <div class="mdcr-vin-lookup-row">
+                <input id="mdcr-vin-lookup" class="search-input" type="text" placeholder="Např. TMB..." />
+                <button class="btn-secondary" type="button" onclick="lookupMdcrVin()">Zobrazit data pro VIN</button>
+              </div>
+              <div class="mdcr-vin-lookup-row">
+                <button class="btn-secondary" type="button" onclick="lookupMdcrVinWithoutLimit()">Hledat VIN bez limitu</button>
+              </div>
+              <div class="app-center-actions">
+                <button class="btn-secondary" type="button" onclick="runMdcrOpenDataImport(true)">Spustit test</button>
+                <button class="btn-primary" type="button" onclick="runMdcrOpenDataImport(false)">Importovat lokálně</button>
+              </div>
+              <p class="panel-subtle">Doporučení: nejdřív spusť „Test bez zápisu“, zkontroluj počet nalezených VIN a až potom ostrý lokální import.</p>
+            </article>
+            <article class="tool-card mdcr-open-data-card">
+              <h3>Co se zapíše do aplikace</h3>
+              <div id="mdcr-open-data-fields" class="app-center-notes"></div>
+              <h3>Poslední importy</h3>
+              <div id="mdcr-open-data-imports" class="tool-table-wrap">
+                <div class="loading">Načítám importy...</div>
+              </div>
+            </article>
+          </div>
+          <div id="mdcr-vin-lookup-result" class="tool-result"></div>
+          <div id="mdcr-open-data-result" class="tool-result"></div>
         </section>
 
         <!-- Sekce: Systémové nástroje -->
@@ -308,6 +496,9 @@
           <div id="settings-error" class="error hidden"></div>
           
           <div id="settings-content" class="settings-content hidden">
+            <div id="settings-source-panel" class="settings-source-panel">
+              <div class="loading">Načítám zdroje nastavení...</div>
+            </div>
             <!-- Tabs pro kategorie -->
             <div class="settings-tabs">
               <button class="settings-tab active" data-category="general" onclick="showSettingsCategory('general')">
@@ -532,9 +723,6 @@
                   <label for="cc-license-plan">Licence plan</label>
                   <select id="cc-license-plan">
                     <option value="">beze změny</option>
-                    <option value="free">free</option>
-                    <option value="basic">basic</option>
-                    <option value="premium">premium</option>
                   </select>
                 </div>
                 <div class="form-group">
@@ -761,14 +949,34 @@
                 <div class="cc-metric-item"><span>Severity</span><strong id="cc-notifications-severity-preview">info</strong></div>
               </div>
               <div class="form-group">
-                <label for="cc-broadcast-message">Zpráva</label>
-                <input id="cc-broadcast-message" type="text" placeholder="Např. Plánovaná údržba..." />
+                <label for="cc-broadcast-title">Titulek (volitelný)</label>
+                <input id="cc-broadcast-title" type="text" placeholder="Systémové oznámení" />
+              </div>
+              <div class="form-group cc-broadcast-compose-group">
+                <label>Zpráva</label>
+                <div class="cc-broadcast-editor-shell">
+                  <div class="cc-broadcast-toolbar" role="toolbar" aria-label="Formátování zprávy">
+                    <button type="button" class="cc-broadcast-tool" data-cc-cmd="bold" title="Tučně"><strong>B</strong></button>
+                    <span class="cc-broadcast-toolbar-sep" aria-hidden="true"></span>
+                    <button type="button" class="cc-broadcast-tool cc-broadcast-tool-align" data-cc-cmd="justifyLeft" title="Zarovnat vlevo">L</button>
+                    <button type="button" class="cc-broadcast-tool cc-broadcast-tool-align" data-cc-cmd="justifyCenter" title="Na střed">C</button>
+                    <button type="button" class="cc-broadcast-tool cc-broadcast-tool-align" data-cc-cmd="justifyRight" title="Zarovnat vpravo">R</button>
+                  </div>
+                  <div id="cc-broadcast-editor" class="cc-broadcast-editor" contenteditable="true" spellcheck="true" data-placeholder="Text oznámení pro uživatele…"></div>
+                </div>
+                <p class="cc-broadcast-preview-caption">Náhled uživatele (šířka jako v aplikaci)</p>
+                <div class="cc-broadcast-user-preview-panel app-notifications-dropdown" aria-hidden="true">
+                  <div class="app-notifications-dropdown-head">Oznámení</div>
+                  <div class="app-notifications-dropdown-list">
+                    <article class="app-notifications-item cc-broadcast-preview-item">
+                      <div id="cc-broadcast-preview-title" class="app-notifications-item-title">Oznámení</div>
+                      <div id="cc-broadcast-preview-msg" class="app-notifications-item-msg"><span class="cc-broadcast-preview-placeholder">Začněte psát výše…</span></div>
+                      <div id="cc-broadcast-preview-meta" class="app-notifications-item-meta"></div>
+                    </article>
+                  </div>
+                </div>
               </div>
               <div class="cc-license-inline">
-                <div class="form-group">
-                  <label for="cc-broadcast-title">Titulek (volitelný)</label>
-                  <input id="cc-broadcast-title" type="text" placeholder="Systémové oznámení" />
-                </div>
                 <div class="form-group">
                   <label for="cc-broadcast-target-type">Cílení</label>
                   <select id="cc-broadcast-target-type">
@@ -788,6 +996,11 @@
                 <button class="btn-secondary" type="button" onclick="loadControlCenterNotifications()">Načíst feed</button>
                 <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-notifications-details')">Zobrazit detail</button>
               </div>
+              <small style="display:block;margin-top:10px;line-height:1.45;color:#64748b;">
+                Zprávy odeslané odtud se uloží do databáze a v aplikaci mají vlastní číslo položky (kladné ID).
+                Opakované upozornění na údržbu z konfigurace (bez nového řádku v DB) je v Nastavení → Obecná → Údržba a oznámení.
+                Kdo broadcast odeslal, lze dohledat v Audit u akce <code>notifications.broadcast</code>.
+              </small>
               <div id="cc-notifications-result" class="cc-module-result">Čeká na načtení notification feedu.</div>
               <details id="cc-notifications-details" class="cc-module-details">
                 <summary>Detail notifikačního feedu</summary>
@@ -950,20 +1163,54 @@
         </div>
         <div class="form-group">
           <label for="user-role">Role *</label>
-          <select id="user-role" required>
+          <select id="user-role" required onchange="applyDefaultUserWorkspaceCheckboxesFromRole()">
             <option value="user">Uživatel</option>
             <option value="service">Servis</option>
+            <option value="admin">Tenant admin</option>
             <option value="developer_admin">Developer Admin</option>
           </select>
         </div>
         <div class="form-group">
           <label for="user-license-plan">Licence *</label>
           <select id="user-license-plan" required>
-            <option value="free">FREE (1 vozidlo)</option>
-            <option value="basic">BASIC (5 vozidel)</option>
-            <option value="premium">PREMIUM (neomezeně)</option>
+            <option value="free">FREE</option>
           </select>
         </div>
+        <fieldset class="form-group user-workspace-entitlements-panel">
+          <legend class="user-workspace-legend">Pracovní režimy v aplikaci</legend>
+          <p class="user-workspace-lead">
+            Stejný e-mail může mít <strong>uživatelský</strong> prostor (garáž, /app/u/…) a zároveň
+            <strong>servisní</strong> (/app/s/…). Zaškrtněte obě volby a uložte — nastavení se uloží do účtu a projeví se v
+            <code>/api/me</code> (přepínač režimu v aplikaci).
+          </p>
+          <ul class="user-workspace-checklist">
+            <li>
+              <label class="user-workspace-check">
+                <input type="checkbox" id="user-ws-user" />
+                <span class="user-workspace-check-title">Uživatel</span>
+                <span class="user-workspace-check-desc">Vlastní vozidla, rezervace jako zákazník</span>
+              </label>
+            </li>
+            <li>
+              <label class="user-workspace-check">
+                <input type="checkbox" id="user-ws-service" />
+                <span class="user-workspace-check-title">Servis</span>
+                <span class="user-workspace-check-desc">Servisní workspace, klienti, servisní API</span>
+              </label>
+            </li>
+          </ul>
+          <div class="user-workspace-default-row">
+            <label for="user-ws-default">Výchozí obrazovka při obou režimech</label>
+            <select id="user-ws-default">
+              <option value="">Podle role (uživatel, pokud jsou oba)</option>
+              <option value="user">Po přihlášení: uživatel</option>
+              <option value="service">Po přihlášení: servis</option>
+            </select>
+          </div>
+          <p class="user-workspace-footnote">
+            Pokud zaškrtnutí odpovídá jen poli Role, explicitní rozšíření se neukládá. Změna role v dropdownu znovu nastaví výchozí zaškrtnutí (zkontrolujte před uložením).
+          </p>
+        </fieldset>
         <div class="modal-footer">
           <button type="button" class="btn-secondary" onclick="closeUserModal()">Zrušit</button>
           <button type="submit" class="btn-primary">Uložit</button>
@@ -1110,8 +1357,9 @@
   <!-- Modal: Detail uživatele -->
   <div id="user-detail-modal" class="modal hidden">
     <div class="modal-content user-detail-modal-content">
-      <div class="modal-header">
+      <div class="modal-header user-detail-modal-header">
         <h2 id="user-detail-title">Detail uživatele</h2>
+        <div id="user-detail-notify-wrap" class="user-detail-notify-wrap"></div>
         <button class="modal-close" onclick="closeUserDetailModal()">&times;</button>
       </div>
       <div class="user-detail-body">
@@ -1126,19 +1374,294 @@
           <div id="user-detail-list" class="user-detail-list"></div>
         </div>
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer user-detail-modal-footer">
         <button type="button" class="btn-secondary" onclick="refreshUserDetail()">Obnovit data</button>
-        <button type="button" class="btn-primary" onclick="editUserFromDetail()">✏️ Upravit uživatele</button>
-        <button type="button" class="btn-secondary" onclick="disableCurrentUserFromDetail()">⏸️ Disable</button>
-        <button type="button" class="btn-secondary" onclick="enableCurrentUserFromDetail()">▶️ Enable</button>
-        <button type="button" class="btn-secondary" onclick="forceLogoutCurrentUserFromDetail()">🚪 Force logout</button>
-        <button type="button" class="btn-secondary" onclick="resetPasswordCurrentUserFromDetail()">🔑 Reset hesla</button>
-        <button type="button" class="btn-danger" onclick="deleteCurrentUserFromDetail()">🗑️ Smazat uživatele</button>
+        <button type="button" class="btn-primary hidden" id="user-detail-btn-restore-account" onclick="restoreSoftDeletedUserFromDetail()" title="Obnoví přihlašovací e-mail, aktivuje účet, synchronizuje zobrazení u vozidel a archivované servisní záznamy vlastníka">
+          ♻️ Obnovit účet
+        </button>
+        <button type="button" class="btn-primary" data-user-detail-active-only onclick="editUserFromDetail()">✏️ Upravit uživatele</button>
+        <button type="button" class="btn-secondary" data-user-detail-active-only onclick="disableCurrentUserFromDetail()">⏸️ Disable</button>
+        <button type="button" class="btn-secondary" data-user-detail-active-only onclick="enableCurrentUserFromDetail()">▶️ Enable</button>
+        <button type="button" class="btn-secondary" data-user-detail-active-only onclick="forceLogoutCurrentUserFromDetail()">🚪 Force logout</button>
+        <button type="button" class="btn-secondary" data-user-detail-active-only onclick="resetPasswordCurrentUserFromDetail()">🔑 Reset hesla</button>
+        <button type="button" class="btn-danger" data-user-detail-active-only onclick="deleteCurrentUserFromDetail()">🗑️ Smazat uživatele</button>
         <button type="button" class="btn-secondary" onclick="closeUserDetailModal()">Zavřít</button>
       </div>
     </div>
   </div>
 
-  <script src="admin.js?v=20260311g"></script>
+  <!-- Modal: důvod administrátorského zásahu (náhrada za prompt(), který u otevřeného modalu často nejde použít) -->
+  <div id="admin-intervention-reason-modal" class="modal modal-layer-front hidden">
+    <div class="modal-content" style="max-width: 520px">
+      <div class="modal-header">
+        <h2>Důvod zásahu</h2>
+        <button type="button" class="modal-close" onclick="cancelAdminInterventionReasonModal()" aria-label="Zavřít">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="admin-reason-modal-context" class="muted" style="margin-top: 0"></p>
+        <label for="admin-reason-modal-input"><strong>Zadejte důvod pro audit</strong> (minimum 3 znaky po oříznutí mezer)</label>
+        <textarea id="admin-reason-modal-input" rows="4" placeholder="Krátký popis např. duplicitní účet, žádost zákazníka…"></textarea>
+        <p id="admin-reason-modal-error" class="error hidden" role="alert" style="margin-bottom: 0"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="cancelAdminInterventionReasonModal()">Zrušit</button>
+        <button type="button" class="btn-primary" onclick="submitAdminInterventionReasonModal()">Potvrdit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: informovat uživatele e-mailem (historie admin změn) -->
+  <div id="admin-user-notify-modal" class="modal hidden">
+    <div class="modal-content admin-user-notify-modal-content">
+      <div class="modal-header">
+        <h2 id="admin-notify-modal-title">E-mail uživateli</h2>
+        <button type="button" class="modal-close" onclick="closeAdminUserNotifyModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="admin-notify-modal-hint" class="muted">
+          Zaškrtněte změny, které mají být uvedeny v e-mailu na registrovanou adresu uživatele. Již odeslané položky nelze znovu zařadit do stejného souhrnu.
+        </p>
+        <div id="admin-notify-loading" class="loading hidden">Načítám historii…</div>
+        <div id="admin-notify-list" class="admin-notify-list"></div>
+        <div id="admin-notify-error" class="error hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeAdminUserNotifyModal()">Zavřít</button>
+        <button type="button" class="btn-secondary" onclick="adminNotifySelectAllPending()">Vybrat vše nepřečtené</button>
+        <button type="button" class="btn-primary" id="admin-notify-submit" onclick="submitAdminUserNotifySend()">Odeslat e-mail</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Admin support view vozidla (read-only) -->
+  <div id="vehicle-support-modal" class="modal hidden">
+    <div class="modal-content vehicle-support-modal-shell">
+      <div class="modal-header vehicle-support-modal-header">
+        <div class="vehicle-support-mode-badge-row">
+          <div class="vehicle-support-title-row">
+            <span class="vehicle-support-mode-chip">ADMIN SUPPORT SNAPSHOT — pouze náhled</span>
+            <span class="vehicle-support-mode-subtitle">Podpora · auditovaný náhled</span>
+          </div>
+          <span class="vehicle-support-mode-muted">Data jsou zobrazena pro účely podpory. Otevření detailu je auditováno.</span>
+        </div>
+        <button type="button" class="modal-close" onclick="closeVehicleSupportModal()">&times;</button>
+      </div>
+      <div id="vehicle-support-loading" class="loading">Načítám náhled vozidla…</div>
+      <div id="vehicle-support-error" class="error hidden"></div>
+      <div id="vehicle-support-body" class="vehicle-support-modal-body hidden">
+        <div class="vehicle-support-hero">
+          <p class="vehicle-support-hero-text">
+            Data jsou načtena ze stejného backend <strong>source-of-truth</strong> jako uživatelský detail vozidla.
+            Jedná se o samostatný <strong>read-only snapshot</strong>, nikoli o kopii celého uživatelského modalu akcí.
+            <span class="vehicle-support-hero-accent">Náhled je auditovaný — pole v sekci nelze přímo editovat.</span>
+          </p>
+          <div class="vehicle-support-toolbar">
+            <button type="button" class="btn-primary btn-small" onclick="openVehicleSupportCorrectionDialog()">
+              Navrhnout admin opravu
+            </button>
+            <button type="button" class="btn-secondary btn-small" onclick="refreshVehicleSupportSnapshot()">
+              Obnovit data
+            </button>
+          </div>
+        </div>
+        <nav class="vehicle-support-toc" aria-label="Rychlý přechod na sekci">
+          <a href="#vs-owner" class="vehicle-support-toc-link">Vlastník</a>
+          <a href="#vs-basic" class="vehicle-support-toc-link">Základní</a>
+          <a href="#vs-tech" class="vehicle-support-toc-link">Technika</a>
+          <a href="#vs-photos" class="vehicle-support-toc-link">Fotky</a>
+          <a href="#vs-docs" class="vehicle-support-toc-link">Doklady</a>
+          <a href="#vs-records" class="vehicle-support-toc-link">Servis</a>
+          <a href="#vs-reminders" class="vehicle-support-toc-link">Připomínky</a>
+          <a href="#vs-access" class="vehicle-support-toc-link">Přístupy</a>
+          <a href="#vs-tacho" class="vehicle-support-toc-link">Tachometr</a>
+          <a href="#vs-audit" class="vehicle-support-toc-link">Audit</a>
+        </nav>
+        <section id="vs-owner" class="vehicle-support-section vehicle-support-card">
+          <div class="vehicle-support-card-head vs-accent-owner">
+            <div class="vehicle-support-card-titles">
+              <h3>Vlastník</h3>
+              <p class="vehicle-support-card-desc">Minimalizované údaje o vazbě vlastníka (GDPR) — plný kontakt v přehledu uživatele.</p>
+            </div>
+          </div>
+          <div id="vehicle-support-owner" class="vehicle-support-card-body"></div>
+        </section>
+        <section id="vs-basic" class="vehicle-support-section vehicle-support-card">
+          <div class="vehicle-support-card-head vs-accent-basic">
+            <div class="vehicle-support-card-titles">
+              <h3>Základní údaje vozidla</h3>
+              <p class="vehicle-support-card-desc">Identita vozidla, SPZ, VIN, pojistka, STK a poznámky z karty.</p>
+            </div>
+          </div>
+          <div id="vehicle-support-basic" class="vehicle-support-card-body"></div>
+        </section>
+        <section id="vs-tech" class="vehicle-support-section vehicle-support-card">
+          <div class="vehicle-support-card-head vs-accent-tech">
+            <div class="vehicle-support-card-titles">
+              <h3>Technická data</h3>
+              <p class="vehicle-support-card-desc">Km stav, pneumatiky, STK importy a technický přehled.</p>
+            </div>
+          </div>
+          <div id="vehicle-support-technical" class="vehicle-support-card-body"></div>
+        </section>
+        <section id="vs-photos" class="vehicle-support-section vehicle-support-card">
+          <div class="vehicle-support-card-head vs-accent-photos">
+            <div class="vehicle-support-card-titles">
+              <h3>Fotografie</h3>
+              <p class="vehicle-support-card-desc">Náhledy přes chráněný admin stream.</p>
+            </div>
+          </div>
+          <div id="vehicle-support-photos" class="vehicle-support-card-body"></div>
+        </section>
+        <section id="vs-docs" class="vehicle-support-section vehicle-support-card">
+          <div class="vehicle-support-card-head vs-accent-docs">
+            <div class="vehicle-support-card-titles">
+              <h3>Doklady · digitální reporty</h3>
+              <p class="vehicle-support-card-desc">Dokončené podklady a reporty navázané na vozidlo.</p>
+            </div>
+          </div>
+          <div id="vehicle-support-documents" class="vehicle-support-card-body"></div>
+        </section>
+        <section id="vs-records" class="vehicle-support-section vehicle-support-card">
+          <div class="vehicle-support-card-head vs-accent-records">
+            <div class="vehicle-support-card-titles">
+              <h3>Servisní záznamy</h3>
+              <p class="vehicle-support-card-desc">Historie servisních záznamů (read-only tabulka).</p>
+            </div>
+          </div>
+          <div id="vehicle-support-records" class="vehicle-support-card-body"></div>
+        </section>
+        <section id="vs-reminders" class="vehicle-support-section vehicle-support-card">
+          <div class="vehicle-support-card-head vs-accent-reminders">
+            <div class="vehicle-support-card-titles">
+              <h3>Připomínky</h3>
+              <p class="vehicle-support-card-desc">Termíny a texty připomínek uživatele.</p>
+            </div>
+          </div>
+          <div id="vehicle-support-reminders" class="vehicle-support-card-body"></div>
+        </section>
+        <section id="vs-access" class="vehicle-support-section vehicle-support-card">
+          <div class="vehicle-support-card-head vs-accent-access">
+            <div class="vehicle-support-card-titles">
+              <h3>Přístupy servisu</h3>
+              <p class="vehicle-support-card-desc">Které servisy mají k vozidlu přístup a v jakém stavu.</p>
+            </div>
+          </div>
+          <div id="vehicle-support-access" class="vehicle-support-card-body"></div>
+        </section>
+        <section id="vs-tacho" class="vehicle-support-section vehicle-support-card">
+          <div class="vehicle-support-card-head vs-accent-tacho">
+            <div class="vehicle-support-card-titles">
+              <h3>Tachometr · STK evidence</h3>
+              <p class="vehicle-support-card-desc">Sloučená historie importů tachometru a řádků STK.</p>
+            </div>
+          </div>
+          <div id="vehicle-support-tacho" class="vehicle-support-card-body"></div>
+        </section>
+        <section id="vs-audit" class="vehicle-support-section vehicle-support-card">
+          <div class="vehicle-support-card-head vs-accent-audit">
+            <div class="vehicle-support-card-titles">
+              <h3>Audit vozidla</h3>
+              <p class="vehicle-support-card-desc">Globální auditní metadata k vozidlu (bez plného diffu).</p>
+            </div>
+          </div>
+          <div id="vehicle-support-audit" class="vehicle-support-card-body"></div>
+        </section>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeVehicleSupportModal()">Zavřít</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: řízená admin oprava (mimo řádek) -->
+  <div id="vehicle-support-correction-modal" class="modal hidden">
+    <div class="modal-content vehicle-support-correction-shell">
+      <div class="modal-header">
+        <h2>Řízená oprava údajů</h2>
+        <button type="button" class="modal-close" onclick="closeVehicleSupportCorrectionModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="vehicle-support-correction-form" onsubmit="submitVehicleSupportCorrection(event); return false;">
+          <div class="form-group">
+            <label for="vsc-target-entity">Oblast změny</label>
+            <select id="vsc-target-entity" required>
+              <option value="vehicle">Vozidlo</option>
+              <option value="service_record">Servisní záznam</option>
+              <option value="reminder">Připomínka</option>
+            </select>
+          </div>
+          <div class="form-group" id="vsc-target-id-wrap">
+            <label for="vsc-target-id">ID cíle (servisní záznam / připomínka)</label>
+            <input type="number" id="vsc-target-id" min="1" step="1" />
+          </div>
+          <div class="form-group">
+            <label for="vsc-field">Pole</label>
+            <select id="vsc-field" required></select>
+          </div>
+          <div class="form-group">
+            <label for="vsc-old-value">Aktuální hodnota (z DB náhledu)</label>
+            <input type="text" id="vsc-old-value" readonly />
+          </div>
+          <div class="form-group">
+            <label for="vsc-new-value">Nová hodnota</label>
+            <input type="text" id="vsc-new-value" required autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="vsc-reason">Důvod změny *</label>
+            <textarea id="vsc-reason" rows="4" required></textarea>
+          </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="vsc-notify-user" checked />
+              Odeslat uživateli oficiální oznámení e-mailem (stejný mechanismus jako u admin změn účtu)
+            </label>
+          </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="vsc-confirm" required />
+              Provést opravu a zařadit změnu do oznámení uživatele dle nastavení výše
+            </label>
+          </div>
+          <div id="vsc-form-error" class="error hidden"></div>
+          <div class="modal-footer" style="padding: 16px 0 0">
+            <button type="button" class="btn-secondary" onclick="closeVehicleSupportCorrectionModal()">
+              Zrušit
+            </button>
+            <button type="submit" class="btn-primary" id="vsc-submit">Provést opravu</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightbox: velký náhled fotky ze support modalu -->
+  <div
+    id="vehicle-support-photo-lightbox"
+    class="modal hidden modal-layer-front vehicle-support-photo-lightbox-modal"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Velký náhled fotografie"
+    onclick="if (event.target === this) closeVehicleSupportPhotoLightbox()"
+  >
+    <div class="vehicle-support-photo-lightbox-inner" onclick="event.stopPropagation()">
+      <button
+        type="button"
+        class="vehicle-support-photo-lightbox-close"
+        onclick="closeVehicleSupportPhotoLightbox()"
+        aria-label="Zavřít náhled"
+      >
+        &times;
+      </button>
+      <img
+        id="vehicle-support-photo-lightbox-img"
+        class="vehicle-support-photo-lightbox-img"
+        src=""
+        alt=""
+      />
+      <p id="vehicle-support-photo-lightbox-caption" class="vehicle-support-photo-lightbox-caption hidden"></p>
+    </div>
+  </div>
+
+  <script src="admin.js?v=20260506soft-restore-account"></script>
 </body>
 </html>

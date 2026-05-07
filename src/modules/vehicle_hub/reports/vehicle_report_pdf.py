@@ -235,6 +235,20 @@ def _build_qr(payload: VehicleServiceReportPayload) -> Drawing:
     return drawing
 
 
+def _build_qr_drawing_scaled(text: str, *, size_mm: float = 28) -> Drawing:
+    raw = str(text or "").strip()
+    if not raw:
+        raw = " "
+    qr_widget = QrCodeWidget(raw)
+    bounds = qr_widget.getBounds()
+    w = bounds[2] - bounds[0]
+    h = bounds[3] - bounds[1]
+    s = float(size_mm)
+    drawing = Drawing(s * mm, s * mm, transform=[(s * mm) / w, 0, 0, (s * mm) / h, 0, 0])
+    drawing.add(qr_widget)
+    return drawing
+
+
 def _card(flowable, *, width: float, background=colors.white, border=COLOR_BORDER, padding: int = 10) -> Table:
     table = Table([[flowable]], colWidths=[width])
     table.setStyle(
@@ -276,6 +290,33 @@ def _build_verification_panel(payload: VehicleServiceReportPayload, styles: dict
         background=COLOR_SURFACE,
         border=COLOR_BORDER,
         padding=4,
+    )
+
+
+def _build_new_owner_handover_banner(payload: VehicleServiceReportPayload, styles: dict[str, ParagraphStyle]) -> Table | None:
+    url = str(payload.new_owner_claim_qr_payload or "").strip()
+    if not url:
+        return None
+    inner = _stack(
+        176 * mm,
+        _paragraph("Předání vozidla novému vlastníkovi", styles["section_kicker"]),
+        _paragraph("QR pro připojení vozidla k účtu", styles["section_title_small"]),
+        Spacer(1, 0.8 * mm),
+        _paragraph(
+            "Nový majitel naskenuje kód v aplikaci nebo otevře odkaz, ověří SPZ a VIN a přidá si vozidlo k účtu. Servisní historie zůstane zachovaná.",
+            styles["body_small"],
+        ),
+        Spacer(1, 2 * mm),
+        _build_qr_drawing_scaled(url, size_mm=32),
+        Spacer(1, 1.2 * mm),
+        _paragraph("Odkaz lze také přeposlat e‑mailem nebo SMS.", styles["verify_hint"]),
+    )
+    return _card(
+        inner,
+        width=180 * mm,
+        background=COLOR_GREEN_SOFT,
+        border=COLOR_GREEN,
+        padding=18,
     )
 
 
@@ -1281,11 +1322,19 @@ def render_vehicle_service_report_pdf(payload: VehicleServiceReportPayload) -> b
     story = [
         _build_header(payload, styles),
         Spacer(1, 2.1 * mm),
+    ]
+    handover = _build_new_owner_handover_banner(payload, styles)
+    if handover is not None:
+        story.append(handover)
+        story.append(Spacer(1, 2.4 * mm))
+    story.extend(
+        [
         _build_hero(payload, styles),
         Spacer(1, 1.1 * mm),
         _build_summary_cards(payload, styles),
         Spacer(1, 2.2 * mm),
-    ]
+        ]
+    )
 
     if payload.owner:
         story.extend(

@@ -14,7 +14,12 @@ from datetime import datetime, timedelta
 import secrets
 
 from src.core.config import FRONTEND_BASE_URL
-from src.core.rbac import is_admin, is_service_or_admin
+from src.core.rbac import is_admin
+from src.modules.vehicle_hub.workspace_entitlements import (
+    customer_acts_as_service_operator,
+    customer_has_user_workspace_access,
+    effective_workspace_kinds,
+)
 from ..database import get_db
 from ..models import (
     Reservation as ReservationModel,
@@ -39,6 +44,7 @@ from ..email_notifications import (
     send_reservation_rescheduled_email,
 )
 from ..ownership import get_owned_vehicle, get_owned_vehicle_rows, get_primary_vehicle_owner
+from ...licensing.service import assert_feature
 
 router = APIRouter(prefix="/reservations", tags=["reservations-v1"])
 
@@ -56,12 +62,39 @@ def _ensure_reservations_schema(db: Session) -> None:
     assert_module_ready(db, "reservations", detail_prefix="Rezervace nejsou připravené")
 
 
+def _assert_user_reservations_enabled(db: Session, current_user: Customer) -> None:
+    if "user" not in effective_workspace_kinds(current_user):
+        return
+    tenant_id = getattr(current_user, "tenant_id", None)
+    if not tenant_id:
+        return
+    assert_feature(db, int(tenant_id), "reservations")
+
+
 def _is_admin_role(role: Optional[str]) -> bool:
     return is_admin(role)
 
 
-def _is_service_like_role(role: Optional[str]) -> bool:
-    return is_service_or_admin(role)
+def _ensure_reservation_rw_access(current_user: Customer, reservation: ReservationModel) -> None:
+    if _is_admin_role(current_user.role):
+        return
+    kinds = effective_workspace_kinds(current_user)
+    if "user" in kinds and reservation.customer_id == current_user.id:
+        return
+    if "service" in kinds and reservation.service_id == current_user.id:
+        return
+    raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
+
+
+def _reservation_mutation_role_key(current_user: Customer, reservation: ReservationModel) -> str:
+    if _is_admin_role(current_user.role):
+        return "admin"
+    kinds = effective_workspace_kinds(current_user)
+    if "service" in kinds and reservation.service_id == current_user.id:
+        return "service"
+    if "user" in kinds and reservation.customer_id == current_user.id:
+        return "user"
+    raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
 
 
 def _normalize_email(value: Optional[str]) -> str:
@@ -311,6 +344,96 @@ def _enrich_reservations(db: Session, reservations: List[ReservationModel]) -> L
     return reservations
 
 
+def _vehicle_options_for_user_reservations(
+    db: Session,
+    current_user: Customer,
+    *,
+    tenant_id: Optional[int],
+) -> List[Dict]:
+    vehicles = get_owned_vehicle_rows(db, current_user, tenant_id=tenant_id)
+    return [
+        {
+            "id": int(vehicle.id),
+            "name": _reservation_vehicle_label(vehicle),
+            "plate": getattr(vehicle, "plate", None),
+            "owner_email": getattr(get_primary_vehicle_owner(db, vehicle), "email", None)
+            or getattr(vehicle, "user_email", None),
+            "is_shared": False,
+            "source": "owner",
+        }
+        for vehicle in vehicles
+    ]
+
+
+def _vehicle_options_for_service_reservations(db: Session, *, service_id: int) -> List[Dict]:
+    source_by_vehicle: dict[int, str] = {}
+
+    shared_rows = (
+        db.query(ServiceVehicleAccess.vehicle_id)
+        .filter(
+            ServiceVehicleAccess.service_customer_id == service_id,
+            ServiceVehicleAccess.status == "active",
+            ServiceVehicleAccess.vehicle_id.isnot(None),
+        )
+        .all()
+    )
+    for (vehicle_id,) in shared_rows:
+        if vehicle_id is None:
+            continue
+        source_by_vehicle[int(vehicle_id)] = "service_access"
+
+    reservation_rows = (
+        db.query(ReservationModel.vehicle_id)
+        .filter(
+            ReservationModel.service_id == service_id,
+            ReservationModel.vehicle_id.isnot(None),
+        )
+        .all()
+    )
+    for (vehicle_id,) in reservation_rows:
+        if vehicle_id is None:
+            continue
+        source_by_vehicle.setdefault(int(vehicle_id), "reservation_history")
+
+    linked_vehicle_rows = (
+        db.query(VehicleOwnership.vehicle_id)
+        .join(
+            ServiceCustomerLink,
+            ServiceCustomerLink.customer_id == VehicleOwnership.customer_id,
+        )
+        .filter(
+            VehicleOwnership.is_active.is_(True),
+            ServiceCustomerLink.service_customer_id == service_id,
+            ServiceCustomerLink.status == "active",
+        )
+        .all()
+    )
+    for (vehicle_id,) in linked_vehicle_rows:
+        if vehicle_id is None:
+            continue
+        source_by_vehicle.setdefault(int(vehicle_id), "linked_customer")
+
+    vehicle_ids = sorted(source_by_vehicle.keys())
+    if not vehicle_ids:
+        return []
+
+    query = db.query(VehicleModel).filter(VehicleModel.id.in_(vehicle_ids))
+    vehicles = query.order_by(VehicleModel.created_at.desc(), VehicleModel.id.desc()).all()
+
+    return [
+        {
+            "id": int(vehicle.id),
+            "name": _reservation_vehicle_label(vehicle),
+            "plate": getattr(vehicle, "plate", None),
+            "owner_email": getattr(get_primary_vehicle_owner(db, vehicle), "email", None)
+            or getattr(vehicle, "user_email", None),
+            "is_shared": True,
+            "source": source_by_vehicle.get(int(vehicle.id), "service_access"),
+        }
+        for vehicle in vehicles
+    ]
+
+
 @router.get("/vehicle-options", response_model=List[ReservationVehicleOptionOutV1])
 def get_reservation_vehicle_options(
     current_user: Customer = Depends(get_current_user),
@@ -322,92 +445,12 @@ def get_reservation_vehicle_options(
     - user: vlastní vozidla
     - service: vozidla se sdíleným přístupem + vozidla z dřívějších rezervací servisu
     - admin/developer_admin: tenantová vozidla
+    - kombinace user+service (entitlements): sjednocený seznam (vlastní + servisní)
     """
     _ensure_reservations_schema(db)
     role_key = str(current_user.role or "").strip().lower()
     tenant_id = getattr(current_user, "tenant_id", None)
-
-    if role_key == "user":
-        vehicles = get_owned_vehicle_rows(db, current_user, tenant_id=tenant_id)
-        return [
-            {
-                "id": int(vehicle.id),
-                "name": _reservation_vehicle_label(vehicle),
-                "plate": getattr(vehicle, "plate", None),
-                "owner_email": getattr(get_primary_vehicle_owner(db, vehicle), "email", None) or getattr(vehicle, "user_email", None),
-                "is_shared": False,
-                "source": "owner",
-            }
-            for vehicle in vehicles
-        ]
-
-    if role_key == "service":
-        service_id = int(current_user.id)
-        source_by_vehicle: dict[int, str] = {}
-
-        shared_rows = (
-            db.query(ServiceVehicleAccess.vehicle_id)
-            .filter(
-                ServiceVehicleAccess.service_customer_id == service_id,
-                ServiceVehicleAccess.status == "active",
-                ServiceVehicleAccess.vehicle_id.isnot(None),
-            )
-            .all()
-        )
-        for (vehicle_id,) in shared_rows:
-            if vehicle_id is None:
-                continue
-            source_by_vehicle[int(vehicle_id)] = "service_access"
-
-        reservation_rows = (
-            db.query(ReservationModel.vehicle_id)
-            .filter(
-                ReservationModel.service_id == service_id,
-                ReservationModel.vehicle_id.isnot(None),
-            )
-            .all()
-        )
-        for (vehicle_id,) in reservation_rows:
-            if vehicle_id is None:
-                continue
-            source_by_vehicle.setdefault(int(vehicle_id), "reservation_history")
-
-        linked_vehicle_rows = (
-            db.query(VehicleOwnership.vehicle_id)
-            .join(
-                ServiceCustomerLink,
-                ServiceCustomerLink.customer_id == VehicleOwnership.customer_id,
-            )
-            .filter(
-                VehicleOwnership.is_active.is_(True),
-                ServiceCustomerLink.service_customer_id == service_id,
-                ServiceCustomerLink.status == "active",
-            )
-            .all()
-        )
-        for (vehicle_id,) in linked_vehicle_rows:
-            if vehicle_id is None:
-                continue
-            source_by_vehicle.setdefault(int(vehicle_id), "linked_customer")
-
-        vehicle_ids = sorted(source_by_vehicle.keys())
-        if not vehicle_ids:
-            return []
-
-        query = db.query(VehicleModel).filter(VehicleModel.id.in_(vehicle_ids))
-        vehicles = query.order_by(VehicleModel.created_at.desc(), VehicleModel.id.desc()).all()
-
-        return [
-            {
-                "id": int(vehicle.id),
-                "name": _reservation_vehicle_label(vehicle),
-                "plate": getattr(vehicle, "plate", None),
-                "owner_email": getattr(get_primary_vehicle_owner(db, vehicle), "email", None) or getattr(vehicle, "user_email", None),
-                "is_shared": True,
-                "source": source_by_vehicle.get(int(vehicle.id), "service_access"),
-            }
-            for vehicle in vehicles
-        ]
+    kinds = effective_workspace_kinds(current_user)
 
     if _is_admin_role(role_key):
         query = db.query(VehicleModel)
@@ -419,14 +462,26 @@ def get_reservation_vehicle_options(
                 "id": int(vehicle.id),
                 "name": _reservation_vehicle_label(vehicle),
                 "plate": getattr(vehicle, "plate", None),
-                "owner_email": getattr(get_primary_vehicle_owner(db, vehicle), "email", None) or getattr(vehicle, "user_email", None),
+                "owner_email": getattr(get_primary_vehicle_owner(db, vehicle), "email", None)
+                or getattr(vehicle, "user_email", None),
                 "is_shared": True,
                 "source": "tenant_admin",
             }
             for vehicle in vehicles
         ]
 
-    raise HTTPException(status_code=403, detail="Role nemá oprávnění pro načtení vozidel rezervace.")
+    merged: Dict[int, Dict] = {}
+    if "user" in kinds:
+        for row in _vehicle_options_for_user_reservations(db, current_user, tenant_id=tenant_id):
+            merged[int(row["id"])] = row
+    if "service" in kinds:
+        service_id = int(current_user.id)
+        for row in _vehicle_options_for_service_reservations(db, service_id=service_id):
+            vid = int(row["id"])
+            if vid not in merged:
+                merged[vid] = row
+
+    return sorted(merged.values(), key=lambda r: int(r["id"]), reverse=True)
 
 
 @router.post("", response_model=ReservationOutV1)
@@ -461,21 +516,34 @@ def create_reservation(
     ).first()
     if not service:
         raise HTTPException(status_code=404, detail="Servis nebyl nalezen")
-    
-    # Pro uživatele (role user) - rezervace musí být pro jeho vozidlo
-    if current_user.role == "user":
-        if get_owned_vehicle(db, current_user, int(vehicle.id), tenant_id=getattr(current_user, "tenant_id", None)) is None:
-            raise HTTPException(status_code=403, detail="Nemůžete vytvořit rezervaci pro cizí vozidlo")
-        customer = current_user
-        customer_id = current_user.id
-    else:
-        if str(current_user.role or "").strip().lower() == "service" and reservation_data.service_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Servis může vytvářet rezervace pouze pro sebe")
-        # Pro service/admin - použít customer_id z vlastníka vozidla
+
+    kinds = effective_workspace_kinds(current_user)
+    tenant_id_cu = getattr(current_user, "tenant_id", None)
+    owns_vehicle = (
+        get_owned_vehicle(db, current_user, int(vehicle.id), tenant_id=tenant_id_cu) is not None
+    )
+
+    if _is_admin_role(current_user.role):
         customer = get_primary_vehicle_owner(db, vehicle)
         if not customer:
             raise HTTPException(status_code=404, detail="Zákazník nenalezen")
         customer_id = customer.id
+    elif "user" in kinds and owns_vehicle:
+        _assert_user_reservations_enabled(db, current_user)
+        customer = current_user
+        customer_id = current_user.id
+    elif "service" in kinds:
+        if reservation_data.service_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Servis může vytvářet rezervace pouze pro sebe")
+        customer = get_primary_vehicle_owner(db, vehicle)
+        if not customer:
+            raise HTTPException(status_code=404, detail="Zákazník nenalezen")
+        customer_id = customer.id
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="Nemáte oprávnění vytvořit rezervaci pro toto vozidlo (chybí vlastnictví nebo servisní režim).",
+        )
 
     # Pokud link není aktivní, vytvoříme rezervaci i tak a pošleme servisu 1-klik potvrzení propojení.
     requires_service_link_confirmation = (
@@ -567,7 +635,7 @@ def claim_reservation_service_link(
     db: Session = Depends(get_db),
 ):
     """Servis potvrdí propojení klienta z e-mailového odkazu a vazbu aktivuje jedním klikem."""
-    if not _is_service_like_role(current_user.role):
+    if not customer_acts_as_service_operator(current_user):
         raise HTTPException(status_code=403, detail="Potvrzení propojení je dostupné pouze pro servisní účet.")
 
     token = str(payload.token or "").strip()
@@ -575,8 +643,7 @@ def claim_reservation_service_link(
     if not invite:
         raise HTTPException(status_code=404, detail="Odkaz pro propojení nebyl nalezen.")
 
-    role_key = str(current_user.role or "").strip().lower()
-    if role_key in {"service", "developer_admin"} and invite.service_customer_id != current_user.id:
+    if not _is_admin_role(current_user.role) and invite.service_customer_id != current_user.id:
         raise HTTPException(status_code=403, detail="Tento odkaz patří jinému servisnímu účtu.")
 
     reservation_id = _parse_reservation_id_from_auto_link_message(invite.invite_message)
@@ -649,8 +716,11 @@ def get_my_reservations(
     db: Session = Depends(get_db)
 ):
     """Vrací rezervace přihlášeného účtu v uživatelském kontextu."""
-    if str(current_user.role or "").strip().lower() == "service":
-        raise HTTPException(status_code=403, detail="Servisní účet používá endpoint /reservations/service")
+    if not customer_has_user_workspace_access(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Tento účet nemá povolený uživatelský přehled rezervací (/reservations/my).",
+        )
     reservations = db.query(ReservationModel).filter(
         ReservationModel.customer_id == current_user.id,
     ).order_by(ReservationModel.start_datetime.desc()).all()
@@ -665,12 +735,14 @@ def get_service_reservations(
     db: Session = Depends(get_db)
 ):
     """Vrací rezervace pro servis (role service) nebo admin přehled v tenantovi."""
-    if not _is_service_like_role(current_user.role):
+    if not customer_acts_as_service_operator(current_user):
         raise HTTPException(status_code=403, detail="Tento endpoint je pouze pro servis nebo admin")
 
     query = db.query(ReservationModel)
     role_key = str(current_user.role or "").strip().lower()
     if role_key in {"service", "developer_admin"}:
+        query = query.filter(ReservationModel.service_id == current_user.id)
+    elif "service" in effective_workspace_kinds(current_user) and role_key == "user":
         query = query.filter(ReservationModel.service_id == current_user.id)
     elif not _is_admin_role(current_user.role):
         raise HTTPException(status_code=403, detail="Nemáte oprávnění pro servisní přehled rezervací")
@@ -695,16 +767,7 @@ def get_reservation(
     if not reservation:
         raise HTTPException(status_code=404, detail="Rezervace nenalezena")
 
-    # Kontrola přístupu
-    if current_user.role == "user":
-        if reservation.customer_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
-    elif str(current_user.role or "").strip().lower() == "service":
-        if reservation.service_id != current_user.id and not _is_admin_role(current_user.role):
-            raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
-    elif not _is_admin_role(current_user.role):
-        if reservation.customer_id != current_user.id and reservation.service_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
+    _ensure_reservation_rw_access(current_user, reservation)
 
     _enrich_reservations(db, [reservation])
     return reservation
@@ -726,18 +789,7 @@ def update_reservation(
     if not reservation:
         raise HTTPException(status_code=404, detail="Rezervace nenalezena")
 
-    # Kontrola přístupu a oprávnění
-    if current_user.role == "user":
-        if reservation.customer_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
-    elif str(current_user.role or "").strip().lower() == "service":
-        if reservation.service_id != current_user.id and not _is_admin_role(current_user.role):
-            raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
-    elif not _is_admin_role(current_user.role):
-        if reservation.customer_id != current_user.id and reservation.service_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
-    
-    role_key = str(current_user.role or "").strip().lower()
+    role_key = _reservation_mutation_role_key(current_user, reservation)
     fields_set = set(getattr(reservation_data, "model_fields_set", set()) or set())
     old_start_datetime = reservation.start_datetime
     old_end_datetime = reservation.end_datetime
@@ -875,16 +927,7 @@ def delete_reservation(
     if not reservation:
         raise HTTPException(status_code=404, detail="Rezervace nenalezena")
 
-    # Kontrola přístupu
-    if current_user.role == "user":
-        if reservation.customer_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Nemáte oprávnění smazat tuto rezervaci")
-    elif str(current_user.role or "").strip().lower() == "service":
-        if reservation.service_id != current_user.id and not _is_admin_role(current_user.role):
-            raise HTTPException(status_code=403, detail="Nemáte oprávnění smazat tuto rezervaci")
-    elif not _is_admin_role(current_user.role):
-        if reservation.customer_id != current_user.id and reservation.service_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Nemáte oprávnění smazat tuto rezervaci")
+    _ensure_reservation_rw_access(current_user, reservation)
     
     delete_source = str(request.headers.get("x-client-platform") or "").strip().lower()
     if not delete_source:

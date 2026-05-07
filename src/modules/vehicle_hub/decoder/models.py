@@ -21,6 +21,7 @@ class VehicleDecodedData(BaseModel):
     fuel_type: Optional[str] = None  # Typ paliva
     transmission_type: Optional[str] = None  # Typ převodovky
     body_type: Optional[str] = None  # Typ karoserie
+    exterior_color: Optional[str] = None  # Barva karoserie
     doors: Optional[int] = None
     seats: Optional[int] = None
     gross_weight_kg: Optional[int] = None  # Celková hmotnost
@@ -80,5 +81,4 @@ class VehicleDecodeResponse(BaseModel):
     
     class Config:
         from_attributes = True
-
 

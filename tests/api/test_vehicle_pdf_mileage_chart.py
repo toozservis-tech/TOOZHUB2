@@ -19,6 +19,7 @@ from src.modules.vehicle_hub.mileage_reports import (
 )
 from src.modules.vehicle_hub.models import (
     Customer,
+    License,
     ServiceIntake,
     ServiceRecord,
     Tenant,
@@ -42,6 +43,31 @@ def db_session(tmp_path: Path):
     finally:
         db.close()
         engine.dispose()
+
+
+def _grant_basic_license_docs(db_session, tenant_id: int) -> None:
+    """BASIC má documents_enabled — nutné pro PDF / mileage timeline API v testech."""
+    now = datetime.utcnow()
+    lic = db_session.query(License).filter(License.tenant_id == tenant_id).first()
+    if lic:
+        lic.plan = "basic"
+        lic.status = "active"
+        lic.vehicles_limit = 3
+        lic.updated_at = now
+        return
+    db_session.add(
+        License(
+            tenant_id=tenant_id,
+            plan="basic",
+            status="active",
+            vehicles_limit=3,
+            valid_from=now,
+            valid_to=None,
+            vin_decode_enabled=False,
+            ares_enabled=True,
+            reminders_enabled=True,
+        )
+    )
 
 
 def _seed_owned_vehicle(db_session):
@@ -75,6 +101,7 @@ def _seed_owned_vehicle(db_session):
         owner=owner,
         assigned_by_customer_id=owner.id,
     )
+    _grant_basic_license_docs(db_session, tenant.id)
     db_session.commit()
     db_session.refresh(owner)
     db_session.refresh(vehicle)

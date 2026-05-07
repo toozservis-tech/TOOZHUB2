@@ -4,13 +4,15 @@ Email Client Service - služba pro odesílání emailů
 from __future__ import annotations
 
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-from typing import Optional, List
+from email.utils import make_msgid, formatdate
+from typing import Optional, List, Tuple
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from src.core.branding import APP_DISPLAY_NAME
 from src.core.config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
@@ -24,9 +26,12 @@ class EmailMessage:
     subject: str
     body: str
     html_body: Optional[str] = None
+    reply_to: Optional[List[str]] = None
     cc: Optional[List[str]] = None
     bcc: Optional[List[str]] = None
     attachments: Optional[List[Path]] = None
+    # (filename, bytes, mime) — např. ("vypis.pdf", data, "application/pdf")
+    attachment_blobs: List[Tuple[str, bytes, str]] = field(default_factory=list)
 
 
 class EmailService:
@@ -76,6 +81,10 @@ class EmailService:
         msg["From"] = self.from_email
         msg["To"] = ", ".join(message.to)
         msg["Subject"] = message.subject
+        msg["Message-ID"] = make_msgid(domain="toozservis.cz")
+        msg["Date"] = formatdate(localtime=True)
+        if message.reply_to:
+            msg["Reply-To"] = ", ".join(message.reply_to)
         
         if message.cc:
             msg["Cc"] = ", ".join(message.cc)
@@ -91,6 +100,9 @@ class EmailService:
         if message.attachments:
             for attachment_path in message.attachments:
                 self._add_attachment(msg, attachment_path)
+        if message.attachment_blobs:
+            for filename, blob, mime in message.attachment_blobs:
+                self._add_attachment_bytes(msg, blob, filename, mime)
         
         # Seznam všech příjemců
         all_recipients = list(message.to)
@@ -102,21 +114,26 @@ class EmailService:
         # Odeslat email
         try:
             # Port 465 vyžaduje SSL (SMTP_SSL), port 587 vyžaduje STARTTLS
+            tls_context = ssl.create_default_context()
             if self.port == 465:
-                # SSL připojení pro port 465
+                # SSL připojení pro port 465 (např. Webnode)
                 print(f"[EMAIL] Connecting to {self.host}:{self.port} using SMTP_SSL")
-                with smtplib.SMTP_SSL(self.host, self.port, timeout=30) as server:
+                with smtplib.SMTP_SSL(
+                    self.host, self.port, timeout=30, context=tls_context
+                ) as server:
                     print(f"[EMAIL] Connected, authenticating as {self.username}")
                     server.login(self.username, self.password)
                     print(f"[EMAIL] Authenticated, sending email to {len(all_recipients)} recipient(s)")
                     server.sendmail(self.from_email, all_recipients, msg.as_string())
                     print(f"[EMAIL] Email successfully sent")
             else:
-                # STARTTLS pro port 587 a ostatní
+                # STARTTLS (587) — po starttls znovu EHLO (RFC), jinak některé servery ukončí spojení při AUTH
                 print(f"[EMAIL] Connecting to {self.host}:{self.port} using SMTP + STARTTLS")
                 with smtplib.SMTP(self.host, self.port, timeout=30) as server:
+                    server.ehlo()
                     print(f"[EMAIL] Connected, starting TLS")
-                    server.starttls()
+                    server.starttls(context=tls_context)
+                    server.ehlo()
                     print(f"[EMAIL] TLS started, authenticating as {self.username}")
                     server.login(self.username, self.password)
                     print(f"[EMAIL] Authenticated, sending email to {len(all_recipients)} recipient(s)")
@@ -151,6 +168,19 @@ class EmailService:
             "Content-Disposition",
             f"attachment; filename={file_path.name}"
         )
+        msg.attach(part)
+
+    def _add_attachment_bytes(self, msg: MIMEMultipart, data: bytes, filename: str, mime: str) -> None:
+        if not data:
+            print(f"[EMAIL] Příloha {filename} je prázdná, přeskočeno")
+            return
+        parts = mime.split("/", 1)
+        maintype = parts[0] if parts else "application"
+        subtype = parts[1] if len(parts) > 1 else "octet-stream"
+        part = MIMEBase(maintype, subtype)
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f"attachment; filename={filename}")
         msg.attach(part)
     
     def send_simple_email(

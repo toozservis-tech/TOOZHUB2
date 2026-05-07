@@ -3,7 +3,7 @@ GET /api/me — session context for SPA routing (JWT/session is source of truth)
 """
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -14,7 +14,13 @@ from src.core.branding import APP_DISPLAY_NAME
 from src.modules.vehicle_hub.audit_log import write_global_audit_log
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer, Tenant
+from src.modules.vehicle_hub.workspace_entitlements import (
+    default_workspace_route_kind,
+    effective_workspace_kinds,
+    customer_may_use_workspace_kind,
+)
 from src.modules.vehicle_hub.workspace_routing import (
+    build_app_path_for_kind,
     build_default_app_path,
     ensure_tenant_workspace_slug,
     map_account_type,
@@ -39,6 +45,14 @@ class ApiMeAuthenticatedResponse(BaseModel):
     account_slug: str
     tenant_id: int
     workspace_route_kind: str = Field(description="user|service namespace for slug uniqueness")
+    workspace_entitlements: List[str] = Field(
+        default_factory=list,
+        description="Povolené režimy UI/API: user, service (rozšíření účtu)",
+    )
+    workspace_ui_default: Optional[str] = Field(
+        default=None,
+        description="Výchozí režim při více entitlements (user|service)",
+    )
     default_app_path: str
     role: str
     license_plan: Optional[str] = None
@@ -55,13 +69,6 @@ def _normalize_assert_route(raw: Optional[str]) -> Optional[str]:
     if x in {"s", "service"}:
         return "service"
     return None
-
-
-def _expected_route_kind_from_role(role: str) -> str:
-    r = str(role or "").strip().lower()
-    if r == "service":
-        return "service"
-    return "user"
 
 
 def _normalize_tenant_workspace_route_kind(tenant: Tenant, customer: Customer) -> None:
@@ -88,12 +95,16 @@ def api_me(
         raise HTTPException(status_code=500, detail="Tenant nenalezen")
 
     _normalize_tenant_workspace_route_kind(tenant, customer)
-    rk = resolve_workspace_route_kind_for_customer(customer)
+
+    kinds = effective_workspace_kinds(customer)
+    entitlements_list = sorted(kinds)
+
+    rk_seed = default_workspace_route_kind(customer)
     ensure_tenant_workspace_slug(
         db,
         tenant,
         seed_label=str(tenant.name or customer.name or customer.email or "workspace"),
-        route_kind=rk,
+        route_kind=rk_seed,
     )
     db.commit()
     db.refresh(tenant)
@@ -112,8 +123,7 @@ def api_me(
     assert_kind = _normalize_assert_route(assert_route)
     slug_cmp = (assert_slug or "").strip().lower()
     if assert_kind and slug_cmp:
-        expected_kind = _expected_route_kind_from_role(str(customer.role or ""))
-        if assert_kind != expected_kind:
+        if not customer_may_use_workspace_kind(customer, assert_kind):
             write_global_audit_log(
                 db,
                 entity_type="workspace_route",
@@ -123,9 +133,9 @@ def api_me(
                 actor_role=str(customer.role or ""),
                 tenant_id=customer.tenant_id,
                 metadata={
-                    "reason": "route_kind_role_mismatch",
+                    "reason": "workspace_entitlement_missing",
                     "assert_route": assert_kind,
-                    "expected_route_kind": expected_kind,
+                    "allowed_kinds": list(entitlements_list),
                     "asserted_slug": slug_cmp,
                     "resolved_slug": str(tenant.workspace_slug or ""),
                     "path": str(request.url.path),
@@ -137,7 +147,7 @@ def api_me(
                 status_code=403,
                 detail={
                     "reason": "workspace_route_mismatch",
-                    "default_app_path": build_default_app_path(db, customer, tenant),
+                    "default_app_path": build_app_path_for_kind(db, customer, tenant, rk_seed),
                 },
             )
 
@@ -165,11 +175,14 @@ def api_me(
                 status_code=403,
                 detail={
                     "reason": "workspace_slug_mismatch",
-                    "default_app_path": build_default_app_path(db, customer, tenant),
+                    "default_app_path": build_app_path_for_kind(db, customer, tenant, rk_seed),
                 },
             )
+        rk = assert_kind
+    else:
+        rk = rk_seed
 
-    default_path = build_default_app_path(db, customer, tenant)
+    default_path = build_app_path_for_kind(db, customer, tenant, rk)
     body = ApiMeAuthenticatedResponse(
         authenticated=True,
         account_type=map_account_type(str(customer.role or "")),
@@ -179,6 +192,8 @@ def api_me(
         account_slug=str(tenant.workspace_slug or ""),
         tenant_id=int(customer.tenant_id),
         workspace_route_kind=rk,
+        workspace_entitlements=entitlements_list,
+        workspace_ui_default=getattr(customer, "workspace_ui_default", None),
         default_app_path=default_path,
         role=str(customer.role or "user"),
         license_plan=lic_plan,

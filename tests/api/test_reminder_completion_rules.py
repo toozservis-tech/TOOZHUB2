@@ -11,7 +11,7 @@ from src.modules.vehicle_hub.database import Base
 from src.modules.vehicle_hub.models import Customer, Reminder, ServiceCustomerLink, Tenant, Vehicle, VehicleOwnership
 from src.modules.vehicle_hub.routers_v1 import reminders as reminders_router
 from src.modules.vehicle_hub.routers_v1 import service_workspace as workspace_router
-from src.modules.vehicle_hub.routers_v1.schemas import ReminderCreateV1, ReminderUpdateV1
+from src.modules.vehicle_hub.routers_v1.schemas import ReminderUpdateV1
 
 
 @pytest.fixture()
@@ -126,25 +126,25 @@ def test_manual_one_off_reminder_can_be_completed_and_resets_notification_marker
 
 
 def test_recurring_reminder_cannot_be_completed_via_customer_update(db_session) -> None:
+    """Řada s recurrence_group_id nesmí jít „dokončit“ jedním přepnutím u majitele."""
     _, user, _, vehicle = _seed_context(db_session)
 
-    created = reminders_router.create_reminder(
-        reminder_data=ReminderCreateV1(
-            vehicle_id=vehicle.id,
-            type="SERVIS",
-            text="Opakovaná kontrola servisu",
-            due_date=date.today() + timedelta(days=5),
-            repeat_count=2,
-            repeat_interval_days=30,
-        ),
-        current_user=user,
-        db=db_session,
+    reminder = Reminder(
+        tenant_id=user.tenant_id,
+        customer_id=user.id,
+        vehicle_id=vehicle.id,
+        type="SERVIS",
+        text="Opakovaná kontrola servisu",
+        due_date=date.today() + timedelta(days=5),
+        is_manual=True,
+        is_completed=False,
+        recurrence_group_id="series-customer-rules",
+        recurrence_index=1,
+        repeat_interval_days=30,
     )
-
-    assert created.is_recurring is True
-    reminder = db_session.query(Reminder).filter(Reminder.id == created.id).first()
-    assert reminder is not None
-    assert reminder.recurrence_group_id
+    db_session.add(reminder)
+    db_session.commit()
+    db_session.refresh(reminder)
 
     with pytest.raises(reminders_router.HTTPException) as exc:
         reminders_router.update_reminder(

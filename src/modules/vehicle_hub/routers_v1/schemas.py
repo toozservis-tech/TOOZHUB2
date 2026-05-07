@@ -1,9 +1,11 @@
 """
 Pydantic schémata pro API v1.0
 """
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_serializer, model_validator
 from typing import Any, Dict, List, Optional
 from datetime import datetime, date
+
+from src.core.datetime_cz import naive_utc_to_iso_z
 
 
 # ==========================
@@ -29,6 +31,8 @@ class VehicleCreateV1(BaseModel):
     orv_number: Optional[str] = None
     orv_use_owner_data: bool = False
     data_trust_state: Optional[str] = None
+    catalog_image_id: Optional[str] = None
+    catalog_image_url: Optional[str] = None
     # assigned_service_id: Optional[int] = None  # ID servisu přiřazeného k vozidlu - DOČASNĚ ZAKÁZÁNO
 
 
@@ -51,6 +55,9 @@ class VehicleUpdateV1(BaseModel):
     orv_number: Optional[str] = None
     orv_use_owner_data: Optional[bool] = None
     data_trust_state: Optional[str] = None
+    catalog_image_id: Optional[str] = None
+    catalog_image_url: Optional[str] = None
+    regenerate_technical_overview: Optional[bool] = None
     # assigned_service_id: Optional[int] = None  # ID servisu přiřazeného k vozidlu - DOČASNĚ ZAKÁZÁNO
 
 
@@ -61,6 +68,8 @@ class VehicleOutV1(BaseModel):
     brand: Optional[str]
     model: Optional[str]
     year: Optional[int]
+    fuel: Optional[str] = None
+    body_type: Optional[str] = None
     engine: Optional[str]
     vin: Optional[str]
     plate: Optional[str]
@@ -74,6 +83,10 @@ class VehicleOutV1(BaseModel):
     notes: Optional[str]
     primary_photo: Optional[Dict[str, Any]] = None
     photo_path: Optional[str] = None
+    catalog_image_id: Optional[str] = None
+    catalog_image_url: Optional[str] = None
+    can_regenerate_catalog_image: bool = False
+    remaining_catalog_image_regenerations: int = 0
     stk_valid_until: Optional[date]
     current_mileage_km: Optional[int] = None
     last_stk_mileage_km: Optional[int] = None
@@ -90,6 +103,7 @@ class VehicleOutV1(BaseModel):
     # assigned_service_id: Optional[int] = None  # DOČASNĚ ZAKÁZÁNO
     tenant_id: Optional[int] = None  # Multi-tenant podpora
     created_at: datetime
+    technical_overview: Optional[Dict[str, Any]] = None
     
     class Config:
         from_attributes = True
@@ -106,6 +120,19 @@ class VehicleMileageRecordResultV1(BaseModel):
     vehicle: VehicleOutV1
     created_record_id: Optional[int] = None
     created_vehicle_mileage_id: Optional[int] = None
+
+
+class VehicleMileageLogEntryOutV1(BaseModel):
+    """Jeden řádek historie km (tabulka vehicle_mileage)."""
+
+    id: int
+    mileage_km: int
+    source: str
+    note: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class ORVParsedVehicleFieldsV1(BaseModel):
@@ -148,11 +175,29 @@ class ORVParseFieldConfidenceV1(BaseModel):
 
 
 class ORVParseRequestV1(BaseModel):
-    front_image_base64: str = Field(..., min_length=100)
-    back_image_base64: str = Field(..., min_length=100)
+    """Buď přední+zadní strana, nebo jeden snímek (malý ORV / jednostránkový techničák)."""
+
+    front_image_base64: Optional[str] = None
+    back_image_base64: Optional[str] = None
+    single_orv_image_base64: Optional[str] = None
     front_image_mime_type: Optional[str] = Field(default="image/jpeg", max_length=255)
     back_image_mime_type: Optional[str] = Field(default="image/jpeg", max_length=255)
+    single_orv_image_mime_type: Optional[str] = Field(default="image/jpeg", max_length=255)
     source: Optional[str] = Field(default="ios_orv_scan", max_length=64)
+
+    @model_validator(mode="after")
+    def _validate_orv_images(self) -> "ORVParseRequestV1":
+        single = (self.single_orv_image_base64 or "").strip()
+        front = (self.front_image_base64 or "").strip()
+        back = (self.back_image_base64 or "").strip()
+        if single:
+            if front or back:
+                raise ValueError("Zadejte buď jeden snímek ORV, nebo přední a zadní stranu, ne obojí.")
+            if len(single) < 100:
+                raise ValueError("Snímek ORV je příliš krátký.")
+        elif len(front) < 100 or len(back) < 100:
+            raise ValueError("Pro zpracování ORV jsou povinné obě strany dokladu, nebo jeden snímek malého techničáku.")
+        return self
 
 
 class ORVParseResponseV1(BaseModel):
@@ -182,6 +227,61 @@ class ORVReviewAuditResponseV1(BaseModel):
     scan_id: int
     field_diffs: Dict[str, Any] = Field(default_factory=dict)
     vin_validation: Dict[str, Any] = Field(default_factory=dict)
+
+
+class VehiclePreviewDecodedV1(BaseModel):
+    make: Optional[str] = None
+    model: Optional[str] = None
+    year: Optional[int] = None
+    body_type: Optional[str] = None
+    exterior_color: Optional[str] = None
+    source: str = "manual-fallback"
+
+
+class VehiclePreviewFromVinRequestV1(BaseModel):
+    vin: str = Field(..., min_length=5, max_length=32)
+    preferred_color: Optional[str] = Field(default=None, max_length=32)
+    force_refresh: bool = False
+    decoded: Optional[VehiclePreviewDecodedV1] = None
+
+
+class VehiclePreviewCatalogImageAlternativeV1(BaseModel):
+    url: str
+    thumbnail_url: Optional[str] = None
+    score: int = 0
+    source_domain: Optional[str] = None
+
+
+class VehiclePreviewCatalogImageV1(BaseModel):
+    id: Optional[str] = None
+    url: str
+    thumbnail_url: Optional[str] = None
+    source_domain: Optional[str] = None
+    provider: str
+    score: int = 0
+    representative: bool = True
+    verified_real_vehicle: bool = False
+    license_note: str
+
+
+class VehiclePreviewFromVinResponseV1(BaseModel):
+    ok: bool
+    vin: str
+    decoded: Optional[VehiclePreviewDecodedV1] = None
+    catalog_image: Optional[VehiclePreviewCatalogImageV1] = None
+    alternatives: List[VehiclePreviewCatalogImageAlternativeV1] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    reason: Optional[str] = None
+    can_regenerate: bool = False
+    remaining_regenerations: int = 0
+    saved_to_gallery: bool = False
+    saved_gallery_photo_id: Optional[int] = None
+    primary_photo_asset_id: Optional[int] = None
+
+
+class VehicleCatalogImageGenerateRequestV1(BaseModel):
+    preferred_color: Optional[str] = Field(default=None, max_length=32)
+    save_to_gallery: bool = True
 
 
 # ==========================
@@ -261,6 +361,11 @@ class VehicleServiceLinkListOutV1(BaseModel):
     grants: List[VehicleServiceLinkOutV1] = []
 
 
+class ConnectServiceByEmailRequestV1(BaseModel):
+    """Propojení zákaznického účtu se servisem podle známého e-mailu servisu."""
+    service_email: str = Field(..., min_length=3, max_length=320)
+
+
 class ServiceApprovedVehicleOutV1(BaseModel):
     id: int
     customer_id: Optional[int] = None
@@ -301,7 +406,11 @@ class ServiceRecordCreateV1(BaseModel):
 
 class ServiceRecordUpdateV1(BaseModel):
     performed_at: Optional[datetime] = None
-    mileage: Optional[int] = Field(default=None, ge=0)
+    mileage: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Při PUT se ignoruje — nájezd existujícího záznamu nelze měnit.",
+    )
     description: Optional[str] = Field(default=None, min_length=3)
     price: Optional[float] = Field(default=None, ge=0)
     note: Optional[str] = None
@@ -349,6 +458,12 @@ class ServiceRecordOutV1(BaseModel):
     deletion_reason: Optional[str] = None
     snapshot_hash: Optional[str] = None
     updated_at: Optional[datetime] = None
+
+    viewer_mutations_allowed: bool = True
+    viewer_financials_redacted: bool = False
+    ownership_segment_index: Optional[int] = None
+    current_viewer_segment_index: Optional[int] = None
+    ownership_segment_owner_label: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -514,6 +629,10 @@ class ReminderOutV1(BaseModel):
     is_recurring: bool = False
     recurrence_group_id: Optional[str] = None
     recurrence_index: Optional[int] = None
+
+    @field_serializer("notify_at", when_used="json")
+    def _serialize_notify_at_json(self, value: Optional[datetime]) -> Optional[str]:
+        return naive_utc_to_iso_z(value)
 
 
 class ReminderCreateV1(BaseModel):

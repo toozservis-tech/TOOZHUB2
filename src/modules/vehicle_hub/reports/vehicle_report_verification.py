@@ -84,6 +84,7 @@ def _resolve_finalized_by(current_user: Customer) -> str:
 def build_payload_hash(payload: VehicleServiceReportPayload) -> str:
     data = payload.to_dict()
     data["verification_qr_payload"] = None
+    data["new_owner_claim_qr_payload"] = None
     document = data.get("document") or {}
     for key, fallback in [
         ("generated_at", ""),
@@ -110,6 +111,7 @@ def _build_document_hash(
 ) -> str:
     data = payload.to_dict()
     data["verification_qr_payload"] = None
+    data["new_owner_claim_qr_payload"] = None
     document = data.get("document") or {}
     document["generated_at"] = finalized_at_iso
     document["document_id"] = document_id

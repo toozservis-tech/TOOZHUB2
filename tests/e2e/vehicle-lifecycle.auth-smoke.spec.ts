@@ -68,21 +68,16 @@ test.describe('Vehicle lifecycle browser click-through', () => {
     await page.locator('[data-testid="vehicle-detail-modal"]').getByRole('button', { name: 'Servis' }).click();
     await expect(page.locator('.vehicle-service-actions')).toBeVisible({ timeout: 10_000 });
 
-    const dialogValues = ['sale', `buyer-${suffix}@example.com`, true];
-    page.on('dialog', async (dialog) => {
-      const next = dialogValues.shift();
-      if (dialog.type() === 'confirm') {
-        await (next ? dialog.accept() : dialog.dismiss());
-      } else {
-        await dialog.accept(String(next || ''));
-      }
-    });
-
     const removeResponsePromise = page.waitForResponse((response) => (
       response.request().method() === 'POST'
       && response.url().includes(`/api/v1/vehicles/${vehicleId}/remove/confirm`)
     ));
-    await page.locator('.vehicle-service-actions').getByRole('button', { name: /Smazat/ }).click();
+    await page.locator('.vehicle-service-actions').getByRole('button', { name: /Odebrat/ }).click();
+    await expect(page.getByTestId('vehicle-removal-modal')).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId('vehicle-removal-reason-sale').check();
+    await page.getByTestId('vehicle-removal-buyer-email').fill(buyerEmail);
+    await page.getByTestId('vehicle-removal-buyer-phone').fill('+420601' + suffix.slice(-6));
+    await page.getByTestId('vehicle-removal-submit').click();
     const removeResponse = await removeResponsePromise;
     const removalText = await removeResponse.text();
     expect(removeResponse.ok(), `remove/confirm HTTP ${removeResponse.status()}: ${removalText}`).toBeTruthy();

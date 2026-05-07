@@ -13,6 +13,11 @@ struct UserProfile: Codable, Identifiable, Hashable {
     var phone: String?
     var role: String
     var createdAt: Date?
+    var accountStatus: String?
+    var emailVerifiedAt: Date?
+    var phoneE164: String?
+    var phoneVerifiedAt: Date?
+    var phoneVerificationStatus: String?
 }
 
 struct LoginRequest: Encodable {
@@ -82,9 +87,11 @@ struct TokenResponse: Decodable {
 }
 
 struct RegisterTokenResponse: Decodable {
-    let accessToken: String
-    let tokenType: String
-    let user: UserProfile
+    let accessToken: String?
+    let tokenType: String?
+    let user: UserProfile?
+    let verificationRequired: Bool?
+    let message: String?
     let emailSent: Bool?
     let registrationEmailStatus: String?
 }

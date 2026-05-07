@@ -152,6 +152,19 @@ DETAIL_HTML_WITH_FINDINGS = """
 """
 
 
+def _merge_post_fields(data: dict | None, files: dict | None) -> dict:
+    combined: dict = {}
+    if data:
+        combined.update(dict(data))
+    if files:
+        for key, value in files.items():
+            if isinstance(value, tuple) and len(value) == 2:
+                combined[key] = value[1]
+            else:
+                combined[key] = value
+    return combined
+
+
 class _FakeResponse:
     def __init__(self, text: str = "", content: bytes = b"", status_code: int = 200, headers: dict | None = None):
         self.text = text
@@ -189,40 +202,40 @@ class _FakeSession:
             )
         raise AssertionError(f"Unexpected GET url: {url}")
 
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
-        _FakeSession.last_post_data = dict(data or {})
+    def post(self, url: str, data: dict | None = None, files: dict | None = None, **kwargs: object):
+        _FakeSession.last_post_data = _merge_post_fields(data, files)
         if not url.endswith("/Home/Search"):
             raise AssertionError(f"Unexpected POST url: {url}")
         return _FakeResponse(text=RESULT_HTML, status_code=200)
 
 
 class _FakeSessionHtml500(_FakeSession):
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
-        _FakeSession.last_post_data = dict(data or {})
+    def post(self, url: str, data: dict | None = None, files: dict | None = None, **kwargs: object):
+        _FakeSession.last_post_data = _merge_post_fields(data, files)
         if not url.endswith("/Home/Search"):
             raise AssertionError(f"Unexpected POST url: {url}")
         return _FakeResponse(text="<!DOCTYPE html><html><body>Server Error</body></html>", status_code=500)
 
 
 class _FakeSessionNoResults(_FakeSession):
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
-        _FakeSession.last_post_data = dict(data or {})
+    def post(self, url: str, data: dict | None = None, files: dict | None = None, **kwargs: object):
+        _FakeSession.last_post_data = _merge_post_fields(data, files)
         if not url.endswith("/Home/Search"):
             raise AssertionError(f"Unexpected POST url: {url}")
         return _FakeResponse(text="<html><body>Bez tabulky</body></html>", status_code=200)
 
 
 class _FakeSessionInlineDetail(_FakeSession):
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
-        _FakeSession.last_post_data = dict(data or {})
+    def post(self, url: str, data: dict | None = None, files: dict | None = None, **kwargs: object):
+        _FakeSession.last_post_data = _merge_post_fields(data, files)
         if not url.endswith("/Home/Search"):
             raise AssertionError(f"Unexpected POST url: {url}")
         return _FakeResponse(text=RESULT_HTML_WITH_INLINE_DETAIL, status_code=200)
 
 
 class _FakeSessionDetailForm(_FakeSession):
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
-        _FakeSession.last_post_data = dict(data or {})
+    def post(self, url: str, data: dict | None = None, files: dict | None = None, **kwargs: object):
+        _FakeSession.last_post_data = _merge_post_fields(data, files)
         if url.endswith("/Home/Search"):
             return _FakeResponse(text=RESULT_HTML_WITH_DETAIL_FORM, status_code=200)
         if url.endswith("/Home/InspectionDetail"):
@@ -248,8 +261,8 @@ class _FakeSessionCaptchaRefresh(_FakeSession):
             )
         raise AssertionError(f"Unexpected GET url: {url}")
 
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
-        _FakeSession.last_post_data = dict(data or {})
+    def post(self, url: str, data: dict | None = None, files: dict | None = None, **kwargs: object):
+        _FakeSession.last_post_data = _merge_post_fields(data, files)
         if not url.endswith("/Home/Search"):
             raise AssertionError(f"Unexpected POST url: {url}")
         return _FakeResponse(text=CAPTCHA_ERROR_HTML, status_code=200)
@@ -258,8 +271,12 @@ class _FakeSessionCaptchaRefresh(_FakeSession):
 @pytest.fixture(autouse=True)
 def _clear_tachometer_store():
     vehicles_router._TACHOMETER_CHALLENGE_STORE.clear()
+    for p in vehicles_router.TACHOMETER_CHALLENGE_PERSIST_DIR.glob("*.tach.pkl"):
+        p.unlink(missing_ok=True)
     yield
     vehicles_router._TACHOMETER_CHALLENGE_STORE.clear()
+    for p in vehicles_router.TACHOMETER_CHALLENGE_PERSIST_DIR.glob("*.tach.pkl"):
+        p.unlink(missing_ok=True)
 
 
 @pytest.fixture()
@@ -331,6 +348,34 @@ def test_init_vehicle_tachometer_returns_captcha_for_owned_vehicle(db_session, m
     assert stored["expected_vin"] == "TMBJF73T2B9044629"
 
 
+def test_submit_vehicle_tachometer_works_with_challenge_persisted_only(db_session, monkeypatch) -> None:
+    """Po vymazání RAM musí submit načíst cookies z perzistentního souboru (např. jiný Gunicorn worker)."""
+    owner, vehicle = _seed_owned_vehicle(db_session)
+    monkeypatch.setattr(vehicles_router.requests, "Session", _FakeSession)
+
+    init_response = vehicles_router.init_vehicle_tachometer(
+        vehicle_id=vehicle.id,
+        current_user=owner,
+        db=db_session,
+    )
+    p = vehicles_router.TACHOMETER_CHALLENGE_PERSIST_DIR / f"{init_response.session_id}.tach.pkl"
+    assert p.is_file()
+
+    vehicles_router._TACHOMETER_CHALLENGE_STORE.clear()
+
+    response = vehicles_router.submit_vehicle_tachometer(
+        vehicle_id=vehicle.id,
+        payload=vehicles_router.VehicleTachometerSubmitRequest(
+            session_id=init_response.session_id,
+            captcha_code="2ukkq",
+        ),
+        current_user=owner,
+        db=db_session,
+    )
+    assert response.latest_mileage_km == 416_588
+    assert not p.is_file()
+
+
 def test_submit_vehicle_tachometer_updates_vehicle_and_creates_audit_record(db_session, monkeypatch) -> None:
     owner, vehicle = _seed_owned_vehicle(db_session)
     monkeypatch.setattr(vehicles_router.requests, "Session", _FakeSession)
@@ -384,9 +429,11 @@ def test_submit_vehicle_tachometer_updates_vehicle_and_creates_audit_record(db_s
     assert history[0].id > 0
     assert history[0].mileage_km == 402_411
     assert history[1].protocol_number == "CZ-3644-25-05-0162"
-    assert history[1].inspection_type == "STK / Evidenční kontrola"
+    assert history[1].inspection_type == "STK"
+    assert history[1].inspection_kind == "Evidenční kontrola"
     assert history[1].source == "kontrolatachometru.cz"
     assert history[1].status == "imported"
+    assert history[1].read_only is True
     assert history[1].summary
     assert history[1].detail_available is False
     assert history[1].has_documents is False

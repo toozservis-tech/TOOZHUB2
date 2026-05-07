@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from src.core.auth import get_current_user_email
+from src.core.datetime_cz import ZONE_PRAGUE
 from src.core.branding import APP_DISPLAY_NAME
 from src.core.security import hash_password, verify_password
 from src.modules.email_client.templates import render_email_layout, render_panel
@@ -72,6 +73,24 @@ def update_current_user(
     )
 
     update_data = user_update.model_dump(exclude_unset=True)
+    if "phone" in update_data:
+        from src.modules.vehicle_hub.registration_security import normalize_validate_phone_e164
+
+        raw_phone = update_data.pop("phone")
+        if raw_phone is None or str(raw_phone).strip() == "":
+            customer.phone = None
+            customer.phone_e164 = None
+            customer.phone_verified_at = None
+        else:
+            try:
+                new_e164 = normalize_validate_phone_e164(str(raw_phone))
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            if new_e164 != (customer.phone_e164 or None):
+                customer.phone_verified_at = None
+            customer.phone_e164 = new_e164
+            customer.phone = str(raw_phone).strip()
+
     for field, value in update_data.items():
         if hasattr(customer, field):
             setattr(customer, field, value)
@@ -203,14 +222,14 @@ def change_password(
         if email_service.is_configured():
             print(f"[CHANGE_PASSWORD] Odesílám potvrzovací email na: {email}")
             user_name = customer.name or "Uživateli"
-            change_time = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
+            change_time = datetime.now(timezone.utc).astimezone(ZONE_PRAGUE).strftime("%d.%m.%Y %H:%M")
 
             email_body = f"""
 Dobrý den {user_name},
 
 vaše heslo k účtu v aplikaci {APP_DISPLAY_NAME} bylo úspěšně změněno.
 
-Změna byla provedena: {change_time} UTC
+Změna byla provedena: {change_time} (časová zóna Praha / Česká republika)
 
 Pokud jste tuto změnu neprovedli, okamžitě kontaktujte podporu.
 
@@ -228,7 +247,7 @@ S pozdravem,
                 panels=[
                     render_panel(
                         title="Detaily změny",
-                        rows=[("Datum změny", f"{change_time} UTC"), ("Účet", email)],
+                        rows=[("Datum změny", f"{change_time} (Praha)"), ("Účet", email)],
                         accent="#ef4444",
                         tone="#fef2f2",
                     )

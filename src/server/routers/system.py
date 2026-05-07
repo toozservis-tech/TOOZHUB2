@@ -275,11 +275,29 @@ def root():
     return RedirectResponse(url="/web/index.html", status_code=302)
 
 
+def _shell_index_canonical_path() -> Path:
+    return (web_path / "index.html").resolve()
+
+
+def _apply_shell_index_headers(response: FileResponse, index_path: Path) -> None:
+    """Hlavičky pro HTML shell (+ diagnostika při porovnávání, co telefon opravdu stáhl)."""
+    try:
+        response.headers["X-Shell-Index-Mtime"] = str(int(index_path.stat().st_mtime))
+    except OSError:
+        pass
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["Surrogate-Control"] = "no-store"
+
+
 def _spa_index_response() -> FileResponse:
     index_path = web_path / "index.html"
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="Web interface není k dispozici")
-    return FileResponse(index_path)
+    response = FileResponse(index_path)
+    _apply_shell_index_headers(response, index_path)
+    return response
 
 
 # Přípony skutečných statických souborů: chybějící soubor = 404 (ne SPA shell).
@@ -321,6 +339,11 @@ def _serve_web_relative_file_or_spa(relative_path: str) -> FileResponse:
     if not str(target).startswith(str(base)):
         raise HTTPException(status_code=403, detail="Neplatná cesta")
     if target.is_file():
+        # GET /web/index.html jinak vracel holý FileResponse bez no-store → CDN/prohlížeč mohly držet starší shell.
+        if target.resolve() == _shell_index_canonical_path():
+            response = FileResponse(target)
+            _apply_shell_index_headers(response, target)
+            return response
         return FileResponse(target)
     if target.is_dir():
         nested = target / "index.html"
@@ -358,6 +381,14 @@ def spa_web_deep_shell(full_path: str):
 def spa_public_shell():
     """Deep-link friendly HTML shell (routing řeší SPA v prohlížeči)."""
     return _spa_index_response()
+
+
+@router.get("/favicon.ico")
+def favicon_redirect():
+    icon_path = web_path / "assets" / "toozservis-logo-icon.png"
+    if icon_path.exists():
+        return FileResponse(icon_path, media_type="image/png")
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 @router.api_route("/app", methods=["GET", "HEAD"])
@@ -533,7 +564,7 @@ def debug_db_stats(
             legacy_db_size = None
 
     try:
-        vehicles_total = db.query(VehicleModel).count()
+        vehicles_total = db.query(VehicleModel).filter(VehicleModel.status != "archived").count()
         users_total = db.query(Customer).count()
         current_user = db.query(Customer).filter(Customer.email == current_user_email).first()
 

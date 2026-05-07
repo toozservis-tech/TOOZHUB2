@@ -14,18 +14,21 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import HTTPException
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy import func, or_
 
 from src.core.branding import APP_DISPLAY_NAME, APP_EXPORT_DISPLAY_NAME
+from src.core.datetime_cz import format_prague_generated_label
 from src.modules.vehicle_hub.models import (
     BotCommand,
     Customer,
     CustomerCommand,
     CustomerSecuritySettings,
     EmailNotificationLog,
+    GlobalAuditLog,
     Instance,
     License,
+    LicenseAuditLog,
     PushSubscription,
     Reminder as ReminderModel,
     Reservation as ReservationModel,
@@ -62,14 +65,22 @@ except ImportError:
 class UserRegister(BaseModel):
     email: EmailStr
     password: str
-    name: Optional[str] = None
+    name: str = Field(min_length=2, max_length=200)
     ico: Optional[str] = None
     dic: Optional[str] = None
     street: Optional[str] = None
     street_number: Optional[str] = None
     city: Optional[str] = None
     zip: Optional[str] = None
-    phone: Optional[str] = None
+    phone: str = Field(min_length=8, max_length=24)
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=512)
+
+
+class ResendVerificationEmailRequest(BaseModel):
+    email: EmailStr
 
 
 class ServiceRegisterRequest(BaseModel):
@@ -114,7 +125,12 @@ class LoginResponse(BaseModel):
     challenge_expires_in: Optional[int] = None
 
 
-class RegisterTokenResponse(TokenResponse):
+class RegisterTokenResponse(BaseModel):
+    access_token: Optional[str] = None
+    token_type: str = "bearer"
+    user: Optional[dict] = None
+    verification_required: bool = False
+    message: Optional[str] = None
     email_sent: bool = False
     registration_email_status: Optional[str] = None
 
@@ -137,9 +153,24 @@ class UserResponse(BaseModel):
     notify_general: bool = True
     role: str = "user"
     created_at: Optional[datetime] = None
+    account_status: Optional[str] = None
+    email_verified_at: Optional[datetime] = None
+    phone_e164: Optional[str] = None
+    phone_verified_at: Optional[datetime] = None
+    phone_verification_status: str = "unverified"
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="after")
+    def _derive_phone_verification_status(self) -> UserResponse:
+        if self.phone_verified_at is not None:
+            object.__setattr__(self, "phone_verification_status", "verified")
+        elif self.phone_e164:
+            object.__setattr__(self, "phone_verification_status", "unverified")
+        else:
+            object.__setattr__(self, "phone_verification_status", "invalid")
+        return self
 
 
 class UserUpdate(BaseModel):
@@ -398,7 +429,7 @@ def build_vehicle_export_pdf(
     story = [
         Paragraph(f"{APP_EXPORT_DISPLAY_NAME} • Export vozidla", title_style),
         Paragraph(
-            f"Generováno {datetime.utcnow().strftime('%d.%m.%Y %H:%M UTC')} pro účet {customer.email}",
+            f"Generováno {format_prague_generated_label()} pro účet {customer.email}",
             subtitle_style,
         ),
         Paragraph("1) Identifikace vozidla", section_style),
@@ -569,11 +600,31 @@ def send_registration_alert_email(
             result["status"] = "smtp_not_configured"
             return result
 
-        now_utc = datetime.utcnow().strftime("%d.%m.%Y %H:%M:%S UTC")
+        stamp = format_prague_generated_label()
         safe_name = (account_name or "").strip() or "-"
         safe_ico = normalize_ico(account_ico) or "-"
         safe_type = "servis" if str(registration_type).lower() == "service" else "uživatel"
         meta = metadata or {}
+
+        antifraud_rows: list[tuple[str, str]] = []
+        if meta.get("email_status") is not None:
+            antifraud_rows.append(("Stav e-mailu", str(meta["email_status"])))
+        if meta.get("phone_status") is not None:
+            antifraud_rows.append(("Stav telefonu", str(meta["phone_status"])))
+        if meta.get("fraud_score") is not None:
+            antifraud_rows.append(("Fraud score", str(meta["fraud_score"])))
+        if meta.get("risk_flags") is not None:
+            antifraud_rows.append(("Risk flags", str(meta["risk_flags"])))
+        if meta.get("registration_ip") is not None:
+            antifraud_rows.append(("Registr. IP", str(meta["registration_ip"])))
+        if meta.get("registration_user_agent") is not None:
+            antifraud_rows.append(("User-Agent", str(meta["registration_user_agent"])[:500]))
+        if meta.get("tenant_id") is not None:
+            antifraud_rows.append(("tenant_id", str(meta["tenant_id"])))
+        if meta.get("customer_id") is not None:
+            antifraud_rows.append(("customer_id", str(meta["customer_id"])))
+        if meta.get("role") is not None:
+            antifraud_rows.append(("role", str(meta["role"])))
 
         detail_lines = []
         for key, value in meta.items():
@@ -582,23 +633,41 @@ def send_registration_alert_email(
             detail_lines.append(f"- {key}: {value}")
         detail_block = "\n".join(detail_lines) if detail_lines else "- bez doplňujících údajů"
 
-        subject = f"[{APP_DISPLAY_NAME}] Nová registrace ({safe_type})"
-        body = f"""Byla vytvořena nová registrace v aplikaci {APP_DISPLAY_NAME}.
+        if str(registration_type).lower() == "service":
+            subject = f"[{APP_DISPLAY_NAME}] Nová žádost o registraci servisu"
+        else:
+            subject = f"[{APP_DISPLAY_NAME}] Nová registrace ({safe_type})"
+
+        is_service_registration = str(registration_type).lower() == "service"
+        lead_line = (
+            f"Byla přijata nová žádost o servisní účet v aplikaci {APP_DISPLAY_NAME}."
+            if is_service_registration
+            else f"Byla vytvořena nová registrace v aplikaci {APP_DISPLAY_NAME}."
+        )
+        body = f"""{lead_line}
 
 Typ registrace: {safe_type}
 Email účtu: {account_email}
 Název/Jméno: {safe_name}
 IČO: {safe_ico}
-Čas: {now_utc}
+Čas: {stamp}
 
 Detaily:
 {detail_block}
 """
 
         html_body = render_email_layout(
-            title="Nová registrace",
-            subtitle="Interní oznámení o novém účtu v aplikaci.",
-            intro=f"Byla vytvořena nová registrace v aplikaci {APP_DISPLAY_NAME}.",
+            title="Nová žádost o registraci servisu" if is_service_registration else "Nová registrace",
+            subtitle=(
+                "Žádost čeká na schválení v administraci."
+                if is_service_registration
+                else "Interní oznámení o novém účtu v aplikaci."
+            ),
+            intro=(
+                f"Byla přijata nová žádost o servisní účet v aplikaci {APP_DISPLAY_NAME}."
+                if is_service_registration
+                else f"Byla vytvořena nová registrace v aplikaci {APP_DISPLAY_NAME}."
+            ),
             panels=[
                 render_panel(
                     title="Souhrn registrace",
@@ -607,10 +676,22 @@ Detaily:
                         ("Email účtu", account_email),
                         ("Název/Jméno", safe_name),
                         ("IČO", safe_ico),
-                        ("Čas", now_utc),
+                        ("Čas", stamp),
                     ],
                     accent="#3b82f6",
                     tone="#eff6ff",
+                ),
+                *(
+                    [
+                        render_panel(
+                            title="Antifraud / registrace",
+                            rows=antifraud_rows,
+                            accent="#f59e0b",
+                            tone="#fffbeb",
+                        )
+                    ]
+                    if antifraud_rows
+                    else []
                 ),
                 render_panel(
                     title="Detaily",
@@ -906,6 +987,18 @@ def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
             ServiceRegistrationRequest.approved_tenant_id == tenant_id
         ).update({ServiceRegistrationRequest.approved_tenant_id: None}, synchronize_session=False)
 
+    db.query(VehicleOwnership).filter(VehicleOwnership.assigned_by_customer_id == customer.id).update(
+        {VehicleOwnership.assigned_by_customer_id: None},
+        synchronize_session=False,
+    )
+    db.query(GlobalAuditLog).filter(GlobalAuditLog.actor_user_id == customer.id).update(
+        {GlobalAuditLog.actor_user_id: None},
+        synchronize_session=False,
+    )
+    deleted_counts["license_audit_logs_user"] = bulk_delete(
+        db.query(LicenseAuditLog).filter(LicenseAuditLog.user_id == customer.id)
+    )
+
     deleted_counts["service_documents"] = bulk_delete(
         db.query(ServiceDocumentIngestion).filter(
             or_(
@@ -1065,6 +1158,9 @@ def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
             )
             deleted_counts["tenant_license"] = bulk_delete(
                 db.query(License).filter(License.tenant_id == tenant_id)
+            )
+            deleted_counts["tenant_global_audit_log"] = bulk_delete(
+                db.query(GlobalAuditLog).filter(GlobalAuditLog.tenant_id == tenant_id)
             )
             deleted_counts["tenants"] = bulk_delete(
                 db.query(Tenant).filter(Tenant.id == tenant_id)

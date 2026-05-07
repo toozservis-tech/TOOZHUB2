@@ -75,5 +75,5 @@ def test_get_vehicles_returns_only_same_tenant_records(db_session) -> None:
     current_user = SimpleNamespace(email="sec-high-005@example.com", tenant_id=100)
     vehicles = vehicles_router.get_vehicles(current_user=current_user, db=db_session)
 
-    returned_ids = {item.id for item in vehicles}
+    returned_ids = {item["id"] for item in vehicles}
     assert returned_ids == {own.id}

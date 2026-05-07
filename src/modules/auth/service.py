@@ -88,6 +88,13 @@ class AuthService:
             
             if response.status_code == 200:
                 result = response.json()
+                if result.get("verification_required"):
+                    self.access_token = None
+                    user = result.get("user") or {}
+                    self.current_user_email = user.get("email") or normalized_email
+                    self.current_user = user
+                    print("[AUTH] Registrace čeká na ověření e-mailu (odkaz v e-mailu).")
+                    return True
                 self.access_token = result.get("access_token")
                 user = result.get("user", {})
                 self.current_user_email = user.get("email") or normalized_email

@@ -22,8 +22,21 @@ final class UserFeatureService {
         return try await api.request(.put("/api/v1/vehicles/\(id)", body: body), token: token)
     }
 
-    func deleteVehicle(id: Int, token: String) async throws {
-        try await api.requestNoContent(.delete("/api/v1/vehicles/\(id)"), token: token)
+    func removeVehicleFromAccount(id: Int, reasonCode: String, followupAnswer: [String: String], token: String) async throws -> VehicleRemovalConfirmResponse {
+        let initBody = try api.encodeBody(VehicleRemovalInitBody(reasonCode: reasonCode))
+        _ = try await api.request(
+            VehicleRemovalInitResponse.self,
+            .post("/api/v1/vehicles/\(id)/remove/init", body: initBody),
+            token: token
+        )
+        let confirmBody = try api.encodeBody(
+            VehicleRemovalConfirmBody(reasonCode: reasonCode, followupAnswer: followupAnswer)
+        )
+        return try await api.request(
+            VehicleRemovalConfirmResponse.self,
+            .post("/api/v1/vehicles/\(id)/remove/confirm", body: confirmBody),
+            token: token
+        )
     }
 
     func createServiceRecord(vehicleId: Int, _ request: ServiceRecordCreateRequest, token: String) async throws -> ServiceRecord {
@@ -366,4 +379,17 @@ final class UserFeatureService {
             return nil
         }
     }
+}
+
+private struct VehicleRemovalInitBody: Encodable {
+    let reasonCode: String
+}
+
+private struct VehicleRemovalConfirmBody: Encodable {
+    let reasonCode: String
+    let followupAnswer: [String: String]
+}
+
+private struct VehicleRemovalInitResponse: Decodable {
+    let vehicleId: Int?
 }

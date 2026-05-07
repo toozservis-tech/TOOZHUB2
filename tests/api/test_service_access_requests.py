@@ -9,26 +9,18 @@ from sqlalchemy import func
 from src.modules.vehicle_hub.database import SessionLocal
 from src.modules.vehicle_hub.models import Customer
 from src.modules.vehicle_hub.routers_v1 import service_workspace as workspace_router
-
-
-def _unique_email(prefix: str) -> str:
-    return f"{prefix}_{uuid4().hex[:10]}@example.com"
+from tests.api.integration_accounts import (
+    CI_SAR_LOOKUP_SERVICE,
+    CI_SAR_OWNER_A,
+    CI_SAR_OWNER_B,
+    CI_SAR_SERVICE,
+    CI_SAR_USER,
+    ensure_user_token,
+)
 
 
 def _register_user(api_url: str, *, email: str, password: str = "testpass123", name: str = "Test User") -> tuple[str, int]:
-    response = requests.post(
-        f"{api_url}/user/register",
-        json={
-            "email": email,
-            "password": password,
-            "name": name,
-            "phone": "+420123456789",
-        },
-        timeout=8,
-    )
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    return payload["access_token"], int(payload["user"]["id"])
+    return ensure_user_token(api_url, email, password=password, name=name)
 
 
 def _promote_user_to_service(email: str) -> None:
@@ -66,8 +58,8 @@ def _create_vehicle(api_url: str, token: str, *, plate: str, vin: str) -> int:
 
 
 def test_service_access_request_approval_flow(api_url):
-    service_email = _unique_email("service_access")
-    user_email = _unique_email("user_access")
+    service_email = CI_SAR_SERVICE
+    user_email = CI_SAR_USER
 
     service_token, service_id = _register_user(api_url, email=service_email, name="Servis Access")
     _promote_user_to_service(service_email)
@@ -188,9 +180,9 @@ def test_service_access_request_approval_flow(api_url):
 
 
 def test_service_vehicle_lookup_conflict_payload(api_url):
-    service_email = _unique_email("service_lookup_conflict")
-    first_owner_email = _unique_email("lookup_owner_first")
-    second_owner_email = _unique_email("lookup_owner_second")
+    service_email = CI_SAR_LOOKUP_SERVICE
+    first_owner_email = CI_SAR_OWNER_A
+    second_owner_email = CI_SAR_OWNER_B
 
     _register_user(api_url, email=service_email, name="Servis Lookup")
     _promote_user_to_service(service_email)

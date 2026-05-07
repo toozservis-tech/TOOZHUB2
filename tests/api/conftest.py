@@ -6,22 +6,24 @@ import pytest
 import requests
 from pathlib import Path
 import sys
-from uuid import uuid4
 
-# Přidat root projektu do path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+
+from tests.api.integration_accounts import (
+    CI_DEFAULT_PASSWORD,
+    TEST_USER_EMAIL_DEFAULT,
+    _verify_customer_email_in_db,
+    CI_DEFAULT_PHONE_E164,
+)
 
 # Testovací konfigurace
 TEST_API_URL = os.getenv("TEST_API_URL", "http://127.0.0.1:8000")
 TEST_DB_URL = os.getenv("TEST_DATABASE_URL", "sqlite:///./test_vehicles.db")
 TEST_ENV = "test"
 
-# Testovací uživatel
-# Použij unikátní email pro každou pytest session, aby testy nebyly závislé na stavu DB
-_session_suffix = uuid4().hex[:8]
-TEST_USER_EMAIL = os.getenv("TEST_USER_EMAIL", f"api_test_{_session_suffix}@example.com")
-TEST_USER_PASSWORD = os.getenv("TEST_USER_PASSWORD", "testpass123")
+TEST_USER_EMAIL = os.getenv("TEST_USER_EMAIL", TEST_USER_EMAIL_DEFAULT)
+TEST_USER_PASSWORD = os.getenv("TEST_USER_PASSWORD", CI_DEFAULT_PASSWORD)
 
 
 @pytest.fixture(scope="session")
@@ -50,13 +52,17 @@ def auth_token(api_url):
                 "email": TEST_USER_EMAIL,
                 "password": TEST_USER_PASSWORD,
                 "name": "API Test User",
-                "phone": "+420123456789"
+                "phone": CI_DEFAULT_PHONE_E164,
             },
             timeout=5
         )
         if response.status_code == 200:
             data = response.json()
-            return data.get("access_token")
+            tok = data.get("access_token")
+            if data.get("verification_required") and not tok:
+                _verify_customer_email_in_db(TEST_USER_EMAIL)
+            else:
+                return tok
     except Exception:
         pass
 

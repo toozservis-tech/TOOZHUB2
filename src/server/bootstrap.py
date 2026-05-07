@@ -20,12 +20,15 @@ from src.core.config import (
     ENVIRONMENT,
     HOST,
     JWT_SECRET_KEY,
+    LISTEN_HOST,
     PORT,
     PRODUCTION_LOCK_MODE,
 )
+from src.core.cloudflare_access import validate_cloudflare_access_admin_env
 from src.core.security_middleware import (
     AdminNetworkGuardMiddleware,
     AntiTamperingMiddleware,
+    CloudflareAccessAdminMiddleware,
     HttpsRedirectMiddleware,
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
@@ -43,7 +46,8 @@ from src.server.routers.user_auth import router as user_auth_router
 from src.server.routers.user_security import router as user_security_router
 from src.server.routers.session_me import router as session_me_router
 from src.server.routers.workspace_debug import router as workspace_debug_router
-from src.server.runtime_settings import get_runtime_setting_bool
+from src.server.maintenance_runtime_notice import maintenance_lockout_message_html
+from src.server.runtime_settings import get_runtime_setting_bool, load_runtime_settings
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -71,6 +75,38 @@ try:
 except ValueError:
     LICENSE_SUBSCRIPTION_WORKER_INTERVAL_SEC = 3600
 
+ENABLE_MDCR_OPEN_DATA_SCHEDULE_WORKER = _env_bool("ENABLE_MDCR_OPEN_DATA_SCHEDULE_WORKER", True)
+
+
+def _parse_env_bounded_int(name: str, default: int, *, min_val: int, max_val: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return max(min_val, min(max_val, value))
+
+
+MDCR_SCHEDULE_HOUR_PRAGUE = _parse_env_bounded_int("MDCR_SCHEDULE_HOUR_PRAGUE", 3, min_val=0, max_val=23)
+MDCR_SCHEDULE_MINUTE_PRAGUE = _parse_env_bounded_int("MDCR_SCHEDULE_MINUTE_PRAGUE", 30, min_val=0, max_val=59)
+
+
+def _seconds_until_next_prague_time(hour: int, minute: int) -> float:
+    """Spočítá počet sekund do příštího plánu v Europe/Prague."""
+    try:
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("Europe/Prague")
+        now = datetime.now(tz)
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return max(45.0, (target - now).total_seconds())
+    except Exception as exc:
+        print(f"[MDCR_SCHEDULE_WORKER] Europe/Prague schedule fallback to 86400s: {exc}")
+        return 86400.0
+
+
 ENABLE_FILE_BROWSER = _env_bool("ENABLE_FILE_BROWSER", False)
 
 REQUIRED_PRODUCTION_STORAGE_DIRS = (
@@ -81,6 +117,7 @@ REQUIRED_PRODUCTION_STORAGE_DIRS = (
 
 _reminder_notification_task: asyncio.Task | None = None
 _license_subscription_task: asyncio.Task | None = None
+_mdcr_open_data_schedule_task: asyncio.Task | None = None
 
 _MAINTENANCE_BYPASS_PREFIXES = (
     "/admin-api",
@@ -129,6 +166,12 @@ if ENVIRONMENT == "production":
         print('[SERVER] Vygenerujte nový klíč pomocí: python -c "import secrets; print(secrets.token_urlsafe(32))"')
         raise SystemExit(1)
     print("[SERVER] OK: JWT_SECRET_KEY je nastaven (neni vychozi hodnota)")
+
+_cf_access_errs = validate_cloudflare_access_admin_env()
+if ENVIRONMENT == "production" and _cf_access_errs:
+    for _msg in _cf_access_errs:
+        print(f"[SERVER] ERROR (Cloudflare Access): {_msg}")
+    raise SystemExit(1)
 
 try:
     from src.core.config_validator import log_config_status
@@ -200,6 +243,71 @@ async def _license_subscription_worker() -> None:
         await asyncio.sleep(LICENSE_SUBSCRIPTION_WORKER_INTERVAL_SEC)
 
 
+def _mdcr_open_data_schedule_tick() -> None:
+    from fastapi import HTTPException
+
+    db = SessionLocal()
+    try:
+        if is_job_paused("mdcr.open_data.schedule"):
+            print("[MDCR_SCHEDULE_WORKER] paused (Developer Control Center job_state)")
+            return
+        from src.server.admin_api import MdcrOpenDataImportRequest, _run_mdcr_open_data_import
+
+        dry_schedule = _env_bool("MDCR_SCHEDULE_DRY_RUN", False)
+        payload = MdcrOpenDataImportRequest(
+            source_url=None,
+            use_latest_source=True,
+            dry_run=dry_schedule,
+            limit=None,
+            update_vehicle_profile=True,
+        )
+        audit_email = (os.getenv("MDCR_SCHEDULE_AUDIT_EMAIL") or "").strip()
+        summary = _run_mdcr_open_data_import(
+            db,
+            payload,
+            admin_email=audit_email or "mdcr-schedule",
+            request=None,
+        )
+        print(
+            "[MDCR_SCHEDULE_WORKER] import finished "
+            f"dry_run={summary.get('dry_run')} scanned={summary.get('scanned_records')} "
+            f"matched_records={summary.get('matched_records')} matched_vehicles={summary.get('matched_vehicles')} "
+            f"ins+={summary.get('inspection_inserted')} ins~={summary.get('inspection_updated')} "
+            f"profiles={summary.get('vehicle_profile_updated')}"
+        )
+    except HTTPException as he:
+        print(f"[MDCR_SCHEDULE_WORKER] HTTPException {he.status_code}: {he.detail}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    except Exception as exc:
+        print(f"[MDCR_SCHEDULE_WORKER] import error: {exc}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+async def _mdcr_open_data_schedule_worker() -> None:
+    while True:
+        wait_sec = _seconds_until_next_prague_time(
+            MDCR_SCHEDULE_HOUR_PRAGUE,
+            MDCR_SCHEDULE_MINUTE_PRAGUE,
+        )
+        print(
+            f"[MDCR_SCHEDULE_WORKER] next wake in {wait_sec:.0f}s "
+            f"(target clock {MDCR_SCHEDULE_HOUR_PRAGUE:02d}:{MDCR_SCHEDULE_MINUTE_PRAGUE:02d} Europe/Prague)"
+        )
+        await asyncio.sleep(wait_sec)
+        try:
+            await asyncio.to_thread(_mdcr_open_data_schedule_tick)
+        except Exception as exc:
+            print(f"[MDCR_SCHEDULE_WORKER] tick failed (async wrapper): {exc}")
+
+
 def _is_maintenance_bypass_path(path: str) -> bool:
     path_lc = (path or "").lower()
     if path_lc in _MAINTENANCE_BYPASS_EXACT:
@@ -245,6 +353,7 @@ def _register_middlewares(app: FastAPI) -> None:
     app.add_middleware(AntiTamperingMiddleware)
     app.add_middleware(RateLimitMiddleware, calls=100, period=60)
     app.add_middleware(AdminNetworkGuardMiddleware)
+    app.add_middleware(CloudflareAccessAdminMiddleware)
     app.add_middleware(HttpsRedirectMiddleware)
 
     @app.middleware("http")
@@ -258,6 +367,12 @@ def _register_middlewares(app: FastAPI) -> None:
             return await call_next(request)
 
         retry_after_sec = "300"
+        settings_snap = load_runtime_settings()
+        extra_notice_html = maintenance_lockout_message_html(settings_snap)
+        extra_notice_paragraph = ""
+        if extra_notice_html.strip():
+            extra_notice_paragraph = f'<p class="extra-notice">{extra_notice_html}</p>'
+
         if path.startswith("/api/") or path.startswith("/user/"):
             response = JSONResponse(
                 status_code=503,
@@ -277,9 +392,11 @@ def _register_middlewares(app: FastAPI) -> None:
                     ".wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}"
                     ".card{max-width:680px;background:#1e293b;border:1px solid #334155;border-radius:16px;padding:28px;}"
                     "h1{margin:0 0 10px;font-size:28px;}p{margin:0 0 8px;line-height:1.55;color:#cbd5e1;}"
+                    "p.extra-notice{margin-top:14px;color:#fcd34d;}"
                     "</style></head><body><div class='wrap'><div class='card'>"
                     "<h1>Aplikace je v režimu údržby</h1>"
                     "<p>Probíhá aktualizace systému. Dočasně není možné aplikaci používat.</p>"
+                    f"{extra_notice_paragraph}"
                     "<p>Zkuste to prosím znovu za několik minut.</p>"
                     "</div></div></body></html>"
                 ),
@@ -357,9 +474,11 @@ def _include_feature_routers(app: FastAPI) -> None:
     try:
         from src.modules.vehicle_hub.routers_v1.service_dashboard import router as service_dashboard_router
         from src.modules.vehicle_hub.routers_v1.service_invoices import router as service_invoices_router
+        from src.modules.service_workspace.fakturyweb_router import router as fakturyweb_test_router
         from src.modules.vehicle_hub.routers_v1.service_canonical import router as service_canonical_router
 
         app.include_router(service_dashboard_router)
+        app.include_router(fakturyweb_test_router)
         app.include_router(service_invoices_router)
         app.include_router(service_canonical_router)
         print("[SERVER] Service Dashboard + Service Invoices + canonical intake routery zaregistrovány: /api/service/")
@@ -402,6 +521,17 @@ def _include_feature_routers(app: FastAPI) -> None:
 
         traceback.print_exc()
 
+    try:
+        from src.server.routers.public_demo_account import router as public_demo_account_router
+
+        app.include_router(public_demo_account_router)
+        print("[SERVER] Public demo account router zaregistrován: /api/public/demo-account")
+    except ImportError as exc:
+        print(f"[SERVER] Warning: Public demo account router není dostupný: {exc}")
+        import traceback
+
+        traceback.print_exc()
+
     if ENABLE_AUTOPILOT_API:
         try:
             from src.modules.vehicle_hub.routers_v1.autopilot import router as autopilot_router
@@ -435,6 +565,21 @@ def _include_feature_routers(app: FastAPI) -> None:
 
         app.include_router(admin_api_router)
         print("[SERVER] Admin API router zaregistrován: /admin-api/")
+        try:
+            from src.server.admin_vehicle_support import router as admin_vehicle_support_router
+
+            app.include_router(admin_vehicle_support_router, prefix="/admin-api")
+            print("[SERVER] Admin vehicle support router zaregistrován: /admin-api/vehicles/...")
+        except ImportError as exc_inner:
+            print(f"[SERVER] Warning: Admin vehicle support router není dostupný: {exc_inner}")
+        try:
+            from src.server.admin_vehicle_lifecycle import router as admin_vehicle_lifecycle_router
+
+            app.include_router(admin_vehicle_lifecycle_router, prefix="/admin-api")
+            app.include_router(admin_vehicle_lifecycle_router, prefix="/api/admin")
+            print("[SERVER] Admin vehicle lifecycle router zaregistrován: /admin-api/vehicle-lifecycle a /api/admin/vehicle-lifecycle")
+        except ImportError as exc_inner:
+            print(f"[SERVER] Warning: Admin vehicle lifecycle router není dostupný: {exc_inner}")
     except ImportError as exc:
         print(f"[SERVER] Warning: Admin API router není dostupný: {exc}")
         import traceback
@@ -457,6 +602,15 @@ def _include_feature_routers(app: FastAPI) -> None:
             traceback.print_exc()
     else:
         print("[SERVER] AI Features router přeskočen (ENABLE_AI_FEATURES=false)")
+
+    try:
+        from src.server.routers.support import router as support_router
+        app.include_router(support_router)
+        print("[SERVER] Support router zaregistrován: /api/v1/support/")
+    except ImportError as exc:
+        print(f"[SERVER] Warning: Support router není dostupný: {exc}")
+        import traceback
+        traceback.print_exc()
 
     app.include_router(session_me_router)
     if PRODUCTION_LOCK_MODE:
@@ -505,7 +659,7 @@ def _mount_static_directories(app: FastAPI) -> None:
 def _register_lifecycle_hooks(app: FastAPI) -> None:
     @app.on_event("startup")
     async def _start_background_workers() -> None:
-        global _reminder_notification_task, _license_subscription_task
+        global _reminder_notification_task, _license_subscription_task, _mdcr_open_data_schedule_task
         _validate_required_production_storage()
         db = SessionLocal()
         try:
@@ -546,9 +700,19 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
             _license_subscription_task = asyncio.create_task(_license_subscription_worker())
             print(f"[LICENSE_SUBSCRIPTION_WORKER] started (interval={LICENSE_SUBSCRIPTION_WORKER_INTERVAL_SEC}s)")
 
+        if not ENABLE_MDCR_OPEN_DATA_SCHEDULE_WORKER:
+            print("[MDCR_SCHEDULE_WORKER] disabled (ENABLE_MDCR_OPEN_DATA_SCHEDULE_WORKER=0)")
+        elif _mdcr_open_data_schedule_task is None:
+            _mdcr_open_data_schedule_task = asyncio.create_task(_mdcr_open_data_schedule_worker())
+            print(
+                f"[MDCR_SCHEDULE_WORKER] started "
+                f"(daily ~{MDCR_SCHEDULE_HOUR_PRAGUE:02d}:{MDCR_SCHEDULE_MINUTE_PRAGUE:02d} Europe/Prague; "
+                f"pause via job mdcr.open_data.schedule)"
+            )
+
     @app.on_event("shutdown")
     async def _stop_background_workers() -> None:
-        global _reminder_notification_task, _license_subscription_task
+        global _reminder_notification_task, _license_subscription_task, _mdcr_open_data_schedule_task
         if _reminder_notification_task is not None:
             _reminder_notification_task.cancel()
             try:
@@ -568,6 +732,16 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
             finally:
                 _license_subscription_task = None
             print("[LICENSE_SUBSCRIPTION_WORKER] stopped")
+
+        if _mdcr_open_data_schedule_task is not None:
+            _mdcr_open_data_schedule_task.cancel()
+            try:
+                await _mdcr_open_data_schedule_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                _mdcr_open_data_schedule_task = None
+            print("[MDCR_SCHEDULE_WORKER] stopped")
 
 
 def create_app() -> FastAPI:
@@ -653,7 +827,7 @@ def run_server(app: FastAPI) -> None:
     print(f"[SERVER] 📅 Datum buildu: {build_date}")
     print(f"[SERVER] 🔄 Aktualizace: {update_info}")
     print("=" * 60)
-    print(f"[SERVER] Spouštím server na {HOST}:{PORT}")
+    print(f"[SERVER] Spouštím server na {LISTEN_HOST}:{PORT} (HOST v konfiguraci: {HOST})")
     print(f"[SERVER] Režim: {ENVIRONMENT}")
     print(f"[SERVER] CORS origins: {ALLOWED_ORIGINS}")
     print("")
@@ -716,4 +890,4 @@ def run_server(app: FastAPI) -> None:
 
     print("=" * 40)
     print("")
-    uvicorn.run(app, host=HOST, port=PORT)
+    uvicorn.run(app, host=LISTEN_HOST, port=PORT)

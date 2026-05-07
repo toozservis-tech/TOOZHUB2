@@ -10,6 +10,11 @@ refactor — see TECHNICAL_RENAME_BACKLOG.md.
 
 APP_DISPLAY_NAME = "Správa vozidel"
 APP_DISPLAY_NAME_GENITIVE = "Správy vozidel"
+
+# Transakční e-maily: pouze název produktu (APP_DISPLAY_NAME), bez legacy obchodních slov v textu.
+APP_EMAIL_TAGLINE = "Servisní historie, dokumenty a připomínky — přehledně na jednom místě."
+# Krátká nálada v těle e-mailu (pod hlavičkou značky)
+APP_EMAIL_MOOD_LINE = "Vozidla, servis a termíny — přehledně, bez papírování."
 APP_API_DISPLAY_NAME = f"{APP_DISPLAY_NAME} API"
 APP_SUPPORT_DISPLAY_NAME = f"{APP_DISPLAY_NAME} Podpora"
 APP_EXPORT_DISPLAY_NAME = APP_DISPLAY_NAME

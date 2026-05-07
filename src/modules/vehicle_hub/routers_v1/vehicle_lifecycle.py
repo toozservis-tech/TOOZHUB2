@@ -8,7 +8,9 @@ import zipfile
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -22,6 +24,7 @@ from ..models import (
     Customer,
     ServiceAccessRequest,
     ServiceRecord,
+    SystemNotification,
     Vehicle,
     VehicleRemovalEvent,
     VehicleReportDocument,
@@ -29,7 +32,9 @@ from ..models import (
     VehicleTransferToken,
 )
 from ..ownership import (
+    get_customer_by_email,
     get_owned_vehicle,
+    released_placeholder_user_email,
     release_vehicle_owner_assignment,
     transfer_vehicle_to_new_owner,
     user_owns_vehicle,
@@ -40,6 +45,11 @@ from ..reports.vehicle_report_pdf import render_vehicle_service_report_pdf
 from ..reports.vehicle_report_verification import finalize_vehicle_report_document
 from ..schema_management import assert_module_ready
 from ..service_access import create_or_update_vehicle_service_link, revoke_vehicle_service_link, vehicle_label
+from ..user_in_app_notifications import (
+    APP_AUTOMATED_NOTIFICATION_SENDER,
+    notify_service_access_decided,
+    notify_service_owner_granted_direct_access,
+)
 from ..vehicle_public_history import render_vehicle_qr_svg
 from .auth import get_current_user
 
@@ -58,14 +68,127 @@ REPORT_ROOT = DATA_DIR / "vehicle_reports"
 ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
 REPORT_ROOT.mkdir(parents=True, exist_ok=True)
 
+logger = logging.getLogger(__name__)
+
 REMOVAL_FOLLOWUP_FIELDS = {
-    "sale": "buyer_contact_hint",
+    "ceased": "note",
     "scrap": "scrap_document_reference",
     "export": "export_country",
     "temporary_hide": "hide_until_or_reason",
     "duplicate": "duplicate_vehicle_reference",
     "other": "note",
 }
+
+REMOVAL_REASON_CODES = frozenset({"sale", "handover", *REMOVAL_FOLLOWUP_FIELDS.keys()})
+
+# Prodej i předání novému držiteli — transfer token + e-mail příjemci (stejný kontakt jako „sale“).
+REMOVAL_REASONS_WITH_TRANSFER_RECIPIENT = frozenset({"sale", "handover"})
+
+_SALE_BUYER_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _validate_sale_buyer_contact(answer: dict[str, Any] | None, *, seller_email: str | None) -> tuple[str, str]:
+    raw = answer or {}
+    email = str(raw.get("buyer_email") or "").strip().lower()
+    phone_raw = str(raw.get("buyer_phone") or "").strip()
+    if not email or not _SALE_BUYER_EMAIL_RE.match(email):
+        raise HTTPException(status_code=422, detail="Zadejte platný e-mail kupce.")
+    seller_norm = str(seller_email or "").strip().lower()
+    if seller_norm and email == seller_norm:
+        raise HTTPException(status_code=422, detail="Zadejte e-mail kupce, ne svůj účet.")
+    digits = re.sub(r"\D", "", phone_raw)
+    if len(digits) < 9:
+        raise HTTPException(
+            status_code=422,
+            detail="Zadejte platné telefonní číslo kupce (alespoň 9 číslic).",
+        )
+    return email, phone_raw
+
+
+def _send_vehicle_sale_buyer_email_background(
+    buyer_email: str,
+    buyer_phone: str,
+    seller_name: str,
+    vehicle_label_s: str,
+    transfer_url: str,
+    pdf_path_str: str,
+    registration_url: str,
+    buyer_already_registered: bool,
+) -> None:
+    from pathlib import Path
+
+    from src.core.branding import APP_DISPLAY_NAME
+    from src.modules.email_client.service import EmailMessage, EmailService
+    from src.modules.email_client.templates import render_email_layout, render_panel
+
+    svc = EmailService()
+    if not svc.is_configured():
+        print("[VEHICLE_SALE] SMTP není nakonfigurováno — e-mail kupci neodeslán")
+        return
+    path = Path(pdf_path_str)
+    pdf_bytes = path.read_bytes() if path.is_file() else b""
+    seller_bit = f" ({seller_name})" if seller_name else ""
+    intro_paras = [
+        f"Prodávající{seller_bit} vám předává vozidlo — {vehicle_label_s}.",
+        "V příloze najdete digitální výpis vozidla (PDF). Tlačítkem níže dokončíte převod v aplikaci (ověření SPZ a VIN).",
+    ]
+    extra_paras: list[str] = []
+    if not buyer_already_registered:
+        extra_paras.append(
+            f"Účet s tímto e-mailem v {APP_DISPLAY_NAME} zatím neevidujeme — založte si ho přes registraci v aplikaci, "
+            "poté použijte odkaz pro převod."
+        )
+    plain_lines = [
+        "Dobrý den,",
+        "",
+        intro_paras[0],
+        intro_paras[1],
+        "",
+        f"Odkaz pro převod: {transfer_url}",
+        f"Telefon uvedený při předání: {buyer_phone}",
+        "",
+    ]
+    if not buyer_already_registered:
+        plain_lines.extend(
+            [
+                f"Registrace v aplikaci: {registration_url}",
+                "",
+            ]
+        )
+    plain_body = "\n".join(plain_lines) + f"\n— {APP_DISPLAY_NAME}\n"
+
+    panels = [
+        render_panel(
+            title="Údaje pro převod",
+            rows=[("Vozidlo", vehicle_label_s), ("Váš e-mail", buyer_email), ("Telefon", buyer_phone)],
+        ),
+    ]
+    html_body = render_email_layout(
+        title="Předání vozidla — digitální výpis",
+        subtitle=vehicle_label_s,
+        intro="Dobrý den,",
+        paragraphs=intro_paras + extra_paras,
+        panels=panels,
+        cta_label="Dokončit převod",
+        cta_url=transfer_url,
+        accent="#16a34a",
+        footer_note=None if buyer_already_registered else f"Registrace: {registration_url}",
+    )
+    blobs: list[tuple[str, bytes, str]] = []
+    if pdf_bytes:
+        blobs.append(("digitalni-vypis-vozidla.pdf", pdf_bytes, "application/pdf"))
+    msg = EmailMessage(
+        to=[buyer_email],
+        subject=f"Předání vozidla — {vehicle_label_s}",
+        body=plain_body,
+        html_body=html_body,
+        attachment_blobs=blobs,
+    )
+    try:
+        svc.send_email(msg)
+        print(f"[VEHICLE_SALE] E-mail kupci odeslán: {buyer_email}")
+    except Exception as exc:
+        print(f"[VEHICLE_SALE] Odeslání e-mailu kupci selhalo: {exc}")
 
 
 class ServiceAccessLinkRequest(BaseModel):
@@ -205,10 +328,14 @@ def _generate_vehicle_report(
     *,
     vehicle: Vehicle,
     current_user: Customer,
+    new_owner_claim_url: str | None = None,
 ) -> tuple[VehicleReportDocument, bytes]:
     resolved_mode = resolve_report_mode(db=db, vehicle=vehicle, current_user=current_user, requested_mode="owner")
     payload = build_vehicle_service_report_payload(db=db, vehicle=vehicle, current_user=current_user, mode=resolved_mode)
     payload, document_row = finalize_vehicle_report_document(db=db, vehicle=vehicle, current_user=current_user, payload=payload)
+    claim_url = str(new_owner_claim_url or "").strip()
+    if claim_url:
+        payload.new_owner_claim_qr_payload = claim_url
     pdf_content = render_vehicle_service_report_pdf(payload)
     report_path = REPORT_ROOT / f"vehicle-{int(vehicle.id)}-report-{document_row.document_id}.pdf"
     report_path.write_bytes(pdf_content)
@@ -428,6 +555,15 @@ def request_or_link_service_access(
         vehicle_id=int(vehicle.id),
         metadata={"service_id": int(service.id), "access_scope": payload.access_scope},
     )
+    try:
+        notify_service_owner_granted_direct_access(
+            db,
+            service_customer_id=int(service.id),
+            vehicle=vehicle,
+            owner=current_user,
+        )
+    except Exception as exc:
+        print(f"[VEHICLE_LIFECYCLE] In-app oznámení servisu (direct grant) selhalo: {exc}")
     db.commit()
     return {"linked": True, "access_id": int(link.id), "status": "approved", "vehicle_id": int(vehicle.id), "service_id": int(service.id)}
 
@@ -477,6 +613,16 @@ def approve_service_access(
         vehicle_id=int(vehicle.id),
         metadata={"request_id": int(request_row.id)},
     )
+    try:
+        notify_service_access_decided(
+            db,
+            service_customer_id=int(request_row.service_customer_id),
+            vehicle=vehicle,
+            approved=True,
+            owner=current_user,
+        )
+    except Exception as exc:
+        print(f"[VEHICLE_LIFECYCLE] In-app oznámení servisu (schváleno) selhalo: {exc}")
     db.commit()
     return {"approved": True, "access_id": int(link.id), "request_id": int(request_row.id)}
 
@@ -514,6 +660,16 @@ def reject_service_access(
         vehicle_id=int(vehicle.id),
         metadata={"note": payload.note if payload else None},
     )
+    try:
+        notify_service_access_decided(
+            db,
+            service_customer_id=int(request_row.service_customer_id),
+            vehicle=vehicle,
+            approved=False,
+            owner=current_user,
+        )
+    except Exception as exc:
+        print(f"[VEHICLE_LIFECYCLE] In-app oznámení servisu (zamítnuto) selhalo: {exc}")
     db.commit()
     return {"rejected": True, "request_id": int(request_row.id)}
 
@@ -566,13 +722,25 @@ def init_vehicle_removal(
 ):
     _ = _require_owned_vehicle(db, current_user, vehicle_id)
     reason = str(payload.reason_code or "").strip().lower()
-    if reason not in REMOVAL_FOLLOWUP_FIELDS:
+    if reason not in REMOVAL_REASON_CODES:
         raise HTTPException(status_code=422, detail="Neplatný důvod odstranění vozidla z evidence.")
+    if reason in REMOVAL_REASONS_WITH_TRANSFER_RECIPIENT:
+        return {
+            "vehicle_id": int(vehicle_id),
+            "reason_code": reason,
+            "required_followup_field": "buyer_email",
+            "required_followup_fields": ["buyer_email", "buyer_phone"],
+            "requires_transfer_token": True,
+            "will_generate_digital_report": True,
+            "will_archive_without_loss": True,
+        }
+    field = REMOVAL_FOLLOWUP_FIELDS[reason]
     return {
         "vehicle_id": int(vehicle_id),
         "reason_code": reason,
-        "required_followup_field": REMOVAL_FOLLOWUP_FIELDS[reason],
-        "requires_transfer_token": reason == "sale",
+        "required_followup_field": field,
+        "required_followup_fields": [field],
+        "requires_transfer_token": False,
         "will_generate_digital_report": True,
         "will_archive_without_loss": True,
     }
@@ -610,49 +778,110 @@ def create_transfer_token(
 def confirm_vehicle_removal(
     vehicle_id: int,
     payload: RemovalConfirmRequest,
+    background_tasks: BackgroundTasks,
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     vehicle = _require_owned_vehicle(db, current_user, vehicle_id)
     reason = str(payload.reason_code or "").strip().lower()
-    required_field = REMOVAL_FOLLOWUP_FIELDS.get(reason)
-    if not required_field:
+    if reason not in REMOVAL_REASON_CODES:
         raise HTTPException(status_code=422, detail="Neplatný důvod odstranění vozidla z evidence.")
-    if not str((payload.followup_answer or {}).get(required_field) or "").strip():
-        raise HTTPException(status_code=422, detail=f"Pro důvod {reason} je povinné pole {required_field}.")
-    document_row, _pdf_content = _generate_vehicle_report(db, vehicle=vehicle, current_user=current_user)
+
+    sale_buyer_email: str | None = None
+    sale_buyer_phone: str | None = None
+    followup_for_event: dict[str, Any] = dict(payload.followup_answer or {})
+
+    if reason in REMOVAL_REASONS_WITH_TRANSFER_RECIPIENT:
+        sale_buyer_email, sale_buyer_phone = _validate_sale_buyer_contact(
+            payload.followup_answer,
+            seller_email=getattr(current_user, "email", None),
+        )
+        followup_for_event = {"buyer_email": sale_buyer_email, "buyer_phone": sale_buyer_phone}
+        rn = str((payload.followup_answer or {}).get("recipient_note") or "").strip()
+        if rn:
+            followup_for_event["recipient_note"] = rn
+    else:
+        required_field = REMOVAL_FOLLOWUP_FIELDS.get(reason)
+        if not required_field:
+            raise HTTPException(status_code=422, detail="Neplatný důvod odstranění vozidla z evidence.")
+        if not str((payload.followup_answer or {}).get(required_field) or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail=f"Pro důvod {reason} je povinné pole {required_field}.",
+            )
+
     transfer_row = None
     transfer_payload = None
-    if reason == "sale":
+    new_owner_url: str | None = None
+    if reason in REMOVAL_REASONS_WITH_TRANSFER_RECIPIENT:
         transfer_row, raw_token, public_url = _create_transfer_token(
             db,
             vehicle=vehicle,
             current_user=current_user,
-            transfer_reason="sale",
+            transfer_reason=str(reason),
             expires_in_days=30,
         )
+        new_owner_url = public_url
         transfer_payload = {
             "token": raw_token,
             "qr_payload": public_url,
             "qr_svg": _safe_qr_svg(public_url),
             "share": {"email": public_url, "sms": public_url, "whatsapp": public_url},
         }
+    document_row, _pdf_content = _generate_vehicle_report(
+        db,
+        vehicle=vehicle,
+        current_user=current_user,
+        new_owner_claim_url=new_owner_url,
+    )
     archive_path = _archive_vehicle_bundle(db, vehicle=vehicle, document_row=document_row)
     released = release_vehicle_owner_assignment(db, vehicle=vehicle, owner=current_user)
     if not released:
         raise HTTPException(status_code=409, detail="Aktivní vlastnická vazba už byla ukončena.")
     vehicle.status = "archived"
+    vehicle.user_email = released_placeholder_user_email(int(vehicle.id))
     event = VehicleRemovalEvent(
         vehicle_id=int(vehicle.id),
         initiated_by_user_id=int(current_user.id),
         reason_code=reason,
-        required_followup_answer_json=json.dumps(payload.followup_answer, ensure_ascii=False, default=str),
+        required_followup_answer_json=json.dumps(followup_for_event, ensure_ascii=False, default=str),
         digital_report_document_id=int(document_row.id),
         archive_bundle_path=archive_path,
         transfer_token_id=int(transfer_row.id) if transfer_row else None,
     )
     db.add(event)
     db.flush()
+
+    buyer_already_registered = False
+    if reason in REMOVAL_REASONS_WITH_TRANSFER_RECIPIENT and sale_buyer_email:
+        buyer_customer = get_customer_by_email(db, sale_buyer_email)
+        buyer_already_registered = bool(buyer_customer)
+        if buyer_customer:
+            try:
+                assert_module_ready(
+                    db,
+                    "system_notifications",
+                    detail_prefix="Systémová oznámení nejsou připravená",
+                )
+                label = vehicle_label(vehicle)
+                seller_disp = (current_user.name or current_user.email or "Prodávající").strip()
+                db.add(
+                    SystemNotification(
+                        target_type="user",
+                        target_value=str(buyer_customer.id),
+                        title="Předání vozidla",
+                        message=(
+                            f"{seller_disp} vám předává vozidlo {label}. "
+                            "Podrobnosti a digitální výpis najdete v e-mailu; dokončete převod přes odkaz v něm."
+                        ),
+                        severity="info",
+                        created_by_customer_id=None,
+                        created_by_email=APP_AUTOMATED_NOTIFICATION_SENDER,
+                    )
+                )
+            except Exception as exc:
+                print(f"[VEHICLE_SALE] Nepodařilo se vytvořit in-app oznámení pro kupce: {exc}")
+
     write_global_audit_log(
         db,
         entity_type="vehicle_removal_event",
@@ -671,6 +900,24 @@ def confirm_vehicle_removal(
         },
     )
     db.commit()
+
+    if reason in REMOVAL_REASONS_WITH_TRANSFER_RECIPIENT and sale_buyer_email and new_owner_url:
+        pdf_path_str = str(REPORT_ROOT / f"vehicle-{int(vehicle.id)}-report-{document_row.document_id}.pdf")
+        from src.modules.email_client.templates import build_app_url
+
+        reg_url = build_app_url("/web/index.html")
+        background_tasks.add_task(
+            _send_vehicle_sale_buyer_email_background,
+            sale_buyer_email,
+            sale_buyer_phone or "",
+            (current_user.name or current_user.email or "").strip(),
+            vehicle_label(vehicle),
+            str(new_owner_url),
+            pdf_path_str,
+            reg_url,
+            buyer_already_registered,
+        )
+
     return {
         "removed": True,
         "vehicle_id": int(vehicle.id),
@@ -733,19 +980,66 @@ def get_vehicle_digital_report(
     return Response(content=pdf_content, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 
-@router.post("/claim-by-transfer")
-def claim_vehicle_by_transfer(
+def validate_transfer_claim_identity(
+    db: Session,
     payload: ClaimByTransferRequest,
-    current_user: Customer = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+    current_user: Customer,
+) -> tuple[VehicleTransferToken, Vehicle]:
+    """
+    Ověří platný předávací token a shodu SPZ/VIN se záznamem vozidla.
+    Používá se před převodem vlastnictví i před doplněním technického přehledu (bez změny vlastníka).
+    """
     token_row = db.query(VehicleTransferToken).filter(VehicleTransferToken.token_hash == _token_hash(payload.token)).first()
     if not token_row:
         raise HTTPException(status_code=404, detail="Předávací token nebyl nalezen.")
-    if token_row.status != "active" or token_row.expires_at < datetime.utcnow():
-        if token_row.status == "active":
-            token_row.status = "expired"
-            db.commit()
+    now = datetime.utcnow()
+    if token_row.expires_at < now and token_row.status == "active":
+        token_row.status = "expired"
+        db.flush()
+    if token_row.status == "claimed":
+        write_global_audit_log(
+            db,
+            entity_type="vehicle_transfer_token",
+            entity_id=int(token_row.id),
+            action="transfer_token_claim_rejected",
+            actor_type="user",
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=getattr(current_user, "tenant_id", None),
+            vehicle_id=int(token_row.vehicle_id),
+            metadata={"reason": "already_claimed"},
+        )
+        db.commit()
+        raise HTTPException(status_code=409, detail="Předávací token už byl použit.")
+    if token_row.status == "revoked":
+        write_global_audit_log(
+            db,
+            entity_type="vehicle_transfer_token",
+            entity_id=int(token_row.id),
+            action="transfer_token_claim_rejected",
+            actor_type="user",
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=getattr(current_user, "tenant_id", None),
+            vehicle_id=int(token_row.vehicle_id),
+            metadata={"reason": "token_revoked"},
+        )
+        db.commit()
+        raise HTTPException(status_code=409, detail="Předávací token byl zrušen.")
+    if token_row.status != "active":
+        write_global_audit_log(
+            db,
+            entity_type="vehicle_transfer_token",
+            entity_id=int(token_row.id),
+            action="transfer_token_claim_rejected",
+            actor_type="user",
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=getattr(current_user, "tenant_id", None),
+            vehicle_id=int(token_row.vehicle_id),
+            metadata={"reason": "inactive_token", "token_status": token_row.status},
+        )
+        db.commit()
         raise HTTPException(status_code=409, detail="Předávací token už není aktivní.")
     vehicle = db.query(Vehicle).filter(Vehicle.id == int(token_row.vehicle_id)).first()
     if not vehicle:
@@ -764,7 +1058,86 @@ def claim_vehicle_by_transfer(
             metadata={"reason": "vin_or_spz_mismatch"},
         )
         db.commit()
-        raise HTTPException(status_code=409, detail="VIN nebo SPZ nesouhlasí s předávaným vozidlem.")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "SPZ nebo VIN po vyčištění mezer nesedí se záznamem vozidla v rejstříku. "
+                "Zadejte SPZ přesně podle velkého technického průkazu včetně prvních znaků "
+                "(často se plete začátek: číslice „1“ vs písmeno „I“, nebo „5“ vs „S“, pořadí znaků u kombinace číslic a písmen). "
+                "VIN musí mít přesně 17 znaků bez mezer."
+            ),
+        )
+    return token_row, vehicle
+
+
+def _technical_overview_snapshot_for_refresh(overview: object | None) -> str | None:
+    if overview is None:
+        return None
+    try:
+        return json.dumps(overview, sort_keys=True, default=str)
+    except Exception:
+        return None
+
+
+def perform_transfer_technical_refresh_before_claim(
+    db: Session,
+    payload: ClaimByTransferRequest,
+    current_user: Customer,
+) -> dict[str, Any]:
+    """Obnoví vehicle_technical_overview před dokončením převodu (bez změny vlastníka)."""
+    from src.modules.vehicle_hub.services.vehicle_technical_overview import persist_vehicle_technical_overview
+
+    _, vehicle = validate_transfer_claim_identity(db, payload, current_user)
+    before = _technical_overview_snapshot_for_refresh(getattr(vehicle, "vehicle_technical_overview", None))
+    try:
+        persist_vehicle_technical_overview(db, vehicle)
+    except Exception as exc:
+        logger.warning(
+            "[VEHICLE_LIFECYCLE] refresh technical overview failed vehicle_id=%s err=%s",
+            getattr(vehicle, "id", None),
+            exc,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Technické údaje se nepodařilo načíst. Zkuste to za chvíli znovu.",
+        )
+    db.commit()
+    db.refresh(vehicle)
+    after = _technical_overview_snapshot_for_refresh(getattr(vehicle, "vehicle_technical_overview", None))
+    changed = before != after
+    write_global_audit_log(
+        db,
+        entity_type="vehicle",
+        entity_id=int(vehicle.id),
+        action="transfer_technical_overview_pre_claim_refresh",
+        actor_type="user",
+        actor_user_id=int(current_user.id),
+        tenant_id=getattr(vehicle, "tenant_id", None),
+        vehicle_id=int(vehicle.id),
+        metadata={"technical_overview_changed": changed},
+    )
+    db.commit()
+    return {"refreshed": True, "technical_overview_changed": changed}
+
+
+@router.post("/transfer-technical-refresh-before-claim")
+def transfer_technical_refresh_before_claim(
+    payload: ClaimByTransferRequest,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Doplnění technických údajů před převodem — kanonické URL pod /api/v1/vehicles/."""
+    return perform_transfer_technical_refresh_before_claim(db, payload, current_user)
+
+
+@router.post("/claim-by-transfer")
+def claim_vehicle_by_transfer(
+    payload: ClaimByTransferRequest,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    token_row, vehicle = validate_transfer_claim_identity(db, payload, current_user)
     transfer_vehicle_to_new_owner(
         db,
         vehicle=vehicle,
@@ -790,3 +1163,13 @@ def claim_vehicle_by_transfer(
     )
     db.commit()
     return {"claimed": True, "vehicle_id": int(vehicle.id), "history_preserved": True}
+
+
+@router.post("/transfer-claim")
+def transfer_claim_alias(
+    payload: ClaimByTransferRequest,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stejné chování jako POST /claim-by-transfer (alias pro novější klienty)."""
+    return claim_vehicle_by_transfer(payload=payload, current_user=current_user, db=db)

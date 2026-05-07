@@ -131,7 +131,7 @@ def count_vehicles(db: Session, tenant_id: int) -> int:
     Returns:
         Počet vozidel
     """
-    return db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id).count()
+    return db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id, Vehicle.status != "archived").count()
 
 
 def assert_vehicle_quota(db: Session, tenant_id: int) -> None:

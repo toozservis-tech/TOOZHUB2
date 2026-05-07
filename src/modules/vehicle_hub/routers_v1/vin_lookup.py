@@ -53,9 +53,9 @@ async def lookup_vin(vin: str, db: Session = Depends(get_db)):
     
     try:
         # Použít existující decoder (lazy import pro vyhnutí se cyklu)
-        from ..decoder.router import decode_vin  # import uvnitř funkce
+        from ..decoder.router import decode_vin_core  # import uvnitř funkce
         decode_request = VinDecodeRequest(vin=vin_clean)
-        decode_response: VehicleDecodeResponse = await decode_vin(decode_request, db)
+        decode_response: VehicleDecodeResponse = await decode_vin_core(decode_request, db, None)
         
         if not decode_response.success or not decode_response.data:
             # Pokud decoder nevrátil data, vrať prázdnou odpověď

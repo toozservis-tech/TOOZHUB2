@@ -95,7 +95,11 @@ final class AuthManager: ObservableObject {
 
     func registerUser(_ request: UserRegisterRequest) async throws -> RegisterTokenResponse {
         let response = try await featureService.registerUser(request)
-        completeAuthentication(token: response.accessToken, user: response.user)
+        if let token = response.accessToken, !token.isEmpty, let user = response.user {
+            completeAuthentication(token: token, user: user)
+        } else {
+            logout()
+        }
         return response
     }
 

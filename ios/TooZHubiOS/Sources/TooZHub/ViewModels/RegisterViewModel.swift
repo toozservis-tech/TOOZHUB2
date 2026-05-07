@@ -82,6 +82,8 @@ final class RegisterViewModel: ObservableObject {
 
             if response.registrationEmailStatus == "failed" {
                 infoMessage = "Registrace proběhla, ale potvrzovací e-mail se nepodařilo odeslat."
+            } else if response.verificationRequired == true {
+                infoMessage = response.message ?? "Na e-mail jsme poslali ověřovací odkaz. Dokud e-mail neověříte, přihlášení nebude možné."
             }
             return true
         } catch {

@@ -7,16 +7,20 @@ Struktura (datový tok, ne UI):
   /admin-api/users/{id}/detail, control-center akce nad uživateli.
 - Sekce Servisy: /admin-api/services, /admin-api/services/{id}, /admin-api/service-registration-requests.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request as FastAPIRequest
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request as FastAPIRequest
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect, func
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timezone, timedelta
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, Field, EmailStr
 from pathlib import Path
 from copy import deepcopy
+import gzip
+import hashlib
 import os
+import re
+import time
 import json
 import sqlite3
 import shutil
@@ -24,6 +28,12 @@ import zipfile
 import ipaddress
 import secrets
 import string
+import csv
+import io
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
+
 
 from src.core.auth import get_current_user_email, security
 from src.core.rbac import is_admin, is_developer_admin
@@ -42,6 +52,10 @@ from src.core.config import (
 )
 from src.modules.vehicle_hub.database import get_db, DB_URL, engine
 from src.modules.vehicle_hub.audit_log import write_global_audit_log
+from src.modules.vehicle_hub.service_record_snapshot import (
+    service_record_audit_snapshot,
+    snapshot_json_and_hash,
+)
 from src.modules.vehicle_hub.customer_ordinal import (
     assign_admin_ordinal_if_missing,
     deletion_mark_display,
@@ -49,9 +63,11 @@ from src.modules.vehicle_hub.customer_ordinal import (
 from src.modules.vehicle_hub.models import (
     Customer,
     CustomerDeletionLabel,
+    Tenant,
     Vehicle,
     VehicleOwnership,
     ServiceRecord,
+    ServiceRecordAuditLog,
     Reservation,
     Reminder,
     ServiceRegistrationRequest,
@@ -62,9 +78,22 @@ from src.modules.vehicle_hub.models import (
     SecurityAccessLog,
     PushSubscription,
     DeveloperActionAuditLog,
+    AdminCustomerChangeEvent,
     GlobalAuditLog,
     SecurityBlockedIp,
     SystemNotification,
+    DemoAccessToken,
+    VehicleInspectionHistory,
+    VehicleMileage,
+    VehicleStkImportAuditLog,
+    VehicleTachometerHistoryEntry,
+)
+from src.server.admin_customer_change_notify import (
+    admin_change_table_exists,
+    record_admin_customer_change,
+    record_user_profile_license_changes_from_admin,
+    send_customer_change_notification_email,
+    mark_events_notified,
 )
 from src.modules.vehicle_hub.account_state import (
     ensure_customer_account_state_schema,
@@ -85,8 +114,33 @@ from src.modules.vehicle_hub.tenant_provisioning import (
     create_dedicated_tenant,
     ensure_default_license_for_tenant,
 )
+from src.modules.vehicle_hub.workspace_entitlements import (
+    effective_workspace_kinds,
+    normalize_workspace_entitlements_for_storage,
+    normalize_workspace_ui_default_for_storage,
+)
+
+
+def _effective_workspace_entitlements_for_admin_summary(role: Optional[str], raw_column: Any) -> List[str]:
+    """Stejné výsledky jako effective_workspace_kinds(Customer) — pro SQL seznam uživatelů."""
+    class _MiniCustomer:
+        __slots__ = ("role", "workspace_entitlements")
+
+        def __init__(self, r: Optional[str], raw: Any):
+            self.role = r
+            self.workspace_entitlements = raw
+
+    return sorted(effective_workspace_kinds(_MiniCustomer(role, raw_column)))
 from src.modules.vehicle_hub.routers_v1.reminders import apply_reminder_completion_update
-from src.server.runtime_settings import ADMIN_SETTINGS_FILE
+from src.modules.vehicle_hub.schema_management import assert_module_ready
+from src.server.maintenance_runtime_notice import build_maintenance_runtime_notification_item
+from src.server.runtime_settings import ADMIN_SETTINGS_FILE, invalidate_runtime_settings_cache, load_runtime_settings
+from src.server.system_notification_markup import (
+    NOTIFICATION_HTML_MARKER,
+    notification_message_kind,
+    notification_visible_text_len,
+    sanitize_notification_rich_html,
+)
 from src.server.control_center_jobs import (
     is_job_paused,
     set_job_paused,
@@ -96,11 +150,21 @@ try:
     from src.modules.licensing.service import (
         upgrade_license_plan,
         get_license_status as get_tenant_license_status,
+        get_allowed_license_plans_for_role,
+        get_license_plan_base,
+        get_license_plan_public_label,
+        get_license_workspace_kind_for_role,
+        normalize_license_plan_key as normalize_license_plan_for_role,
     )
     LICENSE_MANAGEMENT_AVAILABLE = True
 except Exception:
     upgrade_license_plan = None
     get_tenant_license_status = None
+    get_allowed_license_plans_for_role = None
+    get_license_plan_base = None
+    get_license_plan_public_label = None
+    get_license_workspace_kind_for_role = None
+    normalize_license_plan_for_role = None
     LICENSE_MANAGEMENT_AVAILABLE = False
 
 router = APIRouter(prefix="/admin-api", tags=["admin"])
@@ -122,11 +186,10 @@ JOB_NAME_ALIASES = {
 
 # Import pro admin tenants endpoints
 try:
-    from src.modules.vehicle_hub.models import Tenant, Instance
+    from src.modules.vehicle_hub.models import Instance
     TENANTS_AVAILABLE = True
 except ImportError:
     TENANTS_AVAILABLE = False
-    Tenant = None
     Instance = None
 
 try:
@@ -317,6 +380,28 @@ def _safe_json_load(value: Any) -> Dict[str, Any]:
         return {}
 
 
+def _admin_vehicle_short_label(vehicle: Vehicle) -> str:
+    nick = (vehicle.nickname or "").strip()
+    if nick:
+        return nick
+    bm = f"{vehicle.brand or ''} {vehicle.model or ''}".strip()
+    if bm:
+        return bm
+    if vehicle.plate:
+        return str(vehicle.plate)
+    return f"Vozidlo #{vehicle.id}"
+
+
+def _notify_customer_id_for_record(db: Session, record: ServiceRecord) -> Optional[int]:
+    if record.user_id:
+        return int(record.user_id)
+    vehicle = db.query(Vehicle).filter(Vehicle.id == record.vehicle_id).first()
+    if not vehicle:
+        return None
+    owner = get_primary_vehicle_owner(db, vehicle)
+    return int(owner.id) if owner else None
+
+
 PAYMENT_SUCCESS_PROVIDER_STATUSES = {"PAID", "CONFIRMED"}
 PAYMENT_SUCCESS_EVENT_TYPES = {
     "payment_paid",
@@ -499,6 +584,158 @@ def _directory_usage(path: Path) -> Dict[str, Any]:
         "total_bytes": total_bytes,
         "total_human": _format_bytes(total_bytes),
     }
+
+
+_VEHICLE_REPORT_ARCHIVE_RE = re.compile(r"^vehicle-(\d+)-")
+_TENANT_DISK_USAGE_CACHE: Dict[str, Any] = {"ts": 0.0, "map": {}}
+
+
+def _tenant_disk_cache_ttl_sec() -> float:
+    try:
+        return max(15.0, float(os.getenv("ADMIN_TENANT_DISK_CACHE_SEC", "90")))
+    except ValueError:
+        return 90.0
+
+
+def _get_tenant_disk_usage_map(db: Session) -> Dict[int, int]:
+    """Součet velikostí souborů v data/ podle tenant_id (sdílené mezi účty se stejným tenantem)."""
+    now = time.monotonic()
+    ttl = _tenant_disk_cache_ttl_sec()
+    cached_map = _TENANT_DISK_USAGE_CACHE.get("map") or {}
+    cached_ts = float(_TENANT_DISK_USAGE_CACHE.get("ts") or 0.0)
+    if cached_map and (now - cached_ts) < ttl:
+        return cached_map  # type: ignore[return-value]
+    computed = _compute_tenant_disk_usage_bytes(db)
+    _TENANT_DISK_USAGE_CACHE["ts"] = now
+    _TENANT_DISK_USAGE_CACHE["map"] = computed
+    return computed
+
+
+def _compute_tenant_disk_usage_bytes(db: Session) -> Dict[int, int]:
+    totals: Dict[int, int] = {}
+
+    def add_bytes(tenant_id: int, nbytes: int) -> None:
+        if tenant_id <= 0 or nbytes <= 0:
+            return
+        totals[tenant_id] = totals.get(tenant_id, 0) + nbytes
+
+    vp_root = DATA_DIR / "vehicle_photos" / "tenants"
+    if vp_root.is_dir():
+        for item in vp_root.rglob("*"):
+            if not item.is_file():
+                continue
+            try:
+                rel = item.relative_to(vp_root)
+            except ValueError:
+                continue
+            parts = rel.parts
+            if not parts:
+                continue
+            head = parts[0]
+            if not str(head).isdigit():
+                continue
+            try:
+                tid = int(head)
+            except ValueError:
+                continue
+            try:
+                add_bytes(tid, item.stat().st_size)
+            except OSError:
+                pass
+
+    def add_tenant_prefixed_subtree(root: Path, prefix: str) -> None:
+        if not root.is_dir():
+            return
+        for child in root.iterdir():
+            if not child.is_dir():
+                continue
+            name = child.name
+            if not name.startswith(prefix):
+                continue
+            rest = name[len(prefix) :]
+            if not rest.isdigit():
+                continue
+            tid = int(rest)
+            for item in child.rglob("*"):
+                if item.is_file():
+                    try:
+                        add_bytes(tid, item.stat().st_size)
+                    except OSError:
+                        pass
+
+    add_tenant_prefixed_subtree(DATA_DIR / "service_record_attachments", "tenant_")
+    add_tenant_prefixed_subtree(DATA_DIR / "vehicle_orv_scans", "tenant_")
+
+    vid_to_tid: Dict[int, int] = {}
+    for vid, tid in db.query(Vehicle.id, Vehicle.tenant_id).all():
+        if tid is not None:
+            vid_to_tid[int(vid)] = int(tid)
+
+    uploads_root = DATA_DIR / "uploads" / "vehicles"
+    if uploads_root.is_dir():
+        for child in uploads_root.iterdir():
+            if not child.is_dir():
+                continue
+            if not child.name.isdigit():
+                continue
+            vid = int(child.name)
+            tid = vid_to_tid.get(vid)
+            if tid is None:
+                continue
+            for item in child.rglob("*"):
+                if item.is_file():
+                    try:
+                        add_bytes(tid, item.stat().st_size)
+                    except OSError:
+                        pass
+
+    for folder in (DATA_DIR / "vehicle_reports", DATA_DIR / "vehicle_archives"):
+        if not folder.is_dir():
+            continue
+        for item in folder.iterdir():
+            if not item.is_file():
+                continue
+            match = _VEHICLE_REPORT_ARCHIVE_RE.match(item.name)
+            if not match:
+                continue
+            vid = int(match.group(1))
+            tid = vid_to_tid.get(vid)
+            if tid is None:
+                continue
+            try:
+                add_bytes(tid, item.stat().st_size)
+            except OSError:
+                pass
+
+    vin_to_tid: Dict[str, int] = {}
+    for vin, tid in db.query(Vehicle.vin, Vehicle.tenant_id).filter(Vehicle.tenant_id.isnot(None)).all():
+        if tid is None:
+            continue
+        tid_int = int(tid)
+        raw_vin = str(vin or "").strip()
+        if raw_vin:
+            vk = re.sub(r"[^A-Z0-9_-]", "_", raw_vin.upper())
+            if vk:
+                vin_to_tid[vk] = tid_int
+    for vid, tid_int in vid_to_tid.items():
+        vin_to_tid[f"VEHICLE-{vid}"] = tid_int
+
+    case_root = DATA_DIR / "vehicle_case_photos"
+    if case_root.is_dir():
+        for child in case_root.iterdir():
+            if not child.is_dir():
+                continue
+            tid = vin_to_tid.get(child.name)
+            if tid is None:
+                continue
+            for item in child.rglob("*"):
+                if item.is_file():
+                    try:
+                        add_bytes(tid, item.stat().st_size)
+                    except OSError:
+                        pass
+
+    return totals
 
 
 def _backup_entry_sort_ts(created_at: Optional[str], backup_dir: Path) -> float:
@@ -1061,13 +1298,31 @@ def validate_role_value(role: str) -> str:
     return normalized_role
 
 
-def normalize_license_plan(plan: Optional[str]) -> Optional[str]:
+def normalize_license_plan(plan: Optional[str], role: Optional[str] = None) -> Optional[str]:
     if plan is None:
         return None
-    normalized_plan = str(plan).strip().lower()
-    if not normalized_plan:
+    normalized_plan_raw = str(plan).strip().lower()
+    if not normalized_plan_raw:
         return None
-    allowed_plans = {"free", "basic", "premium"}
+
+    if role is None:
+        normalized_plan = normalized_plan_raw
+        allowed_plans = (
+            set(get_allowed_license_plans_for_role("user") + get_allowed_license_plans_for_role("service"))
+            if get_allowed_license_plans_for_role
+            else {"free", "basic", "premium", "lifetime"}
+        )
+    else:
+        normalized_plan = (
+            normalize_license_plan_for_role(normalized_plan_raw, role)
+            if normalize_license_plan_for_role
+            else normalized_plan_raw
+        )
+        allowed_plans = (
+            set(get_allowed_license_plans_for_role(role))
+            if get_allowed_license_plans_for_role
+            else {"free", "basic", "premium", "lifetime"}
+        )
     if normalized_plan not in allowed_plans:
         allowed = ", ".join(sorted(allowed_plans))
         raise HTTPException(status_code=400, detail=f"Neplatný plán licence '{plan}'. Povolené plány: {allowed}")
@@ -1167,7 +1422,12 @@ def get_client_ip(request: FastAPIRequest) -> Optional[str]:
 
 
 def to_iso_datetime(value: Any) -> Optional[str]:
-    """Bezpečný převod datetime/date/string hodnot na ISO string."""
+    """Bezpečný převod datetime/date/string hodnot na ISO string.
+
+    Časové údaje z DB jsou v UTC (naivní datetime); do JSON posíláme vždy s příponou Z,
+    aby je prohlížeč neinterpretoval jako lokální čas (posun oproti Praze).
+    Čisté kalendářní datum (YYYY-MM-DD) vracíme beze změny.
+    """
     if value is None:
         return None
     if isinstance(value, str):
@@ -1178,12 +1438,24 @@ def to_iso_datetime(value: Any) -> Optional[str]:
         candidate = text_value
         if " " in candidate and "T" not in candidate:
             candidate = candidate.replace(" ", "T", 1)
-        try:
-            datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", candidate):
             return candidate
+        try:
+            parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
         except ValueError:
             return text_value
-    if isinstance(value, (datetime, date)):
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.isoformat().replace("+00:00", "Z")
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        else:
+            value = value.astimezone(timezone.utc)
+        return value.isoformat().replace("+00:00", "Z")
+    if isinstance(value, date):
         return value.isoformat()
     return str(value)
 
@@ -1296,7 +1568,32 @@ def get_default_admin_settings() -> Dict[str, Dict[str, Dict[str, Any]]]:
             "app_name": {"value": "Správa vozidel", "value_type": "string", "description": "Název aplikace"},
             "app_version": {"value": "2.2.0", "value_type": "string", "description": "Verze aplikace"},
             "app_description": {"value": "Správa vozidel a servisních záznamů", "value_type": "string", "description": "Popis aplikace"},
-            "maintenance_mode": {"value": False, "value_type": "boolean", "description": "Zapnout režim údržby"},
+            "maintenance_notice_enabled": {
+                "value": False,
+                "value_type": "boolean",
+                "description": "Zobrazit plánovanou údržbu v Oznamování v aplikaci",
+            },
+            "maintenance_notice_title": {"value": "Oznámení", "value_type": "string", "description": "Nadpis v seznamu oznámení"},
+            "maintenance_notice_message": {
+                "value": "",
+                "value_type": "string",
+                "description": "Text pro uživatele (např. plánovaná odstávka, žádost o zálohu)",
+            },
+            "maintenance_notice_period_start": {
+                "value": "",
+                "value_type": "string",
+                "description": "Od kdy platí připomenutí – prázdné = vždy, formát data RRRR-MM-DD",
+            },
+            "maintenance_notice_period_end": {
+                "value": "",
+                "value_type": "string",
+                "description": "Do kdy platí připomenutí – volitelně, formát data RRRR-MM-DD",
+            },
+            "maintenance_mode": {
+                "value": False,
+                "value_type": "boolean",
+                "description": "Úplný režim údržby: ukončení přístupu pro uživatele (chyba 503). Admin panel dál funguje.",
+            },
         },
         "security": {
             "jwt_expiration_hours": {"value": max(1, int(JWT_EXPIRE_MINUTES / 60)), "value_type": "number", "description": "Jak dlouho je token platný"},
@@ -1355,7 +1652,8 @@ def get_default_admin_settings() -> Dict[str, Dict[str, Dict[str, Any]]]:
             "country": {"value": (os.getenv("COMGATE_COUNTRY", "CZ") or "CZ").strip().upper(), "value_type": "string", "description": "Země platební brány"},
             "create_url": {"value": (os.getenv("COMGATE_CREATE_URL", "https://payments.comgate.cz/v1.0/create") or "https://payments.comgate.cz/v1.0/create").strip(), "value_type": "string", "description": "Comgate create endpoint"},
             "status_url": {"value": (os.getenv("COMGATE_STATUS_URL", "https://payments.comgate.cz/v1.0/status") or "https://payments.comgate.cz/v1.0/status").strip(), "value_type": "string", "description": "Comgate status endpoint"},
-            "recurring_url": {"value": (os.getenv("COMGATE_RECURRING_URL", "https://payments.comgate.cz/v2.0/recurring") or "https://payments.comgate.cz/v2.0/recurring").strip(), "value_type": "string", "description": "Comgate recurring endpoint"},
+            "recurring_url": {"value": (os.getenv("COMGATE_RECURRING_URL", "https://payments.comgate.cz/v1.0/recurring") or "https://payments.comgate.cz/v1.0/recurring").strip(), "value_type": "string", "description": "Comgate recurring endpoint"},
+            "recurring_enabled": {"value": _default_env_bool("COMGATE_RECURRING_ENABLED", True), "value_type": "boolean", "description": "Povolit backend recurring flow"},
             "price_basic_monthly_halers": {"value": comgate_basic_monthly, "value_type": "number", "description": "BASIC měsíčně (v haléřích)"},
             "price_basic_yearly_halers": {"value": comgate_basic_yearly, "value_type": "number", "description": "BASIC ročně (v haléřích)"},
             "price_premium_monthly_halers": {"value": comgate_premium_monthly, "value_type": "number", "description": "PREMIUM měsíčně (v haléřích)"},
@@ -1408,6 +1706,7 @@ def save_admin_settings(settings: Dict[str, Dict[str, Dict[str, Any]]]) -> None:
     ADMIN_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(ADMIN_SETTINGS_FILE, "w", encoding="utf-8") as handle:
         json.dump(settings, handle, ensure_ascii=False, indent=2)
+    invalidate_runtime_settings_cache()
 
 
 # ============= SCHEMAS =============
@@ -1451,6 +1750,16 @@ class UserSummary(BaseModel):
     is_disabled: bool = False
     is_deleted: bool = False
     session_version: int = 0
+    workspace_entitlements: Optional[List[str]] = None
+    workspace_ui_default: Optional[str] = None
+    pending_admin_notify_count: int = 0
+    # Soubory v data/ přiřazené k tenantovi (stejná hodnota u účtů se stejným tenant_id).
+    disk_usage_bytes: int = 0
+    disk_usage_human: str = "0.0 B"
+
+
+class AdminNotifySendRequest(BaseModel):
+    change_ids: List[int]
 
 
 class VehicleSummary(BaseModel):
@@ -1470,7 +1779,7 @@ class VehicleSummary(BaseModel):
 
 class UserCreate(BaseModel):
     email: EmailStr
-    name: Optional[str] = None
+    name: str
     password: str
     role: str = "user"
     tenant_id: Optional[int] = None
@@ -1482,10 +1791,12 @@ class UserCreate(BaseModel):
     city: Optional[str] = None
     zip: Optional[str] = None
     license_plan: Optional[str] = None
+    workspace_entitlements: Optional[List[str]] = None
+    workspace_ui_default: Optional[str] = None
 
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=2, max_length=200)
     password: Optional[str] = None
     role: Optional[str] = None
     ico: Optional[str] = None
@@ -1496,6 +1807,9 @@ class UserUpdate(BaseModel):
     city: Optional[str] = None
     zip: Optional[str] = None
     license_plan: Optional[str] = None
+    # JSON pole ["user","service"] — rozšíření pracovních režimů (None = beze změny)
+    workspace_entitlements: Optional[List[str]] = None
+    workspace_ui_default: Optional[str] = None
 
 class VehicleCreate(BaseModel):
     user_email: EmailStr
@@ -1532,6 +1846,7 @@ class ServiceUpdate(BaseModel):
     phone: Optional[str] = None
     ico: Optional[str] = None
     password: Optional[str] = None
+    partner_catalog_approved: Optional[bool] = None
 
 
 class ServiceRegistrationDecision(BaseModel):
@@ -1611,6 +1926,104 @@ class SettingsUpdatePayload(BaseModel):
     settings: List[SettingUpdateItem]
 
 
+def _json_loads_safe(raw: Any) -> Dict[str, Any]:
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(str(raw))
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _audit_severity(action: Any, details: Any = None) -> str:
+    haystack = f"{action or ''} {details or ''}".lower()
+    if any(token in haystack for token in ("delete", "restore", "failed", "blocked", "disable", "force", "suspended", "error")):
+        return "critical"
+    if any(token in haystack for token in ("update", "change", "warning", "expired", "reject", "cleanup")):
+        return "warning"
+    return "info"
+
+
+def _client_ip_from_request(request: Optional[FastAPIRequest]) -> Optional[str]:
+    if request is None:
+        return None
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    real_ip = (request.headers.get("x-real-ip") or "").strip()
+    return forwarded or real_ip or (request.client.host if request.client else None)
+
+
+def _license_is_expired(row: License) -> bool:
+    status = str(getattr(row, "status", "") or "").strip().lower()
+    valid_to = getattr(row, "valid_to", None)
+    return status == "expired" or (valid_to is not None and valid_to < datetime.utcnow())
+
+
+def _serialize_payment_attention_row(tx: LicensePaymentTransaction, customer: Optional[Customer] = None) -> Dict[str, Any]:
+    environment = _infer_payment_environment(
+        payload_json=tx.payload_json,
+        provider_status=tx.provider_status,
+        event_type=tx.event_type,
+    )
+    return {
+        "id": tx.id,
+        "tenant_id": tx.tenant_id,
+        "email": customer.email if customer else None,
+        "user_id": customer.id if customer else None,
+        "trans_id": tx.trans_id,
+        "ref_id": tx.ref_id,
+        "plan": tx.plan,
+        "amount_halers": tx.amount_halers,
+        "currency": tx.currency or "CZK",
+        "provider_status": tx.provider_status,
+        "event_type": tx.event_type,
+        "payment_environment": environment,
+        "is_failed": _is_payment_failed(tx.provider_status, tx.event_type),
+        "needs_attention": _payment_needs_attention(tx.provider_status, tx.event_type),
+        "created_at": to_iso_datetime(tx.created_at),
+    }
+
+
+def _table_ready(db: Session, name: str) -> bool:
+    try:
+        return bool(inspect(db.bind).has_table(name))
+    except Exception:
+        return False
+
+
+def _module_status(*checks: bool) -> str:
+    if not checks:
+        return "unknown"
+    return "ok" if all(checks) else "warning"
+
+
+def _app_center_module(
+    *,
+    key: str,
+    label: str,
+    group: str,
+    status: str,
+    description: str,
+    admin_section: Optional[str] = None,
+    metrics: Optional[Dict[str, Any]] = None,
+    actions: Optional[List[Dict[str, Any]]] = None,
+    notes: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    return {
+        "key": key,
+        "label": label,
+        "group": group,
+        "status": status,
+        "description": description,
+        "admin_section": admin_section,
+        "metrics": metrics or {},
+        "actions": actions or [],
+        "notes": notes or [],
+    }
+
+
 class DbInfoResponse(BaseModel):
     db_path: str
     table_count: int
@@ -1649,6 +2062,22 @@ class SecurityUnblockIpRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class MdcrOpenDataImportRequest(BaseModel):
+    source_url: Optional[str] = None
+    use_latest_source: bool = True
+    dry_run: bool = True
+    limit: Optional[int] = 500
+    update_vehicle_profile: bool = True
+
+
+class MdcrVinLookupRequest(BaseModel):
+    vin: str
+    source_url: Optional[str] = None
+    use_latest_source: bool = True
+    limit: Optional[int] = 50000
+    max_matches: Optional[int] = 20
+
+
 class BackupCreateRequest(BaseModel):
     include_data_dir: bool = True
 
@@ -1669,6 +2098,11 @@ class UserStateActionRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class UserSoftRestoreRequest(BaseModel):
+    customer_id: int = Field(..., ge=1)
+    reason: Optional[str] = Field(default=None, max_length=2000)
+
+
 class UserPasswordResetRequest(BaseModel):
     new_password: Optional[str] = None
     generate_random: bool = True
@@ -1682,9 +2116,24 @@ class UserLicenseUpdateRequest(BaseModel):
     source: Optional[str] = None
     reason: Optional[str] = None
 
+def prepare_broadcast_notification_storage_message(message: str, *, rich: bool) -> str:
+    raw_plain = str(message or "").strip()
+    if rich:
+        clean_html = sanitize_notification_rich_html(raw_plain)
+        if notification_visible_text_len(clean_html) < 3:
+            raise HTTPException(
+                status_code=400,
+                detail="Formátovaná zpráva musí obsahovat alespoň 3 viditelné znaky.",
+            )
+        return NOTIFICATION_HTML_MARKER + clean_html
+    if len(raw_plain) < 3:
+        raise HTTPException(status_code=400, detail="Zpráva musí mít alespoň 3 znaky.")
+    return raw_plain
+
 
 class BroadcastNotificationRequest(BaseModel):
     message: str
+    rich: bool = False
     title: Optional[str] = None
     severity: Optional[str] = "info"  # info | warning | critical
     target_type: Optional[str] = "all"  # all | tenant | plan | user
@@ -1719,7 +2168,15 @@ def get_overview(
         total_vehicles = safe_count_query(db, "SELECT COUNT(*) FROM vehicles")
         total_services = safe_count_query(
             db,
-            "SELECT COUNT(*) FROM customers WHERE role = 'service' AND COALESCE(is_deleted, 0) = 0",
+            """
+            SELECT COUNT(*) FROM customers c
+            LEFT JOIN tenants t ON t.id = c.tenant_id
+            WHERE COALESCE(c.is_deleted, 0) = 0
+              AND (
+                c.role = 'service'
+                OR (c.role = 'developer_admin' AND COALESCE(t.workspace_route_kind, '') = 'service')
+              )
+            """,
         )
         total_records = safe_count_query(db, "SELECT COUNT(*) FROM service_records")
         total_reservations = safe_count_query(db, "SELECT COUNT(*) FROM reservations")
@@ -1739,6 +2196,1252 @@ def get_overview(
         raise HTTPException(status_code=500, detail=f"Chyba při načítání statistik: {str(e)}")
 
 
+@router.get("/admin-home")
+def get_admin_home(
+    request: FastAPIRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Pracovní přehled pro běžného admina: co dnes vyžaduje pozornost."""
+    now = datetime.utcnow()
+    since_24h = now - timedelta(hours=24)
+    since_7d = now - timedelta(days=7)
+    since_14d = now - timedelta(days=14)
+
+    pending_service_requests: List[ServiceRegistrationRequest] = []
+    if inspect(db.bind).has_table("service_registration_requests"):
+        pending_service_requests = (
+            db.query(ServiceRegistrationRequest)
+            .filter(ServiceRegistrationRequest.status == "pending")
+            .order_by(ServiceRegistrationRequest.created_at.asc())
+            .limit(10)
+            .all()
+        )
+
+    payment_attention: List[Dict[str, Any]] = []
+    if inspect(db.bind).has_table("license_payment_transactions"):
+        tx_rows = (
+            db.query(LicensePaymentTransaction)
+            .filter(LicensePaymentTransaction.created_at >= since_14d)
+            .order_by(LicensePaymentTransaction.created_at.desc(), LicensePaymentTransaction.id.desc())
+            .limit(200)
+            .all()
+        )
+        tenant_ids = sorted({tx.tenant_id for tx in tx_rows if tx.tenant_id is not None})
+        customers_by_tenant = {
+            row.tenant_id: row
+            for row in db.query(Customer)
+            .filter(Customer.tenant_id.in_(tenant_ids), Customer.role.in_(["user", "service"]))
+            .order_by(Customer.id.asc())
+            .all()
+        } if tenant_ids else {}
+        for tx in tx_rows:
+            if _payment_needs_attention(tx.provider_status, tx.event_type):
+                payment_attention.append(_serialize_payment_attention_row(tx, customers_by_tenant.get(tx.tenant_id)))
+            if len(payment_attention) >= 10:
+                break
+
+    expired_licenses: List[Dict[str, Any]] = []
+    if inspect(db.bind).has_table("licenses"):
+        license_rows = (
+            db.query(License)
+            .filter((License.status == "expired") | (License.valid_to < now))
+            .order_by(License.valid_to.asc().nullsfirst(), License.id.asc())
+            .limit(20)
+            .all()
+        )
+        tenant_ids = sorted({lic.tenant_id for lic in license_rows if lic.tenant_id is not None})
+        customers_by_tenant = {
+            row.tenant_id: row
+            for row in db.query(Customer)
+            .filter(Customer.tenant_id.in_(tenant_ids), Customer.role.in_(["user", "service"]))
+            .order_by(Customer.id.asc())
+            .all()
+        } if tenant_ids else {}
+        for lic in license_rows:
+            user = customers_by_tenant.get(lic.tenant_id)
+            expired_licenses.append({
+                "license_id": lic.id,
+                "tenant_id": lic.tenant_id,
+                "user_id": user.id if user else None,
+                "email": user.email if user else None,
+                "plan": lic.plan,
+                "status": lic.status,
+                "valid_to": to_iso_datetime(lic.valid_to),
+            })
+
+    security_summary = {
+        "failed_logins_24h": 0,
+        "rate_limited_24h": 0,
+        "source_probes_24h": 0,
+        "blocked_ips_active": 0,
+        "admin_allowlist_configured": bool(str(os.getenv("ADMIN_NETWORK_ALLOWLIST", "")).strip()),
+        "current_ip": _client_ip_from_request(request),
+    }
+    if inspect(db.bind).has_table("security_access_logs"):
+        security_summary["failed_logins_24h"] = int(db.query(func.count(SecurityAccessLog.id)).filter(SecurityAccessLog.event_type == "login_failed", SecurityAccessLog.created_at >= since_24h).scalar() or 0)
+        security_summary["rate_limited_24h"] = int(db.query(func.count(SecurityAccessLog.id)).filter(SecurityAccessLog.event_type == "login_rate_limited", SecurityAccessLog.created_at >= since_24h).scalar() or 0)
+        security_summary["source_probes_24h"] = int(db.query(func.count(SecurityAccessLog.id)).filter(SecurityAccessLog.event_type == "source_probe_blocked", SecurityAccessLog.created_at >= since_24h).scalar() or 0)
+    if inspect(db.bind).has_table("security_blocked_ips"):
+        security_summary["blocked_ips_active"] = int(db.query(func.count(SecurityBlockedIp.id)).filter(SecurityBlockedIp.is_active.is_(True)).scalar() or 0)
+
+    backup_entries = _list_backup_entries() if CONTROL_CENTER_BACKUP_DIR.exists() else []
+    latest_backup = backup_entries[0] if backup_entries else None
+    backup_created = latest_backup.get("created_at") if latest_backup else None
+    backup_warning = True
+    if backup_created:
+        try:
+            backup_dt = datetime.fromisoformat(str(backup_created).replace("Z", "+00:00")).replace(tzinfo=None)
+            backup_warning = backup_dt < (now - timedelta(hours=72))
+        except Exception:
+            backup_warning = True
+
+    recent_errors: List[Dict[str, Any]] = []
+    if inspect(db.bind).has_table("developer_action_audit_logs"):
+        for row in (
+            db.query(DeveloperActionAuditLog)
+            .filter(DeveloperActionAuditLog.created_at >= since_7d, DeveloperActionAuditLog.result != "success")
+            .order_by(DeveloperActionAuditLog.created_at.desc(), DeveloperActionAuditLog.id.desc())
+            .limit(10)
+            .all()
+        ):
+            recent_errors.append({
+                "id": row.id,
+                "source": "developer_action",
+                "action": row.action_type,
+                "actor": row.developer_email,
+                "target": row.target_resource,
+                "result": row.result,
+                "created_at": to_iso_datetime(row.created_at),
+            })
+    if inspect(db.bind).has_table("security_access_logs"):
+        for row in (
+            db.query(SecurityAccessLog)
+            .filter(SecurityAccessLog.created_at >= since_7d, SecurityAccessLog.event_type.in_(["login_rate_limited", "source_probe_blocked"]))
+            .order_by(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc())
+            .limit(10)
+            .all()
+        ):
+            recent_errors.append({
+                "id": row.id,
+                "source": "security",
+                "action": row.event_type,
+                "actor": row.user_email,
+                "target": row.endpoint,
+                "result": row.ip_address,
+                "created_at": to_iso_datetime(row.created_at),
+            })
+    recent_errors = sorted(recent_errors, key=lambda item: item.get("created_at") or "", reverse=True)[:10]
+
+    priorities = []
+    def add_priority(key: str, label: str, count: int, severity: str, section: str, hint: str) -> None:
+        priorities.append({"key": key, "label": label, "count": count, "severity": severity, "section": section, "hint": hint})
+
+    add_priority("service_requests", "Čekající servisní registrace", len(pending_service_requests), "warning" if pending_service_requests else "ok", "services", "Schválit nebo zamítnout nové servisní účty.")
+    add_priority("payments", "Problémové platby", len(payment_attention), "critical" if payment_attention else "ok", "control-center", "Zkontrolovat failed/pending/refund transakce.")
+    add_priority("licenses", "Expirované licence", len(expired_licenses), "warning" if expired_licenses else "ok", "users", "Vyřešit obnovu licence nebo ruční stav účtu.")
+    add_priority("security", "Bezpečnostní upozornění", int(security_summary["failed_logins_24h"]) + int(security_summary["rate_limited_24h"]) + int(security_summary["source_probes_24h"]) + int(security_summary["blocked_ips_active"]), "critical" if (security_summary["rate_limited_24h"] or security_summary["source_probes_24h"]) else "warning" if security_summary["failed_logins_24h"] else "ok", "security", "Zkontrolovat IP, rate limit a allowlist.")
+    add_priority("backup", "Backup stav", 1 if backup_warning else 0, "warning" if backup_warning else "ok", "system", "Backup je starší než 72 h nebo chybí.")
+
+    return {
+        "timestamp": to_iso_datetime(now),
+        "priorities": priorities,
+        "pending_service_requests": [
+            {
+                "id": r.id,
+                "service_name": r.service_name,
+                "email": r.email,
+                "ico": r.ico,
+                "city": r.city,
+                "created_at": to_iso_datetime(r.created_at),
+            }
+            for r in pending_service_requests
+        ],
+        "payment_attention": payment_attention,
+        "expired_licenses": expired_licenses[:10],
+        "recent_errors": recent_errors,
+        "backup": {
+            "latest": latest_backup,
+            "count": len(backup_entries),
+            "warning": backup_warning,
+        },
+        "security": security_summary,
+    }
+
+
+@router.get("/app-center/modules")
+def get_admin_app_center_modules(
+    request: FastAPIRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Mapa celé aplikace pro admina: co existuje, v jakém je stavu a kde to ovládat."""
+    now = datetime.utcnow()
+    customers_ready = _table_ready(db, "customers")
+    vehicles_ready = _table_ready(db, "vehicles")
+    records_ready = _table_ready(db, "service_records")
+    reminders_ready = _table_ready(db, "reminders")
+    reservations_ready = _table_ready(db, "reservations")
+    services_ready = _table_ready(db, "service_registration_requests")
+    payments_ready = _table_ready(db, "license_payment_transactions")
+    licenses_ready = _table_ready(db, "licenses")
+    security_ready = _table_ready(db, "security_access_logs")
+    invoices_ready = _table_ready(db, "service_invoices")
+    audit_ready = _table_ready(db, "audit_log")
+    notifications_ready = _table_ready(db, "system_notifications")
+
+    runtime_settings = load_admin_settings()
+    comgate_settings = runtime_settings.get("comgate", {})
+    email_settings = runtime_settings.get("email", {})
+    payment_enabled = bool(comgate_settings.get("enabled", {}).get("value", False))
+    payment_merchant = bool(str(comgate_settings.get("merchant", {}).get("value", "")).strip())
+    smtp_ready = bool(str(email_settings.get("smtp_host", {}).get("value", SMTP_HOST or "")).strip()) and bool(
+        str(email_settings.get("smtp_from", {}).get("value", SMTP_FROM or "")).strip()
+    )
+
+    total_users = safe_count_query(db, "SELECT COUNT(*) FROM customers WHERE COALESCE(is_deleted, 0) = 0") if customers_ready else 0
+    total_services = (
+        safe_count_query(
+            db,
+            """
+            SELECT COUNT(*) FROM customers c
+            LEFT JOIN tenants t ON t.id = c.tenant_id
+            WHERE COALESCE(c.is_deleted, 0) = 0
+              AND (
+                c.role = 'service'
+                OR (c.role = 'developer_admin' AND COALESCE(t.workspace_route_kind, '') = 'service')
+              )
+            """,
+        )
+        if customers_ready
+        else 0
+    )
+    total_vehicles = safe_count_query(db, "SELECT COUNT(*) FROM vehicles") if vehicles_ready else 0
+    total_records = safe_count_query(db, "SELECT COUNT(*) FROM service_records") if records_ready else 0
+    pending_service_requests = safe_count_query(db, "SELECT COUNT(*) FROM service_registration_requests WHERE status = 'pending'") if services_ready else 0
+    support_count = safe_count_query(db, "SELECT COUNT(*) FROM security_access_logs WHERE event_type = 'support_contact_submitted'") if security_ready else 0
+    failed_login_24h = 0
+    if security_ready:
+        failed_login_24h = int(
+            db.query(func.count(SecurityAccessLog.id))
+            .filter(SecurityAccessLog.event_type == "login_failed", SecurityAccessLog.created_at >= now - timedelta(hours=24))
+            .scalar()
+            or 0
+        )
+    payment_attention = 0
+    if payments_ready:
+        recent_payments = (
+            db.query(LicensePaymentTransaction)
+            .filter(LicensePaymentTransaction.created_at >= now - timedelta(days=14))
+            .order_by(LicensePaymentTransaction.created_at.desc())
+            .limit(200)
+            .all()
+        )
+        payment_attention = sum(1 for tx in recent_payments if _payment_needs_attention(tx.provider_status, tx.event_type))
+
+    backup_entries = _list_backup_entries()
+    latest_backup = backup_entries[0] if backup_entries else None
+    backup_status = "warning"
+    if latest_backup and latest_backup.get("created_at"):
+        try:
+            created = datetime.fromisoformat(str(latest_backup["created_at"]).replace("Z", "+00:00")).replace(tzinfo=None)
+            backup_status = "ok" if created >= now - timedelta(hours=72) else "warning"
+        except Exception:
+            backup_status = "warning"
+
+    modules = [
+        _app_center_module(
+            key="today",
+            label="Co řešit dnes",
+            group="Denní práce",
+            status="ok",
+            description="Prioritní pracovní fronta pro admina.",
+            admin_section="overview",
+            metrics={"priority_view": "ready"},
+            actions=[{"label": "Otevřít přehled", "type": "section", "target": "overview"}],
+        ),
+        _app_center_module(
+            key="users",
+            label="Uživatelé a účty",
+            group="Denní práce",
+            status=_module_status(customers_ready, licenses_ready),
+            description="Správa účtů, rolí, licencí, detailu účtu a historie.",
+            admin_section="users",
+            metrics={"active_users": total_users},
+            actions=[
+                {"label": "Správa uživatelů", "type": "section", "target": "users"},
+                {"label": "Globální hledání", "type": "section", "target": "global-admin"},
+            ],
+        ),
+        _app_center_module(
+            key="vehicles",
+            label="Vozidla",
+            group="Denní práce",
+            status=_module_status(vehicles_ready),
+            description="Vozidla, vlastnictví, převody, archiv a servisní vazby.",
+            admin_section="vehicles",
+            metrics={"vehicles": total_vehicles},
+            actions=[
+                {"label": "Správa vozidel", "type": "section", "target": "vehicles"},
+                {"label": "Převody a archiv", "type": "section", "target": "vehicle-lifecycle"},
+            ],
+        ),
+        _app_center_module(
+            key="service_records",
+            label="Záznamy, připomínky, rezervace",
+            group="Denní práce",
+            status=_module_status(records_ready, reminders_ready, reservations_ready),
+            description="Servisní historie, připomínky, rezervace a zásahy do záznamů.",
+            admin_section="records",
+            metrics={"records": total_records},
+            actions=[{"label": "Servisní záznamy", "type": "section", "target": "records"}],
+        ),
+        _app_center_module(
+            key="services",
+            label="Servisy",
+            group="Servisní provoz",
+            status=_module_status(customers_ready, services_ready),
+            description="Servisní účty, žádosti o registraci, propojení s vozidly.",
+            admin_section="services",
+            metrics={"services": total_services, "pending_requests": pending_service_requests},
+            actions=[{"label": "Správa servisů", "type": "section", "target": "services"}],
+        ),
+        _app_center_module(
+            key="invoices",
+            label="Faktury a servisní doklady",
+            group="Servisní provoz",
+            status=_module_status(invoices_ready),
+            description="Servisní faktury, PDF, FakturyWeb export a jednotná historie dokladů.",
+            admin_section="global-admin",
+            metrics={"table_ready": invoices_ready},
+            actions=[
+                {"label": "Najít faktury", "type": "global_filter", "target": "payment"},
+                {"label": "Servisní účty", "type": "section", "target": "services"},
+            ],
+            notes=["Detailní tvorba faktur je v servisním účtu; admin má dohled přes servis a audit."],
+        ),
+        _app_center_module(
+            key="payments",
+            label="Platby a licence",
+            group="Finance",
+            status=_module_status(payments_ready, licenses_ready, payment_enabled, payment_merchant),
+            description="Comgate platby, licence, subscription stav a resync.",
+            admin_section="control-center",
+            metrics={"attention": payment_attention, "comgate_enabled": payment_enabled, "merchant_configured": payment_merchant},
+            actions=[
+                {"label": "Platební panel", "type": "control_center", "target": "payments"},
+                {"label": "Spustit resync plateb", "type": "command", "target": "payments.resync"},
+            ],
+        ),
+        _app_center_module(
+            key="support",
+            label="Podpora",
+            group="Komunikace",
+            status=_module_status(security_ready, smtp_ready),
+            description="Požadavky podpory z aplikace a komunikace s uživateli.",
+            admin_section="support",
+            metrics={"support_events": support_count, "smtp_ready": smtp_ready},
+            actions=[{"label": "Support inbox", "type": "section", "target": "support"}],
+        ),
+        _app_center_module(
+            key="notifications",
+            label="Notifikace",
+            group="Komunikace",
+            status=_module_status(notifications_ready, smtp_ready),
+            description="Systémová oznámení, broadcast a e-mail delivery.",
+            admin_section="control-center",
+            metrics={"smtp_ready": smtp_ready},
+            actions=[
+                {"label": "Broadcast", "type": "control_center", "target": "notifications"},
+                {"label": "Email monitor", "type": "command", "target": "logs.tail"},
+            ],
+        ),
+        _app_center_module(
+            key="security",
+            label="Bezpečnost",
+            group="Provoz",
+            status="warning" if failed_login_24h else _module_status(security_ready),
+            description="Admin allowlist, blokace IP, failed loginy a security události.",
+            admin_section="security",
+            metrics={
+                "failed_login_24h": failed_login_24h,
+                "allowlist_configured": bool(str(os.getenv("ADMIN_NETWORK_ALLOWLIST", "")).strip()),
+                "current_ip": _client_ip_from_request(request),
+            },
+            actions=[
+                {"label": "Bezpečnostní panel", "type": "section", "target": "security"},
+                {"label": "Security monitor", "type": "control_center", "target": "security"},
+            ],
+        ),
+        _app_center_module(
+            key="system",
+            label="Systém, backup, nastavení",
+            group="Provoz",
+            status=backup_status,
+            description="Health, DB nástroje, backup/restore, runtime settings a env přehled.",
+            admin_section="system",
+            metrics={"backups": len(backup_entries), "latest_backup": latest_backup.get("created_at") if latest_backup else None},
+            actions=[
+                {"label": "Systémové nástroje", "type": "section", "target": "system"},
+                {"label": "Nastavení", "type": "section", "target": "settings"},
+                {"label": "Vytvořit backup", "type": "command", "target": "backup.create"},
+            ],
+        ),
+        _app_center_module(
+            key="audit",
+            label="Audit a historie",
+            group="Provoz",
+            status=_module_status(audit_ready),
+            description="Append-only audit, developer akce, timeline entit a CSV export.",
+            admin_section="audit",
+            metrics={"audit_ready": audit_ready},
+            actions=[{"label": "Audit log", "type": "section", "target": "audit"}],
+        ),
+        _app_center_module(
+            key="mdcr_open_data",
+            label="MDČR otevřená data",
+            group="Integrace",
+            status=_module_status(vehicles_ready, _table_ready(db, "vehicle_inspection_histories"), _table_ready(db, "vehicle_tachometer_history_entries")),
+            description="Import STK/SME údajů z otevřených dat podle VIN: platnost STK, výsledek prohlídky, tachometr a technický přehled.",
+            admin_section="mdcr-open-data",
+            metrics={
+                "vehicles_with_vin": safe_count_query(db, "SELECT COUNT(*) FROM vehicles WHERE vin IS NOT NULL AND TRIM(vin) <> ''") if vehicles_ready else 0,
+                "source": "data.gov.cz",
+            },
+            actions=[{"label": "Import MDČR dat", "type": "section", "target": "mdcr-open-data"}],
+            notes=["KontrolaTachometru.cz nemá veřejné API; používáme otevřená data MDČR."],
+        ),
+        _app_center_module(
+            key="public",
+            label="Veřejné části a demo",
+            group="Veřejná aplikace",
+            status="ok",
+            description="Public web, demo přístupy, veřejná historie vozidla a transfer tokeny.",
+            admin_section="demo-access",
+            metrics={"demo_leads": safe_count_query(db, "SELECT COUNT(*) FROM demo_access_tokens") if _table_ready(db, "demo_access_tokens") else 0},
+            actions=[
+                {"label": "Demo žádosti", "type": "section", "target": "demo-access"},
+                {"label": "Public web", "type": "url", "target": "/"},
+            ],
+        ),
+        _app_center_module(
+            key="integrations",
+            label="Integrace a API",
+            group="Integrace",
+            status="ok" if smtp_ready else "warning",
+            description="SMTP, Comgate, ARES, VIN/ORV, FakturyWeb a interní API dostupnost.",
+            admin_section="settings",
+            metrics={
+                "smtp_ready": smtp_ready,
+                "comgate_enabled": payment_enabled,
+                "fakturyweb_configured": bool(os.getenv("FAKTURYWEB_EMAIL") and os.getenv("FAKTURYWEB_API_KEY")),
+            },
+            actions=[
+                {"label": "Nastavení API", "type": "section", "target": "settings"},
+                {"label": "MDČR open data", "type": "section", "target": "mdcr-open-data"},
+                {"label": "Health", "type": "command", "target": "system.health"},
+            ],
+        ),
+    ]
+
+    status_counts: Dict[str, int] = {}
+    for module in modules:
+        status_counts[module["status"]] = status_counts.get(module["status"], 0) + 1
+
+    return {
+        "timestamp": to_iso_datetime(now),
+        "groups": sorted({module["group"] for module in modules}),
+        "status_counts": status_counts,
+        "modules": modules,
+    }
+
+
+@router.post("/app-center/actions/{action_key}")
+def run_admin_app_center_action(
+    action_key: str,
+    request: FastAPIRequest,
+    email: str = Depends(require_control_center_admin),
+    db: Session = Depends(get_db),
+):
+    """Bezpečné rychlé akce z Centra aplikace."""
+    normalized = (action_key or "").strip().lower()
+    if normalized == "system.health":
+        return get_control_center_health(email=email, db=db)
+    if normalized == "payments.resync":
+        return resync_control_center_payments(request=request, email=email, db=db)
+    if normalized == "backup.create":
+        return create_control_center_backup(
+            payload=BackupCreateRequest(include_data_dir=True),
+            request=request,
+            email=email,
+            db=db,
+        )
+    if normalized == "logs.tail":
+        return get_control_center_system_logs(lines=80, email=email, db=db)
+    raise HTTPException(status_code=400, detail="Nepodporovaná rychlá akce")
+
+
+MDCR_OPEN_DATA_DEFAULT_URL = os.getenv(
+    "MDCR_STK_OPEN_DATA_URL",
+    "https://istp.data.md.gov.cz/api/data/2c90870f-8991-475d-b527-e78fa436d546",
+)
+MDCR_OPEN_DATA_SOURCE_LABEL = "data.gov.cz/MDČR otevřená data STK/SME"
+MDCR_OPEN_DATA_SPARQL_URL = "https://data.gov.cz/sparql"
+_MDCR_LATEST_SOURCE_CACHE: Dict[str, Any] = {}
+
+
+def _mdcr_legal_notice() -> Dict[str, Any]:
+    return {
+        "status": "official_open_data",
+        "provider": "Ministerstvo dopravy ČR",
+        "catalog": "Národní katalog otevřených dat / data.gov.cz",
+        "source_label": MDCR_OPEN_DATA_SOURCE_LABEL,
+        "not_official_app_notice": "Aplikace není oficiální službou Ministerstva dopravy ČR a nezobrazuje online výpis z registru.",
+        "freshness_notice": "Aktuálnost odpovídá nejnovější datové sadě zveřejněné poskytovatelem v NKOD/data.gov.cz, nikoliv okamžitému stavu registru.",
+        "attribution": "Zdroj dat: Ministerstvo dopravy ČR, Národní katalog otevřených dat (data.gov.cz).",
+        "usage_rules": [
+            "U každého importovaného údaje uchovávat zdroj, datum datasetu, URL distribuce a čas importu.",
+            "Neoznačovat data jako živé online ověření ani jako oficiální výpis MDČR.",
+            "Při zobrazení uživateli vždy uvádět datum datasetu a zdroj dat.",
+            "Nezpracovávat neveřejné služby typu Kontrola tachometru scrapingem ani obcházením ochrany.",
+            "Před přidáním nové datové sady ověřit její katalogový záznam, podmínky užití a dokumentaci.",
+        ],
+        "links": [
+            {
+                "label": "NKOD / data.gov.cz",
+                "url": "https://data.gov.cz",
+            },
+            {
+                "label": "Otevřená data v eGovernmentu ČR",
+                "url": "https://archi.gov.cz/nap:otevrena_data",
+            },
+            {
+                "label": "Dokumentace schématu Prohlídky STK/SME",
+                "url": "https://istp.data.md.gov.cz/resources/istp/opendata/documentation/istp-opendata-schemas-ProhlidkaSeznam-v1.pdf",
+            },
+        ],
+        "supported_datasets": [
+            {
+                "key": "stk_sme_inspections",
+                "label": "Prohlídky vozidel STK a SME",
+                "status": "implemented",
+                "purpose": "VIN, datum prohlídky, typ prohlídky, výsledek, stav tachometru, platnost příští STK, značka/model, protokol.",
+            },
+            {
+                "key": "stations_stk_sme",
+                "label": "Stanice STK/SME a číselníky",
+                "status": "planned_review",
+                "purpose": "Doplnění názvů stanic, kódů, číselníků a lepší čitelnosti importovaných výsledků.",
+            },
+            {
+                "key": "emissions",
+                "label": "Data měření emisí",
+                "status": "planned_review",
+                "purpose": "Doplnění emisních údajů, pokud katalogový záznam a schéma potvrdí vhodné použití.",
+            },
+        ],
+    }
+
+
+def _xml_local_name(tag: Any) -> str:
+    raw = str(tag or "")
+    return raw.rsplit("}", 1)[-1] if "}" in raw else raw
+
+
+def _mdcr_child_text(elem: ET.Element, path: str) -> Optional[str]:
+    current = elem
+    for part in path.split("/"):
+        next_child = None
+        for child in list(current):
+            if _xml_local_name(child.tag) == part:
+                next_child = child
+                break
+        if next_child is None:
+            return None
+        current = next_child
+    text_value = current.text
+    if text_value is None:
+        return None
+    cleaned = str(text_value).strip()
+    return cleaned or None
+
+
+def _parse_mdcr_int(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    digits = re.sub(r"[^0-9]", "", str(value))
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except Exception:
+        return None
+
+
+def _parse_mdcr_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    raw = str(value).strip()
+    normalized = raw.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).replace(tzinfo=None)
+    except Exception:
+        pass
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _parse_mdcr_date(value: Optional[str]) -> Optional[date]:
+    parsed = _parse_mdcr_datetime(value)
+    return parsed.date() if parsed else None
+
+
+def _normalize_mdcr_vin(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    normalized = re.sub(r"[^A-Z0-9]", "", str(value).upper())
+    return normalized or None
+
+
+def _mdcr_record_from_element(elem: ET.Element) -> Dict[str, Any]:
+    vin = _normalize_mdcr_vin(_mdcr_child_text(elem, "Vozidlo/Vin"))
+    inspection_date_raw = _mdcr_child_text(elem, "DatumProhlidky")
+    next_inspection_raw = _mdcr_child_text(elem, "Vysledek/DatumPristiProhlidky")
+    brand = _mdcr_child_text(elem, "Vozidlo/Znacka")
+    model = _mdcr_child_text(elem, "Vozidlo/ObchodniOznaceni")
+    protocol = _mdcr_child_text(elem, "CisloProtokolu")
+    odometer = _parse_mdcr_int(_mdcr_child_text(elem, "Vysledek/Odometr"))
+    inspection_type = _mdcr_child_text(elem, "DruhProhlidky")
+    result = _mdcr_child_text(elem, "Vysledek/VysledekCelkovy")
+    station_name = _mdcr_child_text(elem, "Stanice/Nazev")
+    station_code = _mdcr_child_text(elem, "Stanice/CisloStanice")
+    record = {
+        "vin": vin,
+        "protocol_number": protocol,
+        "inspection_date": _parse_mdcr_datetime(inspection_date_raw),
+        "inspection_date_raw": inspection_date_raw,
+        "next_inspection_date": _parse_mdcr_date(next_inspection_raw),
+        "next_inspection_date_raw": next_inspection_raw,
+        "inspection_type": inspection_type,
+        "result_label": result,
+        "odometer_km": odometer,
+        "brand": brand,
+        "model": model,
+        "station_name": station_name,
+        "station_code": station_code,
+    }
+    record["source_hash"] = hashlib.sha256(
+        "|".join(
+            str(record.get(key) or "")
+            for key in ("vin", "protocol_number", "inspection_date_raw", "odometer_km", "result_label")
+        ).encode("utf-8")
+    ).hexdigest()
+    return record
+
+
+def _serialize_mdcr_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "vin": record.get("vin"),
+        "protocol_number": record.get("protocol_number"),
+        "inspection_date": to_iso_datetime(record.get("inspection_date")),
+        "inspection_date_raw": record.get("inspection_date_raw"),
+        "next_inspection_date": record.get("next_inspection_date").isoformat() if record.get("next_inspection_date") else None,
+        "next_inspection_date_raw": record.get("next_inspection_date_raw"),
+        "inspection_type": record.get("inspection_type"),
+        "result_label": record.get("result_label"),
+        "odometer_km": record.get("odometer_km"),
+        "brand": record.get("brand"),
+        "model": record.get("model"),
+        "station_name": record.get("station_name"),
+        "station_code": record.get("station_code"),
+        "source_hash": record.get("source_hash"),
+    }
+
+
+def _mdcr_source_url_from_payload(value: Optional[str]) -> str:
+    source_url = (value or MDCR_OPEN_DATA_DEFAULT_URL).strip()
+    if not source_url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Zdroj MDČR musí být HTTPS URL")
+    return source_url
+
+
+def _fetch_latest_mdcr_open_data_source(force: bool = False) -> Dict[str, Any]:
+    now = datetime.utcnow()
+    cached_at = _MDCR_LATEST_SOURCE_CACHE.get("cached_at")
+    if (
+        not force
+        and cached_at
+        and isinstance(cached_at, datetime)
+        and cached_at >= now - timedelta(minutes=15)
+        and _MDCR_LATEST_SOURCE_CACHE.get("source_url")
+    ):
+        return dict(_MDCR_LATEST_SOURCE_CACHE)
+
+    query = """
+PREFIX dct: <http://purl.org/dc/terms/>
+PREFIX dcat: <http://www.w3.org/ns/dcat#>
+SELECT ?dataset ?title ?download WHERE {
+  ?dataset dct:title ?title ; dcat:distribution ?dist .
+  ?dist dcat:downloadURL ?download .
+  FILTER(CONTAINS(STR(?title), "Prohlídky vozidel STK a SME za"))
+}
+LIMIT 10000
+"""
+    url = MDCR_OPEN_DATA_SPARQL_URL + "?" + urllib.parse.urlencode(
+        {"query": query, "format": "application/sparql-results+json"}
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        if _MDCR_LATEST_SOURCE_CACHE.get("source_url"):
+            cached = dict(_MDCR_LATEST_SOURCE_CACHE)
+            cached["warning"] = f"Nepodařilo se obnovit katalog data.gov.cz, používám poslední známý zdroj: {exc}"
+            return cached
+        return {
+            "source_url": MDCR_OPEN_DATA_DEFAULT_URL,
+            "title": "Výchozí MDČR distribuční soubor",
+            "dataset_date": None,
+            "warning": f"Nepodařilo se načíst katalog data.gov.cz, používám výchozí zdroj: {exc}",
+            "cached_at": now,
+        }
+
+    latest: Optional[Dict[str, Any]] = None
+    for binding in payload.get("results", {}).get("bindings", []):
+        title = binding.get("title", {}).get("value") or ""
+        match = re.search(r"(\d{2})-(\d{2})-(\d{4})", title)
+        if not match:
+            continue
+        try:
+            dataset_date = date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+        except Exception:
+            continue
+        download = binding.get("download", {}).get("value") or ""
+        if not download.startswith("https://"):
+            continue
+        dataset_iri = binding.get("dataset", {}).get("value") or ""
+        item = {
+            "source_url": download,
+            "title": title,
+            "dataset_date": dataset_date.isoformat(),
+            "dataset_iri": dataset_iri,
+            "catalog_url": "https://data.gov.cz/datov%C3%A1-sada?iri=" + urllib.parse.quote(dataset_iri, safe=""),
+            "cached_at": now,
+        }
+        if latest is None or dataset_date > date.fromisoformat(str(latest["dataset_date"])):
+            latest = item
+    if not latest:
+        latest = {
+            "source_url": MDCR_OPEN_DATA_DEFAULT_URL,
+            "title": "Výchozí MDČR distribuční soubor",
+            "dataset_date": None,
+            "warning": "Katalog data.gov.cz nevrátil žádný denní dataset STK/SME.",
+            "cached_at": now,
+        }
+    _MDCR_LATEST_SOURCE_CACHE.clear()
+    _MDCR_LATEST_SOURCE_CACHE.update(latest)
+    return dict(latest)
+
+
+def _resolve_mdcr_source(value: Optional[str], use_latest: bool = True) -> Dict[str, Any]:
+    if use_latest:
+        latest = _fetch_latest_mdcr_open_data_source(force=True)
+        latest["resolved_by"] = "data.gov.cz latest at click"
+        return latest
+    return {
+        "source_url": _mdcr_source_url_from_payload(value),
+        "title": "Ručně zadaný distribuční soubor",
+        "dataset_date": None,
+        "resolved_by": "manual",
+    }
+
+
+def _iter_mdcr_open_data_records(xml_stream):
+    for event, elem in ET.iterparse(xml_stream, events=("end",)):
+        if _xml_local_name(elem.tag) != "Prohlidka":
+            continue
+        yield _mdcr_record_from_element(elem)
+        elem.clear()
+
+
+def _mdcr_existing_vin_map(db: Session) -> Dict[str, List[Vehicle]]:
+    vehicles = db.query(Vehicle).filter(Vehicle.vin.isnot(None)).all()
+    result: Dict[str, List[Vehicle]] = {}
+    for vehicle in vehicles:
+        vin = _normalize_mdcr_vin(vehicle.vin)
+        if not vin:
+            continue
+        result.setdefault(vin, []).append(vehicle)
+    return result
+
+
+def _mdcr_upsert_inspection(db: Session, vehicle: Vehicle, record: Dict[str, Any], now: datetime) -> str:
+    existing = (
+        db.query(VehicleInspectionHistory)
+        .filter(
+            VehicleInspectionHistory.vehicle_id == vehicle.id,
+            VehicleInspectionHistory.source_hash == record["source_hash"],
+        )
+        .first()
+    )
+    raw_payload = json.dumps(record, ensure_ascii=False, default=str)
+    if existing:
+        existing.imported_at = now
+        existing.raw_payload_json = raw_payload
+        return "updated"
+    inspection = VehicleInspectionHistory(
+        tenant_id=vehicle.tenant_id,
+        vehicle_id=vehicle.id,
+        vin=record.get("vin") or vehicle.vin or "",
+        inspection_date=record.get("inspection_date"),
+        inspection_type=record.get("inspection_type"),
+        inspection_kind=record.get("inspection_type"),
+        odometer_km=record.get("odometer_km"),
+        protocol_number=record.get("protocol_number"),
+        result_label=record.get("result_label"),
+        note_text=f"Import z otevřených dat MDČR; stanice: {record.get('station_name') or record.get('station_code') or '-'}",
+        source=MDCR_OPEN_DATA_SOURCE_LABEL,
+        source_hash=record["source_hash"],
+        imported_at=now,
+        raw_payload_json=raw_payload,
+    )
+    db.add(inspection)
+    return "inserted"
+
+
+def _mdcr_upsert_tachometer_entry(db: Session, vehicle: Vehicle, record: Dict[str, Any], now: datetime) -> str:
+    if record.get("odometer_km") is None and record.get("inspection_date") is None:
+        return "skipped"
+    query = db.query(VehicleTachometerHistoryEntry).filter(
+        VehicleTachometerHistoryEntry.vehicle_id == vehicle.id,
+        VehicleTachometerHistoryEntry.check_date == record.get("inspection_date"),
+        VehicleTachometerHistoryEntry.mileage_km == record.get("odometer_km"),
+    )
+    protocol = record.get("protocol_number")
+    if protocol:
+        query = query.filter(VehicleTachometerHistoryEntry.protocol_number == protocol)
+    else:
+        query = query.filter(VehicleTachometerHistoryEntry.protocol_number.is_(None))
+    existing = query.first()
+    raw_payload = json.dumps(record, ensure_ascii=False, default=str)
+    summary = (
+        f"{record.get('inspection_type') or 'STK/SME'} · "
+        f"{record.get('result_label') or 'bez výsledku'} · "
+        f"{record.get('odometer_km') or '?'} km"
+    )
+    if existing:
+        existing.last_seen_at = now
+        existing.raw_payload_json = raw_payload
+        existing.summary = summary
+        return "updated"
+    db.add(
+        VehicleTachometerHistoryEntry(
+            tenant_id=vehicle.tenant_id,
+            vehicle_id=vehicle.id,
+            check_date=record.get("inspection_date"),
+            mileage_km=record.get("odometer_km"),
+            protocol_number=protocol,
+            inspection_type=record.get("inspection_type"),
+            source=MDCR_OPEN_DATA_SOURCE_LABEL,
+            status="imported",
+            read_only=True,
+            summary=summary,
+            findings_summary=record.get("result_label"),
+            detail_snapshot_json=raw_payload,
+            source_detail_reference=record.get("protocol_number"),
+            raw_payload_json=raw_payload,
+            imported_at=now,
+            last_seen_at=now,
+        )
+    )
+    return "inserted"
+
+
+def _mdcr_update_vehicle_profile(db: Session, vehicle: Vehicle, record: Dict[str, Any], now: datetime) -> bool:
+    changed = False
+    inspection_date = record.get("inspection_date")
+    odometer = record.get("odometer_km")
+    next_inspection = record.get("next_inspection_date")
+    current_overview = vehicle.vehicle_technical_overview if isinstance(vehicle.vehicle_technical_overview, dict) else {}
+    overview = dict(current_overview)
+    overview["mdcr_open_data"] = {
+        "source": MDCR_OPEN_DATA_SOURCE_LABEL,
+        "last_imported_at": to_iso_datetime(now),
+        "protocol_number": record.get("protocol_number"),
+        "inspection_date": to_iso_datetime(inspection_date),
+        "inspection_type": record.get("inspection_type"),
+        "result_label": record.get("result_label"),
+        "odometer_km": odometer,
+        "next_inspection_date": next_inspection.isoformat() if next_inspection else None,
+        "brand": record.get("brand"),
+        "model": record.get("model"),
+        "station_name": record.get("station_name"),
+        "station_code": record.get("station_code"),
+    }
+    vehicle.vehicle_technical_overview = overview
+    changed = True
+    if next_inspection and vehicle.stk_valid_until != next_inspection:
+        vehicle.stk_valid_until = next_inspection
+        changed = True
+    if odometer is not None:
+        latest_date = vehicle.latest_stk_odometer_date
+        should_update_latest = not latest_date or (inspection_date and inspection_date >= latest_date)
+        if should_update_latest:
+            vehicle.latest_stk_odometer_km = odometer
+            vehicle.latest_stk_odometer_date = inspection_date
+            vehicle.last_stk_mileage_km = odometer
+            vehicle.mileage_checked_at = now
+            vehicle.latest_stk_sync_at = now
+            vehicle.latest_stk_source = MDCR_OPEN_DATA_SOURCE_LABEL
+            vehicle.latest_stk_import_status = "imported"
+            if vehicle.current_mileage_km is None or odometer > vehicle.current_mileage_km:
+                vehicle.current_mileage_km = odometer
+            changed = True
+        mileage_exists = (
+            db.query(VehicleMileage)
+            .filter(
+                VehicleMileage.vehicle_id == vehicle.id,
+                VehicleMileage.source == "stk",
+                VehicleMileage.mileage_km == odometer,
+            )
+            .first()
+        )
+        if not mileage_exists:
+            db.add(
+                VehicleMileage(
+                    tenant_id=vehicle.tenant_id,
+                    vehicle_id=vehicle.id,
+                    mileage_km=odometer,
+                    source="stk",
+                    note=f"MDČR otevřená data, protokol {record.get('protocol_number') or '-'}",
+                    created_at=now,
+                )
+            )
+            changed = True
+    return changed
+
+
+def _run_mdcr_open_data_import(
+    db: Session,
+    payload: MdcrOpenDataImportRequest,
+    admin_email: str,
+    request: Optional[FastAPIRequest] = None,
+) -> Dict[str, Any]:
+    source_info = _resolve_mdcr_source(payload.source_url, payload.use_latest_source)
+    source_url = _mdcr_source_url_from_payload(source_info.get("source_url"))
+    if payload.limit is not None and payload.limit < 1:
+        raise HTTPException(status_code=400, detail="Limit musí být prázdný nebo větší než 0")
+
+    vin_map = _mdcr_existing_vin_map(db)
+    now = datetime.utcnow()
+    summary = {
+        "source_url": source_url,
+        "source_info": {k: to_iso_datetime(v) if isinstance(v, datetime) else v for k, v in source_info.items()},
+        "dry_run": bool(payload.dry_run),
+        "limit": payload.limit,
+        "known_vehicle_vins": len(vin_map),
+        "scanned_records": 0,
+        "records_with_vin": 0,
+        "matched_records": 0,
+        "matched_vehicles": 0,
+        "inspection_inserted": 0,
+        "inspection_updated": 0,
+        "tachometer_inserted": 0,
+        "tachometer_updated": 0,
+        "vehicle_profile_updated": 0,
+        "sample_matches": [],
+        "started_at": to_iso_datetime(now),
+    }
+    touched_vehicle_ids = set()
+    req = urllib.request.Request(source_url, headers={"User-Agent": "ToozHub2 admin MDCR open-data importer"})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as response:
+            buffered = io.BufferedReader(response)
+            head = buffered.peek(2)[:2]
+            stream = gzip.GzipFile(fileobj=buffered) if head == b"\x1f\x8b" else buffered
+            for record in _iter_mdcr_open_data_records(stream):
+                summary["scanned_records"] += 1
+                vin = record.get("vin")
+                if vin:
+                    summary["records_with_vin"] += 1
+                vehicles = vin_map.get(vin or "", [])
+                if vehicles:
+                    summary["matched_records"] += 1
+                    for vehicle in vehicles:
+                        touched_vehicle_ids.add(vehicle.id)
+                        if len(summary["sample_matches"]) < 8:
+                            summary["sample_matches"].append(
+                                {
+                                    "vehicle_id": vehicle.id,
+                                    "vin": vin,
+                                    "plate": vehicle.plate,
+                                    "inspection_date": to_iso_datetime(record.get("inspection_date")),
+                                    "odometer_km": record.get("odometer_km"),
+                                    "result": record.get("result_label"),
+                                }
+                            )
+                        if payload.dry_run:
+                            continue
+                        inspection_status = _mdcr_upsert_inspection(db, vehicle, record, now)
+                        if inspection_status == "inserted":
+                            summary["inspection_inserted"] += 1
+                        elif inspection_status == "updated":
+                            summary["inspection_updated"] += 1
+                        tachometer_status = _mdcr_upsert_tachometer_entry(db, vehicle, record, now)
+                        if tachometer_status == "inserted":
+                            summary["tachometer_inserted"] += 1
+                        elif tachometer_status == "updated":
+                            summary["tachometer_updated"] += 1
+                        if payload.update_vehicle_profile and _mdcr_update_vehicle_profile(db, vehicle, record, now):
+                            summary["vehicle_profile_updated"] += 1
+                    if not payload.dry_run and len(touched_vehicle_ids) % 100 == 0:
+                        db.flush()
+                if payload.limit and summary["scanned_records"] >= payload.limit:
+                    break
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if not payload.dry_run:
+            db.rollback()
+        raise HTTPException(status_code=502, detail=f"Import MDČR dat selhal: {exc}") from exc
+
+    summary["matched_vehicles"] = len(touched_vehicle_ids)
+    summary["finished_at"] = to_iso_datetime(datetime.utcnow())
+    if not payload.dry_run:
+        for vehicle_id in list(touched_vehicle_ids)[:50]:
+            vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+            if not vehicle:
+                continue
+            db.add(
+                VehicleStkImportAuditLog(
+                    tenant_id=vehicle.tenant_id,
+                    vehicle_id=vehicle.id,
+                    vin=vehicle.vin,
+                    action="mdcr_open_data_import",
+                    status="success",
+                    message="Import otevřených dat MDČR dokončen pro vozidlo",
+                    metadata_json=json.dumps(summary, ensure_ascii=False, default=str),
+                    created_at=datetime.utcnow(),
+                )
+            )
+        db.commit()
+        audit_email = (admin_email or "").strip()
+        if audit_email:
+            log_developer_action(
+                db,
+                developer_email=audit_email,
+                request=request,
+                action_type="MDCR_OPEN_DATA_IMPORT",
+                target_resource="mdcr_open_data",
+                parameters={
+                    "source_url": source_url,
+                    "scanned_records": summary["scanned_records"],
+                    "matched_vehicles": summary["matched_vehicles"],
+                    "inspection_inserted": summary["inspection_inserted"],
+                    "trigger": "schedule" if request is None else "admin_api",
+                },
+                result="success",
+            )
+    return summary
+
+
+@router.get("/mdcr-open-data/status")
+def get_mdcr_open_data_status(
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    vin_count = safe_count_query(db, "SELECT COUNT(*) FROM vehicles WHERE vin IS NOT NULL AND TRIM(vin) <> ''")
+    latest_audit = (
+        db.query(VehicleStkImportAuditLog)
+        .filter(VehicleStkImportAuditLog.action == "mdcr_open_data_import")
+        .order_by(VehicleStkImportAuditLog.created_at.desc())
+        .first()
+        if _table_ready(db, "vehicle_stk_import_audit_logs")
+        else None
+    )
+    latest_source = _fetch_latest_mdcr_open_data_source(force=False)
+    return {
+        "default_source_url": MDCR_OPEN_DATA_DEFAULT_URL,
+        "latest_source": {k: to_iso_datetime(v) if isinstance(v, datetime) else v for k, v in latest_source.items()},
+        "source_label": MDCR_OPEN_DATA_SOURCE_LABEL,
+        "legal_notice": _mdcr_legal_notice(),
+        "tables": {
+            "vehicles": _table_ready(db, "vehicles"),
+            "vehicle_inspection_histories": _table_ready(db, "vehicle_inspection_histories"),
+            "vehicle_tachometer_history_entries": _table_ready(db, "vehicle_tachometer_history_entries"),
+            "vehicle_mileage": _table_ready(db, "vehicle_mileage"),
+            "vehicle_stk_import_audit_logs": _table_ready(db, "vehicle_stk_import_audit_logs"),
+        },
+        "vehicles_with_vin": vin_count,
+        "latest_import": {
+            "created_at": to_iso_datetime(latest_audit.created_at),
+            "status": latest_audit.status,
+            "message": latest_audit.message,
+        }
+        if latest_audit
+        else None,
+        "what_is_imported": [
+            "VIN a párování na vozidlo",
+            "datum a druh STK/SME prohlídky",
+            "výsledek prohlídky",
+            "stav tachometru",
+            "datum příští prohlídky / platnost STK",
+            "značka, model a stanice ze zdrojového záznamu",
+            "číslo protokolu a raw záznam pro audit",
+        ],
+    }
+
+
+@router.post("/mdcr-open-data/import")
+def import_mdcr_open_data(
+    payload: MdcrOpenDataImportRequest,
+    request: FastAPIRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    return _run_mdcr_open_data_import(db, payload, email, request)
+
+
+@router.get("/mdcr-open-data/latest-source")
+def get_mdcr_open_data_latest_source(
+    email: str = Depends(require_developer_admin),
+):
+    latest = _fetch_latest_mdcr_open_data_source(force=True)
+    return {k: to_iso_datetime(v) if isinstance(v, datetime) else v for k, v in latest.items()}
+
+
+@router.post("/mdcr-open-data/lookup-vin")
+def lookup_mdcr_open_data_by_vin(
+    payload: MdcrVinLookupRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    source_info = _resolve_mdcr_source(payload.source_url, payload.use_latest_source)
+    source_url = _mdcr_source_url_from_payload(source_info.get("source_url"))
+    normalized_vin = _normalize_mdcr_vin(payload.vin)
+    if not normalized_vin or len(normalized_vin) < 5:
+        raise HTTPException(status_code=400, detail="Zadejte platný VIN nebo jeho dostatečně dlouhou část")
+    if payload.limit is not None and payload.limit < 1:
+        raise HTTPException(status_code=400, detail="Limit musí být prázdný nebo větší než 0")
+    max_matches = max(1, min(int(payload.max_matches or 20), 100))
+    local_vehicles = (
+        db.query(Vehicle)
+        .filter(func.upper(Vehicle.vin) == normalized_vin)
+        .order_by(Vehicle.id.asc())
+        .limit(20)
+        .all()
+    )
+    summary = {
+        "source_url": source_url,
+        "source_info": {k: to_iso_datetime(v) if isinstance(v, datetime) else v for k, v in source_info.items()},
+        "legal_notice": _mdcr_legal_notice(),
+        "vin": payload.vin,
+        "normalized_vin": normalized_vin,
+        "limit": payload.limit,
+        "scanned_records": 0,
+        "records_with_vin": 0,
+        "matches_count": 0,
+        "matches": [],
+        "source_sample_records": [],
+        "source_metadata": {},
+        "source_opened": False,
+        "source_opened_note": None,
+        "local_vehicles": [
+            {
+                "id": vehicle.id,
+                "plate": vehicle.plate,
+                "brand": vehicle.brand,
+                "model": vehicle.model,
+                "user_email": vehicle.user_email,
+                "stk_valid_until": vehicle.stk_valid_until.isoformat() if vehicle.stk_valid_until else None,
+                "latest_stk_odometer_km": vehicle.latest_stk_odometer_km,
+                "latest_stk_odometer_date": to_iso_datetime(vehicle.latest_stk_odometer_date),
+            }
+            for vehicle in local_vehicles
+        ],
+    }
+    req = urllib.request.Request(source_url, headers={"User-Agent": "ToozHub2 admin MDCR VIN lookup"})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as response:
+            buffered = io.BufferedReader(response)
+            head = buffered.peek(2)[:2]
+            summary["source_metadata"] = {
+                "status_code": getattr(response, "status", None),
+                "content_type": response.headers.get("content-type"),
+                "content_encoding": response.headers.get("content-encoding"),
+                "content_length": response.headers.get("content-length"),
+                "detected_format": "gzip/xml" if head == b"\x1f\x8b" else "xml",
+                "final_url": response.geturl(),
+            }
+            summary["source_opened"] = True
+            summary["source_opened_note"] = (
+                "Soubor MDČR je komprimovaný GZIP/XML. Aplikace jej úspěšně otevřela, rozbalila a níže zobrazuje konkrétní řádky."
+                if head == b"\x1f\x8b"
+                else "Soubor MDČR je XML. Aplikace jej úspěšně otevřela a níže zobrazuje konkrétní řádky."
+            )
+            stream = gzip.GzipFile(fileobj=buffered) if head == b"\x1f\x8b" else buffered
+            for record in _iter_mdcr_open_data_records(stream):
+                summary["scanned_records"] += 1
+                if len(summary["source_sample_records"]) < 5:
+                    summary["source_sample_records"].append(_serialize_mdcr_record(record))
+                vin = record.get("vin")
+                if vin:
+                    summary["records_with_vin"] += 1
+                if vin == normalized_vin:
+                    summary["matches"].append(_serialize_mdcr_record(record))
+                    summary["matches_count"] += 1
+                    if summary["matches_count"] >= max_matches:
+                        break
+                if payload.limit and summary["scanned_records"] >= payload.limit:
+                    break
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Kontrola VIN v MDČR datech selhala: {exc}") from exc
+    if summary["matches_count"]:
+        summary["verification_note"] = "Zadaný VIN byl nalezen přímo ve staženém MDČR datasetu."
+    else:
+        limit_text = "celém načteném souboru" if payload.limit is None else f"prvních {payload.limit} záznamech"
+        summary["verification_note"] = (
+            f"Zadaný VIN nebyl nalezen v {limit_text} tohoto konkrétního distribučního souboru. "
+            "Neznamená to, že MDČR k vozidlu nikdy nic nemá; může být potřeba jiný denní soubor nebo hledání bez limitu."
+        )
+    return summary
+
+
+@router.get("/mdcr-open-data/imports")
+def list_mdcr_open_data_imports(
+    limit: int = 30,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    limit = max(1, min(int(limit or 30), 100))
+    rows = (
+        db.query(VehicleStkImportAuditLog)
+        .filter(VehicleStkImportAuditLog.action == "mdcr_open_data_import")
+        .order_by(VehicleStkImportAuditLog.created_at.desc())
+        .limit(limit)
+        .all()
+        if _table_ready(db, "vehicle_stk_import_audit_logs")
+        else []
+    )
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "vehicle_id": row.vehicle_id,
+                "vin": row.vin,
+                "status": row.status,
+                "message": row.message,
+                "created_at": to_iso_datetime(row.created_at),
+            }
+            for row in rows
+        ]
+    }
+
+
 @router.get("/workspace-sections")
 def get_admin_workspace_sections(
     email: str = Depends(require_developer_admin),
@@ -1755,6 +3458,8 @@ def get_admin_workspace_sections(
                     "/admin-api/users/{user_id}",
                     "/admin-api/users/{user_id}/vehicles",
                     "/admin-api/users/{user_id}/detail",
+                    "/admin-api/users/{user_id}/admin-notify-history",
+                    "/admin-api/users/{user_id}/admin-notify-send",
                     "/admin-api/control-center/users/{user_id}/license",
                 ],
             },
@@ -1766,6 +3471,14 @@ def get_admin_workspace_sections(
                     "/admin-api/services",
                     "/admin-api/services/{service_id}",
                     "/admin-api/service-registration-requests",
+                ],
+            },
+            {
+                "id": "demo_leads",
+                "label": "Ukázkový přístup",
+                "description": "E-maily, na které byl odeslán odkaz do veřejné ukázky (Developer Admin → Ukázka)",
+                "paths": [
+                    "/admin-api/demo-access-leads",
                 ],
             },
         ]
@@ -1809,6 +3522,378 @@ def list_global_audit_log_entries(
     }
 
 
+@router.get("/security-status")
+def get_admin_security_status(
+    request: FastAPIRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Zjednodušený bezpečnostní panel pro běžný admin režim."""
+    now = datetime.utcnow()
+    since_24h = now - timedelta(hours=24)
+    allowlist_raw = str(os.getenv("ADMIN_NETWORK_ALLOWLIST", "")).strip()
+    latest_failed = []
+    active_blocks = []
+
+    if inspect(db.bind).has_table("security_access_logs"):
+        failed_rows = (
+            db.query(SecurityAccessLog)
+            .filter(SecurityAccessLog.event_type.in_(["login_failed", "login_rate_limited", "source_probe_blocked"]))
+            .order_by(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc())
+            .limit(50)
+            .all()
+        )
+        latest_failed = [
+            {
+                "id": row.id,
+                "event_type": row.event_type,
+                "user_email": row.user_email,
+                "ip_address": row.ip_address,
+                "endpoint": row.endpoint,
+                "location": ", ".join([part for part in [row.city, row.region, row.country] if part]) or None,
+                "details": row.details,
+                "created_at": to_iso_datetime(row.created_at),
+            }
+            for row in failed_rows
+        ]
+
+    if inspect(db.bind).has_table("security_blocked_ips"):
+        active_blocks = [
+            {
+                "id": row.id,
+                "ip_address": row.ip_address,
+                "reason": row.reason,
+                "blocked_by_email": row.blocked_by_email,
+                "blocked_at": to_iso_datetime(row.blocked_at),
+                "expires_at": to_iso_datetime(row.expires_at),
+                "is_active": bool(row.is_active),
+            }
+            for row in (
+                db.query(SecurityBlockedIp)
+                .filter(SecurityBlockedIp.is_active.is_(True))
+                .order_by(SecurityBlockedIp.blocked_at.desc())
+                .limit(100)
+                .all()
+            )
+        ]
+
+    counters = {
+        "failed_logins_24h": 0,
+        "rate_limited_24h": 0,
+        "source_probes_24h": 0,
+        "blocked_ips_active": len(active_blocks),
+    }
+    if inspect(db.bind).has_table("security_access_logs"):
+        counters["failed_logins_24h"] = int(db.query(func.count(SecurityAccessLog.id)).filter(SecurityAccessLog.event_type == "login_failed", SecurityAccessLog.created_at >= since_24h).scalar() or 0)
+        counters["rate_limited_24h"] = int(db.query(func.count(SecurityAccessLog.id)).filter(SecurityAccessLog.event_type == "login_rate_limited", SecurityAccessLog.created_at >= since_24h).scalar() or 0)
+        counters["source_probes_24h"] = int(db.query(func.count(SecurityAccessLog.id)).filter(SecurityAccessLog.event_type == "source_probe_blocked", SecurityAccessLog.created_at >= since_24h).scalar() or 0)
+
+    return {
+        "current_ip": _client_ip_from_request(request),
+        "allowlist": {
+            "configured": bool(allowlist_raw),
+            "raw": allowlist_raw,
+            "entries": [part.strip() for part in allowlist_raw.split(",") if part.strip()],
+            "source": ".env / process environment",
+            "requires_restart": True,
+        },
+        "counters": counters,
+        "active_blocks": active_blocks,
+        "latest_security_events": latest_failed,
+        "timestamp": to_iso_datetime(now),
+    }
+
+
+@router.get("/settings/effective")
+def get_admin_effective_settings(
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Vrátí praktický přehled zdrojů nastavení: env vs. runtime admin settings."""
+    runtime_settings = load_admin_settings()
+    env_rows = [
+        ("ENVIRONMENT", ENVIRONMENT, "env", True, False),
+        ("HOST", HOST, "env", True, False),
+        ("PORT", PORT, "env", True, False),
+        ("ALLOWED_ORIGINS", ",".join(ALLOWED_ORIGINS or []), "env", True, False),
+        ("ADMIN_NETWORK_ALLOWLIST", os.getenv("ADMIN_NETWORK_ALLOWLIST", ""), "env", True, False),
+        ("ENFORCE_HTTPS", os.getenv("ENFORCE_HTTPS", ""), "env", True, False),
+        ("SMTP_HOST", SMTP_HOST or "", "env", True, False),
+        ("SMTP_PORT", SMTP_PORT or "", "env", True, False),
+        ("SMTP_FROM", SMTP_FROM or "", "env", True, False),
+        ("SMTP_USER", SMTP_USER or "", "env", True, True),
+        ("JWT_EXPIRE_MINUTES", JWT_EXPIRE_MINUTES, "env", True, False),
+        ("DATA_DIR", str(DATA_DIR), "env", True, False),
+    ]
+    runtime_rows = []
+    for category, values in runtime_settings.items():
+        if not isinstance(values, dict):
+            continue
+        for key, payload in values.items():
+            payload = payload if isinstance(payload, dict) else {"value": payload}
+            runtime_rows.append({
+                "key": f"{category}.{key}",
+                "value": payload.get("value"),
+                "source": "runtime_settings",
+                "requires_restart": False,
+                "editable_in_admin": True,
+                "description": payload.get("description"),
+                "value_type": payload.get("value_type"),
+            })
+    return {
+        "env": [
+            {
+                "key": key,
+                "value": "***" if secret and value else value,
+                "source": source,
+                "requires_restart": restart,
+                "editable_in_admin": False,
+            }
+            for key, value, source, restart, secret in env_rows
+        ],
+        "runtime": runtime_rows,
+        "settings_file": str(ADMIN_SETTINGS_FILE),
+        "settings_file_exists": ADMIN_SETTINGS_FILE.exists(),
+    }
+
+
+@router.get("/support-inbox")
+def get_admin_support_inbox(
+    limit: int = 100,
+    offset: int = 0,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Inbox požadavků podpory složený z existujících security/support událostí."""
+    if not inspect(db.bind).has_table("security_access_logs"):
+        return {"items": [], "limit": limit, "offset": offset, "note": "security_access_logs missing"}
+    rows = (
+        db.query(SecurityAccessLog)
+        .filter(SecurityAccessLog.event_type == "support_contact_submitted")
+        .order_by(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc())
+        .offset(max(offset, 0))
+        .limit(min(max(limit, 1), 500))
+        .all()
+    )
+    items = []
+    for row in rows:
+        details = _json_loads_safe(row.details)
+        items.append({
+            "id": row.id,
+            "customer_id": row.customer_id,
+            "tenant_id": row.tenant_id,
+            "email": row.user_email,
+            "category": details.get("category"),
+            "subject": details.get("subject"),
+            "has_phone": details.get("has_phone"),
+            "include_diagnostics": details.get("include_diagnostics"),
+            "ip_address": row.ip_address,
+            "endpoint": row.endpoint,
+            "created_at": to_iso_datetime(row.created_at),
+        })
+    return {"items": items, "limit": limit, "offset": offset}
+
+
+@router.get("/entity-history/{entity_type}/{entity_id}")
+def get_admin_entity_history(
+    entity_type: str,
+    entity_id: int,
+    limit: int = 100,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Jednotná timeline pro uživatele, vozidlo nebo servis."""
+    normalized_type = (entity_type or "").strip().lower()
+    if normalized_type not in {"user", "service", "vehicle"}:
+        raise HTTPException(status_code=400, detail="entity_type musí být user, service nebo vehicle")
+
+    items: List[Dict[str, Any]] = []
+    target_user: Optional[Customer] = None
+    tenant_id: Optional[int] = None
+    if normalized_type in {"user", "service"}:
+        target_user = db.query(Customer).filter(Customer.id == entity_id).first()
+        if target_user:
+            tenant_id = target_user.tenant_id
+
+    if inspect(db.bind).has_table("audit_log"):
+        q = db.query(GlobalAuditLog)
+        if normalized_type == "vehicle":
+            q = q.filter((GlobalAuditLog.vehicle_id == entity_id) | ((GlobalAuditLog.entity_type == "vehicle") & (GlobalAuditLog.entity_id == entity_id)))
+        else:
+            q = q.filter((GlobalAuditLog.actor_user_id == entity_id) | ((GlobalAuditLog.entity_type.in_(["user", "service", "customer"])) & (GlobalAuditLog.entity_id == entity_id)))
+        for row in q.order_by(GlobalAuditLog.created_at.desc(), GlobalAuditLog.id.desc()).limit(limit).all():
+            items.append({
+                "source": "audit_log",
+                "severity": _audit_severity(row.action, row.metadata_json),
+                "title": row.action,
+                "details": row.metadata_json,
+                "actor": row.actor_role or row.actor_user_id,
+                "created_at": to_iso_datetime(row.created_at),
+            })
+
+    if target_user and inspect(db.bind).has_table("security_access_logs"):
+        for row in (
+            db.query(SecurityAccessLog)
+            .filter((SecurityAccessLog.customer_id == entity_id) | (func.lower(SecurityAccessLog.user_email) == func.lower(target_user.email)))
+            .order_by(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc())
+            .limit(30)
+            .all()
+        ):
+            items.append({
+                "source": "security",
+                "severity": _audit_severity(row.event_type, row.details),
+                "title": row.event_type,
+                "details": row.details,
+                "actor": row.user_email,
+                "ip_address": row.ip_address,
+                "created_at": to_iso_datetime(row.created_at),
+            })
+
+    if tenant_id and inspect(db.bind).has_table("license_payment_transactions"):
+        for tx in (
+            db.query(LicensePaymentTransaction)
+            .filter(LicensePaymentTransaction.tenant_id == tenant_id)
+            .order_by(LicensePaymentTransaction.created_at.desc(), LicensePaymentTransaction.id.desc())
+            .limit(30)
+            .all()
+        ):
+            items.append({
+                "source": "payment",
+                "severity": "critical" if _payment_needs_attention(tx.provider_status, tx.event_type) else "info",
+                "title": tx.provider_status or tx.event_type or "payment",
+                "details": tx.trans_id or tx.ref_id,
+                "actor": tx.provider,
+                "created_at": to_iso_datetime(tx.created_at),
+            })
+
+    if target_user and inspect(db.bind).has_table("admin_customer_change_events"):
+        for row in (
+            db.query(AdminCustomerChangeEvent)
+            .filter(AdminCustomerChangeEvent.customer_id == entity_id)
+            .order_by(AdminCustomerChangeEvent.created_at.desc(), AdminCustomerChangeEvent.id.desc())
+            .limit(30)
+            .all()
+        ):
+            items.append({
+                "source": "admin_change",
+                "severity": "warning" if row.notified_at is None else "info",
+                "title": row.summary_line,
+                "details": row.detail_text,
+                "actor": row.admin_email,
+                "created_at": to_iso_datetime(row.created_at),
+            })
+
+    if inspect(db.bind).has_table("developer_action_audit_logs"):
+        targets = [f"{normalized_type}:{entity_id}"]
+        if tenant_id:
+            targets.append(f"tenant:{tenant_id}")
+        for row in (
+            db.query(DeveloperActionAuditLog)
+            .filter(DeveloperActionAuditLog.target_resource.in_(targets))
+            .order_by(DeveloperActionAuditLog.created_at.desc(), DeveloperActionAuditLog.id.desc())
+            .limit(30)
+            .all()
+        ):
+            items.append({
+                "source": "developer_action",
+                "severity": _audit_severity(row.action_type, row.result),
+                "title": row.action_type,
+                "details": row.parameters_json,
+                "actor": row.developer_email,
+                "created_at": to_iso_datetime(row.created_at),
+            })
+
+    items = sorted(items, key=lambda item: item.get("created_at") or "", reverse=True)[: min(max(limit, 1), 300)]
+    return {"items": items, "entity_type": normalized_type, "entity_id": entity_id}
+
+
+@router.get("/demo-access-leads")
+def list_demo_access_leads(
+    limit: int = 100,
+    offset: int = 0,
+    search: Optional[str] = None,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Přehled žádostí o ukázkový přístup (e-mail, na který byl odeslán odkaz, IP při žádosti, uplatnění odkazu).
+    developer_admin / admin — obsahuje osobní údaje zájemců.
+    Volitelný query param ``search`` filtruje řádky podle části e-mailu (case-insensitive).
+    """
+    if not inspect(db.bind).has_table("demo_access_tokens"):
+        return {
+            "items": [],
+            "summary": {
+                "total_requests": 0,
+                "unique_visitor_emails": 0,
+                "last_24h_requests": 0,
+                "consumed_total": 0,
+                "filtered_total": 0,
+            },
+            "limit": limit,
+            "offset": offset,
+            "note": "demo_access_tokens missing — run alembic upgrade",
+            "search": None,
+        }
+
+    lim = min(max(int(limit), 1), 500)
+    off = max(int(offset), 0)
+    needle = (search or "").strip()
+    list_q = db.query(DemoAccessToken)
+    count_q = db.query(func.count(DemoAccessToken.id))
+    if needle:
+        like = f"%{needle}%"
+        list_q = list_q.filter(DemoAccessToken.visitor_email.ilike(like))
+        count_q = count_q.filter(DemoAccessToken.visitor_email.ilike(like))
+    filtered_total = int(count_q.scalar() or 0)
+    rows = (
+        list_q.order_by(DemoAccessToken.created_at.desc(), DemoAccessToken.id.desc())
+        .offset(off)
+        .limit(lim)
+        .all()
+    )
+    total_requests = int(db.query(func.count(DemoAccessToken.id)).scalar() or 0)
+    unique_visitor_emails = int(
+        db.query(func.count(func.distinct(DemoAccessToken.visitor_email))).scalar() or 0
+    )
+    consumed_total = int(
+        db.query(func.count(DemoAccessToken.id)).filter(DemoAccessToken.consumed_at.isnot(None)).scalar() or 0
+    )
+    since = datetime.utcnow() - timedelta(hours=24)
+    last_24h = int(
+        db.query(func.count(DemoAccessToken.id))
+        .filter(DemoAccessToken.created_at >= since)
+        .scalar()
+        or 0
+    )
+
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "visitor_email": r.visitor_email,
+                "client_ip": r.request_ip,
+                "user_agent": r.user_agent,
+                "contact_consent": bool(r.contact_consent),
+                "created_at": to_iso_datetime(r.created_at),
+                "expires_at": to_iso_datetime(r.expires_at),
+                "consumed_at": to_iso_datetime(r.consumed_at) if r.consumed_at else None,
+            }
+            for r in rows
+        ],
+        "summary": {
+            "total_requests": total_requests,
+            "unique_visitor_emails": unique_visitor_emails,
+            "last_24h_requests": last_24h,
+            "consumed_total": consumed_total,
+            "filtered_total": filtered_total,
+        },
+        "limit": lim,
+        "offset": off,
+        "search": needle or None,
+    }
+
+
 @router.get("/users", response_model=List[UserSummary])
 def get_all_users(
     limit: int = 50,
@@ -1822,6 +3907,13 @@ def get_all_users(
         security_logs_available = inspect(db.bind).has_table("security_access_logs")
         licenses_available = inspect(db.bind).has_table("licenses")
         payments_available = inspect(db.bind).has_table("license_payment_transactions")
+        notify_table = inspect(db.bind).has_table("admin_customer_change_events")
+        pending_notify_sql = (
+            "(SELECT COUNT(*) FROM admin_customer_change_events accne "
+            "WHERE accne.customer_id = c.id AND accne.notified_at IS NULL)"
+            if notify_table
+            else "0"
+        )
         license_plan_sql = (
             "(SELECT l.plan FROM licenses l WHERE l.tenant_id = c.tenant_id LIMIT 1)"
             if licenses_available
@@ -1881,15 +3973,18 @@ def get_all_users(
                         COALESCE(c.is_deleted, 0) as is_deleted,
                         COALESCE(c.session_version, 0) as session_version,
                         c.admin_ordinal as admin_ordinal,
+                        c.workspace_entitlements as workspace_entitlements,
+                        c.workspace_ui_default as workspace_ui_default,
                         COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count,
                         {license_plan_sql} as license_plan,
                         {license_status_sql} as license_status,
                         {has_paid_sql} as has_paid,
-                        {last_paid_at_sql} as last_paid_at
+                        {last_paid_at_sql} as last_paid_at,
+                        {pending_notify_sql} as pending_admin_notify_count
                     FROM customers c
                     {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
                     WHERE COALESCE(c.is_deleted, 0) = 0
-                    GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, c.admin_ordinal, vehicle_counts.vehicles_count
+                    GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, c.admin_ordinal, c.workspace_entitlements, c.workspace_ui_default, vehicle_counts.vehicles_count
                     ORDER BY c.created_at DESC
                     LIMIT :limit OFFSET :offset
                 ),
@@ -1940,15 +4035,18 @@ def get_all_users(
                         COALESCE(c.is_deleted, 0) as is_deleted,
                         COALESCE(c.session_version, 0) as session_version,
                         c.admin_ordinal as admin_ordinal,
+                        c.workspace_entitlements as workspace_entitlements,
+                        c.workspace_ui_default as workspace_ui_default,
                         COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count,
                         {license_plan_sql} as license_plan,
                         {license_status_sql} as license_status,
                         {has_paid_sql} as has_paid,
-                        {last_paid_at_sql} as last_paid_at
+                        {last_paid_at_sql} as last_paid_at,
+                        {pending_notify_sql} as pending_admin_notify_count
                     FROM customers c
                     {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
                     WHERE COALESCE(c.is_deleted, 0) = 0
-                    GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, c.admin_ordinal, vehicle_counts.vehicles_count
+                    GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, c.admin_ordinal, c.workspace_entitlements, c.workspace_ui_default, vehicle_counts.vehicles_count
                     ORDER BY c.created_at DESC
                     LIMIT :limit OFFSET :offset
                 )
@@ -1967,6 +4065,8 @@ def get_all_users(
                 if tenant_id is not None:
                     tenant_ids.append(int(tenant_id))
             payment_state_by_tenant = _collect_paid_state_by_tenant(db, tenant_ids)
+
+        tenant_disk_map = _get_tenant_disk_usage_map(db)
 
         users = []
         for row in rows:
@@ -1997,6 +4097,12 @@ def get_all_users(
                 else:
                     last_paid_at_value = None
 
+            ws_eff = _effective_workspace_entitlements_for_admin_summary(
+                str(data.get("role") or "") or None,
+                data.get("workspace_entitlements"),
+            )
+            tid_for_disk = data.get("tenant_id")
+            disk_b = int(tenant_disk_map.get(int(tid_for_disk), 0)) if tid_for_disk is not None else 0
             users.append(UserSummary(
                 id=data.get("id"),
                 admin_ordinal=data.get("admin_ordinal"),
@@ -2019,6 +4125,11 @@ def get_all_users(
                 is_disabled=bool(data.get("is_disabled")),
                 is_deleted=bool(data.get("is_deleted")),
                 session_version=int(data.get("session_version") or 0),
+                workspace_entitlements=ws_eff,
+                workspace_ui_default=data.get("workspace_ui_default"),
+                pending_admin_notify_count=int(data.get("pending_admin_notify_count") or 0),
+                disk_usage_bytes=disk_b,
+                disk_usage_human=_format_bytes(disk_b),
             ))
         
         return users
@@ -2050,6 +4161,65 @@ def _fetch_deleted_user_archive_rows(db: Session) -> List[DeletedUserArchiveRow]
     return out
 
 
+def _restore_archived_service_records_for_vehicle_ids(
+    db: Session,
+    *,
+    vehicle_ids: List[int],
+    admin_email: str,
+) -> int:
+    """Obnoví všechny archivované servisní záznamy na daných vozidlech (jedna transakce před volajícím commitem)."""
+    if not vehicle_ids:
+        return 0
+    records = (
+        db.query(ServiceRecord)
+        .filter(
+            ServiceRecord.vehicle_id.in_(vehicle_ids),
+            ServiceRecord.is_deleted.is_(True),
+        )
+        .all()
+    )
+    restored = 0
+    for record in records:
+        before_snapshot = service_record_audit_snapshot(record)
+        record.is_deleted = False
+        record.deleted_at = None
+        record.deleted_by_user_id = None
+        record.deletion_reason = None
+        after_snapshot = service_record_audit_snapshot(record)
+        prev_json, _ = snapshot_json_and_hash(before_snapshot)
+        new_json, snap_hash = snapshot_json_and_hash(after_snapshot)
+        record.snapshot_hash = snap_hash
+        db.add(
+            ServiceRecordAuditLog(
+                tenant_id=record.tenant_id,
+                service_record_id=record.id,
+                vehicle_id=record.vehicle_id,
+                changed_by_user_id=None,
+                action="restore",
+                previous_snapshot_json=prev_json,
+                new_snapshot_json=new_json,
+                snapshot_hash=snap_hash,
+                change_reason="customer_soft_restore",
+            )
+        )
+        write_global_audit_log(
+            db,
+            entity_type="service_record",
+            entity_id=int(record.id),
+            action="service_record_restore_admin",
+            actor_user_id=None,
+            actor_role="developer_admin",
+            tenant_id=int(record.tenant_id),
+            metadata={
+                "vehicle_id": int(record.vehicle_id),
+                "cause": "user_soft_restore",
+                "admin_email": admin_email,
+            },
+        )
+        restored += 1
+    return restored
+
+
 @router.get("/user-deletion-archive", response_model=List[DeletedUserArchiveRow])
 def get_deleted_users_archive(
     email: str = Depends(require_developer_admin),
@@ -2069,22 +4239,148 @@ def get_deleted_users_archive(
         raise HTTPException(status_code=500, detail=f"Chyba při načítání archivu smazaných: {str(e)}")
 
 
-@router.post("/users")
-def create_user(
-    user_data: UserCreate,
+@router.post("/user-soft-restore")
+def soft_restore_deleted_customer(
+    payload: UserSoftRestoreRequest,
     request: FastAPIRequest,
     email: str = Depends(require_developer_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+):
+    """
+    Obnoví účet po soft-delete: původní e-mail z archivu, aktivace účtu,
+    synchronizace zobrazovaného e-mailu u vozidel vlastníka a obnovení
+    archivovaných servisních záznamů na těchto vozidlech.
+    """
+    try:
+        actor = get_customer_by_email(db, email)
+        user = db.query(Customer).filter(Customer.id == int(payload.customer_id)).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Uživatel nenalezen")
+        if actor and actor.id == user.id:
+            raise HTTPException(status_code=400, detail="Nelze obnovit účet, pod kterým jste přihlášeni.")
+
+        if not customer_is_deleted(user):
+            raise HTTPException(status_code=400, detail="Účet není ve stavu soft-delete — obnova není potřeba.")
+
+        label = (
+            db.query(CustomerDeletionLabel)
+            .filter(CustomerDeletionLabel.customer_id == user.id)
+            .order_by(CustomerDeletionLabel.created_at.desc(), CustomerDeletionLabel.id.desc())
+            .first()
+        )
+        if not label or not (label.email_before or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Nelze zjistit původní e-mail z archivu smazání (chybí záznam customer_deletion_labels).",
+            )
+
+        restored_email = (label.email_before or "").strip().lower()
+        conflict = (
+            db.query(Customer)
+            .filter(
+                func.lower(Customer.email) == restored_email,
+                Customer.id != user.id,
+                Customer.is_deleted.is_(False),
+            )
+            .first()
+        )
+        if conflict:
+            raise HTTPException(
+                status_code=409,
+                detail=f"E-mail {restored_email} je již použit jiným aktivním účtem (ID {conflict.id}).",
+            )
+
+        own_rows = (
+            db.query(VehicleOwnership.vehicle_id)
+            .filter(
+                VehicleOwnership.customer_id == user.id,
+                VehicleOwnership.is_active.is_(True),
+            )
+            .all()
+        )
+        vehicle_ids = [int(v[0]) for v in own_rows if v[0] is not None]
+
+        user.email = restored_email
+        user.is_deleted = False
+        user.is_disabled = False
+        user.deleted_at = None
+        user.disabled_at = None
+        assign_admin_ordinal_if_missing(db, user)
+        sync_vehicle_user_email_display_for_customer(db, user.id, restored_email)
+        increment_customer_session_version(user)
+
+        records_restored = _restore_archived_service_records_for_vehicle_ids(
+            db, vehicle_ids=vehicle_ids, admin_email=email
+        )
+
+        db.commit()
+
+        if admin_change_table_exists(db):
+            record_admin_customer_change(
+                db,
+                customer_id=user.id,
+                admin_email=email,
+                change_key="account.restored_after_soft_delete",
+                summary_line=f"Účet byl obnoven z archivu (e-mail {restored_email})",
+                detail_text=(payload.reason or "").strip() or None,
+                payload={
+                    "vehicles_considered": len(vehicle_ids),
+                    "service_records_restored": records_restored,
+                },
+            )
+            db.commit()
+
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="user.soft_restore",
+            target_resource=f"user:{user.id}",
+            parameters={
+                "restored_email": restored_email,
+                "vehicles_count": len(vehicle_ids),
+                "service_records_restored": records_restored,
+                "reason": (payload.reason or "").strip() or None,
+            },
+            result="success",
+            status_code=200,
+        )
+
+        return {
+            "message": f"Účet byl obnoven. Přihlašovací e-mail: {restored_email}",
+            "user_id": user.id,
+            "restored_email": restored_email,
+            "vehicles_count": len(vehicle_ids),
+            "service_records_restored": records_restored,
+            "session_version": customer_session_version(user),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Chyba při obnově účtu: {str(e)}")
+
+
+@router.post("/users")
+def create_user(
+    request: FastAPIRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+    payload: Dict[str, Any] = Body(...),
 ):
     """Vytvoření nového uživatele"""
     try:
+        user_data = UserCreate.model_validate(payload)
         acting_admin = get_customer_by_email(db, email)
         if not acting_admin:
             raise HTTPException(status_code=404, detail="Admin účet nenalezen")
 
         target_email = str(user_data.email).strip().lower()
         target_role = validate_role_value(user_data.role)
-        selected_plan = normalize_license_plan(user_data.license_plan)
+        selected_plan = normalize_license_plan(user_data.license_plan, target_role)
         if selected_plan and (not LICENSE_MANAGEMENT_AVAILABLE or not upgrade_license_plan):
             raise HTTPException(status_code=503, detail="Správa licencí není momentálně dostupná")
         if user_data.tenant_id is not None:
@@ -2105,7 +4401,17 @@ def create_user(
         
         # Hash hesla
         password_hash_value = hash_password(user_data.password)
-        
+
+        now_admin = datetime.utcnow()
+        phone_e164_create = None
+        if user_data.phone:
+            from src.modules.vehicle_hub.registration_security import normalize_validate_phone_e164
+
+            try:
+                phone_e164_create = normalize_validate_phone_e164(str(user_data.phone))
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         # Vytvořit uživatele
         new_user = Customer(
             tenant_id=tenant_id,
@@ -2116,28 +4422,57 @@ def create_user(
             ico=user_data.ico,
             dic=user_data.dic,
             phone=user_data.phone,
+            phone_e164=phone_e164_create,
             street=user_data.street,
             street_number=user_data.street_number,
             city=user_data.city,
             zip=user_data.zip,
-            created_at=datetime.utcnow()
+            created_at=now_admin,
+            account_status="active",
+            email_verified_at=now_admin,
         )
         db.add(new_user)
         db.flush()
         assign_admin_ordinal_if_missing(db, new_user)
+
+        if "workspace_entitlements" in payload:
+            raw_ent_c = payload.get("workspace_entitlements")
+            if raw_ent_c is None:
+                new_user.workspace_entitlements = None
+            else:
+                try:
+                    new_user.workspace_entitlements = normalize_workspace_entitlements_for_storage(raw_ent_c)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if "workspace_ui_default" in payload:
+            raw_ui_c = payload.get("workspace_ui_default")
+            if raw_ui_c is None or str(raw_ui_c).strip() == "":
+                new_user.workspace_ui_default = None
+            else:
+                try:
+                    new_user.workspace_ui_default = normalize_workspace_ui_default_for_storage(
+                        raw_ui_c,
+                        effective_workspace_kinds(new_user),
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         db.commit()
         db.refresh(new_user)
 
         ensure_default_license_for_tenant(db, new_user.tenant_id)
         if selected_plan:
             upgrade_license_plan(db, new_user.tenant_id, selected_plan)
-        
+        db.refresh(new_user)
+
         return {
             "id": new_user.id,
             "email": new_user.email,
             "tenant_id": new_user.tenant_id,
             "role": new_user.role,
-            "license_plan": selected_plan or "free",
+            "license_plan": selected_plan or normalize_license_plan("free", target_role) or "free",
+            "workspace_entitlements": sorted(effective_workspace_kinds(new_user)),
+            "workspace_ui_default": getattr(new_user, "workspace_ui_default", None),
             "message": "Uživatel byl vytvořen",
         }
         
@@ -2153,13 +4488,14 @@ def create_user(
 @router.patch("/users/{user_id}")
 def update_user(
     user_id: int,
-    user_data: UserUpdate,
     request: FastAPIRequest,
     email: str = Depends(require_developer_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    payload: Dict[str, Any] = Body(...),
 ):
     """Úprava uživatele"""
     try:
+        user_data = UserUpdate.model_validate(payload)
         ensure_customer_account_state_schema(db)
         user = db.query(Customer).filter(Customer.id == user_id).first()
         if not user:
@@ -2167,9 +4503,31 @@ def update_user(
         if customer_is_deleted(user):
             raise HTTPException(status_code=400, detail="Smazaný účet nelze upravovat")
 
-        selected_plan = normalize_license_plan(user_data.license_plan)
+        target_role = validate_role_value(user_data.role) if user_data.role is not None else str(user.role or "user")
+        selected_plan = normalize_license_plan(user_data.license_plan, target_role)
         if selected_plan and (not LICENSE_MANAGEMENT_AVAILABLE or not upgrade_license_plan):
             raise HTTPException(status_code=503, detail="Správa licencí není momentálně dostupná")
+
+        license_before = (None, None)
+        if inspect(db.bind).has_table("licenses"):
+            lic_row0 = db.query(License).filter(License.tenant_id == user.tenant_id).first()
+            if lic_row0:
+                license_before = (lic_row0.plan, lic_row0.status)
+        before_prof = {
+            "email": user.email,
+            "name": user.name,
+            "role": user.role,
+            "ico": user.ico,
+            "dic": user.dic,
+            "phone": user.phone,
+            "street": user.street,
+            "street_number": user.street_number,
+            "city": user.city,
+            "zip": user.zip,
+            "workspace_entitlements": user.workspace_entitlements,
+            "workspace_ui_default": user.workspace_ui_default,
+        }
+        pwd_will_update = user_data.password is not None
         
         # Aktualizovat pole
         if user_data.email is not None:
@@ -2188,7 +4546,7 @@ def update_user(
             user.name = user_data.name
         
         if user_data.role is not None:
-            user.role = validate_role_value(user_data.role)
+            user.role = target_role
 
         if user_data.ico is not None:
             user.ico = user_data.ico
@@ -2208,6 +4566,29 @@ def update_user(
         if user_data.password is not None:
             user.password_hash = hash_password(user_data.password)
             increment_customer_session_version(user)
+
+        if "workspace_entitlements" in payload:
+            raw_ent = payload.get("workspace_entitlements")
+            if raw_ent is None:
+                user.workspace_entitlements = None
+            else:
+                try:
+                    user.workspace_entitlements = normalize_workspace_entitlements_for_storage(raw_ent)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if "workspace_ui_default" in payload:
+            raw_ui = payload.get("workspace_ui_default")
+            if raw_ui is None or str(raw_ui).strip() == "":
+                user.workspace_ui_default = None
+            else:
+                try:
+                    user.workspace_ui_default = normalize_workspace_ui_default_for_storage(
+                        raw_ui,
+                        effective_workspace_kinds(user),
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
         
         db.commit()
 
@@ -2215,10 +4596,46 @@ def update_user(
         if selected_plan:
             updated_license = upgrade_license_plan(db, user.tenant_id, selected_plan)
 
+        db.refresh(user)
+
+        license_after = (None, None)
+        if inspect(db.bind).has_table("licenses"):
+            lic_row1 = db.query(License).filter(License.tenant_id == user.tenant_id).first()
+            if lic_row1:
+                license_after = (lic_row1.plan, lic_row1.status)
+        after_prof = {
+            "email": user.email,
+            "name": user.name,
+            "role": user.role,
+            "ico": user.ico,
+            "dic": user.dic,
+            "phone": user.phone,
+            "street": user.street,
+            "street_number": user.street_number,
+            "city": user.city,
+            "zip": user.zip,
+            "workspace_entitlements": user.workspace_entitlements,
+            "workspace_ui_default": user.workspace_ui_default,
+        }
+        if admin_change_table_exists(db):
+            record_user_profile_license_changes_from_admin(
+                db,
+                customer_id=user.id,
+                admin_email=email,
+                before=before_prof,
+                after=after_prof,
+                license_before=license_before,
+                license_after=license_after,
+                password_updated=pwd_will_update,
+            )
+            db.commit()
+
         return {
             "message": "Uživatel byl upraven",
             "license_plan": (updated_license or {}).get("plan", selected_plan),
             "license_status": (updated_license or {}).get("status"),
+            "workspace_entitlements": sorted(effective_workspace_kinds(user)),
+            "workspace_ui_default": getattr(user, "workspace_ui_default", None),
         }
         
     except HTTPException:
@@ -2318,6 +4735,7 @@ def get_user_vehicles(
             {_primary_owner_join_sql(vehicle_alias="v", selector_alias="uvo_primary", ownership_alias="uvo", owner_alias="owner_customer")}
             WHERE uvo.customer_id = :user_id
               AND uvo.is_active = 1
+              AND v.status != 'archived'
             GROUP BY v.id, owner_customer.email, v.user_email, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.created_at
             ORDER BY v.created_at DESC
         """), {"user_id": user_id})
@@ -2384,6 +4802,7 @@ def get_user_detail(
             {_primary_owner_join_sql(vehicle_alias="v", selector_alias="udv_primary", ownership_alias="udv_ownership", owner_alias="udv_owner")}
             WHERE udv_ownership.customer_id = :customer_id
               AND udv_ownership.is_active = 1
+              AND v.status != 'archived'
             GROUP BY
                 v.id, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.engine, v.notes,
                 v.stk_valid_until, v.insurance_provider, v.insurance_valid_until, v.created_at
@@ -2822,6 +5241,7 @@ def get_user_detail(
         purchase_date = first_paid_at or activation_date
 
         deletion_archive_mark = None
+        deletion_email_before = None
         label_row = (
             db.query(CustomerDeletionLabel)
             .filter(CustomerDeletionLabel.customer_id == user_id)
@@ -2830,16 +5250,46 @@ def get_user_detail(
         )
         if label_row:
             deletion_archive_mark = deletion_mark_display(label_row.hash_depth, label_row.ordinal_at_delete)
+            raw_prev = (label_row.email_before or "").strip().lower()
+            deletion_email_before = raw_prev or None
+
+        admin_notify_pending = 0
+        if admin_change_table_exists(db):
+            admin_notify_pending = int(
+                db.query(func.count())
+                .select_from(AdminCustomerChangeEvent)
+                .filter(
+                    AdminCustomerChangeEvent.customer_id == user_id,
+                    AdminCustomerChangeEvent.notified_at.is_(None),
+                )
+                .scalar()
+                or 0
+            )
+
+        tenant_disk_map = _get_tenant_disk_usage_map(db)
+        tid_u = user.tenant_id
+        disk_u = int(tenant_disk_map.get(int(tid_u), 0)) if tid_u is not None else 0
 
         return {
+            "admin_notify_pending_count": admin_notify_pending,
             "user": {
                 "id": user.id,
                 "admin_ordinal": getattr(user, "admin_ordinal", None),
                 "deletion_archive_mark": deletion_archive_mark,
+                "deletion_email_before": deletion_email_before,
                 "email": user.email,
                 "name": user.name,
                 "role": user.role,
+                "workspace_entitlements": sorted(effective_workspace_kinds(user)),
+                "workspace_ui_default": getattr(user, "workspace_ui_default", None),
                 "tenant_id": user.tenant_id,
+                "disk_usage_bytes": disk_u,
+                "disk_usage_human": _format_bytes(disk_u),
+                "disk_usage_note": (
+                    "Součet souborů ve složce data/ přiřazených k tenantovi tohoto účtu (fotky vozidel, přílohy záznamů, "
+                    "ORV skeny, PDF reporty/archivy, fotky servisních případů). Účty se stejným tenant_id mají stejnou "
+                    "hodnotu. Nezahrnuje databázi ani sdílené dočasné soubory mimo tyto cesty."
+                ),
                 "ico": user.ico,
                 "dic": user.dic,
                 "phone": user.phone,
@@ -2855,6 +5305,17 @@ def get_user_detail(
                 "notify_oil": bool(user.notify_oil) if user.notify_oil is not None else False,
                 "notify_general": bool(user.notify_general) if user.notify_general is not None else False,
                 "license_plan": license_plan,
+                "license_plan_base": get_license_plan_base(license_plan) if get_license_plan_base else license_plan,
+                "license_workspace_kind": (
+                    get_license_workspace_kind_for_role(user.role)
+                    if get_license_workspace_kind_for_role
+                    else ("service" if str(user.role or "").lower() == "service" else "user")
+                ),
+                "license_allowed_plans": (
+                    get_allowed_license_plans_for_role(user.role)
+                    if get_allowed_license_plans_for_role
+                    else ["free", "basic", "premium", "lifetime"]
+                ),
                 "license_status": license_status,
                 "is_disabled": bool(getattr(user, "is_disabled", False)),
                 "is_deleted": bool(getattr(user, "is_deleted", False)),
@@ -2862,6 +5323,19 @@ def get_user_detail(
                 "last_login_at": to_iso_datetime(getattr(user, "last_login_at", None)),
                 "last_seen_at": to_iso_datetime(getattr(user, "last_seen_at", None)),
                 "created_at": to_iso_datetime(user.created_at),
+                "account_status": getattr(user, "account_status", None) or "active",
+                "email_verified_at": to_iso_datetime(getattr(user, "email_verified_at", None)),
+                "email_verification_label": ("verified" if getattr(user, "email_verified_at", None) else "pending"),
+                "phone_e164": getattr(user, "phone_e164", None),
+                "phone_verified_at": to_iso_datetime(getattr(user, "phone_verified_at", None)),
+                "phone_status_label": (
+                    "verified"
+                    if getattr(user, "phone_verified_at", None)
+                    else ("unverified" if getattr(user, "phone_e164", None) else "invalid")
+                ),
+                "registration_ip": getattr(user, "registration_ip", None),
+                "registration_user_agent": getattr(user, "registration_user_agent", None),
+                "registration_risk_flags": getattr(user, "registration_risk_flags", None),
             },
             "stats": {
                 "vehicles_count": len(vehicles),
@@ -2880,6 +5354,21 @@ def get_user_detail(
             "insight": {
                 "license": {
                     "current_plan": (license_row.plan if license_row else license_plan) or "free",
+                    "current_plan_base": (
+                        get_license_plan_base((license_row.plan if license_row else license_plan) or "free")
+                        if get_license_plan_base
+                        else ((license_row.plan if license_row else license_plan) or "free")
+                    ),
+                    "workspace_kind": (
+                        get_license_workspace_kind_for_role(user.role)
+                        if get_license_workspace_kind_for_role
+                        else ("service" if str(user.role or "").lower() == "service" else "user")
+                    ),
+                    "allowed_plans": (
+                        get_allowed_license_plans_for_role(user.role)
+                        if get_allowed_license_plans_for_role
+                        else ["free", "basic", "premium", "lifetime"]
+                    ),
                     "status": (license_row.status if license_row else license_status) or "active",
                     "purchase_date": purchase_date,
                     "activation_date": activation_date,
@@ -2927,6 +5416,119 @@ def get_user_detail(
         raise HTTPException(status_code=500, detail=f"Chyba při načítání detailu uživatele: {str(e)}")
 
 
+@router.get("/users/{user_id}/admin-notify-history")
+def get_user_admin_notify_history(
+    user_id: int,
+    limit: int = 200,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Historie změn účtu z adminu + stav odeslání e-mailem uživateli."""
+    user = db.query(Customer).filter(Customer.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Uživatel nenalezen")
+    if not admin_change_table_exists(db):
+        return {"items": [], "pending_count": 0, "user_email": user.email}
+    lim = min(max(limit, 1), 500)
+    rows = (
+        db.query(AdminCustomerChangeEvent)
+        .filter(AdminCustomerChangeEvent.customer_id == user_id)
+        .order_by(AdminCustomerChangeEvent.created_at.desc(), AdminCustomerChangeEvent.id.desc())
+        .limit(lim)
+        .all()
+    )
+    pending_count = int(
+        db.query(func.count())
+        .select_from(AdminCustomerChangeEvent)
+        .filter(
+            AdminCustomerChangeEvent.customer_id == user_id,
+            AdminCustomerChangeEvent.notified_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "change_key": r.change_key,
+                "summary_line": r.summary_line,
+                "detail_text": r.detail_text,
+                "admin_email": r.admin_email,
+                "created_at": to_iso_datetime(r.created_at),
+                "notified_at": to_iso_datetime(r.notified_at) if r.notified_at else None,
+                "notified_to_email": r.notified_to_email,
+            }
+            for r in rows
+        ],
+        "pending_count": pending_count,
+        "user_email": user.email,
+    }
+
+
+@router.post("/users/{user_id}/admin-notify-send")
+def post_user_admin_notify_send(
+    user_id: int,
+    payload: AdminNotifySendRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Odešle uživateli e-mail se souhrnem vybraných (dosud neodeslaných) změn."""
+    if not admin_change_table_exists(db):
+        raise HTTPException(status_code=503, detail="Tabulka historie změn neexistuje — spusťte migrace.")
+    user = db.query(Customer).filter(Customer.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Uživatel nenalezen")
+    if customer_is_deleted(user):
+        raise HTTPException(status_code=400, detail="Smazaný účet")
+    ids = list(dict.fromkeys(int(x) for x in (payload.change_ids or [])))
+    if not ids:
+        raise HTTPException(status_code=400, detail="Vyberte alespoň jednu změnu")
+    rows = (
+        db.query(AdminCustomerChangeEvent)
+        .filter(
+            AdminCustomerChangeEvent.customer_id == user_id,
+            AdminCustomerChangeEvent.id.in_(ids),
+        )
+        .all()
+    )
+    if len(rows) != len(ids):
+        raise HTTPException(status_code=400, detail="Neplatné nebo cizí ID změny")
+    if any(r.notified_at is not None for r in rows):
+        raise HTTPException(status_code=400, detail="Některé položky již byly e-mailem odeslány")
+    to_email = (user.email or "").strip().lower()
+    if not to_email:
+        raise HTTPException(status_code=400, detail="Uživatel nemá e-mail")
+    lines = [r.summary_line for r in sorted(rows, key=lambda r: (r.created_at or datetime.min, r.id))]
+    try:
+        send_customer_change_notification_email(
+            to_email=to_email,
+            user_name=user.name,
+            admin_email=email,
+            lines=lines,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    mark_events_notified(db, rows=rows, to_email=to_email)
+    db.commit()
+    return {"message": f"E-mail byl odeslán na {to_email}", "sent_count": len(rows)}
+
+
+def _customer_qualifies_for_admin_service_directory(db: Session, service: Customer) -> bool:
+    """
+    Účty v sekci „Servisy“: role=service, nebo developer_admin nad tenantem s workspace_route_kind=service
+    (typicky stejní lidé jako v servisním režimu v aplikaci).
+    """
+    if customer_is_deleted(service):
+        return False
+    if service.role == "service":
+        return True
+    if service.role != "developer_admin":
+        return False
+    tenant = db.query(Tenant).filter(Tenant.id == service.tenant_id).first()
+    return bool(tenant and str(tenant.workspace_route_kind or "").strip() == "service")
+
+
 @router.get("/services", response_model=List[UserSummary])
 def get_all_services(
     limit: int = 50,
@@ -2934,7 +5536,7 @@ def get_all_services(
     email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db)
 ):
-    """Vrátí seznam servisních účtů (role='service') - pouze pro developer_admin"""
+    """Vrátí servisní účty evidované v aplikaci — role=service i developer_admin se servisním tenantem."""
     try:
         ensure_customer_account_state_schema(db)
         result = db.execute(text(f"""
@@ -2952,16 +5554,23 @@ def get_all_services(
                 COALESCE(c.session_version, 0) as session_version,
                 COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count
             FROM customers c
+            LEFT JOIN tenants t ON t.id = c.tenant_id
             {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
-            WHERE c.role = 'service'
-              AND COALESCE(c.is_deleted, 0) = 0
+            WHERE COALESCE(c.is_deleted, 0) = 0
+              AND (
+                c.role = 'service'
+                OR (c.role = 'developer_admin' AND COALESCE(t.workspace_route_kind, '') = 'service')
+              )
             ORDER BY c.created_at DESC
             LIMIT :limit OFFSET :offset
         """), {"limit": limit, "offset": offset})
         
+        tenant_disk_map = _get_tenant_disk_usage_map(db)
         services = []
         for row in result:
             created_at = row[7]
+            tid_sv = row[4]
+            disk_sv = int(tenant_disk_map.get(int(tid_sv), 0)) if tid_sv is not None else 0
             services.append(UserSummary(
                 id=row[0],
                 email=row[1],
@@ -2975,6 +5584,8 @@ def get_all_services(
                 is_disabled=bool(row[8]),
                 is_deleted=bool(row[9]),
                 session_version=int(row[10] or 0),
+                disk_usage_bytes=disk_sv,
+                disk_usage_human=_format_bytes(disk_sv),
             ))
         
         return services
@@ -3025,6 +5636,7 @@ def create_service(
             city=service_data.city,
             phone=service_data.phone,
             ico=service_data.ico,
+            partner_catalog_approved=True,
             created_at=datetime.utcnow()
         )
         db.add(new_service)
@@ -3065,8 +5677,8 @@ def update_service(
         if not service:
             raise HTTPException(status_code=404, detail="Servis nenalezen")
         
-        if service.role != "service":
-            raise HTTPException(status_code=400, detail="Zadaný uživatel není servis")
+        if not _customer_qualifies_for_admin_service_directory(db, service):
+            raise HTTPException(status_code=400, detail="Zadaný uživatel není servis v této evidenci.")
         
         # Aktualizovat pole
         if service_data.email is not None:
@@ -3094,7 +5706,10 @@ def update_service(
         
         if service_data.password is not None:
             service.password_hash = hash_password(service_data.password)
-        
+
+        if service_data.partner_catalog_approved is not None:
+            service.partner_catalog_approved = bool(service_data.partner_catalog_approved)
+
         db.commit()
         return {"message": "Servis byl upraven"}
         
@@ -3114,14 +5729,21 @@ def delete_service(
     email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db)
 ):
-    """Smazání servisu"""
+    """Odstranění servisního účtu ze seznamu (soft-delete kvůli FK vazbám v aplikaci)."""
     try:
+        actor = get_customer_by_email(db, email)
         service = db.query(Customer).filter(Customer.id == service_id).first()
         if not service:
             raise HTTPException(status_code=404, detail="Servis nenalezen")
-        
-        if service.role != "service":
-            raise HTTPException(status_code=400, detail="Zadaný uživatel není servis")
+
+        if actor and actor.id == service.id:
+            raise HTTPException(status_code=400, detail="Nelze smazat účet, pod kterým jste přihlášeni.")
+
+        if customer_is_deleted(service):
+            return {"message": "Servis je již odstraněn ze seznamu.", "soft_deleted": True}
+
+        if not _customer_qualifies_for_admin_service_directory(db, service):
+            raise HTTPException(status_code=400, detail="Zadaný uživatel není servis v této evidenci.")
 
         vehicles_count = (
             db.query(func.count(func.distinct(VehicleOwnership.vehicle_id)))
@@ -3137,13 +5759,37 @@ def delete_service(
                 status_code=400,
                 detail=f"Servis má přiřazeno {vehicles_count} vozidel. Nejprve změňte vlastníka nebo vozidla smažte.",
             )
-        
-        service_email = service.email
-        db.delete(service)
+
+        previous_email = (service.email or "").strip().lower()
+        result = soft_delete_customer(db, service)
+        if result.get("already"):
+            return {"message": f"Servis {result.get('email')} je již odstraněný.", "soft_deleted": True}
+
+        deleted_alias = result["deleted_alias"]
         db.commit()
-        
-        return {"message": f"Servis {service_email} byl smazán"}
-        
+
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="service.delete",
+            target_resource=f"service:{service_id}",
+            parameters={
+                "previous_email": previous_email,
+                "deleted_alias": deleted_alias,
+                "soft_deleted": True,
+            },
+            result="success",
+            status_code=200,
+        )
+
+        return {
+            "message": f"Servis {previous_email} byl odstraněn ze seznamu (soft-delete)",
+            "soft_deleted": True,
+            "deleted_alias_email": deleted_alias,
+            "session_version": result.get("session_version"),
+        }
+
     except HTTPException:
         raise
     except Exception as e:
@@ -3260,6 +5906,14 @@ def approve_service_registration_request(
             workspace_route_kind="service",
         )
 
+        from src.modules.vehicle_hub.registration_security import normalize_validate_phone_e164
+
+        try:
+            approved_phone_e164 = normalize_validate_phone_e164(str(req.phone or ""))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        approved_at = datetime.utcnow()
         new_service = Customer(
             tenant_id=dedicated_tenant.id,
             email=req.email.strip().lower(),
@@ -3272,8 +5926,12 @@ def approve_service_registration_request(
             city=req.city,
             zip=req.zip,
             phone=req.phone,
+            phone_e164=approved_phone_e164,
             role="service",
-            created_at=datetime.utcnow(),
+            partner_catalog_approved=True,
+            created_at=approved_at,
+            account_status="active",
+            email_verified_at=approved_at,
         )
         db.add(new_service)
         db.flush()
@@ -3382,6 +6040,7 @@ def get_all_vehicles(
             FROM vehicles v
             LEFT JOIN service_records sr ON sr.vehicle_id = v.id
             {_primary_owner_join_sql(vehicle_alias="v", selector_alias="gav_primary", ownership_alias="gav_ownership", owner_alias="owner_customer")}
+            WHERE v.status != 'archived'
             GROUP BY v.id, owner_customer.email, v.user_email, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.created_at, owner_customer.name, owner_customer.id, v.tenant_id
             ORDER BY v.created_at DESC
             LIMIT :limit OFFSET :offset
@@ -3457,6 +6116,17 @@ def create_vehicle(
         )
         db.commit()
         db.refresh(new_vehicle)
+        if admin_change_table_exists(db):
+            lbl = _admin_vehicle_short_label(new_vehicle)
+            record_admin_customer_change(
+                db,
+                customer_id=user.id,
+                admin_email=email,
+                change_key="vehicle.created",
+                summary_line=f"Přidáno vozidlo „{lbl}“",
+                detail_text=f"ID vozidla v systému: {new_vehicle.id}",
+            )
+            db.commit()
         log_developer_action(
             db,
             developer_email=email,
@@ -3498,6 +6168,17 @@ def update_vehicle(
         vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+
+        old_owner = get_primary_vehicle_owner(db, vehicle)
+        old_owner_id = int(old_owner.id) if old_owner else None
+        old_snapshot = (
+            vehicle.nickname,
+            vehicle.brand,
+            vehicle.model,
+            vehicle.year,
+            vehicle.plate,
+            vehicle.vin,
+        )
         
         # Aktualizovat pole
         if vehicle_data.user_email is not None:
@@ -3531,7 +6212,46 @@ def update_vehicle(
             vehicle.vin = vehicle_data.vin
         
         db.commit()
+        db.refresh(vehicle)
         primary_owner = get_primary_vehicle_owner(db, vehicle)
+        new_owner_id = int(primary_owner.id) if primary_owner else None
+        new_snapshot = (
+            vehicle.nickname,
+            vehicle.brand,
+            vehicle.model,
+            vehicle.year,
+            vehicle.plate,
+            vehicle.vin,
+        )
+        if admin_change_table_exists(db):
+            lbl = _admin_vehicle_short_label(vehicle)
+            if vehicle_data.user_email is not None and old_owner_id != new_owner_id:
+                if old_owner_id:
+                    record_admin_customer_change(
+                        db,
+                        customer_id=old_owner_id,
+                        admin_email=email,
+                        change_key="vehicle.transferred_from",
+                        summary_line=f"Vozidlo „{lbl}“ bylo převedeno na jiného uživatele",
+                    )
+                if new_owner_id:
+                    record_admin_customer_change(
+                        db,
+                        customer_id=new_owner_id,
+                        admin_email=email,
+                        change_key="vehicle.transferred_to",
+                        summary_line=f"Bylo vám přiřazeno vozidlo „{lbl}“",
+                    )
+            elif new_owner_id and old_snapshot != new_snapshot:
+                record_admin_customer_change(
+                    db,
+                    customer_id=new_owner_id,
+                    admin_email=email,
+                    change_key="vehicle.updated",
+                    summary_line=f"Upraveno vozidlo „{lbl}“",
+                    detail_text="Administrátor změnil údaje vozidla (název, značka, model, rok, SPZ nebo VIN).",
+                )
+            db.commit()
         log_developer_action(
             db,
             developer_email=email,
@@ -3571,10 +6291,34 @@ def delete_vehicle(
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
         primary_owner = get_primary_vehicle_owner(db, vehicle)
+        owner_id = int(primary_owner.id) if primary_owner else None
+        vlabel = _admin_vehicle_short_label(vehicle)
         tenant_id = vehicle.tenant_id
+        vehicle_audit = {
+            "vehicle_id": vehicle_id,
+            "label": vlabel,
+            "vin": vehicle.vin,
+            "plate": vehicle.plate,
+            "nickname": vehicle.nickname,
+            "brand": vehicle.brand,
+            "model": vehicle.model,
+            "owner_email": primary_owner.email if primary_owner else None,
+            "recoverable_via_app": False,
+            "note": "Tvrdé mazání včetně závislostí — obnova pouze ze zálohy databáze.",
+        }
         dependency_counts = _delete_vehicle_dependencies_for_admin(db, vehicle_id)
         db.delete(vehicle)
         db.commit()
+        if admin_change_table_exists(db) and owner_id:
+            record_admin_customer_change(
+                db,
+                customer_id=owner_id,
+                admin_email=email,
+                change_key="vehicle.deleted",
+                summary_line=f"Smazáno vozidlo „{vlabel}“",
+                detail_text=f"ID vozidla: {vehicle_id}",
+            )
+            db.commit()
         log_developer_action(
             db,
             developer_email=email,
@@ -3587,6 +6331,7 @@ def delete_vehicle(
                 "owner_customer_id": primary_owner.id if primary_owner else None,
                 "owner_email": primary_owner.email if primary_owner else None,
                 "deleted_dependencies": dependency_counts,
+                "vehicle_snapshot": vehicle_audit,
             },
             result="success",
             status_code=200,
@@ -3603,20 +6348,101 @@ def delete_vehicle(
         raise HTTPException(status_code=500, detail=f"Chyba při mazání vozidla: {str(e)}")
 
 
+def _admin_deleted_service_records_response(db: Session, *, limit: int, offset: int) -> dict[str, Any]:
+    """Společná datová část pro archivované servisní záznamy (obnova)."""
+    lim = min(max(limit, 1), 300)
+    off = max(0, offset)
+    pairs = (
+        db.query(ServiceRecord, Vehicle)
+        .outerjoin(Vehicle, Vehicle.id == ServiceRecord.vehicle_id)
+        .filter(ServiceRecord.is_deleted.is_(True))
+        .order_by(ServiceRecord.deleted_at.desc(), ServiceRecord.id.desc())
+        .offset(off)
+        .limit(lim)
+        .all()
+    )
+    customer_ids = {int(r.user_id) for r, _v in pairs if r.user_id}
+    customers_by_id: dict[int, Customer] = {}
+    if customer_ids:
+        rows = db.query(Customer).filter(Customer.id.in_(customer_ids)).all()
+        customers_by_id = {int(c.id): c for c in rows}
+
+    items = []
+    for r, v in pairs:
+        uid = int(r.user_id) if r.user_id else None
+        cust = customers_by_id.get(uid) if uid else None
+        vl = _admin_vehicle_short_label(v) if v else f"ID {r.vehicle_id}"
+        snap = service_record_audit_snapshot(r)
+        items.append(
+            {
+                "record_id": r.id,
+                "tenant_id": r.tenant_id,
+                "vehicle_id": r.vehicle_id,
+                "vehicle_label": vl,
+                "user_id": r.user_id,
+                "user_email": (cust.email if cust else None),
+                "performed_at": to_iso_datetime(r.performed_at),
+                "deleted_at": to_iso_datetime(r.deleted_at),
+                "deletion_reason": r.deletion_reason,
+                "description_preview": ((r.description or "")[:280] + "…")
+                if len(r.description or "") > 280
+                else (r.description or ""),
+                "mileage": r.mileage,
+                "category": r.category,
+                "record_snapshot": snap,
+            }
+        )
+
+    total = db.query(func.count(ServiceRecord.id)).filter(ServiceRecord.is_deleted.is_(True)).scalar() or 0
+    return {"items": items, "total": int(total), "limit": lim, "offset": off}
+
+
+@router.get("/archived-service-records")
+def list_archived_service_records_for_restore(
+    limit: int = Query(100, ge=1, le=300),
+    offset: int = Query(0, ge=0),
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Archivované (soft-smazané) servisní záznamy pro obnovu v adminu.
+    Dedikovaná URL mimo ``/records`` kvůli proxy/cache a starším workerům bez query ``deleted_only``.
+    """
+    return _admin_deleted_service_records_response(db, limit=limit, offset=offset)
+
+
 @router.get("/records")
 def get_all_records(
     limit: int = 50,
     offset: int = 0,
     user_id: Optional[int] = None,
     vehicle_id: Optional[int] = None,
+    deleted_only: bool = Query(
+        False,
+        description="Vrátí archivované (soft-deleted) záznamy určené k obnově. Použijte místo /records/deleted pokud proxy vrací 405.",
+    ),
     email: str = Depends(require_developer_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Vrátí kompletní seznam všech servisních záznamů
     Dostupné jen pro developer_admin
     """
     try:
+        if deleted_only:
+            try:
+                return _admin_deleted_service_records_response(db, limit=limit, offset=offset)
+            except Exception as inner_exc:
+                import traceback
+                traceback.print_exc()
+                return {
+                    "items": [],
+                    "total": 0,
+                    "limit": limit,
+                    "offset": offset,
+                    "error": f"Chyba při načítání archivovaných záznamů: {str(inner_exc)}",
+                }
+
         query = """
             SELECT 
                 sr.id,
@@ -3638,7 +6464,7 @@ def get_all_records(
             FROM service_records sr
             LEFT JOIN vehicles v ON v.id = sr.vehicle_id
             LEFT JOIN customers c ON c.id = sr.user_id
-            WHERE 1=1
+            WHERE COALESCE(sr.is_deleted, 0) = 0
         """
         params = {}
         
@@ -3679,8 +6505,8 @@ def get_all_records(
                 "user_name": row[15]
             })
         
-        # Celkový počet
-        count_query = "SELECT COUNT(*) FROM service_records WHERE 1=1"
+        # Celkový počet (bez archivovaných záznamů — ty jsou v GET /records/deleted)
+        count_query = "SELECT COUNT(*) FROM service_records WHERE COALESCE(is_deleted, 0) = 0"
         count_params = {}
         if user_id:
             count_query += " AND user_id = :user_id"
@@ -3709,12 +6535,29 @@ def get_all_records(
         }
 
 
+@router.get("/records/deleted")
+def list_deleted_service_records(
+    limit: int = 100,
+    offset: int = 0,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Archivované (soft-deleted) servisní záznamy — alias; preferujte GET /records?deleted_only=true kvůli proxy."""
+    return _admin_deleted_service_records_response(db, limit=limit, offset=offset)
+
+
 @router.get("/audit")
 def get_audit_log(
     limit: int = 50,
     offset: int = 0,
     entity_type: Optional[str] = None,
     action: Optional[str] = None,
+    actor: Optional[str] = None,
+    entity_id: Optional[int] = None,
+    severity: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    export: Optional[str] = None,
     email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db)
 ):
@@ -3731,6 +6574,19 @@ def get_audit_log(
                 global_query = global_query.filter(GlobalAuditLog.entity_type == entity_type)
             if action:
                 global_query = global_query.filter(GlobalAuditLog.action == action)
+            if entity_id is not None:
+                global_query = global_query.filter(GlobalAuditLog.entity_id == entity_id)
+            if actor:
+                like = f"%{actor.strip()}%"
+                global_query = global_query.filter(
+                    (GlobalAuditLog.actor_role.ilike(like))
+                    | (GlobalAuditLog.actor_type.ilike(like))
+                    | (GlobalAuditLog.ip.ilike(like))
+                )
+            if date_from:
+                global_query = global_query.filter(GlobalAuditLog.created_at >= date_from)
+            if date_to:
+                global_query = global_query.filter(GlobalAuditLog.created_at <= date_to)
 
             rows = (
                 global_query
@@ -3746,20 +6602,41 @@ def get_audit_log(
                     metadata_text = str(row.metadata_json)
                     if len(metadata_text) > 240:
                         metadata_text = metadata_text[:237] + "..."
+                row_severity = _audit_severity(row.action, row.metadata_json)
+                if severity and row_severity != severity:
+                    continue
                 logs.append({
                     "id": row.id,
                     "timestamp": to_iso_datetime(row.created_at),
                     "actor_email": None,
                     "actor_user_id": row.actor_user_id,
                     "actor_role": row.actor_role,
+                    "actor_type": row.actor_type,
+                    "ip": row.ip,
                     "action": row.action,
                     "entity_type": row.entity_type,
                     "entity_id": row.entity_id,
                     "details": metadata_text,
+                    "severity": row_severity,
                     "source_project": "audit_log",
                     "tenant_id": row.tenant_id,
                     "metadata_json": row.metadata_json,
                 })
+
+            if str(export or "").lower() == "csv":
+                output = io.StringIO()
+                writer = csv.DictWriter(
+                    output,
+                    fieldnames=["id", "timestamp", "severity", "actor_email", "actor_user_id", "actor_role", "action", "entity_type", "entity_id", "tenant_id", "ip", "details"],
+                )
+                writer.writeheader()
+                for item in logs:
+                    writer.writerow({key: item.get(key) for key in writer.fieldnames})
+                return Response(
+                    content=output.getvalue(),
+                    media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=admin-audit-log.csv"},
+                )
 
             return {
                 "logs": logs,
@@ -3889,6 +6766,20 @@ def create_record(
         db.add(new_record)
         db.commit()
         db.refresh(new_record)
+        nid = _notify_customer_id_for_record(db, new_record)
+        if admin_change_table_exists(db) and nid:
+            v = db.query(Vehicle).filter(Vehicle.id == new_record.vehicle_id).first()
+            vl = _admin_vehicle_short_label(v) if v else f"ID {new_record.vehicle_id}"
+            record_admin_customer_change(
+                db,
+                customer_id=nid,
+                admin_email=email,
+                change_key="service_record.created",
+                summary_line=f"Přidán servisní záznam k vozidlu „{vl}“",
+                detail_text=(record_data.description or "")[:800],
+                payload={"record_id": new_record.id, "mileage": record_data.mileage},
+            )
+            db.commit()
         log_developer_action(
             db,
             developer_email=email,
@@ -3928,6 +6819,22 @@ def update_record(
         record = db.query(ServiceRecord).filter(ServiceRecord.id == record_id).first()
         if not record:
             raise HTTPException(status_code=404, detail="Záznam nenalezen")
+        if bool(getattr(record, "is_deleted", False)):
+            raise HTTPException(
+                status_code=409,
+                detail="Archivovaný servisní záznam nelze upravit — použijte nejdříve obnovu v sekci Záznamy.",
+            )
+
+        snap_b = {
+            "vehicle_id": record.vehicle_id,
+            "user_id": record.user_id,
+            "performed_at": record.performed_at,
+            "mileage": record.mileage,
+            "description": record.description,
+            "price": record.price,
+            "category": record.category,
+            "note": record.note,
+        }
         
         # Aktualizovat pole
         if record_data.vehicle_id is not None:
@@ -3967,6 +6874,52 @@ def update_record(
             record.note = record_data.note
         
         db.commit()
+        db.refresh(record)
+        snap_a = {
+            "vehicle_id": record.vehicle_id,
+            "user_id": record.user_id,
+            "performed_at": record.performed_at,
+            "mileage": record.mileage,
+            "description": record.description,
+            "price": record.price,
+            "category": record.category,
+            "note": record.note,
+        }
+        if admin_change_table_exists(db) and snap_b != snap_a:
+            nid = _notify_customer_id_for_record(db, record)
+            if nid:
+                parts: List[str] = []
+                if snap_b.get("mileage") != snap_a.get("mileage"):
+                    parts.append(
+                        f"Nájezd (km): {snap_b.get('mileage')} → {snap_a.get('mileage')}"
+                    )
+                if snap_b.get("description") != snap_a.get("description"):
+                    parts.append("Popis záznamu byl upraven.")
+                if snap_b.get("performed_at") != snap_a.get("performed_at"):
+                    parts.append("Datum provedení bylo změněno.")
+                if snap_b.get("price") != snap_a.get("price"):
+                    parts.append(f"Cena: {snap_b.get('price')} → {snap_a.get('price')}")
+                if snap_b.get("category") != snap_a.get("category"):
+                    parts.append(f"Kategorie: {snap_b.get('category')} → {snap_a.get('category')}")
+                if snap_b.get("note") != snap_a.get("note"):
+                    parts.append("Poznámka k záznamu byla upravena.")
+                if snap_b.get("vehicle_id") != snap_a.get("vehicle_id"):
+                    parts.append("Záznam byl přeřazen na jiné vozidlo.")
+                if snap_b.get("user_id") != snap_a.get("user_id"):
+                    parts.append("U vazby záznamu na uživatele došlo ke změně.")
+                if parts:
+                    v = db.query(Vehicle).filter(Vehicle.id == record.vehicle_id).first()
+                    vl = _admin_vehicle_short_label(v) if v else f"ID {record.vehicle_id}"
+                    record_admin_customer_change(
+                        db,
+                        customer_id=nid,
+                        admin_email=email,
+                        change_key="service_record.updated",
+                        summary_line=f"Úprava servisního záznamu u vozidla „{vl}“",
+                        detail_text="\n".join(parts),
+                        payload={"record_id": record.id},
+                    )
+                    db.commit()
         log_developer_action(
             db,
             developer_email=email,
@@ -3999,39 +6952,192 @@ def delete_record(
     email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db)
 ):
-    """Smazání servisního záznamu"""
+    """Archivuje servisní záznam (soft-delete). Obnova přes POST /records/{record_id}/restore."""
     try:
         record = db.query(ServiceRecord).filter(ServiceRecord.id == record_id).first()
         if not record:
             raise HTTPException(status_code=404, detail="Záznam nenalezen")
-        audit_payload = {
-            "record_id": record.id,
-            "tenant_id": record.tenant_id,
-            "vehicle_id": record.vehicle_id,
-            "user_id": record.user_id,
-        }
-        
-        db.delete(record)
+        if bool(getattr(record, "is_deleted", False)):
+            return {"message": "Záznam je již archivovaný", "recoverable": True}
+
+        nid = _notify_customer_id_for_record(db, record)
+        v = db.query(Vehicle).filter(Vehicle.id == record.vehicle_id).first()
+        vl = _admin_vehicle_short_label(v) if v else f"ID {record.vehicle_id}"
+        desc_snip = (record.description or "")[:400] or None
+
+        before_snapshot = service_record_audit_snapshot(record)
+        record.is_deleted = True
+        record.deleted_at = datetime.utcnow()
+        record.deleted_by_user_id = None
+        record.deletion_reason = "admin_developer_delete"
+        after_snapshot = service_record_audit_snapshot(record)
+        prev_json, _ = snapshot_json_and_hash(before_snapshot)
+        new_json, snap_hash = snapshot_json_and_hash(after_snapshot)
+        record.snapshot_hash = snap_hash
+
+        db.add(
+            ServiceRecordAuditLog(
+                tenant_id=record.tenant_id,
+                service_record_id=record.id,
+                vehicle_id=record.vehicle_id,
+                changed_by_user_id=None,
+                action="delete",
+                previous_snapshot_json=prev_json,
+                new_snapshot_json=new_json,
+                snapshot_hash=snap_hash,
+                change_reason="admin_developer_delete",
+            )
+        )
+        write_global_audit_log(
+            db,
+            entity_type="service_record",
+            entity_id=int(record_id),
+            action="service_record_archive_admin",
+            actor_user_id=None,
+            actor_role="developer_admin",
+            tenant_id=int(record.tenant_id),
+            metadata={
+                "vehicle_id": int(record.vehicle_id),
+                "admin_email": email,
+                "cause": "admin_api_archive",
+                "recoverable": True,
+            },
+        )
         db.commit()
+
+        if admin_change_table_exists(db) and nid:
+            record_admin_customer_change(
+                db,
+                customer_id=nid,
+                admin_email=email,
+                change_key="service_record.archived",
+                summary_line=f"Archivován servisní záznam u vozidla „{vl}“",
+                detail_text=desc_snip,
+                payload={"record_id": record_id},
+            )
+            db.commit()
+
         log_developer_action(
             db,
             developer_email=email,
             request=request,
             action_type="record.delete",
             target_resource=f"record:{record_id}",
-            parameters=audit_payload,
+            parameters={
+                "record_id": record.id,
+                "tenant_id": record.tenant_id,
+                "vehicle_id": record.vehicle_id,
+                "user_id": record.user_id,
+                "cause": "developer_admin_soft_archive",
+                "recoverable": True,
+                "record_snapshot_before": before_snapshot,
+            },
             status_code=200,
         )
-        
-        return {"message": "Záznam byl smazán"}
-        
+
+        return {
+            "message": "Servisní záznam byl archivován (lze obnovit v sekci Záznamy / archivované záznamy).",
+            "recoverable": True,
+        }
+
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při mazání záznamu: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Chyba při archivaci záznamu: {str(e)}")
+
+
+@router.post("/records/{record_id}/restore")
+def restore_deleted_service_record(
+    record_id: int,
+    request: FastAPIRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Obnoví archivovaný servisní záznam."""
+    try:
+        record = db.query(ServiceRecord).filter(ServiceRecord.id == record_id).first()
+        if not record:
+            raise HTTPException(status_code=404, detail="Záznam nenalezen")
+        if not bool(getattr(record, "is_deleted", False)):
+            return {"message": "Záznam není archivovaný"}
+
+        nid = _notify_customer_id_for_record(db, record)
+        v = db.query(Vehicle).filter(Vehicle.id == record.vehicle_id).first()
+        vl = _admin_vehicle_short_label(v) if v else f"ID {record.vehicle_id}"
+
+        before_snapshot = service_record_audit_snapshot(record)
+        record.is_deleted = False
+        record.deleted_at = None
+        record.deleted_by_user_id = None
+        record.deletion_reason = None
+        after_snapshot = service_record_audit_snapshot(record)
+        prev_json, _ = snapshot_json_and_hash(before_snapshot)
+        new_json, snap_hash = snapshot_json_and_hash(after_snapshot)
+        record.snapshot_hash = snap_hash
+
+        db.add(
+            ServiceRecordAuditLog(
+                tenant_id=record.tenant_id,
+                service_record_id=record.id,
+                vehicle_id=record.vehicle_id,
+                changed_by_user_id=None,
+                action="restore",
+                previous_snapshot_json=prev_json,
+                new_snapshot_json=new_json,
+                snapshot_hash=snap_hash,
+                change_reason="admin_developer_restore",
+            )
+        )
+        write_global_audit_log(
+            db,
+            entity_type="service_record",
+            entity_id=int(record_id),
+            action="service_record_restore_admin",
+            actor_user_id=None,
+            actor_role="developer_admin",
+            tenant_id=int(record.tenant_id),
+            metadata={"vehicle_id": int(record.vehicle_id), "admin_email": email},
+        )
+        db.commit()
+
+        if admin_change_table_exists(db) and nid:
+            record_admin_customer_change(
+                db,
+                customer_id=nid,
+                admin_email=email,
+                change_key="service_record.restored",
+                summary_line=f"Obnoven servisní záznam u vozidla „{vl}“",
+                payload={"record_id": record_id},
+            )
+            db.commit()
+
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="record.restore",
+            target_resource=f"record:{record_id}",
+            parameters={
+                "record_id": record.id,
+                "tenant_id": record.tenant_id,
+                "vehicle_id": record.vehicle_id,
+                "cause": "developer_admin_restore",
+            },
+            status_code=200,
+        )
+
+        return {"message": "Servisní záznam byl obnoven"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Chyba při obnově záznamu: {str(e)}")
 
 
 # ============= REMINDERS CRUD (ADMIN) =============
@@ -4049,6 +7155,16 @@ def update_reminder_admin(
         reminder = db.query(Reminder).filter(Reminder.id == reminder_id).first()
         if not reminder:
             raise HTTPException(status_code=404, detail="Připomínka nenalezena")
+
+        cust_id = int(reminder.customer_id)
+        snap_b = {
+            "vehicle_id": reminder.vehicle_id,
+            "type": reminder.type,
+            "text": reminder.text,
+            "due_date": reminder.due_date,
+            "is_manual": reminder.is_manual,
+            "is_completed": reminder.is_completed,
+        }
 
         if reminder_data.vehicle_id is not None:
             if reminder_data.vehicle_id <= 0:
@@ -4070,6 +7186,26 @@ def update_reminder_admin(
             apply_reminder_completion_update(reminder, reminder_data.is_completed)
 
         db.commit()
+        db.refresh(reminder)
+        snap_a = {
+            "vehicle_id": reminder.vehicle_id,
+            "type": reminder.type,
+            "text": reminder.text,
+            "due_date": reminder.due_date,
+            "is_manual": reminder.is_manual,
+            "is_completed": reminder.is_completed,
+        }
+        if admin_change_table_exists(db) and snap_b != snap_a:
+            record_admin_customer_change(
+                db,
+                customer_id=cust_id,
+                admin_email=email,
+                change_key="reminder.updated",
+                summary_line="Připomínka byla upravena administrátorem",
+                detail_text=f"ID připomínky: {reminder.id}",
+                payload={"before": snap_b, "after": snap_a},
+            )
+            db.commit()
         log_developer_action(
             db,
             developer_email=email,
@@ -4107,6 +7243,7 @@ def delete_reminder_admin(
         reminder = db.query(Reminder).filter(Reminder.id == reminder_id).first()
         if not reminder:
             raise HTTPException(status_code=404, detail="Připomínka nenalezena")
+        cust_id = int(reminder.customer_id)
         audit_payload = {
             "reminder_id": reminder.id,
             "tenant_id": reminder.tenant_id,
@@ -4116,6 +7253,16 @@ def delete_reminder_admin(
 
         db.delete(reminder)
         db.commit()
+        if admin_change_table_exists(db):
+            record_admin_customer_change(
+                db,
+                customer_id=cust_id,
+                admin_email=email,
+                change_key="reminder.deleted",
+                summary_line="Připomínka byla smazána administrátorem",
+                detail_text=f"ID připomínky: {reminder_id}",
+            )
+            db.commit()
         log_developer_action(
             db,
             developer_email=email,
@@ -4151,6 +7298,17 @@ def update_reservation_admin(
         if not reservation:
             raise HTTPException(status_code=404, detail="Rezervace nenalezena")
 
+        cust_id = int(reservation.customer_id)
+        snap_b = {
+            "service_id": reservation.service_id,
+            "vehicle_id": reservation.vehicle_id,
+            "service_type": reservation.service_type,
+            "note": reservation.note,
+            "start_datetime": reservation.start_datetime,
+            "end_datetime": reservation.end_datetime,
+            "status": reservation.status,
+        }
+
         if reservation_data.service_id is not None:
             service = db.query(Customer).filter(Customer.id == reservation_data.service_id).first()
             if not service:
@@ -4182,6 +7340,27 @@ def update_reservation_admin(
             reservation.status = normalized_status
 
         db.commit()
+        db.refresh(reservation)
+        snap_a = {
+            "service_id": reservation.service_id,
+            "vehicle_id": reservation.vehicle_id,
+            "service_type": reservation.service_type,
+            "note": reservation.note,
+            "start_datetime": reservation.start_datetime,
+            "end_datetime": reservation.end_datetime,
+            "status": reservation.status,
+        }
+        if admin_change_table_exists(db) and snap_b != snap_a:
+            record_admin_customer_change(
+                db,
+                customer_id=cust_id,
+                admin_email=email,
+                change_key="reservation.updated",
+                summary_line="Rezervace byla upravena administrátorem",
+                detail_text=f"ID rezervace: {reservation.id}",
+                payload={"before": snap_b, "after": snap_a},
+            )
+            db.commit()
         log_developer_action(
             db,
             developer_email=email,
@@ -4220,6 +7399,7 @@ def delete_reservation_admin(
         reservation = db.query(Reservation).filter(Reservation.id == reservation_id).first()
         if not reservation:
             raise HTTPException(status_code=404, detail="Rezervace nenalezena")
+        cust_id = int(reservation.customer_id)
         audit_payload = {
             "reservation_id": reservation.id,
             "tenant_id": reservation.tenant_id,
@@ -4231,6 +7411,16 @@ def delete_reservation_admin(
 
         db.delete(reservation)
         db.commit()
+        if admin_change_table_exists(db):
+            record_admin_customer_change(
+                db,
+                customer_id=cust_id,
+                admin_email=email,
+                change_key="reservation.deleted",
+                summary_line="Rezervace byla smazána administrátorem",
+                detail_text=f"ID rezervace: {reservation_id}",
+            )
+            db.commit()
         log_developer_action(
             db,
             developer_email=email,
@@ -4761,6 +7951,100 @@ def init_default_admin_settings(
         raise HTTPException(status_code=500, detail=f"Chyba při inicializaci výchozích nastavení: {str(e)}")
 
 
+@router.get("/settings/system-notifications-overview")
+def settings_system_notifications_overview(
+    limit: int = 50,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Přehled oznámení pro administraci Nastavení: řádky v DB + náhled aktivního oznámení z konfigurace údržby.
+    Dostupné pro admin i developer_admin (na rozdíl od samostatného broadcastu v Control Center).
+    """
+    assert_module_ready(db, "system_notifications", detail_prefix="Systémová oznámení nejsou připravená")
+
+    safe_limit = max(1, min(limit, 100))
+    rows = (
+        db.query(SystemNotification)
+        .order_by(SystemNotification.created_at.desc(), SystemNotification.id.desc())
+        .limit(safe_limit)
+        .all()
+    )
+    database_items = [
+        {
+            "id": row.id,
+            "target_type": row.target_type,
+            "target_value": row.target_value,
+            "title": row.title,
+            "message": row.message,
+            "message_kind": notification_message_kind(row.message),
+            "severity": row.severity,
+            "starts_at": to_iso_datetime(row.starts_at),
+            "expires_at": to_iso_datetime(row.expires_at),
+            "is_active": bool(row.is_active),
+            "created_by_email": row.created_by_email,
+            "created_at": to_iso_datetime(row.created_at),
+        }
+        for row in rows
+    ]
+
+    rt_settings = load_runtime_settings()
+    runtime_preview = build_maintenance_runtime_notification_item(rt_settings)
+
+    return {
+        "database_items": database_items,
+        "database_count": len(database_items),
+        "runtime_maintenance_preview": runtime_preview,
+        "runtime_maintenance_active": runtime_preview is not None,
+    }
+
+
+@router.post("/settings/system-notifications/{notification_id}/deactivate")
+def deactivate_settings_system_notification(
+    notification_id: int,
+    request: FastAPIRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Skryje systémové oznámení z aplikace (is_active=false). Pouze řádky z databáze (kladné ID).
+    """
+    if notification_id <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Virtuální oznámení z konfigurace údržby nelze takto vypnout – použijte výše přepínač „Oznámení o údržbě“.",
+        )
+    assert_module_ready(db, "system_notifications", detail_prefix="Systémová oznámení nejsou připravená")
+
+    row = db.query(SystemNotification).filter(SystemNotification.id == notification_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Oznámení nenalezeno")
+
+    if not row.is_active:
+        return {"message": "Oznámení již bylo vypnuto", "id": notification_id, "already_inactive": True}
+
+    row.is_active = False
+    db.commit()
+    db.refresh(row)
+
+    log_developer_action(
+        db,
+        developer_email=email,
+        request=request,
+        action_type="notifications.deactivate",
+        target_resource=f"system_notifications:{notification_id}",
+        parameters={
+            "title": row.title,
+            "message_snippet": (row.message or "")[:240],
+            "target_type": row.target_type,
+            "target_value": row.target_value,
+        },
+        result="success",
+        status_code=200,
+    )
+    return {"message": "Oznámení bylo vypnuto", "id": notification_id}
+
+
 # ============= DEVELOPER CONTROL CENTER =============
 
 @router.get("/control-center/capabilities")
@@ -4860,6 +8144,51 @@ def get_control_center_health(
         if db_path and db_path.exists():
             db_file_size = db_path.stat().st_size
 
+        from src.modules.vehicle_hub.routers_v1.license_status import (
+            _detect_recurring_url_version,
+            _load_comgate_config,
+            _load_subscription_runtime_config,
+        )
+
+        billing_cfg = _load_comgate_config()
+        billing_runtime_cfg = _load_subscription_runtime_config()
+        recurring_url = str(billing_runtime_cfg.get("recurring_url") or "")
+        recurring_url_version = _detect_recurring_url_version(recurring_url)
+        recurring_warning = None
+        if recurring_url_version == "v2.0":
+            recurring_warning = (
+                "Aktivní recurring URL míří na v2.0 endpoint. Současná implementace používá Merchant API "
+                "form-urlencoded flow, kde oficiální dokumentace očekává v1.0/recurring."
+            )
+
+        subscriptions_with_auto_renew = (
+            db.query(func.count(LicenseSubscription.id))
+            .filter(LicenseSubscription.auto_renew_enabled.is_(True))
+            .scalar()
+            or 0
+        )
+        recurring_ready_count = (
+            db.query(func.count(LicenseSubscription.id))
+            .filter(LicenseSubscription.recurring_ready.is_(True))
+            .scalar()
+            or 0
+        )
+        subscriptions_missing_init_recurring_id = (
+            db.query(func.count(LicenseSubscription.id))
+            .filter(
+                LicenseSubscription.auto_renew_enabled.is_(True),
+                (LicenseSubscription.init_recurring_id.is_(None) | (LicenseSubscription.init_recurring_id == "")),
+            )
+            .scalar()
+            or 0
+        )
+        last_recurring_row = (
+            db.query(LicenseSubscription.last_recurring_attempt_at, LicenseSubscription.last_recurring_result)
+            .filter(LicenseSubscription.last_recurring_attempt_at.isnot(None))
+            .order_by(LicenseSubscription.last_recurring_attempt_at.desc(), LicenseSubscription.id.desc())
+            .first()
+        )
+
         return {
             "components": {
                 "api": {"status": "ok"},
@@ -4868,6 +8197,23 @@ def get_control_center_health(
                     "status": "ok" if (payment_enabled and payment_merchant) else "warning",
                     "enabled": payment_enabled,
                     "merchant_configured": payment_merchant,
+                    "billing_diagnostics": {
+                        "COMGATE_ENABLED": bool(billing_cfg.get("enabled")),
+                        "COMGATE_TEST_MODE": bool(billing_cfg.get("test_mode")),
+                        "COMGATE_CREATE_URL": str(billing_cfg.get("create_url") or ""),
+                        "COMGATE_STATUS_URL": str(billing_cfg.get("status_url") or ""),
+                        "COMGATE_RECURRING_URL": recurring_url,
+                        "recurring_url_version_detected": recurring_url_version,
+                        "recurring_enabled_by_config": bool(billing_runtime_cfg.get("recurring_enabled", True)),
+                        "recurring_ready_count": int(recurring_ready_count),
+                        "subscriptions_with_auto_renew": int(subscriptions_with_auto_renew),
+                        "subscriptions_missing_init_recurring_id": int(subscriptions_missing_init_recurring_id),
+                        "last_recurring_attempt_at": (
+                            last_recurring_row[0].isoformat() if last_recurring_row and last_recurring_row[0] else None
+                        ),
+                        "last_recurring_result": last_recurring_row[1] if last_recurring_row else None,
+                        "warning": recurring_warning,
+                    },
                 },
                 "email_service": {
                     "status": email_status,
@@ -5370,6 +8716,17 @@ def disable_user_account(
     increment_customer_session_version(user)
     db.commit()
 
+    if admin_change_table_exists(db):
+        record_admin_customer_change(
+            db,
+            customer_id=user.id,
+            admin_email=email,
+            change_key="account.disabled",
+            summary_line="Účet byl administrátorem pozastaven",
+            detail_text=(payload.reason or "").strip() or None,
+        )
+        db.commit()
+
     log_developer_action(
         db,
         developer_email=email,
@@ -5404,6 +8761,17 @@ def enable_user_account(
     user.disabled_at = None
     increment_customer_session_version(user)
     db.commit()
+
+    if admin_change_table_exists(db):
+        record_admin_customer_change(
+            db,
+            customer_id=user.id,
+            admin_email=email,
+            change_key="account.enabled",
+            summary_line="Účet byl administrátorem znovu aktivován",
+            detail_text=(payload.reason or "").strip() or None,
+        )
+        db.commit()
 
     log_developer_action(
         db,
@@ -5478,6 +8846,17 @@ def reset_user_password_admin(
     increment_customer_session_version(user)
     db.commit()
 
+    if admin_change_table_exists(db):
+        record_admin_customer_change(
+            db,
+            customer_id=user.id,
+            admin_email=email,
+            change_key="account.password_reset",
+            summary_line="Heslo bylo administrátorem resetováno",
+            detail_text="Nové heslo z bezpečnostních důvodů do e-mailu neuvádíme.",
+        )
+        db.commit()
+
     log_developer_action(
         db,
         developer_email=email,
@@ -5506,7 +8885,7 @@ def update_user_license_admin(
     db: Session = Depends(get_db),
 ):
     user = _load_user_for_control_action(db, user_id)
-    plan = normalize_license_plan(payload.plan)
+    plan = normalize_license_plan(payload.plan, user.role)
     status = normalize_license_status(payload.status)
     source = (payload.source or "").strip().lower() or "developer_override"
 
@@ -5518,6 +8897,10 @@ def update_user_license_admin(
     if not license_row:
         raise HTTPException(status_code=500, detail="Licence tenantu nebyla nalezena")
 
+    plan_before = license_row.plan
+    status_before = license_row.status
+    valid_before = license_row.valid_to
+
     if plan:
         upgrade_license_plan(db, user.tenant_id, plan)
         db.refresh(license_row)
@@ -5528,6 +8911,28 @@ def update_user_license_admin(
         license_row.valid_to = payload.valid_to
     db.commit()
     db.refresh(license_row)
+
+    if admin_change_table_exists(db):
+        detail_parts: List[str] = []
+        if str(plan_before or "") != str(license_row.plan or ""):
+            detail_parts.append(f"Plán: {plan_before} → {license_row.plan}")
+        if str(status_before or "") != str(license_row.status or ""):
+            detail_parts.append(f"Stav: {status_before} → {license_row.status}")
+        if valid_before != license_row.valid_to:
+            detail_parts.append(
+                f"Platnost do: {to_iso_datetime(valid_before)} → {to_iso_datetime(license_row.valid_to)}"
+            )
+        if detail_parts:
+            record_admin_customer_change(
+                db,
+                customer_id=user.id,
+                admin_email=email,
+                change_key="license.control_center",
+                summary_line="Úprava licence administrátorem (Control Center)",
+                detail_text="\n".join(detail_parts),
+                payload={"tenant_id": user.tenant_id, "source": source},
+            )
+            db.commit()
 
     try:
         write_global_audit_log(
@@ -6686,6 +10091,7 @@ def list_control_center_notifications(
                 "target_value": row.target_value,
                 "title": row.title,
                 "message": row.message,
+                "message_kind": notification_message_kind(row.message),
                 "severity": row.severity,
                 "starts_at": to_iso_datetime(row.starts_at),
                 "expires_at": to_iso_datetime(row.expires_at),
@@ -6710,9 +10116,10 @@ def broadcast_system_notification(
     Interní broadcast (bez OS shell commandů): uloží oznámení do append-only logu.
     Frontend může log číst a zobrazovat.
     """
-    message = str(payload.message or "").strip()
-    if len(message) < 3:
-        raise HTTPException(status_code=400, detail="Zpráva musí mít alespoň 3 znaky")
+    try:
+        message = prepare_broadcast_notification_storage_message(payload.message or "", rich=bool(payload.rich))
+    except HTTPException:
+        raise
 
     severity = normalize_broadcast_severity(payload.severity)
     target_type, target_value = normalize_notification_target(payload.target_type, payload.target_value)
@@ -6728,6 +10135,8 @@ def broadcast_system_notification(
         "timestamp": datetime.utcnow().isoformat(),
         "title": (payload.title or "").strip() or None,
         "message": message,
+        "message_kind": notification_message_kind(message),
+        "rich": bool(payload.rich),
         "severity": severity,
         "target_type": target_type,
         "target_value": target_value,
@@ -6760,7 +10169,9 @@ def broadcast_system_notification(
         action_type="notifications.broadcast",
         target_resource="system_notifications",
         parameters={
-            "message": message,
+            "message": message[:2400],
+            "message_kind": notification_message_kind(message),
+            "rich": bool(payload.rich),
             "title": event.get("title"),
             "severity": severity,
             "target_type": target_type,

@@ -59,7 +59,86 @@ def test_vehicle_listing_uses_ownership_source_of_truth(db_session) -> None:
 
     current_user = SimpleNamespace(email=owner.email, tenant_id=tenant.id, id=owner.id)
     vehicles = vehicles_router.get_vehicles(current_user=current_user, db=db_session)
-    assert [item.id for item in vehicles] == [vehicle.id]
+    assert [item["id"] for item in vehicles] == [vehicle.id]
+
+
+def test_get_vehicles_merges_legacy_user_email_vehicles_when_ownership_exists(db_session) -> None:
+    """
+    Dřív se legacy vozidla (jen user_email) načetla jen při nulovém vehicle_ownership.
+    Pokud tedy existovalo alespoň jedno vozidlo s ownership, vozidlo pouze s user_email
+    (bez ownership řádku) se v aplikaci nezobrazilo.
+    """
+    tenant = Tenant(name="Merge Legacy Tenant", license_key="merge-legacy-tenant-key")
+    owner = Customer(
+        tenant_id=1,
+        email="merge-legacy@example.com",
+        password_hash="hash",
+        role="user",
+    )
+    db_session.add(tenant)
+    db_session.flush()
+    owner.tenant_id = tenant.id
+    db_session.add(owner)
+    db_session.flush()
+
+    v1 = VehicleModel(
+        tenant_id=tenant.id,
+        user_email=owner.email,
+        nickname="With ownership",
+        stk_valid_until=date(2030, 1, 1),
+    )
+    v2 = VehicleModel(
+        tenant_id=tenant.id,
+        user_email=owner.email,
+        nickname="Legacy email only",
+        stk_valid_until=date(2030, 1, 1),
+    )
+    db_session.add_all([v1, v2])
+    db_session.flush()
+    ensure_vehicle_owner_assignment(db_session, vehicle=v1, owner=owner, assigned_by_customer_id=owner.id)
+    db_session.commit()
+
+    current_user = SimpleNamespace(email=owner.email, tenant_id=tenant.id, id=owner.id)
+    vehicles = vehicles_router.get_vehicles(current_user=current_user, db=db_session)
+    assert {item["id"] for item in vehicles} == {v1.id, v2.id}
+
+
+def test_get_vehicles_includes_ownership_when_only_vehicle_tenant_matches(db_session) -> None:
+    """
+    Aktivní ownership může mít jiné tenant_id než zákazník; zdroj pravdy pro „je v mém tenantu“ je vehicles.tenant_id.
+    """
+    t_a = Tenant(name="Tenant A", license_key="tenant-a-key")
+    t_b = Tenant(name="Tenant B", license_key="tenant-b-key")
+    db_session.add_all([t_a, t_b])
+    db_session.flush()
+
+    owner = Customer(
+        tenant_id=t_a.id,
+        email="tenant-mismatch@example.com",
+        password_hash="hash",
+        role="user",
+    )
+    db_session.add(owner)
+    db_session.flush()
+
+    vehicle = VehicleModel(
+        tenant_id=t_a.id,
+        user_email=owner.email,
+        nickname="Superb Mismatch",
+        stk_valid_until=date(2030, 1, 1),
+    )
+    db_session.add(vehicle)
+    db_session.flush()
+    own_row = ensure_vehicle_owner_assignment(
+        db_session, vehicle=vehicle, owner=owner, assigned_by_customer_id=owner.id
+    )
+    # Simulace rozjetého záznamu: řádek ownership patří jinému tenantu než vozidlo/účet
+    own_row.tenant_id = t_b.id
+    db_session.commit()
+
+    current_user = SimpleNamespace(email=owner.email, tenant_id=t_a.id, id=owner.id)
+    found = vehicles_router.get_vehicles(current_user=current_user, db=db_session)
+    assert {item["id"] for item in found} == {vehicle.id}
 
 
 def test_vehicle_create_creates_primary_ownership_assignment(db_session) -> None:

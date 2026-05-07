@@ -14,6 +14,7 @@ class LicensePlan(str, Enum):
     FREE = "FREE"
     BASIC = "BASIC"
     PREMIUM = "PREMIUM"
+    LIFETIME = "LIFETIME"  # admin-only, beze subscription / Comgate
 
 
 class LicenseStatus(str, Enum):

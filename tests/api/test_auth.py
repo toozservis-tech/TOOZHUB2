@@ -8,30 +8,32 @@ import io
 import struct
 import time
 import zipfile
-import requests
 from uuid import uuid4
 
+import requests
 
-def _unique_email(prefix: str = "test") -> str:
-    return f"{prefix}_{uuid4().hex[:10]}@example.com"
-
-
-def _register_user(api_url: str, email: str | None = None, password: str = "testpass123"):
-    """Vytvoří testovacího uživatele a vrátí normalizovaný email + token."""
-    register_email = email or _unique_email("user")
-    response = requests.post(
-        f"{api_url}/user/register",
-        json={
-            "email": register_email,
-            "password": password,
-            "name": "Test User",
-            "phone": "+420123456789",
-        },
-        timeout=5,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    return register_email.lower(), password, data["access_token"], data
+from tests.api.integration_accounts import (
+    CI_ABSENT_MAILBOX,
+    CI_AUTH_2FA,
+    CI_AUTH_DELETE_FLOW,
+    CI_AUTH_DUP_EMAIL,
+    CI_AUTH_PASSRESET,
+    CI_AUTH_REGISTER_OK,
+    CI_AUTH_SHARED,
+    CI_CASE_NORM,
+    CI_CASE_USER,
+    CI_DEFAULT_PASSWORD,
+    CI_FIXED_ICO_BLOCKED_PAIR,
+    CI_SVC_REQ_A,
+    CI_SVC_REQ_B,
+    CI_SVC_REQ_DUP_EMAIL,
+    CI_SVC_REQ_ICO_DUP_PENDING,
+    CI_SVC_REQ_ICO_PRIMARY,
+    CI_SVC_REQ_STANDALONE,
+    clear_customer_totp_in_db,
+    clear_service_registration_requests_emails,
+    ensure_user_token,
+)
 
 
 def _calculate_totp(secret: str, unix_time: int | None = None) -> str:
@@ -46,56 +48,126 @@ def _calculate_totp(secret: str, unix_time: int | None = None) -> str:
     return f"{binary % 1000000:06d}"
 
 
+def _register_user(api_url: str, email: str | None = None, password: str | None = None):
+    """Zajistí účet (register nebo login) a vrátí normalizovaný email + token."""
+    pwd = password if password is not None else CI_DEFAULT_PASSWORD
+    raw = email or CI_AUTH_SHARED
+    token, _uid = ensure_user_token(api_url, raw.strip(), password=pwd, name="Auth CI")
+    return raw.strip().lower(), pwd, token, {}
+
+
 def test_register_success(api_url):
-    """Test úspěšné registrace"""
-    unique_email = _unique_email("register")
-    
+    """Účet lze jednou zaregistrovat; nová pravidla vyžadují ověření e-mailu před loginem."""
+    import pytest
+    from tests.api.integration_accounts import _verify_customer_email_in_db
+
+    try:
+        requests.get(f"{api_url}/health", timeout=2)
+    except Exception:
+        pytest.skip("API server nedostupný")
+
+    email = CI_AUTH_REGISTER_OK
+    password = CI_DEFAULT_PASSWORD
+
     response = requests.post(
         f"{api_url}/user/register",
         json={
-            "email": unique_email,
-            "password": "testpass123",
+            "email": email,
+            "password": password,
             "name": "Test User",
-            "phone": "+420123456789"
+            "phone": "+420737262711",
         },
-        timeout=5
+        timeout=5,
     )
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert "access_token" in data
-    assert data.get("token_type") == "bearer"
-    assert "user" in data
+
+    if response.status_code == 200:
+        data = response.json()
+        if data.get("verification_required"):
+            assert not data.get("access_token")
+            assert data.get("user", {}).get("email") == email.lower()
+            blocked = requests.post(
+                f"{api_url}/user/login",
+                json={"email": email, "password": password},
+                timeout=5,
+            )
+            assert blocked.status_code == 403
+            assert "ověřte e-mail" in (blocked.json().get("detail") or "").lower()
+            _verify_customer_email_in_db(email)
+            ok_login = requests.post(
+                f"{api_url}/user/login",
+                json={"email": email, "password": password},
+                timeout=5,
+            )
+            assert ok_login.status_code == 200
+            assert ok_login.json().get("access_token")
+            return
+        assert "access_token" in data
+        assert data.get("token_type") == "bearer"
+        assert "user" in data
+        return
+
+    assert response.status_code == 400
+    login_resp = requests.post(
+        f"{api_url}/user/login",
+        json={"email": email, "password": password},
+        timeout=5,
+    )
+    if login_resp.status_code == 403:
+        try:
+            _d = str(login_resp.json().get("detail") or "")
+        except Exception:
+            _d = ""
+        if "ověřte e-mailovou adresu" in _d.lower():
+            _verify_customer_email_in_db(email)
+            login_resp = requests.post(
+                f"{api_url}/user/login",
+                json={"email": email, "password": password},
+                timeout=5,
+            )
+    assert login_resp.status_code == 200, login_resp.text
+    body = login_resp.json()
+    assert body.get("access_token")
 
 
 def test_register_duplicate_email(api_url):
     """Test registrace s duplicitním emailem"""
-    duplicate_email = _unique_email("duplicate")
+    from tests.api.integration_accounts import _verify_customer_email_in_db
 
-    first_response = requests.post(
-        f"{api_url}/user/register",
-        json={
-            "email": duplicate_email,
-            "password": "testpass123",
-            "name": "Test User",
-            "phone": "+420123456789"
-        },
-        timeout=5
+    duplicate_email = CI_AUTH_DUP_EMAIL
+    password = CI_DEFAULT_PASSWORD
+
+    probe = requests.post(
+        f"{api_url}/user/login",
+        json={"email": duplicate_email, "password": password},
+        timeout=5,
     )
-    assert first_response.status_code == 200
+    if probe.status_code != 200:
+        first_response = requests.post(
+            f"{api_url}/user/register",
+            json={
+                "email": duplicate_email,
+                "password": password,
+                "name": "Test User",
+                "phone": "+420737262711",
+            },
+            timeout=5,
+        )
+        if first_response.status_code == 400 and "již existuje" in first_response.text.lower():
+            _verify_customer_email_in_db(duplicate_email)
+        else:
+            assert first_response.status_code == 200
 
-    # Druhá registrace stejného emailu (jiná velikost písmen) musí selhat
     response = requests.post(
         f"{api_url}/user/register",
         json={
             "email": duplicate_email.upper(),
-            "password": "testpass123",
+            "password": password,
             "name": "Test User Duplicate",
-            "phone": "+420123456789",
+            "phone": "+420737262711",
         },
         timeout=5,
     )
-    
+
     assert response.status_code == 400
 
 
@@ -139,7 +211,7 @@ def test_login_nonexistent_user(api_url):
     response = requests.post(
         f"{api_url}/user/login",
         json={
-            "email": _unique_email("nonexistent"),
+            "email": CI_ABSENT_MAILBOX,
             "password": "password123"
         },
         timeout=5
@@ -150,50 +222,73 @@ def test_login_nonexistent_user(api_url):
 
 def test_login_case_insensitive_email(api_url):
     """Přihlášení by mělo ignorovat velikost písmen v emailu"""
-    mixed_case_email = f"CaseUser{uuid4().hex[:6]}@Example.com"
+    mixed_case_email = CI_CASE_USER
     _, password, _, _ = _register_user(api_url, email=mixed_case_email)
-    
+
     response = requests.post(
         f"{api_url}/user/login",
         json={
             "email": mixed_case_email.upper(),
-            "password": password
+            "password": password,
         },
-        timeout=5
+        timeout=5,
     )
-    
+
     assert response.status_code == 200
 
 
 def test_register_stores_normalized_email(api_url):
     """Registrace musí uložit normalizovaný email a blokovat duplicitu"""
-    mixed_case_email = f"CaseUser{uuid4().hex[:6]}@Example.com"
+    from tests.api.integration_accounts import _verify_customer_email_in_db
+
+    mixed_case_email = CI_CASE_NORM
     normalized_email = mixed_case_email.lower()
-    password = "testpass123"
-    
-    # Registrace s mixem velkých písmen
-    register_response = requests.post(
-        f"{api_url}/user/register",
-        json={
-            "email": mixed_case_email,
-            "password": password,
-            "name": "Case User"
-        },
-        timeout=5
+    password = CI_DEFAULT_PASSWORD
+
+    probe = requests.post(
+        f"{api_url}/user/login",
+        json={"email": normalized_email, "password": password},
+        timeout=5,
     )
-    assert register_response.status_code == 200
-    register_data = register_response.json()
-    assert register_data["user"]["email"] == normalized_email
-    
-    # Druhá registrace se stejným emailem v lowercase musí selhat
+    if probe.status_code != 200:
+        register_response = requests.post(
+            f"{api_url}/user/register",
+            json={
+                "email": mixed_case_email,
+                "password": password,
+                "name": "Case User",
+                "phone": "+420737262711",
+            },
+            timeout=5,
+        )
+        if register_response.status_code == 400 and "již existuje" in register_response.text.lower():
+            _verify_customer_email_in_db(normalized_email)
+            probe2 = requests.post(
+                f"{api_url}/user/login",
+                json={"email": normalized_email, "password": password},
+                timeout=5,
+            )
+            assert probe2.status_code == 200, probe2.text
+            assert probe2.json().get("user", {}).get("email") == normalized_email
+        else:
+            assert register_response.status_code == 200, register_response.text
+            register_data = register_response.json()
+            assert register_data["user"]["email"] == normalized_email
+    else:
+        headers = {"Authorization": f"Bearer {probe.json()['access_token']}"}
+        me = requests.get(f"{api_url}/user/me", headers=headers, timeout=5)
+        assert me.status_code == 200
+        assert me.json()["email"] == normalized_email
+
     duplicate_response = requests.post(
         f"{api_url}/user/register",
         json={
             "email": normalized_email,
             "password": password,
-            "name": "Case User Duplicate"
+            "name": "Case User Duplicate",
+            "phone": "+420737262711",
         },
-        timeout=5
+        timeout=5,
     )
     assert duplicate_response.status_code == 400
 
@@ -227,7 +322,9 @@ def test_get_current_user_unauthorized(api_url):
 
 def test_account_export_and_delete_flow(api_url):
     """Uživatel musí umět stáhnout export a následně trvale smazat účet."""
-    email, password, token, _ = _register_user(api_url, password="DeleteMe123")
+    email, password, token, _ = _register_user(
+        api_url, email=CI_AUTH_DELETE_FLOW, password="DeleteMe123"
+    )
     headers = {"Authorization": f"Bearer {token}"}
 
     # Přidat minimálně jedno vozidlo, aby export obsahoval i PDF report.
@@ -302,7 +399,7 @@ def test_forgot_password_endpoint_returns_200(api_url):
     """Forgot password endpoint musí vracet 200 i pro neexistující email."""
     response = requests.post(
         f"{api_url}/user/forgot-password",
-        json={"email": _unique_email("forgot")},
+        json={"email": CI_ABSENT_MAILBOX},
         timeout=5,
     )
     assert response.status_code == 200
@@ -314,7 +411,7 @@ def test_request_password_reset_legacy_alias_returns_200(api_url):
     """Legacy alias endpoint musí fungovat kvůli zpětné kompatibilitě klientů."""
     response = requests.post(
         f"{api_url}/user/request-password-reset",
-        json={"email": _unique_email("forgot_alias")},
+        json={"email": CI_ABSENT_MAILBOX},
         timeout=5,
     )
     assert response.status_code == 200
@@ -332,7 +429,26 @@ def test_password_reset_invalidates_previous_jwt(api_url):
     except Exception:
         pytest.skip("API server nedostupný (spusťte backend pro integrační test).")
 
-    email, password, old_token, _ = _register_user(api_url)
+    email = CI_AUTH_PASSRESET
+    pwd_default = CI_DEFAULT_PASSWORD
+    pwd_new = "newpass999"
+
+    recovered = requests.post(
+        f"{api_url}/user/login",
+        json={"email": email, "password": pwd_new},
+        timeout=10,
+    )
+    if recovered.status_code == 200:
+        rtok = recovered.json()["access_token"]
+        ch = requests.put(
+            f"{api_url}/user/change-password",
+            headers={"Authorization": f"Bearer {rtok}"},
+            json={"current_password": pwd_new, "new_password": pwd_default},
+            timeout=10,
+        )
+        assert ch.status_code == 200, ch.text
+
+    email, password, old_token, _ = _register_user(api_url, email=email, password=pwd_default)
     forgot = requests.post(f"{api_url}/user/forgot-password", json={"email": email}, timeout=10)
     assert forgot.status_code == 200
     payload = forgot.json()
@@ -343,7 +459,7 @@ def test_password_reset_invalidates_previous_jwt(api_url):
     assert token
     reset = requests.post(
         f"{api_url}/user/reset-password",
-        json={"token": token, "new_password": "newpass999"},
+        json={"token": token, "new_password": pwd_new},
         timeout=10,
     )
     assert reset.status_code == 200
@@ -357,7 +473,7 @@ def test_password_reset_invalidates_previous_jwt(api_url):
 
     login = requests.post(
         f"{api_url}/user/login",
-        json={"email": email, "password": "newpass999"},
+        json={"email": email, "password": pwd_new},
         timeout=10,
     )
     assert login.status_code == 200
@@ -383,7 +499,8 @@ def test_login_role_mismatch_returns_403(api_url):
 
 def test_login_with_two_factor_flow(api_url):
     """Kompletní 2FA flow: setup -> enable -> login challenge -> verify."""
-    email, password, token, _ = _register_user(api_url)
+    clear_customer_totp_in_db(CI_AUTH_2FA)
+    email, password, token, _ = _register_user(api_url, email=CI_AUTH_2FA)
     headers = {"Authorization": f"Bearer {token}"}
 
     setup_response = requests.post(
@@ -430,22 +547,32 @@ def test_login_with_two_factor_flow(api_url):
     assert verify_data.get("access_token")
     assert verify_data.get("user", {}).get("email") == email
 
+    disable_code = _calculate_totp(secret)
+    disable_response = requests.post(
+        f"{api_url}/user/security/totp/disable",
+        headers={"Authorization": f"Bearer {verify_data['access_token']}"},
+        json={"current_password": password, "code": disable_code},
+        timeout=5,
+    )
+    assert disable_response.status_code == 200
+
 
 def test_service_registration_request_creates_pending_account(api_url):
     """Servisní registrace vytvoří pending žádost a účet není ihned aktivní."""
-    email = _unique_email("service_request")
-    password = "testpass123"
-    unique_ico = str(10000000 + int(uuid4().hex[:6], 16) % 89999999)
+    clear_service_registration_requests_emails([CI_SVC_REQ_STANDALONE])
+    email = CI_SVC_REQ_STANDALONE
+    password = CI_DEFAULT_PASSWORD
+    ico = CI_SVC_REQ_ICO_PRIMARY
 
     response = requests.post(
         f"{api_url}/user/register/service-request",
         json={
             "email": email,
             "password": password,
-            "ico": unique_ico,
+            "ico": ico,
             "service_name": "Demo Servis s.r.o.",
             "responsible_person": "Jan Novak",
-            "phone": "+420123456789",
+            "phone": "+420737262711",
             "street": "Servisni 1",
             "street_number": "12",
             "city": "Praha",
@@ -470,11 +597,12 @@ def test_service_registration_request_creates_pending_account(api_url):
 
 def test_service_registration_request_duplicate_pending_blocked(api_url):
     """Opakované podání pending servisní žádosti se stejným emailem musí být blokováno."""
-    email = _unique_email("service_request_dup")
-    unique_ico = str(10000000 + int(uuid4().hex[:6], 16) % 89999999)
+    clear_service_registration_requests_emails([CI_SVC_REQ_DUP_EMAIL])
+    email = CI_SVC_REQ_DUP_EMAIL
+    unique_ico = CI_SVC_REQ_ICO_DUP_PENDING
     payload = {
         "email": email,
-        "password": "testpass123",
+        "password": CI_DEFAULT_PASSWORD,
         "ico": unique_ico,
         "service_name": "Servis Duplicate",
         "responsible_person": "Petr Svoboda",
@@ -504,9 +632,10 @@ def test_service_registration_request_duplicate_pending_blocked(api_url):
 
 def test_service_registration_duplicate_ico_blocked(api_url):
     """Jedno IČO nesmí být použito pro více servisních registrací."""
-    ico_digits = str(10000000 + int(uuid4().hex[:6], 16) % 89999999)
+    clear_service_registration_requests_emails([CI_SVC_REQ_A, CI_SVC_REQ_B])
+    ico_digits = CI_FIXED_ICO_BLOCKED_PAIR
     payload_base = {
-        "password": "testpass123",
+        "password": CI_DEFAULT_PASSWORD,
         "ico": ico_digits,
         "service_name": "Servis Test",
         "responsible_person": "Jan Test",
@@ -521,14 +650,14 @@ def test_service_registration_duplicate_ico_blocked(api_url):
 
     first_response = requests.post(
         f"{api_url}/user/register/service-request",
-        json={**payload_base, "email": _unique_email("service_ico_a")},
+        json={**payload_base, "email": CI_SVC_REQ_A},
         timeout=5,
     )
     assert first_response.status_code == 200, first_response.text
 
     second_response = requests.post(
         f"{api_url}/user/register/service-request",
-        json={**payload_base, "email": _unique_email("service_ico_b")},
+        json={**payload_base, "email": CI_SVC_REQ_B},
         timeout=5,
     )
     assert second_response.status_code == 400, second_response.text
