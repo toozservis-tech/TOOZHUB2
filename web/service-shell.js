@@ -28,6 +28,166 @@
   const dataTtlMs = 30000;
   const autoRefreshMs = 60000;
   const defaultSection = 'dashboard';
+
+  /** Jednoduché monochromatické SVG ikony (stroke) — bez emoji, odlišné od jiných produktů. */
+  const NAV_ICON_SVGS = {
+    pin: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M12 17v5M9 10l-3 8 8-3 8-8-5-5-8 8zM14 6l4 4"/></svg>',
+    users:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    chat: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>',
+    invoice:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path fill="none" stroke="currentColor" stroke-width="1.75" d="M14 2v6h6M8 13h8M8 17h8M10 9H8"/></svg>',
+    folder:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    attach:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
+    bank: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M3 21h18M3 10h18M5 10V6l7-3 7 3v4M9 21V10M15 21V10"/></svg>',
+    user: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle fill="none" stroke="currentColor" stroke-width="1.75" cx="12" cy="7" r="4"/></svg>',
+    calendar:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect fill="none" stroke="currentColor" stroke-width="1.75" x="3" y="4" width="18" height="18" rx="2"/><path fill="none" stroke="currentColor" stroke-width="1.75" d="M16 2v4M8 2v4M3 10h18"/></svg>',
+    stack: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path fill="none" stroke="currentColor" stroke-width="1.75" d="M14 2v6h6M10 15h4M10 11h8"/></svg>',
+    notebook:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path fill="none" stroke="currentColor" stroke-width="1.75" d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2zM8 7h8M8 11h8"/></svg>',
+    export:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
+    institution:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M3 21h18M6 21V7l6-4 6 4v14M9 21v-4h6v4"/></svg>',
+    settings:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle fill="none" stroke="currentColor" stroke-width="1.75" cx="12" cy="12" r="3"/><path fill="none" stroke="currentColor" stroke-width="1.75" d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>',
+    palette:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-4-4 4 4 0 0 1-4-4 4 4 0 0 1 4-2z"/><circle cx="6.5" cy="11.5" r=".75" fill="currentColor" stroke="none"/><circle cx="9.5" cy="7.5" r=".75" fill="currentColor" stroke="none"/><circle cx="14.5" cy="7.5" r=".75" fill="currentColor" stroke="none"/><circle cx="17.5" cy="11.5" r=".75" fill="currentColor" stroke="none"/></svg>',
+    help: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle fill="none" stroke="currentColor" stroke-width="1.75" cx="12" cy="12" r="10"/><path fill="none" stroke="currentColor" stroke-width="1.75" d="M9.09 9a3 3 0 1 1 5.83 1c0 2-3 2-3 4M12 17h.01"/></svg>',
+    company:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M3 21h18M5 21V7l8-4v18M13 21V11h8v10"/></svg>',
+  };
+
+  function navRailIconSvg(key) {
+    const k = String(key || '').toLowerCase();
+    return NAV_ICON_SVGS[k] || NAV_ICON_SVGS.pin;
+  }
+
+  /** Levý navigační sloupec (účet servisu): ikona, štítek, volitelné submenu. */
+  const NAV_RAIL_CONFIG = [
+    { group: 'prehled', navIcon: 'pin', label: 'Přehled', section: 'dashboard', submenu: null },
+    { group: 'zakaznici', navIcon: 'users', label: 'Zákazníci', section: 'clients', submenu: null },
+    { group: 'zpravy', navIcon: 'chat', label: 'Zprávy', section: 'messages', submenu: null },
+    {
+      group: 'fakturace',
+      navIcon: 'invoice',
+      label: 'Fakturace',
+      section: 'invoices',
+      submenu: [
+        ['invoices', 'Všechny faktury'],
+        ['invoice-new', 'Nová faktura'],
+        ['quotes', 'Cenové nabídky'],
+        ['credit-notes', 'Opravné doklady'],
+        ['vat-overview', 'Přehled DPH'],
+      ],
+    },
+    {
+      group: 'doklady',
+      navIcon: 'folder',
+      label: 'Doklady',
+      section: 'documents',
+      submenu: [
+        ['documents', 'Všechny doklady'],
+        ['document-new', 'Nový doklad'],
+        ['documents-archive', 'Archiv'],
+      ],
+    },
+    {
+      group: 'interni-dokumenty',
+      navIcon: 'attach',
+      label: 'Interní dokumenty',
+      section: 'interni-dokumenty',
+      submenu: [
+        ['interni-dokumenty', 'Přehled'],
+        ['interni-dokument-novy', 'Nový dokument'],
+        ['interni-dokument-sablony', 'Šablony'],
+      ],
+    },
+    {
+      group: 'platby',
+      navIcon: 'bank',
+      label: 'Platby',
+      section: 'bank-statements',
+      submenu: [
+        ['bank-statements', 'Bankovní výpisy'],
+        ['payment-orders', 'Příkazy k úhradě'],
+        ['payments-settings', 'Nastavení plateb'],
+      ],
+    },
+    {
+      group: 'payroll-zam',
+      navIcon: 'user',
+      label: 'Zaměstnanci',
+      section: 'payroll-employees',
+      submenu: [
+        ['payroll-employees', 'Všichni'],
+        ['payroll-employee-new', 'Nový zaměstnanec'],
+      ],
+    },
+    {
+      group: 'payroll-doch',
+      navIcon: 'calendar',
+      label: 'Docházka',
+      section: 'payroll-attendance',
+      submenu: [['payroll-attendance', 'Přehled měsíce']],
+    },
+    {
+      group: 'payroll-listy',
+      navIcon: 'stack',
+      label: 'Mzdové listy',
+      section: 'payroll-payslips',
+      submenu: [
+        ['payroll-payslips', 'Všichni'],
+        ['payroll-payslip-new', 'Nový list'],
+      ],
+    },
+    {
+      group: 'payroll-denik',
+      navIcon: 'notebook',
+      label: 'Mzdový deník',
+      section: 'payroll-journal',
+      submenu: null,
+    },
+    {
+      group: 'payroll-jmhz',
+      navIcon: 'export',
+      label: 'JMHZ/ČSSZ',
+      section: 'payroll-cssz',
+      submenu: [
+        ['payroll-cssz', 'Seznam podání'],
+        ['payroll-cssz-new', 'Nové podání'],
+      ],
+    },
+    {
+      group: 'payroll-uct',
+      navIcon: 'institution',
+      label: 'Účtárny',
+      section: 'payroll-offices',
+      submenu: [
+        ['payroll-offices', 'Seznam'],
+        ['payroll-office-new', 'Nová účtárna'],
+      ],
+    },
+    {
+      group: 'nastaveni',
+      navIcon: 'settings',
+      label: 'Nastavení',
+      section: 'team',
+      submenu: [
+        ['team', 'Firma'],
+        ['settings-users', 'Uživatelé'],
+        ['settings-integrations', 'Integrace'],
+        ['settings-access', 'Přístupová práva'],
+      ],
+    },
+    { group: 'firemni-vzhled', navIcon: 'palette', label: 'Firemní vzhled', section: 'firemni-vzhled', submenu: null },
+    { group: 'napoveda', navIcon: 'help', label: 'Nápověda', section: 'help-center', submenu: null },
+    { group: 'firma', navIcon: 'company', label: 'Firma', section: 'company-profile', submenu: null },
+  ];
+
   const serviceSections = new Set([
     'dashboard',
     'clients',
@@ -38,7 +198,71 @@
     'reservations',
     'reminders',
     'team',
+    ...NAV_RAIL_CONFIG.flatMap((e) => [e.section, ...(e.submenu || []).map((row) => row[0])]),
+    'payroll-employee-detail',
   ]);
+
+  const SECTION_TO_NAV_GROUP = (() => {
+    const m = new Map();
+    NAV_RAIL_CONFIG.forEach((e) => {
+      m.set(e.section, e.group);
+      (e.submenu || []).forEach(([sid]) => {
+        m.set(sid, e.group);
+      });
+    });
+    m.set('payroll-employee-detail', 'payroll-zam');
+    return m;
+  })();
+
+  let navOutsideCloseBound = false;
+
+  function closeNavFlyouts() {
+    try {
+      document.querySelectorAll('.service-nav-slot.is-submenu-open').forEach((el) => el.classList.remove('is-submenu-open'));
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  function bindNavOutsideCloseOnce() {
+    if (navOutsideCloseBound) return;
+    navOutsideCloseBound = true;
+    document.addEventListener(
+      'pointerdown',
+      (e) => {
+        try {
+          if (!e.target.closest('.service-nav')) closeNavFlyouts();
+        } catch (err) {
+          /* ignore */
+        }
+      },
+      true,
+    );
+  }
+
+  function handleNavRailClick(event, group) {
+    const entry = NAV_RAIL_CONFIG.find((item) => item.group === group);
+    if (!entry) return;
+    const hasSub = Array.isArray(entry.submenu) && entry.submenu.length > 0;
+    if (hasSub && isMobileViewport()) {
+      event.preventDefault();
+      const slot = event.currentTarget && event.currentTarget.closest ? event.currentTarget.closest('.service-nav-slot') : null;
+      if (!slot) return;
+      const willOpen = !slot.classList.contains('is-submenu-open');
+      closeNavFlyouts();
+      if (willOpen) slot.classList.add('is-submenu-open');
+      return;
+    }
+    navigate(entry.section);
+  }
+
+  function navRailSlotActive(entry) {
+    if (!entry.submenu) {
+      return state.activeSection === entry.section;
+    }
+    return SECTION_TO_NAV_GROUP.get(state.activeSection) === entry.group;
+  }
+
   const legacyTargets = [
     { key: 'mainNavbar', selector: '#mainNavbar' },
     { key: 'dashboard', selector: '#dashboard' },
@@ -94,6 +318,22 @@
     customerSearchMeta: null,
     customerSearchLoading: false,
     customerSearchError: '',
+    addCustomerQuickLinkDraft: { email: '', note: '' },
+    createCustomerDraft: {
+      first_name: '',
+      last_name: '',
+      email: '',
+      phone: '',
+      internal_note: '',
+      consent_basis: 'service_customer_intake',
+      consent_note:
+        'Založení účtu zákazníka při návštěvě servisu — evidence vozidla a servisní historie v aplikaci Správa vozidel.',
+      create_vehicle: false,
+      vehicle_vin: '',
+      vehicle_plate: '',
+      vehicle_brand: '',
+      vehicle_model: '',
+    },
     vehicleLookupQuery: '',
     vehicleLookupResults: [],
     vehicleLookupMeta: null,
@@ -104,6 +344,12 @@
     activeVehicle: null,
     modal: null,
     quoteListPrefs: { status: 'all', sort: 'created_at', order: 'desc' },
+    payrollPeriod: { year: new Date().getFullYear(), month: new Date().getMonth() + 1 },
+    payrollData: null,
+    payrollLoading: false,
+    payrollError: '',
+    payrollDetailEmployeeId: null,
+    payrollEmployeeDetailCache: null,
   };
 
   state.modal = createEmptyModalState();
@@ -389,6 +635,7 @@
     return openModal({
       key: `${config.entityType}-detail-${entityId}`,
       entityType: config.entityType,
+      entityId,
       kicker: config.kicker,
       title: config.title,
       description: config.description,
@@ -518,6 +765,7 @@
       actions: {},
       actionKey: '',
       context: {},
+      entityId: 0,
     };
   }
 
@@ -899,6 +1147,7 @@
       state.mounted = true;
       state.theme = safeStorageGet(themeKey) === 'dark' ? 'dark' : 'light';
       applyTheme(state.theme);
+      bindNavOutsideCloseOnce();
       render();
       if (!options.skipLoad) {
         load(false, false).catch((error) => {
@@ -1036,6 +1285,7 @@
   }
 
   function navigate(section, options = {}) {
+    closeNavFlyouts();
     const next = mapSection(section) || defaultSection;
     state.accountMenuOpen = false;
     state.mobileNavOpen = false;
@@ -1048,11 +1298,372 @@
       }
     }
     render();
+    if (String(next || '').startsWith('payroll-')) {
+      window.setTimeout(() => {
+        try {
+          window.serviceShell.refreshPayrollModule(true);
+        } catch (e) {
+          console.warn('[SERVICE_SHELL] payroll refresh failed', e);
+        }
+      }, 0);
+    }
     if (typeof window.syncWorkspaceHistoryFromServiceShell === 'function') {
       window.syncWorkspaceHistoryFromServiceShell(next);
     }
     if (options.forceLoad) {
       load(true, false);
+    }
+  }
+
+  function payrollResolveApiBase() {
+    if (typeof window.getApiBaseUrl === 'function') {
+      const u = window.getApiBaseUrl();
+      if (u) return String(u).replace(/\/$/, '');
+    }
+    return String(window.location.origin || '').replace(/\/$/, '');
+  }
+
+  function payrollAuthHeadersForBlob() {
+    const headers = {
+      Accept: '*/*',
+      'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
+    };
+    if (typeof window.location !== 'undefined') {
+      headers.Referer = window.location.origin + window.location.pathname;
+    }
+    let tok = null;
+    try {
+      tok =
+        (typeof localStorage !== 'undefined' && localStorage.getItem('accessToken')) ||
+        (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('accessToken')) ||
+        (typeof localStorage !== 'undefined' && localStorage.getItem('token'));
+    } catch (e) {
+      tok = null;
+    }
+    if (tok) headers.Authorization = `Bearer ${tok}`;
+    else if (window.currentUser && window.currentUser.email) headers['X-User-Email'] = window.currentUser.email;
+    return headers;
+  }
+
+  function payrollTriggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'download';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  async function payrollFetchBlob(path) {
+    const base = payrollResolveApiBase();
+    const url = `${base}${path}`;
+    const r = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: payrollAuthHeadersForBlob(),
+      cache: 'no-cache',
+      mode: 'cors',
+    });
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      try {
+        const ct = r.headers.get('content-type') || '';
+        if (ct.includes('application/json')) {
+          const j = await r.json();
+          msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail || j);
+        } else {
+          const t = await r.text();
+          if (t) msg = t.slice(0, 500);
+        }
+      } catch (e) {
+        /* ignore */
+      }
+      throw new Error(msg);
+    }
+    let filename = 'download';
+    const cd = r.headers.get('Content-Disposition');
+    if (cd) {
+      const m = /filename\*?=(?:UTF-8'')?["']?([^"';]+)/i.exec(cd);
+      if (m && m[1]) filename = decodeURIComponent(m[1].trim());
+    }
+    const blob = await r.blob();
+    return { blob, filename };
+  }
+
+  async function refreshPayrollModule() {
+    if (typeof window.apiCall !== 'function') {
+      state.payrollError = 'Chybí window.apiCall — nelze načíst mzdy.';
+      render();
+      return;
+    }
+    const y = state.payrollPeriod.year;
+    const m = state.payrollPeriod.month;
+    state.payrollLoading = true;
+    state.payrollError = '';
+    render();
+    try {
+      const [offices, employees, attendance, payslips, journal, jmhz] = await Promise.all([
+        window.apiCall('/api/service/payroll/offices', 'GET'),
+        window.apiCall('/api/service/payroll/employees', 'GET'),
+        window.apiCall(`/api/service/payroll/attendance?year=${y}&month=${m}`, 'GET'),
+        window.apiCall(`/api/service/payroll/payslips?year=${y}&month=${m}`, 'GET'),
+        window.apiCall(`/api/service/payroll/journal?year=${y}&month=${m}`, 'GET'),
+        window.apiCall('/api/service/payroll/jmhz', 'GET'),
+      ]);
+      state.payrollData = { offices, employees, attendance, payslips, journal, jmhz };
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Chyba načtení mzdového modulu');
+      console.warn('[SERVICE_SHELL] refreshPayrollModule', error);
+    } finally {
+      state.payrollLoading = false;
+      render();
+    }
+  }
+
+  function setPayrollPeriod(year, month) {
+    state.payrollPeriod.year = Math.max(2000, Math.min(2100, Number(year) || new Date().getFullYear()));
+    state.payrollPeriod.month = Math.max(1, Math.min(12, Number(month) || 1));
+    render();
+    refreshPayrollModule();
+  }
+
+  async function patchPayrollAttendance(attendanceId, patch) {
+    if (typeof window.apiCall !== 'function') return;
+    try {
+      await window.apiCall(`/api/service/payroll/attendance/${Number(attendanceId)}`, 'PUT', patch);
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Úprava docházky selhala');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function generatePayrollAttendanceMonth() {
+    if (typeof window.apiCall !== 'function') return;
+    const y = state.payrollPeriod.year;
+    const m = state.payrollPeriod.month;
+    try {
+      await window.apiCall(`/api/service/payroll/attendance/generate?year=${y}&month=${m}`, 'POST');
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Generování docházky selhalo');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function generatePayrollPayslipsMonth() {
+    if (typeof window.apiCall !== 'function') return;
+    const y = state.payrollPeriod.year;
+    const m = state.payrollPeriod.month;
+    try {
+      await window.apiCall(`/api/service/payroll/payslips/generate?year=${y}&month=${m}`, 'POST');
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Generování listů selhalo');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function recalculatePayrollPayslip(payslipId) {
+    if (typeof window.apiCall !== 'function') return;
+    try {
+      await window.apiCall(`/api/service/payroll/payslips/${Number(payslipId)}/recalculate`, 'POST');
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Přepočet selhal');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function closePayrollPayslip(payslipId) {
+    if (typeof window.apiCall !== 'function') return;
+    try {
+      await window.apiCall(`/api/service/payroll/payslips/${Number(payslipId)}/close`, 'POST');
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Uzavření listu selhalo');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function refreshPayrollJournal() {
+    if (typeof window.apiCall !== 'function') return;
+    const y = state.payrollPeriod.year;
+    const m = state.payrollPeriod.month;
+    try {
+      await window.apiCall(`/api/service/payroll/journal/refresh?year=${y}&month=${m}`, 'POST');
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Obnova deníku selhala');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function exportPayrollJournalCsv() {
+    const y = state.payrollPeriod.year;
+    const m = state.payrollPeriod.month;
+    try {
+      const { blob, filename } = await payrollFetchBlob(
+        `/api/service/payroll/journal/export-payments?year=${y}&month=${m}`,
+      );
+      payrollTriggerDownload(blob, filename || `payroll_payments_${y}_${String(m).padStart(2, '0')}.csv`);
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Export CSV selhal');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function createPayrollJmhz(officeIdRaw) {
+    if (typeof window.apiCall !== 'function') return;
+    const oid = Number(officeIdRaw);
+    if (!oid) {
+      state.payrollError = 'Vyberte účtárnu.';
+      render();
+      return;
+    }
+    const y = state.payrollPeriod.year;
+    const m = state.payrollPeriod.month;
+    try {
+      await window.apiCall(`/api/service/payroll/jmhz?office_id=${oid}&year=${y}&month=${m}&typ=hlaseni`, 'POST');
+      navigate('payroll-cssz');
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Založení podání selhalo');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function buildPayrollJmhzZip(submissionId) {
+    if (typeof window.apiCall !== 'function') return;
+    try {
+      await window.apiCall(`/api/service/payroll/jmhz/${Number(submissionId)}/build-zip`, 'POST');
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Sestavení ZIP selhalo');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function downloadPayrollJmhz(submissionId) {
+    try {
+      const { blob, filename } = await payrollFetchBlob(`/api/service/payroll/jmhz/${Number(submissionId)}/download`);
+      payrollTriggerDownload(blob, filename || `jmhz_${submissionId}.zip`);
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Stažení ZIP selhalo');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function submitPayrollOfficeCreate(event) {
+    event.preventDefault();
+    if (typeof window.apiCall !== 'function') return;
+    const fd = new FormData(event.target);
+    const name = String(fd.get('name') || '').trim();
+    try {
+      await window.apiCall('/api/service/payroll/offices', 'POST', {
+        name,
+        vs_cssz: String(fd.get('vs_cssz') || '').trim() || null,
+        datovka_id: String(fd.get('datovka_id') || '').trim() || null,
+        is_active: true,
+      });
+      navigate('payroll-offices');
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Uložení účtárny selhalo');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function submitPayrollEmployeeCreate(event) {
+    event.preventDefault();
+    if (typeof window.apiCall !== 'function') return;
+    const fd = new FormData(event.target);
+    const primaryOfficeRaw = fd.get('primary_office_id');
+    try {
+      await window.apiCall('/api/service/payroll/employees', 'POST', {
+        first_name: String(fd.get('first_name') || '').trim(),
+        last_name: String(fd.get('last_name') || '').trim(),
+        birth_date: String(fd.get('birth_date') || ''),
+        primary_office_id: primaryOfficeRaw ? Number(primaryOfficeRaw) : null,
+        hourly_gross_rate: fd.get('hourly_gross_rate') ? Number(fd.get('hourly_gross_rate')) : null,
+        contract_hours_per_week: fd.get('contract_hours_per_week') ? Number(fd.get('contract_hours_per_week')) : null,
+        health_insurance_code: String(fd.get('health_insurance_code') || '').trim() || null,
+        email: String(fd.get('email') || '').trim() || null,
+        phone: String(fd.get('phone') || '').trim() || null,
+        birth_number: String(fd.get('birth_number') || '').trim() || null,
+        iban: String(fd.get('iban') || '').trim() || null,
+      });
+      navigate('payroll-employees');
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Uložení zaměstnance selhalo');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function openPayrollEmployeeDetail(employeeId) {
+    if (typeof window.apiCall !== 'function') return;
+    try {
+      state.payrollEmployeeDetailCache = await window.apiCall(
+        `/api/service/payroll/employees/${Number(employeeId)}`,
+        'GET',
+      );
+      state.payrollDetailEmployeeId = Number(employeeId);
+      navigate('payroll-employee-detail');
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Načtení zaměstnance selhalo');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
+    }
+  }
+
+  async function submitPayrollEmployeeUpdate(event) {
+    event.preventDefault();
+    if (typeof window.apiCall !== 'function') return;
+    const id = state.payrollDetailEmployeeId;
+    if (!id) return;
+    const fd = new FormData(event.target);
+    const primaryOfficeRaw = fd.get('primary_office_id');
+    try {
+      await window.apiCall(`/api/service/payroll/employees/${Number(id)}`, 'PUT', {
+        first_name: String(fd.get('first_name') || '').trim(),
+        last_name: String(fd.get('last_name') || '').trim(),
+        birth_date: String(fd.get('birth_date') || ''),
+        primary_office_id: primaryOfficeRaw ? Number(primaryOfficeRaw) : null,
+        hourly_gross_rate: fd.get('hourly_gross_rate') ? Number(fd.get('hourly_gross_rate')) : null,
+        contract_hours_per_week: fd.get('contract_hours_per_week') ? Number(fd.get('contract_hours_per_week')) : null,
+        health_insurance_code: String(fd.get('health_insurance_code') || '').trim() || null,
+        email: String(fd.get('email') || '').trim() || null,
+        phone: String(fd.get('phone') || '').trim() || null,
+        is_active: (() => {
+          const cb = event.target.querySelector('input[name="is_active"]');
+          return cb ? !!cb.checked : true;
+        })(),
+      });
+      navigate('payroll-employees');
+      state.payrollDetailEmployeeId = null;
+      state.payrollEmployeeDetailCache = null;
+      await refreshPayrollModule();
+    } catch (error) {
+      state.payrollError = String(error?.message || error || 'Uložení změn selhalo');
+      render();
+      if (typeof window.showAlert === 'function') window.showAlert(state.payrollError, 'error');
     }
   }
 
@@ -1086,38 +1697,6 @@
       state.activeSection = 'dashboard';
     }
     render();
-  }
-
-  function openKpiModal(filter) {
-    state.kpiFilter = String(filter || 'all');
-    if (!['dashboard', 'work-orders'].includes(String(state.activeSection || ''))) {
-      state.activeSection = 'dashboard';
-    }
-    render();
-
-    let title = 'Všechny zakázky';
-    if (filter === 'active') title = 'Aktivní zakázky';
-    if (filter === 'awaiting') title = 'Čeká na schválení';
-    if (filter === 'today') title = 'Dnes k dokončení';
-    if (filter === 'overdue') title = 'Po termínu';
-
-    openModal({
-      title,
-      kicker: 'Přehled',
-      size: 'wide',
-      renderContent: () => {
-        const items = filteredWorkOrders();
-        return renderCardList({
-          cards: workOrderCards(items),
-          empty: 'Žádné zakázky neodpovídají vybranému filtru.',
-        });
-      },
-      renderFooter: () => `
-        <div class="service-shell-modal-footer">
-          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal()">Zavřít</button>
-        </div>
-      `
-    });
   }
 
   function openFilterSheet() {
@@ -1220,17 +1799,64 @@
     return plan ? `Licence: ${plan.toUpperCase()}` : 'Licence';
   }
 
-  function openLicenseSettings() {
+  function serviceShellNotificationsButtonHtml() {
+    return `
+          <button id="serviceShellNotificationsButton" class="service-shell-icon-btn app-notifications-button service-shell-topbar-notifications" type="button" onclick="window.toggleAppNotificationsPanel(event)" aria-label="Oznámení aplikace" aria-expanded="false" aria-controls="appNotificationsPanel" data-testid="app-notifications-button-service-shell">
+            <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false" width="22" height="22" fill="currentColor"><path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm6-6V11a6 6 0 1 0-12 0v5l-2 2v1h16v-1l-2-2Z"></path></svg>
+            <span class="app-notifications-badge" id="serviceShellNotificationsBadge" data-count="0" aria-hidden="true"></span>
+          </button>`;
+  }
+
+  async function openLicenseSettings() {
     closeAccountMenu();
-    if (typeof window.openLicenseModal === 'function') {
-      window.openLicenseModal();
-      return;
+    try {
+      if (typeof window.loadLicenseStatus === 'function') {
+        await window.loadLicenseStatus();
+      }
+    } catch (err) {
+      console.warn('[SERVICE_SHELL] openLicenseSettings: loadLicenseStatus failed', err);
     }
-    if (typeof window.openLicensePlans === 'function') {
-      window.openLicensePlans();
-      return;
+    const tryCall = (fn) => {
+      if (typeof fn !== 'function') return false;
+      try {
+        fn();
+        return true;
+      } catch (err) {
+        console.warn('[SERVICE_SHELL] openLicenseSettings: handler threw', err);
+        return false;
+      }
+    };
+    if (tryCall(window.openLicenseModal)) return;
+    if (tryCall(window.openLicensePlans)) return;
+
+    try {
+      const modal =
+        typeof window.ensureLicenseModalRoot === 'function'
+          ? window.ensureLicenseModalRoot()
+          : document.getElementById('licenseModal');
+      if (modal && typeof window.openStaticOverlayModal === 'function') {
+        if (typeof window.syncLicenseBillingButtons === 'function') window.syncLicenseBillingButtons();
+        if (typeof window.applyComgateUiConfig === 'function') {
+          const cfg = typeof window.comgateConfigCache !== 'undefined' ? window.comgateConfigCache : null;
+          window.applyComgateUiConfig(cfg);
+        }
+        if (typeof window.resetLicenseLegalConsent === 'function') window.resetLicenseLegalConsent();
+        window.openStaticOverlayModal(modal, {
+          scrollTargetSelector: '.license-modal-body',
+          focusSelector: '#licenseBillingToggle .license-billing-btn.active',
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn('[SERVICE_SHELL] openLicenseSettings: DOM fallback failed', err);
     }
-    showToast('Licence teď nejsou dostupné.', 'info');
+
+    showToast('Licenci se nepodařilo otevřít. Zkuste obnovit stránku.', 'warning');
+    console.warn('[SERVICE_SHELL] openLicenseSettings: žádný platný handler', {
+      openLicenseModal: typeof window.openLicenseModal,
+      openLicensePlans: typeof window.openLicensePlans,
+      licenseModal: !!document.getElementById('licenseModal'),
+    });
   }
 
   function openAccountSettings() {
@@ -1260,43 +1886,163 @@
     });
   }
 
+  function patchAddCustomerQuickLinkDraft(field, value) {
+    const draft = state.addCustomerQuickLinkDraft || { email: '', note: '' };
+    const v = String(value ?? '');
+    if (field === 'email') draft.email = v;
+    else if (field === 'note') draft.note = v;
+    state.addCustomerQuickLinkDraft = draft;
+  }
+
+  function refreshCustomerSearchDependentModals() {
+    if (!hasFloatingModalSupport()) return;
+    if (isModalOpen('add-customer')) {
+      renderAddCustomerModal();
+    } else if (isModalOpen('service-tools')) {
+      renderServiceToolsModal();
+    }
+  }
+
+  function buildWorkspaceCustomerSearchSectionHtml(options = {}) {
+    const {
+      heading = 'Najít existujícího zákazníka',
+      intro = 'Přesné vyhledání podle e-mailu nebo telefonu (centrální databáze účtů). Bez volného hledání podle jména.',
+      searchButtonLabel = 'Hledat zákazníka',
+      showInviteFromSearch = true,
+      extraHtml = '',
+    } = options;
+    const customerMeta = state.customerSearchMeta || {};
+    const customerRows = state.customerSearchLoading
+      ? '<div class="service-shell-empty">Vyhledávám zákazníky…</div>'
+      : state.customerSearchResults.length
+        ? state.customerSearchResults.map((item) => `
+          <div class="service-shell-list-row">
+            <div>
+              <p class="service-shell-list-title">${escape(item?.name || '-')}</p>
+              <p class="service-shell-list-note">${escape(item?.email_masked || '-')} • ${escape(item?.phone_masked || '-')} • ${escape(item?.status_label || '-')}</p>
+              ${item?.blocking_reason ? `<p class="service-shell-list-note">${escape(item.blocking_reason)}</p>` : ''}
+            </div>
+            <div class="service-shell-modal-actions">
+              ${item?.already_linked
+                ? (Number(item.customer_id) > 0
+                  ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(item.customer_id)})">Otevřít</button>`
+                  : `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.navigate('customers')">Seznam zákazníků</button>`)
+                : (item.lookup_id
+                  ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.linkCustomerFromLookup(${JSON.stringify(String(item.lookup_id))})">Požádat o propojení</button>`
+                  : `<button type="button" class="btn btn-primary" onclick="window.serviceShell.linkCustomerById(${Number(item.customer_id || 0)})">Propojit</button>`)}
+            </div>
+          </div>
+        `).join('')
+        : '<div class="service-shell-empty">Zatím žádné výsledky.</div>';
+
+    return `
+          <section class="service-shell-side-card">
+            <h3>${escape(heading)}</h3>
+            <p>${intro}</p>
+            <div class="service-shell-table-tools">
+              <input class="service-shell-search" type="search" placeholder="Přesný e-mail nebo telefon (+420…)" value="${escape(state.customerSearchQuery)}" oninput="window.serviceShell.setCustomerSearchQuery(this.value)">
+              <button type="button" class="btn btn-primary" onclick="window.serviceShell.searchCustomers()">${escape(searchButtonLabel)}</button>
+            </div>
+            ${customerMeta?.can_create_new_customer ? `<div class="service-shell-inline-alert"><span>Tento kontakt v databázi neevidujeme — můžete založit nového zákazníka níže (bez zobrazení přihlašovacích tokenů).</span></div>` : ''}
+            ${state.customerSearchError ? `<div class="service-shell-inline-error">${escape(state.customerSearchError)}</div>` : ''}
+            <div class="service-shell-list">${customerRows}</div>
+            ${showInviteFromSearch && String(state.customerSearchQuery || '').includes('@') ? '<div class="service-shell-modal-footer service-shell-modal-footer--inline"><button type="button" class="btn btn-secondary" onclick="window.serviceShell.sendInvitationFromSearch()">Zákazník nenalezen? Odeslat pozvánku</button></div>' : ''}
+            ${extraHtml || ''}
+          </section>
+    `;
+  }
+
   async function searchCustomers(queryOverride = null) {
     const query = String(queryOverride ?? state.customerSearchQuery ?? '').trim();
     state.customerSearchQuery = query;
     state.customerSearchError = '';
     state.customerSearchMeta = null;
-    if (query.length < 2) {
+    if (query.length < 3) {
       state.customerSearchResults = [];
-      return renderServiceToolsModal();
+      refreshCustomerSearchDependentModals();
+      return;
     }
     state.customerSearchLoading = true;
-    renderServiceToolsModal();
+    refreshCustomerSearchDependentModals();
     try {
-      const response = await window.apiCall(`/api/v1/services/workspace/customers/search?query=${encodeURIComponent(query)}`, 'GET');
-      state.customerSearchResults = Array.isArray(response?.items) ? response.items : [];
+      const body = query.includes('@') ? { email: query } : { phone: query };
+      const response = await window.apiCall('/api/v1/services/workspace/customers/search', 'POST', body);
       state.customerSearchMeta = response || null;
+      if (!response?.found) {
+        state.customerSearchResults = [];
+      } else {
+        const p = response.customer_preview || {};
+        state.customerSearchResults = [
+          {
+            customer_id: null,
+            lookup_id: p.lookup_id,
+            name: p.display_name_masked || 'Uživatel',
+            email_masked: p.email_masked || '-',
+            phone_masked: p.phone_masked || '-',
+            status: p.link_status === 'active' ? 'linked' : 'found',
+            status_label:
+              p.link_status === 'active'
+                ? 'Aktivní vazba'
+                : p.link_status === 'invited'
+                  ? 'Čeká na dokončení'
+                  : 'Lze propojit',
+            already_linked: p.link_status === 'active',
+            blocking_reason: null,
+          },
+        ];
+      }
     } catch (error) {
-      state.customerSearchError = error?.message || 'Vyhledání klienta selhalo.';
+      const raw = String(error?.message || error?.detail || '').trim();
+      const status = Number(error?.status || error?.statusCode || 0);
+      if (status === 409 || raw.toLowerCase().includes('různé účty')) {
+        state.customerSearchError =
+          'Bezpečnostní konflikt: zadaný e-mail a telefon patří k různým účtům. Ověřte údaje u zákazníka.';
+      } else {
+        state.customerSearchError = raw || 'Vyhledání zákazníka selhalo.';
+      }
       state.customerSearchResults = [];
       state.customerSearchMeta = null;
     } finally {
       state.customerSearchLoading = false;
-      renderServiceToolsModal();
+      refreshCustomerSearchDependentModals();
+    }
+  }
+
+  async function linkCustomerFromLookup(lookupId) {
+    const lid = String(lookupId || '').trim();
+    if (!lid) return;
+    try {
+      const response = await window.apiCall('/api/v1/services/workspace/customers/link-existing', 'POST', {
+        lookup_id: lid,
+        consent_basis: 'customer_requested_service',
+        consent_note:
+          'Zákazník projevil zájem o evidenci vozidla a komunikaci přes aplikaci Správa vozidel při návštěvě servisu.',
+        internal_service_note: null,
+      });
+      showToast(response?.message || 'Žádost odeslána.', 'success');
+      await load(true, true);
+      if (isModalOpen('service-tools') || isModalOpen('add-customer')) {
+        await searchCustomers(state.customerSearchQuery);
+      } else if (String(state.modal?.entityType || '') === 'customer') {
+        await reloadModalData();
+      }
+    } catch (error) {
+      showToast(`Propojení se nepodařilo: ${error?.message || 'Neznámá chyba'}`, 'error');
     }
   }
 
   async function linkCustomerById(customerId) {
     try {
       const response = await window.apiCall(`/api/v1/services/workspace/customers/${Number(customerId)}/link`, 'POST');
-      showToast(response?.message || 'Klient byl propojen.', 'success');
+      showToast(response?.message || 'Zákazník byl propojen.', 'success');
       await load(true, true);
-      if (isModalOpen('service-tools')) {
+      if (isModalOpen('service-tools') || isModalOpen('add-customer')) {
         await searchCustomers(state.customerSearchQuery);
       } else if (String(state.modal?.entityType || '') === 'customer') {
         await reloadModalData();
       }
     } catch (error) {
-      showToast(`Nepodařilo se propojit klienta: ${error?.message || 'Neznámá chyba'}`, 'error');
+      showToast(`Nepodařilo se propojit zákazníka: ${error?.message || 'Neznámá chyba'}`, 'error');
     }
   }
 
@@ -1314,9 +2060,284 @@
       });
       showToast(response?.message || 'Pozvánka byla připravena.', response?.email_sent ? 'success' : 'info');
       await load(true, true);
-      renderServiceToolsModal();
+      refreshCustomerSearchDependentModals();
     } catch (error) {
       showToast(`Nepodařilo se odeslat pozvánku: ${error?.message || 'Neznámá chyba'}`, 'error');
+    }
+  }
+
+  function renderAddCustomerModal() {
+    if (!hasFloatingModalSupport()) return;
+    const draft = state.addCustomerQuickLinkDraft || { email: '', note: '' };
+    const cd = state.createCustomerDraft || {};
+    const quickLinkHtml = `
+            <div style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid rgba(127,140,155,0.25);">
+              <h3>Propojit podle e-mailu účtu</h3>
+              <p>Znáte-li přihlašovací e-mail zákazníka ve Správě vozidel, propojte účet přímo. Server ověří existenci profilu — bez účtu propojení neproběhne.</p>
+              <label class="service-shell-field-label" for="serviceShellQuickLinkCustomerEmail">E-mail</label>
+              <input id="serviceShellQuickLinkCustomerEmail" class="service-shell-search" type="email" autocomplete="email" placeholder="zakaznik@email.cz" style="width:100%;box-sizing:border-box;margin-bottom:0.75rem;" value="${escape(draft.email)}" oninput="window.serviceShell.patchAddCustomerQuickLinkDraft('email', this.value)">
+              <label class="service-shell-field-label" for="serviceShellQuickLinkCustomerNote">Poznámka k vazbě (volitelné)</label>
+              <textarea id="serviceShellQuickLinkCustomerNote" class="service-shell-search" style="min-height:72px;width:100%;box-sizing:border-box;" oninput="window.serviceShell.patchAddCustomerQuickLinkDraft('note', this.value)">${escape(draft.note)}</textarea>
+              <div class="service-shell-modal-footer service-shell-modal-footer--inline" style="margin-top:0.75rem;padding:0;">
+                <button type="button" class="btn btn-primary" onclick="window.serviceShell.linkExistingCustomerByEmail()">Propojit zákazníka</button>
+              </div>
+            </div>
+    `;
+    const createHtml = `
+            <div style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid rgba(127,140,155,0.25);">
+              <h3>2) Vytvořit nového zákazníka</h3>
+              <p>Založí běžný uživatelský účet a odešle zákazníkovi e-mail s odkazem na nastavení hesla (token se zde nezobrazuje).</p>
+              <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+                <div style="flex:1;min-width:140px;">
+                  <label class="service-shell-field-label" for="serviceShellCreateCustFirst">Jméno</label>
+                  <input id="serviceShellCreateCustFirst" class="service-shell-search" style="width:100%;box-sizing:border-box;" value="${escape(cd.first_name || '')}" oninput="window.serviceShell.patchCreateCustomerDraft('first_name', this.value)">
+                </div>
+                <div style="flex:1;min-width:140px;">
+                  <label class="service-shell-field-label" for="serviceShellCreateCustLast">Příjmení</label>
+                  <input id="serviceShellCreateCustLast" class="service-shell-search" style="width:100%;box-sizing:border-box;" value="${escape(cd.last_name || '')}" oninput="window.serviceShell.patchCreateCustomerDraft('last_name', this.value)">
+                </div>
+              </div>
+              <label class="service-shell-field-label" for="serviceShellCreateCustEmail">E-mail</label>
+              <input id="serviceShellCreateCustEmail" class="service-shell-search" type="email" style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;" value="${escape(cd.email || '')}" oninput="window.serviceShell.patchCreateCustomerDraft('email', this.value)">
+              <label class="service-shell-field-label" for="serviceShellCreateCustPhone">Telefon</label>
+              <input id="serviceShellCreateCustPhone" class="service-shell-search" type="tel" style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;" value="${escape(cd.phone || '')}" oninput="window.serviceShell.patchCreateCustomerDraft('phone', this.value)">
+              <label class="service-shell-field-label" for="serviceShellCreateCustInternal">Interní poznámka servisu (volitelné)</label>
+              <textarea id="serviceShellCreateCustInternal" class="service-shell-search" style="min-height:64px;width:100%;box-sizing:border-box;" oninput="window.serviceShell.patchCreateCustomerDraft('internal_note', this.value)">${escape(cd.internal_note || '')}</textarea>
+              <label style="display:flex;align-items:center;gap:0.5rem;margin:0.75rem 0;">
+                <input type="checkbox" ${cd.create_vehicle ? 'checked' : ''} onchange="window.serviceShell.patchCreateCustomerDraft('create_vehicle', this.checked)">
+                <span>Založit zároveň vozidlo</span>
+              </label>
+              <div style="${cd.create_vehicle ? '' : 'display:none;'}">
+                <label class="service-shell-field-label" for="serviceShellCreateCustVin">VIN</label>
+                <input id="serviceShellCreateCustVin" class="service-shell-search" style="width:100%;box-sizing:border-box;" value="${escape(cd.vehicle_vin || '')}" oninput="window.serviceShell.patchCreateCustomerDraft('vehicle_vin', this.value)">
+                <label class="service-shell-field-label" for="serviceShellCreateCustPlate">SPZ</label>
+                <input id="serviceShellCreateCustPlate" class="service-shell-search" style="width:100%;box-sizing:border-box;" value="${escape(cd.vehicle_plate || '')}" oninput="window.serviceShell.patchCreateCustomerDraft('vehicle_plate', this.value)">
+                <label class="service-shell-field-label" for="serviceShellCreateCustBrand">Značka (volitelné)</label>
+                <input id="serviceShellCreateCustBrand" class="service-shell-search" style="width:100%;box-sizing:border-box;" value="${escape(cd.vehicle_brand || '')}" oninput="window.serviceShell.patchCreateCustomerDraft('vehicle_brand', this.value)">
+                <label class="service-shell-field-label" for="serviceShellCreateCustModel">Model (volitelné)</label>
+                <input id="serviceShellCreateCustModel" class="service-shell-search" style="width:100%;box-sizing:border-box;" value="${escape(cd.vehicle_model || '')}" oninput="window.serviceShell.patchCreateCustomerDraft('vehicle_model', this.value)">
+              </div>
+              <div class="service-shell-modal-footer service-shell-modal-footer--inline" style="margin-top:0.75rem;padding:0;">
+                <button type="button" class="btn btn-primary" onclick="window.serviceShell.submitCreateCustomer()">Vytvořit zákazníka a pozvat e-mailem</button>
+              </div>
+            </div>
+    `;
+    openModal({
+      key: 'add-customer',
+      entityType: 'add_customer',
+      kicker: 'Zákazníci',
+      title: 'Přidat zákazníka',
+      description: 'Najděte existující účet nebo založte nového. Náhled kontaktu je maskovaný; token z pozvánky se neukládá do UI.',
+      size: 'wide',
+      bodyClass: 'service-shell-modal-body--tools',
+      renderContent: () => `
+        <div class="service-shell-tools-grid" style="grid-template-columns:1fr;max-width:640px;">
+          ${buildWorkspaceCustomerSearchSectionHtml({
+            heading: '1) Najít existujícího zákazníka',
+            intro: 'E-mail nebo telefon (samo jméno nestačí). Při konfliktu dvou účtů zobrazíme bezpečnostní hlášku.',
+            searchButtonLabel: 'Hledat',
+            showInviteFromSearch: true,
+            extraHtml: quickLinkHtml + createHtml,
+          })}
+        </div>
+      `,
+      renderFooter: () => `
+        <div class="service-shell-modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal()">Zavřít</button>
+        </div>
+      `,
+    });
+  }
+
+  function openAddCustomerModal() {
+    state.accountMenuOpen = false;
+    state.addCustomerQuickLinkDraft = { email: '', note: '' };
+    state.createCustomerDraft = {
+      first_name: '',
+      last_name: '',
+      email: '',
+      phone: '',
+      internal_note: '',
+      consent_basis: 'service_customer_intake',
+      consent_note:
+        'Založení účtu zákazníka při návštěvě servisu — evidence vozidla a servisní historie v aplikaci Správa vozidel.',
+      create_vehicle: false,
+      vehicle_vin: '',
+      vehicle_plate: '',
+      vehicle_brand: '',
+      vehicle_model: '',
+    };
+    renderAddCustomerModal();
+  }
+
+  async function linkExistingCustomerByEmail() {
+    const draft = state.addCustomerQuickLinkDraft || { email: '', note: '' };
+    const email = String(draft.email || document.getElementById('serviceShellQuickLinkCustomerEmail')?.value || '').trim();
+    const note = String(draft.note || document.getElementById('serviceShellQuickLinkCustomerNote')?.value || '').trim();
+    if (!email || !email.includes('@')) {
+      showToast('Zadejte platný e-mail účtu zákazníka.', 'warning');
+      return;
+    }
+    try {
+      const response = await window.apiCall('/api/v1/services/workspace/customers/link-existing', 'POST', {
+        customer_email: email,
+        note: note || null,
+      });
+      showToast(response?.message || 'Zákazník byl propojen.', 'success');
+      state.addCustomerQuickLinkDraft = { email: '', note: '' };
+      await load(true, true);
+      refreshCustomerSearchDependentModals();
+    } catch (error) {
+      showToast(error?.message || 'Propojení se nepodařilo — zkuste vyhledání nebo pozvánku.', 'error');
+    }
+  }
+
+  function patchCreateCustomerDraft(field, value) {
+    const d = state.createCustomerDraft || {};
+    if (field === 'create_vehicle') {
+      d.create_vehicle = Boolean(value);
+    } else {
+      d[field] = String(value ?? '');
+    }
+    state.createCustomerDraft = d;
+    refreshCustomerSearchDependentModals();
+  }
+
+  async function submitCreateCustomer() {
+    const d = state.createCustomerDraft || {};
+    const first = String(d.first_name || '').trim();
+    const last = String(d.last_name || '').trim();
+    const em = String(d.email || document.getElementById('serviceShellCreateCustEmail')?.value || '').trim();
+    const ph = String(d.phone || document.getElementById('serviceShellCreateCustPhone')?.value || '').trim();
+    if (!first || !last) {
+      showToast('Vyplňte jméno a příjmení zákazníka.', 'warning');
+      return;
+    }
+    if (!em || !em.includes('@')) {
+      showToast('Zadejte platný e-mail zákazníka.', 'warning');
+      return;
+    }
+    if (!ph || ph.replace(/\D/g, '').length < 9) {
+      showToast('Zadejte platný telefon (min. 9 číslic).', 'warning');
+      return;
+    }
+    const internal = String(d.internal_note || document.getElementById('serviceShellCreateCustInternal')?.value || '').trim();
+    const consentBasis = String(d.consent_basis || 'service_customer_intake').trim();
+    const consentNote = String(
+      d.consent_note ||
+        'Založení účtu zákazníka při návštěvě servisu — evidence vozidla a servisní historie v aplikaci Správa vozidel.',
+    ).trim();
+    const payload = {
+      first_name: first,
+      last_name: last,
+      email: em,
+      phone: ph,
+      consent_basis: consentBasis,
+      consent_note: consentNote,
+      internal_service_note: internal || null,
+      create_vehicle: Boolean(d.create_vehicle),
+      vehicle: null,
+    };
+    if (payload.create_vehicle) {
+      const vin = String(d.vehicle_vin || document.getElementById('serviceShellCreateCustVin')?.value || '')
+        .trim()
+        .toUpperCase();
+      const plate = String(d.vehicle_plate || document.getElementById('serviceShellCreateCustPlate')?.value || '')
+        .trim()
+        .toUpperCase();
+      const brand = String(d.vehicle_brand || document.getElementById('serviceShellCreateCustBrand')?.value || '').trim();
+      const model = String(d.vehicle_model || document.getElementById('serviceShellCreateCustModel')?.value || '').trim();
+      if (!vin && !plate) {
+        showToast('Vyplňte VIN nebo SPZ vozidla, nebo vypněte volbu založit vozidlo.', 'warning');
+        return;
+      }
+      payload.vehicle = {
+        vin: vin || null,
+        plate: plate || null,
+        brand: brand || null,
+        model: model || null,
+      };
+    }
+    try {
+      const response = await window.apiCall('/api/v1/services/workspace/customers/create', 'POST', payload);
+      showToast(
+        response?.message || 'Zákazník byl vytvořen a pozván e-mailem. Čeká na dokončení registrace zákazníkem.',
+        'success',
+      );
+      state.createCustomerDraft = {
+        first_name: '',
+        last_name: '',
+        email: '',
+        phone: '',
+        internal_note: '',
+        consent_basis: 'service_customer_intake',
+        consent_note:
+          'Založení účtu zákazníka při návštěvě servisu — evidence vozidla a servisní historie v aplikaci Správa vozidel.',
+        create_vehicle: false,
+        vehicle_vin: '',
+        vehicle_plate: '',
+        vehicle_brand: '',
+        vehicle_model: '',
+      };
+      await load(true, true);
+      refreshCustomerSearchDependentModals();
+    } catch (error) {
+      showToast(error?.message || 'Založení zákazníka se nepodařilo.', 'error');
+    }
+  }
+
+  async function submitCustomerLinkNote() {
+    const id = Number(state.modal?.context?.customerId || 0);
+    if (!id) return;
+    const note = String(document.getElementById('serviceShellCustomerLinkNote')?.value || '');
+    try {
+      await window.apiCall(`/api/v1/services/workspace/customers/${id}/link`, 'PATCH', { note: note.trim() || null });
+      showToast('Poznámka k vazbě byla uložena.', 'success');
+      closeModal();
+      await load(true, true);
+      render();
+    } catch (error) {
+      showToast(error?.message || 'Uložení se nepodařilo.', 'error');
+    }
+  }
+
+  function openCustomerLinkNoteModal(customerId, currentNote) {
+    const id = Number(customerId || 0);
+    if (!id) return;
+    openModal({
+      key: 'customer-link-note',
+      entityType: 'customer_link',
+      kicker: `Zákazník #${id}`,
+      title: 'Upravit poznámku k vazbě',
+      description: 'Interní poznámka k propojení v servisním účtu. Nejde o úpravu jména ani kontaktu zákazníka v aplikaci Správa vozidel.',
+      context: { customerId: id },
+      renderContent: () => `
+        <label class="service-shell-field-label" for="serviceShellCustomerLinkNote">Poznámka</label>
+        <textarea id="serviceShellCustomerLinkNote" class="service-shell-search" style="min-height:120px;width:100%;box-sizing:border-box;">${escape(String(currentNote || ''))}</textarea>
+      `,
+      renderFooter: () => `
+        <div class="service-shell-modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal()">Zrušit</button>
+          <button type="button" class="btn btn-primary" onclick="window.serviceShell.submitCustomerLinkNote()">Uložit</button>
+        </div>
+      `,
+    });
+  }
+
+  async function unlinkCustomer(customerId) {
+    const id = Number(customerId || 0);
+    if (!id) return;
+    if (!window.confirm('Odpojit tohoto zákazníka od servisního účtu? Zmizí ze seznamu zákazníků servisu; schválené přístupy k vozidlům v aplikaci zůstávají podle rozhodnutí zákazníka.')) return;
+    try {
+      await window.apiCall(`/api/v1/services/workspace/customers/${id}/link`, 'DELETE');
+      showToast('Zákazník byl odpojen od servisu.', 'success');
+      if (String(state.modal?.entityType || '') === 'customer' && Number(state.modal?.entityId || 0) === id) {
+        closeModal();
+      }
+      await load(true, true);
+      render();
+    } catch (error) {
+      showToast(error?.message || 'Odpojení se nepodařilo.', 'error');
     }
   }
 
@@ -1426,7 +2447,7 @@
           const selected = preferred > 0 && Number(item?.id || 0) === preferred ? 'selected' : '';
           return `<option value="${Number(item.id)}" ${selected}>${escape(item.nickname || item.plate || item.vin || `Vozidlo #${Number(item.id)}`)}</option>`;
         }).join('')
-      : '<option value="">Klient nemá schválené vozidlo pro založení zakázky</option>';
+      : '<option value="">Zákazník nemá schválené vozidlo pro založení zakázky</option>';
   }
 
   async function populateCustomerVehicleSelect(selectId, customerId, options = {}) {
@@ -1471,27 +2492,7 @@
 
   function renderServiceToolsModal() {
     if (!hasFloatingModalSupport()) return;
-    const customerMeta = state.customerSearchMeta || {};
     const vehicleMeta = state.vehicleLookupMeta || {};
-    const customerRows = state.customerSearchLoading
-      ? '<div class="service-shell-empty">Vyhledávám klienty…</div>'
-      : state.customerSearchResults.length
-        ? state.customerSearchResults.map((item) => `
-          <div class="service-shell-list-row">
-            <div>
-              <p class="service-shell-list-title">${escape(item?.name || '-')}</p>
-              <p class="service-shell-list-note">${escape(item?.email_masked || '-')} • ${escape(item?.phone_masked || '-')} • ${escape(item?.status_label || '-')}</p>
-              ${item?.blocking_reason ? `<p class="service-shell-list-note">${escape(item.blocking_reason)}</p>` : ''}
-            </div>
-            <div class="service-shell-modal-actions">
-              ${item?.already_linked
-                ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(item.customer_id || 0)})">Otevřít</button>`
-                : `<button type="button" class="btn btn-primary" onclick="window.serviceShell.linkCustomerById(${Number(item.customer_id || 0)})">Propojit</button>`}
-            </div>
-          </div>
-        `).join('')
-        : '<div class="service-shell-empty">Zatím žádné výsledky.</div>';
-
     const vehicleRows = state.vehicleLookupLoading
       ? '<div class="service-shell-empty">Vyhledávám vozidla…</div>'
       : state.vehicleLookupResults.length
@@ -1531,23 +2532,18 @@
       entityType: 'toolbox',
       kicker: 'Servisní nástroje',
       title: 'Najít nebo vytvořit',
-      description: 'Vyhledávání klientů a vozidel, propojení účtů a bezpečný vstup do dalších servisních akcí.',
+      description: 'Vyhledávání zákazníků a vozidel, propojení účtů ze Správy vozidel a bezpečný vstup do dalších akcí.',
       size: 'wide',
       bodyClass: 'service-shell-modal-body--tools',
       renderContent: () => `
         <div class="service-shell-tools-grid">
-          <section class="service-shell-side-card">
-            <h3>Najít existujícího klienta</h3>
-            <p>Hledání podle e-mailu, telefonu nebo jména. Nejdřív hledat, až potom zvát nebo vytvářet vazbu.</p>
-            <div class="service-shell-table-tools">
-              <input class="service-shell-search" type="search" placeholder="email, telefon nebo jméno" value="${escape(state.customerSearchQuery)}" oninput="window.serviceShell.setCustomerSearchQuery(this.value)">
-              <button type="button" class="btn btn-primary" onclick="window.serviceShell.searchCustomers()">Hledat klienta</button>
-            </div>
-            ${customerMeta?.has_multiple_matches ? `<div class="service-shell-inline-alert"><span>Nalezeno více podobných klientů. Otevřete detail správného záznamu nebo proveďte přímé propojení.</span></div>` : ''}
-            ${state.customerSearchError ? `<div class="service-shell-inline-error">${escape(state.customerSearchError)}</div>` : ''}
-            <div class="service-shell-list">${customerRows}</div>
-            ${String(state.customerSearchQuery || '').includes('@') ? '<div class="service-shell-modal-footer service-shell-modal-footer--inline"><button type="button" class="btn btn-secondary" onclick="window.serviceShell.sendInvitationFromSearch()">Klient nenalezen? Odeslat pozvánku</button></div>' : ''}
-          </section>
+          ${buildWorkspaceCustomerSearchSectionHtml({
+            heading: 'Najít existujícího zákazníka',
+            intro: 'Hledání podle e-mailu, telefonu nebo jména. Ověříte profil v aplikaci, pak propojíte nebo pošlete pozvánku.',
+            searchButtonLabel: 'Hledat',
+            showInviteFromSearch: true,
+            extraHtml: '',
+          })}
           <section class="service-shell-side-card">
             <h3>Najít vozidlo podle VIN / SPZ</h3>
             <p>Bezpečný lookup nad existující databází vozidel zákazníků. Pokud vozidlo existuje, nabídne se detail, přístup nebo nová zakázka.</p>
@@ -1560,7 +2556,7 @@
             <div class="service-shell-list">${vehicleRows}</div>
             <div class="service-shell-modal-footer service-shell-modal-footer--inline">
               <div class="service-shell-inline-alert">
-                <span>Nové vozidlo zakládejte vždy ke konkrétnímu klientovi v detailu klienta, ne jako samostatné vozidlo servisu.</span>
+                <span>Nové vozidlo zakládejte vždy u konkrétního zákazníka v jeho detailu, ne jako samostatné vozidlo servisu.</span>
               </div>
             </div>
           </section>
@@ -1600,8 +2596,8 @@
       : [{ technician_id: Number(window.currentUser?.id || 0), name: window.currentUser?.name || window.currentUser?.email || 'Hlavní technik' }];
     const preferredOwnerId = Number(prefill.ownerId || customers[0]?.customer_id || 0);
     const ownerOptions = customers.length
-      ? customers.map((item) => `<option value="${Number(item.customer_id)}" ${Number(item.customer_id) === preferredOwnerId ? 'selected' : ''}>${escape(item.name || item.email || `Klient #${Number(item.customer_id)}`)}</option>`).join('')
-      : '<option value="">Nejsou dostupní propojení klienti</option>';
+      ? customers.map((item) => `<option value="${Number(item.customer_id)}" ${Number(item.customer_id) === preferredOwnerId ? 'selected' : ''}>${escape(item.name || item.email || `Zákazník #${Number(item.customer_id)}`)}</option>`).join('')
+      : '<option value="">Nejsou dostupní propojení zákazníci</option>';
     openModal({
       key: 'work-order-create',
       entityType: 'work_order',
@@ -1656,7 +2652,7 @@
       },
       renderContent: () => `
         <div class="service-shell-modal-toolbar">
-          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openServiceToolsModal()">Najít klienta nebo vozidlo</button>
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openServiceToolsModal()">Najít zákazníka nebo vozidlo</button>
         </div>
         <form class="service-dashboard-modal-form" onsubmit="event.preventDefault(); window.serviceShell.submitCreateWorkOrderModal();">
           <div class="service-dashboard-modal-grid cols-2">
@@ -1836,7 +2832,7 @@
       },
       renderFooter: (modal) => `
         <div class="service-shell-modal-footer">
-          ${Number(modal?.data?.customer_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(modal.data.customer_id)})">Klient</button>` : ''}
+          ${Number(modal?.data?.customer_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(modal.data.customer_id)})">Zákazník</button>` : ''}
           ${Number(modal?.data?.vehicle_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openVehicleDetailModal(${Number(modal.data.vehicle_id)})">Vozidlo</button>` : ''}
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal()">Zavřít</button>
           <button type="button" class="btn btn-primary" onclick="window.serviceShell.submitWorkOrderDetailUpdate(${id})">${modal.saving ? 'Ukládám…' : 'Uložit změny'}</button>
@@ -1918,9 +2914,9 @@
         <form class="service-dashboard-modal-form" onsubmit="event.preventDefault(); window.serviceShell.submitAddVehicleModal();">
           <div class="service-dashboard-modal-grid cols-2">
             <div class="form-group">
-              <label for="serviceShellAddVehicleCustomer">Klient</label>
+              <label for="serviceShellAddVehicleCustomer">Zákazník</label>
               <select id="serviceShellAddVehicleCustomer">
-                ${customers.map((item) => `<option value="${Number(item.customer_id)}" ${Number(item.customer_id) === preferredCustomerId ? 'selected' : ''}>${escape(item.name || item.email || `Klient #${Number(item.customer_id)}`)}</option>`).join('')}
+                ${customers.map((item) => `<option value="${Number(item.customer_id)}" ${Number(item.customer_id) === preferredCustomerId ? 'selected' : ''}>${escape(item.name || item.email || `Zákazník #${Number(item.customer_id)}`)}</option>`).join('')}
               </select>
             </div>
             <div class="form-group">
@@ -2272,6 +3268,36 @@
     }
   }
 
+  function vehicleInvoicesSection(vehicleId) {
+    const id = Number(vehicleId || 0);
+    const invoices = (Array.isArray(state.invoices) ? state.invoices : []).filter((item) => Number(item?.vehicle_id || 0) === id);
+    if (!invoices.length) {
+      return '<div class="service-shell-empty">K tomuto vozidlu zatím nejsou servisní faktury.</div>';
+    }
+    return `
+      <div class="service-shell-quote-card-list">
+        ${invoices.map((inv) => `
+          <article class="service-shell-card">
+            <div class="service-shell-card-head">
+              <div>
+                <h3 class="service-shell-card-title">${escape(inv?.invoice_number || 'Koncept')}</h3>
+                <p class="service-shell-subtitle">${escape(inv?.status_label || inv?.status || 'Koncept')}</p>
+              </div>
+              <span class="service-shell-badge ${invoiceBadgeClass(inv?.status)}">${escape(inv?.status_label || inv?.status || 'Koncept')}</span>
+            </div>
+            <div class="service-shell-card-grid">
+              <div><span>Celkem</span><strong>${escape(invoiceMoney(inv?.total || 0, inv?.currency || 'CZK'))}</strong></div>
+              <div><span>Splatnost</span><strong>${escape(inv?.due_at ? formatDateTime(inv.due_at) : '-')}</strong></div>
+            </div>
+            <div class="service-shell-card-actions">
+              <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openServiceInvoiceDetailModal(${Number(inv?.id || 0)})">Otevřít fakturu</button>
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    `;
+  }
+
   async function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -2612,10 +3638,9 @@
     return String(status || '').trim().toLowerCase();
   }
 
-  function invoiceBadgeClass(status, fakturyweb = {}) {
+  function invoiceBadgeClass(status) {
     const key = invoiceStatusKey(status);
     if (key === 'cancelled') return 'issue';
-    if (String(fakturyweb?.status || '').toLowerCase().includes('paid')) return 'completed';
     if (key === 'issued') return 'completed';
     return 'awaiting';
   }
@@ -2637,7 +3662,6 @@
       const status = invoiceStatusKey(inv?.status);
       if (filter === 'draft' && status !== 'draft') return false;
       if (filter === 'issued' && status !== 'issued') return false;
-      if (filter === 'exported' && !inv?.fakturyweb?.code) return false;
       if (filter === 'cancelled' && status !== 'cancelled') return false;
       if (!query) return true;
       const haystack = [
@@ -2646,8 +3670,6 @@
         inv?.vehicle_label,
         inv?.total,
         inv?.currency,
-        inv?.fakturyweb?.number,
-        inv?.fakturyweb?.status,
         inv?.extra?.variable_symbol,
         inv?.extra?.order_number,
       ].join(' ').toLowerCase();
@@ -2764,15 +3786,20 @@
     const tags = Array.isArray(extra.tags) ? extra.tags.join(', ') : String(extra.tags || '');
     const supplierName = extra.supplier_name || profile?.name || window.currentUser?.name || '';
     const supplierEmail = extra.supplier_email || profile?.email || window.currentUser?.email || '';
+    const profileStreet = [profile?.street, profile?.street_number].filter(Boolean).join(' ').trim();
+    const supplierStreet = extra.supplier_street || profileStreet || '';
+    const supplierCity = extra.supplier_city || profile?.city || '';
+    const supplierZip = extra.supplier_zip || profile?.zip || '';
+    const supplierPhone = extra.supplier_phone || profile?.phone || '';
     return `
       <form class="service-dashboard-modal-form service-shell-invoice-editor" onsubmit="event.preventDefault(); ${mode === 'create' ? 'window.serviceShell.submitCreateInvoiceModal()' : "window.serviceShell.runModalAction('save')"};">
         <section class="service-shell-invoice-panel service-shell-invoice-panel--accent">
           <div class="service-shell-card-head">
             <div>
               <h3 class="service-shell-card-title">Doklad</h3>
-              <p class="service-shell-subtitle">Základní údaje, platba a číslování pro FakturyWeb.</p>
+              <p class="service-shell-subtitle">Typ dokladu, platba, symboly a data — přenesou se do PDF i do přehledů.</p>
             </div>
-            <span class="service-shell-badge ${invoiceBadgeClass(invoice?.status, invoice?.fakturyweb)}">${escape(invoice?.status_label || invoice?.status || 'Koncept')}</span>
+            <span class="service-shell-badge ${invoiceBadgeClass(invoice?.status)}">${escape(invoice?.status_label || invoice?.status || 'Koncept')}</span>
           </div>
           <div class="service-dashboard-modal-grid cols-2">
             <div class="form-group">
@@ -2882,11 +3909,11 @@
               <div class="form-group"><label for="${prefix}SupplierEmail">E-mail</label><input id="${prefix}SupplierEmail" type="email" value="${escape(supplierEmail)}"></div>
               <div class="form-group"><label for="${prefix}SupplierIco">IČO</label><input id="${prefix}SupplierIco" type="text" value="${escape(extra.supplier_ico || profile?.ico || '')}"></div>
               <div class="form-group"><label for="${prefix}SupplierDic">DIČ</label><input id="${prefix}SupplierDic" type="text" value="${escape(extra.supplier_dic || profile?.dic || '')}"></div>
-              <div class="form-group"><label for="${prefix}SupplierStreet">Ulice</label><input id="${prefix}SupplierStreet" type="text" value="${escape(extra.supplier_street || '')}"></div>
-              <div class="form-group"><label for="${prefix}SupplierCity">Město</label><input id="${prefix}SupplierCity" type="text" value="${escape(extra.supplier_city || '')}"></div>
-              <div class="form-group"><label for="${prefix}SupplierZip">PSČ</label><input id="${prefix}SupplierZip" type="text" value="${escape(extra.supplier_zip || '')}"></div>
+              <div class="form-group"><label for="${prefix}SupplierStreet">Ulice</label><input id="${prefix}SupplierStreet" type="text" value="${escape(supplierStreet)}"></div>
+              <div class="form-group"><label for="${prefix}SupplierCity">Město</label><input id="${prefix}SupplierCity" type="text" value="${escape(supplierCity)}"></div>
+              <div class="form-group"><label for="${prefix}SupplierZip">PSČ</label><input id="${prefix}SupplierZip" type="text" value="${escape(supplierZip)}"></div>
               <div class="form-group"><label for="${prefix}SupplierState">Stát</label><input id="${prefix}SupplierState" type="text" value="${escape(extra.supplier_state || 'Česká republika')}"></div>
-              <div class="form-group"><label for="${prefix}SupplierPhone">Telefon</label><input id="${prefix}SupplierPhone" type="text" value="${escape(extra.supplier_phone || '')}"></div>
+              <div class="form-group"><label for="${prefix}SupplierPhone">Telefon</label><input id="${prefix}SupplierPhone" type="text" value="${escape(supplierPhone)}"></div>
               <div class="form-group"><label for="${prefix}SupplierBankAccount">Účet</label><input id="${prefix}SupplierBankAccount" type="text" value="${escape(extra.supplier_bankaccount || '')}"></div>
               <div class="form-group"><label for="${prefix}SupplierBank">Banka</label><input id="${prefix}SupplierBank" type="text" value="${escape(extra.supplier_bank || '')}"></div>
               <div class="form-group"><label for="${prefix}SupplierIban">IBAN</label><input id="${prefix}SupplierIban" type="text" value="${escape(extra.supplier_iban || '')}"></div>
@@ -2897,9 +3924,9 @@
             <h3 class="service-shell-card-title">Odběratel</h3>
             <div class="service-dashboard-modal-grid cols-2">
               <div class="form-group">
-                <label for="${prefix}Customer">Klient</label>
+                <label for="${prefix}Customer">Zákazník</label>
                 <select id="${prefix}Customer" onchange="window.serviceShell.populateCustomerVehicleSelect('${prefix}Vehicle', this.value, { includeEmpty: true, emptyLabel: 'Bez vozidla', preferredVehicleId: ${Number(invoice?.vehicle_id || 0)} })">
-                  ${customers.map((item) => `<option value="${Number(item.customer_id)}" ${Number(item.customer_id) === selectedCustomerId ? 'selected' : ''}>${escape(item.name || item.email || `Klient #${Number(item.customer_id)}`)}</option>`).join('')}
+                  ${customers.map((item) => `<option value="${Number(item.customer_id)}" ${Number(item.customer_id) === selectedCustomerId ? 'selected' : ''}>${escape(item.name || item.email || `Zákazník #${Number(item.customer_id)}`)}</option>`).join('')}
                 </select>
               </div>
               <div class="form-group"><label for="${prefix}Vehicle">Vozidlo</label><select id="${prefix}Vehicle"><option value="">Načítám vozidla…</option></select></div>
@@ -3028,6 +4055,18 @@
     }
   }
 
+  async function createInvoiceFromQuote(quoteId) {
+    const resolvedQuoteId = Number(quoteId || state.modal?.context?.quoteId || 0);
+    if (!resolvedQuoteId) return;
+    const invoice = await window.apiCall(`/api/service/invoices/from-quote/${resolvedQuoteId}`, 'POST');
+    if (typeof window.showAlert === 'function') {
+      const label = invoice?.invoice_number ? ` ${invoice.invoice_number}` : '';
+      window.showAlert(`Faktura${label} byla připravena z nabídky.`, 'success');
+    }
+    await load(true, true);
+    openServiceInvoiceDetailModal(Number(invoice?.id || 0));
+  }
+
   function openQuoteModal(quoteId) {
     const resolvedQuoteId = Number(quoteId || 0);
     if (!resolvedQuoteId) return;
@@ -3115,6 +4154,7 @@
         <div class="service-shell-modal-footer ${isMobileViewport() ? 'service-shell-mobile-action-bar' : ''}">
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal()">Zpět</button>
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.appendQuoteItemRow()">Přidat položku</button>
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.createInvoiceFromQuote(${resolvedQuoteId})">Vytvořit fakturu</button>
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.shareQuotePdf(${resolvedQuoteId})">Sdílet / stáhnout PDF</button>
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.copyQuotePublicLink(${resolvedQuoteId})">Kopírovat veřejný odkaz</button>
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openQuotePublicLink(${resolvedQuoteId})">Otevřít veřejný odkaz</button>
@@ -3191,9 +4231,9 @@
         <form class="service-dashboard-modal-form" onsubmit="event.preventDefault(); window.serviceShell.submitCreateReminderModal();">
           <div class="service-dashboard-modal-grid cols-2">
             <div class="form-group">
-              <label for="serviceShellCreateReminderCustomer">Klient</label>
+              <label for="serviceShellCreateReminderCustomer">Zákazník</label>
               <select id="serviceShellCreateReminderCustomer" onchange="window.serviceShell.populateCustomerVehicleSelect('serviceShellCreateReminderVehicle', this.value, { includeEmpty: true, emptyLabel: 'Obecná připomínka' })">
-                ${customers.map((item) => `<option value="${Number(item.customer_id)}" ${Number(item.customer_id) === preferredCustomerId ? 'selected' : ''}>${escape(item.name || item.email || `Klient #${Number(item.customer_id)}`)}</option>`).join('')}
+                ${customers.map((item) => `<option value="${Number(item.customer_id)}" ${Number(item.customer_id) === preferredCustomerId ? 'selected' : ''}>${escape(item.name || item.email || `Zákazník #${Number(item.customer_id)}`)}</option>`).join('')}
               </select>
             </div>
             <div class="form-group">
@@ -3254,6 +4294,8 @@
   async function openCreateInvoiceModal(prefill = {}) {
     const customers = Array.isArray(state.customers) ? state.customers : [];
     const preferredCustomerId = Number(prefill.customerId || customers[0]?.customer_id || 0);
+    const prof = currentProfile();
+    const profileStreet = [prof?.street, prof?.street_number].filter(Boolean).join(' ').trim();
     const draftInvoice = {
       customer_id: preferredCustomerId,
       vehicle_id: Number(prefill.vehicleId || 0) || null,
@@ -3272,6 +4314,14 @@
         rounding: '0',
         qr: true,
         customer_note: prefill.notes || '',
+        supplier_name: prof?.name || window.currentUser?.name || '',
+        supplier_email: prof?.email || window.currentUser?.email || '',
+        supplier_ico: prof?.ico || '',
+        supplier_dic: prof?.dic || '',
+        supplier_street: profileStreet || '',
+        supplier_city: prof?.city || '',
+        supplier_zip: prof?.zip || '',
+        supplier_phone: prof?.phone || '',
       },
     };
     openModal({
@@ -3279,7 +4329,7 @@
       entityType: 'service-invoice',
       kicker: 'Faktura',
       title: 'Nová faktura',
-      description: 'Lokální editor dokladu s údaji kompatibilními s FakturyWeb API.',
+      description: 'Kompletní hlavička dodavatele a odběratele, položky a poznámky — vše v aplikaci, PDF po vystavení.',
       size: 'wide',
       actions: {
         save: async () => {
@@ -3347,7 +4397,7 @@
       entityType: 'service-invoice',
       kicker: `Faktura #${id}`,
       title: 'Servisní faktura',
-      description: 'Lokální doklad s možností vystavení, PDF a exportu do FakturyWeb.',
+      description: 'Uložte koncept, upravte doklad a vystavte — PDF odpovídá údajům z editoru.',
       size: 'wide',
       actions: {
         save: async () => {
@@ -3390,12 +4440,12 @@
               <strong>${escape(inv?.invoice_number || '(koncept)')}</strong>
             </div>
             <div>
-              <span class="service-shell-mobile-kicker">Klient</span>
-              <strong>${escape(inv?.customer_label || (inv?.customer_id != null ? `Klient #${inv.customer_id}` : '-'))}</strong>
+              <span class="service-shell-mobile-kicker">Zákazník</span>
+              <strong>${escape(inv?.customer_label || (inv?.customer_id != null ? `Zákazník #${inv.customer_id}` : '-'))}</strong>
             </div>
             <div>
-              <span class="service-shell-mobile-kicker">FakturyWeb</span>
-              <strong>${escape(inv?.fakturyweb?.number || inv?.fakturyweb?.status || 'neodesláno')}</strong>
+              <span class="service-shell-mobile-kicker">Variabilní symbol</span>
+              <strong>${escape(inv?.extra?.variable_symbol || '—')}</strong>
             </div>
             <div>
               <span class="service-shell-mobile-kicker">Celkem</span>
@@ -3448,8 +4498,6 @@
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal()">Zavřít</button>
           ${showIssue ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.appendInvoiceLineRow()">Přidat položku</button>` : ''}
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openServiceInvoicePdf(${id})">PDF</button>
-          ${st === 'issued' ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.exportServiceInvoiceToFakturyWeb(${id})">Odeslat do FakturyWeb</button>` : ''}
-          ${inv?.fakturyweb?.code ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.syncServiceInvoiceFromFakturyWeb(${id})">Sync FakturyWeb</button>` : ''}
           ${showIssue ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.runModalAction('save')">${modal.saving ? 'Ukládám…' : 'Uložit draft'}</button>` : ''}
           ${showIssue ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.issueServiceInvoiceFromModal(${id})">Vystavit</button>` : ''}
           ${showCancel ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.cancelServiceInvoiceFromModal(${id})">Zrušit</button>` : ''}
@@ -3484,33 +4532,6 @@
     if (typeof window.showAlert === 'function') window.showAlert('Faktura byla zrušena.', 'success');
     await load(true, true);
     closeModal();
-  }
-
-  async function exportServiceInvoiceToFakturyWeb(invoiceId) {
-    const id = Number(invoiceId || 0);
-    if (!id) return;
-    const updated = await window.apiCall(`/api/service/invoices/${id}/fakturyweb/export`, 'POST', {});
-    if (typeof window.showAlert === 'function') {
-      const number = updated?.fakturyweb?.number ? ` (${updated.fakturyweb.number})` : '';
-      window.showAlert(`Faktura byla odeslána do FakturyWeb${number}.`, 'success');
-    }
-    await load(true, true);
-    if (state.modal?.entityType === 'service-invoice') {
-      state.modal.data = updated;
-      render();
-    }
-  }
-
-  async function syncServiceInvoiceFromFakturyWeb(invoiceId) {
-    const id = Number(invoiceId || 0);
-    if (!id) return;
-    const updated = await window.apiCall(`/api/service/invoices/${id}/fakturyweb/sync`, 'POST', {});
-    if (typeof window.showAlert === 'function') window.showAlert('Stav z FakturyWeb byl aktualizován.', 'success');
-    await load(true, true);
-    if (state.modal?.entityType === 'service-invoice') {
-      state.modal.data = updated;
-      render();
-    }
   }
 
   function openVehicleQrModal(vehicleId) {
@@ -3628,9 +4649,9 @@
       entityType: 'customer',
       entityId: id,
       endpoint: `/api/v1/services/workspace/customers/${id}/detail`,
-      kicker: `Klient #${id}`,
-      title: 'Detail klienta',
-      description: 'Propojení servisního účtu, stav vazby a návazná vozidla klienta.',
+      kicker: `Zákazník #${id}`,
+      title: 'Detail zákazníka',
+      description: 'Propojení servisního účtu se zákazníkem ve Správě vozidel, stav vazby a jeho vozidla.',
       actions: {
         link: async () => {
           const response = await window.apiCall(`/api/v1/services/workspace/customers/${id}/link`, 'POST');
@@ -3638,7 +4659,7 @@
             close: false,
             reloadDetail: true,
             refreshParent: true,
-            message: response?.message || 'Klient byl propojen.',
+            message: response?.message || 'Zákazník byl propojen.',
           };
         },
       },
@@ -3668,7 +4689,7 @@
           </div>
         </div>
         <section class="service-shell-side-card">
-          <h3>Vozidla klienta</h3>
+          <h3>Vozidla zákazníka</h3>
           <div class="service-shell-list">
             ${(Array.isArray(detail?.vehicles) && detail.vehicles.length)
               ? detail.vehicles.map((item) => `
@@ -3683,13 +4704,15 @@
                   </div>
                 </div>
               `).join('')
-              : '<div class="service-shell-empty">Klient zatím nemá v shellu dostupná vozidla.</div>'}
+              : '<div class="service-shell-empty">Zákazník zatím nemá v tomto přehledu dostupná vozidla.</div>'}
           </div>
         </section>
       `,
       renderFooter: (detail, modal) => `
         <div class="service-shell-modal-footer">
-          ${detail?.can_link ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.runModalAction('link')">${modal.saving ? 'Propojuji…' : 'Propojit klienta'}</button>` : ''}
+          ${detail?.can_link ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.runModalAction('link')">${modal.saving ? 'Propojuji…' : 'Propojit zákazníka'}</button>` : ''}
+          ${detail?.status === 'linked' ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerLinkNoteModal(${id}, ${JSON.stringify(String(detail?.note || ''))})">Upravit poznámku</button>` : ''}
+          ${detail?.status === 'linked' ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.unlinkCustomer(${id})">Odpojit zákazníka</button>` : ''}
           ${detail?.status === 'linked' ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal(); window.serviceShell.openAddVehicleModal(${id})">Přidat vozidlo</button>` : ''}
           ${detail?.can_create_work_order ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal(); window.serviceShell.openCreateWorkOrderModal({ ownerId: ${id} })">Nová zakázka</button>` : ''}
           ${detail?.can_send_invite && !detail?.can_link ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.sendInvitationFromSearch()">Odeslat pozvánku</button>` : ''}
@@ -3740,7 +4763,7 @@
             <h3>Přístup a vazba</h3>
             <div class="service-shell-list">
               <div class="service-shell-list-row"><span class="service-shell-list-title">Přístup</span><span class="service-shell-list-value">${escape(accessStatusLabel(detail?.status))}</span></div>
-              <div class="service-shell-list-row"><span class="service-shell-list-title">Klient</span><span class="service-shell-list-value">${escape(detail?.owner_name || (detail?.linked_customer ? 'Propojený klient' : 'Skrytý bez vazby'))}</span></div>
+              <div class="service-shell-list-row"><span class="service-shell-list-title">Zákazník</span><span class="service-shell-list-value">${escape(detail?.owner_name || (detail?.linked_customer ? 'Propojený zákazník' : 'Skrytý bez vazby'))}</span></div>
               <div class="service-shell-list-row"><span class="service-shell-list-title">Platnost STK</span><span class="service-shell-list-value">${escape(detail?.stk_valid_until ? formatDate(detail.stk_valid_until) : '-')}</span></div>
               <div class="service-shell-list-row"><span class="service-shell-list-title">Aktuální km</span><span class="service-shell-list-value">${escape(detail?.current_mileage_km != null ? String(detail.current_mileage_km) : '-')}</span></div>
               <div class="service-shell-list-row"><span class="service-shell-list-title">Datová důvěra</span><span class="service-shell-list-value">${escape(detail?.data_trust_state || '-')}</span></div>
@@ -3769,6 +4792,18 @@
           </div>
           <div class="service-shell-record-card-list service-shell-vehicle-quotes-wrap">
             ${vehicleQuotesSection(detail)}
+          </div>
+        </section>
+        <section class="service-shell-side-card">
+          <div class="service-shell-card-head">
+            <div>
+              <h3>Faktury</h3>
+              <p class="service-shell-subtitle">Navazující vyúčtování k tomuto vozidlu.</p>
+            </div>
+            <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.openCreateInvoiceModal({ vehicleId: ${id}, customerId: ${Number(detail?.owner_customer_id || 0)} })" aria-label="Nová faktura">+</button>
+          </div>
+          <div class="service-shell-record-card-list service-shell-vehicle-quotes-wrap">
+            ${vehicleInvoicesSection(id)}
           </div>
         </section>
       `,
@@ -3806,7 +4841,7 @@
               <div class="service-shell-list">
                 <div class="service-shell-list-row"><span class="service-shell-list-title">Číslo</span><span class="service-shell-list-value">${escape(detail?.document_number || detail?.original_filename || '-')}</span></div>
                 <div class="service-shell-list-row"><span class="service-shell-list-title">Dodavatel</span><span class="service-shell-list-value">${escape(detail?.supplier_name || '-')}</span></div>
-                <div class="service-shell-list-row"><span class="service-shell-list-title">Klient</span><span class="service-shell-list-value">${escape(detail?.customer_name || detail?.customer_email_masked || '-')}</span></div>
+                <div class="service-shell-list-row"><span class="service-shell-list-title">Zákazník</span><span class="service-shell-list-value">${escape(detail?.customer_name || detail?.customer_email_masked || '-')}</span></div>
                 <div class="service-shell-list-row"><span class="service-shell-list-title">Vozidlo</span><span class="service-shell-list-value">${escape(detail?.vehicle_label || '-')}</span></div>
                 <div class="service-shell-list-row"><span class="service-shell-list-title">Celkem</span><span class="service-shell-list-value">${escape(formatMoney(detail?.total_with_vat, detail?.currency))}</span></div>
               </div>
@@ -3918,7 +4953,7 @@
       `,
       renderFooter: (detail, modal) => `
         <div class="service-shell-modal-footer">
-          ${Number(detail?.customer_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(detail.customer_id)})">Klient</button>` : ''}
+          ${Number(detail?.customer_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(detail.customer_id)})">Zákazník</button>` : ''}
           ${Number(detail?.vehicle_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openVehicleDetailModal(${Number(detail.vehicle_id)})">Vozidlo</button>` : ''}
           ${detail?.can_request_access ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.requestVehicleAccess(${Number(detail?.vehicle_id || 0)}, ${JSON.stringify(String(detail?.vehicle_plate_masked || ''))})">Požádat o přístup</button>` : ''}
           ${detail?.can_edit && reservationStatusKey(detail?.status) === 'PENDING' ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.updateReservationStatus(${id}, 'CONFIRMED', 'Rezervace byla potvrzena.')">Potvrdit</button>` : ''}
@@ -4008,7 +5043,7 @@
       `,
       renderFooter: (detail, modal) => `
         <div class="service-shell-modal-footer">
-          ${Number(detail?.customer_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(detail.customer_id)})">Klient</button>` : ''}
+          ${Number(detail?.customer_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(detail.customer_id)})">Zákazník</button>` : ''}
           ${Number(detail?.vehicle_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openVehicleDetailModal(${Number(detail.vehicle_id)})">Vozidlo</button>` : ''}
           ${detail?.can_request_access ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.requestVehicleAccess(${Number(detail?.vehicle_id || 0)}, ${JSON.stringify(String(detail?.vehicle_plate_masked || ''))})">Požádat o přístup</button>` : ''}
           ${detail?.can_create_work_order ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal(); window.serviceShell.openCreateWorkOrderModal({ ownerId: ${Number(detail?.customer_id || 0)}, vehicleId: ${Number(detail?.vehicle_id || 0)} })">Nová zakázka</button>` : ''}
@@ -4120,10 +5155,10 @@
           </div>
         </div>
         <div class="service-shell-list">
-          <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openServiceToolsModal()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openServiceToolsModal() }"><span class="service-shell-list-title">Najít klienta nebo vozidlo</span><span class="service-shell-list-value">⌘</span></div>
+          <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openServiceToolsModal()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openServiceToolsModal() }"><span class="service-shell-list-title">Najít zákazníka nebo vozidlo</span><span class="service-shell-list-value">⌘</span></div>
           <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openCreateWorkOrderModal()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openCreateWorkOrderModal() }"><span class="service-shell-list-title">Nová zakázka</span><span class="service-shell-list-value">+</span></div>
           <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('reservations')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('reservations') }"><span class="service-shell-list-title">Otevřít příchozí rezervace</span><span class="service-shell-list-value">→</span></div>
-          <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openKpiModal('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openKpiModal('awaiting') }"><span class="service-shell-list-title">Čeká na schválení</span><span class="service-shell-list-value">!</span></div>
+          <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.setKpiFilter('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.setKpiFilter('awaiting') }"><span class="service-shell-list-title">Čeká na schválení</span><span class="service-shell-list-value">!</span></div>
         </div>
       </section>
     `;
@@ -4133,8 +5168,112 @@
     return `
       <div class="workspace-mode-switch workspace-mode-switch--service-toolbar hidden" role="group" aria-label="Přepnout režim rozhraní" data-testid="workspace-mode-switch-service-toolbar">
         <button type="button" class="workspace-mode-switch-btn" data-workspace-mode="user" title="Rozhraní pro vlastní vozidla a osobní účet" onclick="void switchWorkspaceUIMode('user')">Účet</button>
-        <button type="button" class="workspace-mode-switch-btn" data-workspace-mode="service" title="Rozhraní servisu (klienti, workspace)" onclick="void switchWorkspaceUIMode('service')">Servis</button>
+        <button type="button" class="workspace-mode-switch-btn" data-workspace-mode="service" title="Rozhraní servisu (zákazníci, workspace)" onclick="void switchWorkspaceUIMode('service')">Servis</button>
       </div>
+    `;
+  }
+
+  
+  function ServiceNav() {
+    const slots = NAV_RAIL_CONFIG.map((entry) => {
+      const active = navRailSlotActive(entry);
+      const hasSub = Array.isArray(entry.submenu) && entry.submenu.length > 0;
+      const submenuHtml = hasSub
+        ? `
+        <div class="service-nav-submenu" role="menu" aria-label="${escape(entry.label)}">
+          ${entry.submenu
+            .map(([sid, lbl]) => `
+            <button
+              type="button"
+              role="menuitem"
+              class="service-nav-submenu-item ${state.activeSection === sid ? 'is-active' : ''}"
+              onclick="window.serviceShell.navigate('${sid}')"
+            >${escape(lbl)}</button>
+          `)
+            .join('')}
+        </div>`
+        : '';
+      const tutorialRailKey = entry.section
+        ? 'svc-shell-' +
+          String(entry.section)
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9-]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+        : '';
+      const trigger = `
+        <button
+          type="button"
+          class="service-nav-item ${active ? 'active' : ''}"
+          ${hasSub ? 'aria-haspopup="true"' : ''}
+          ${active ? 'aria-current="page"' : ''}
+          ${tutorialRailKey ? `data-tutorial="${escape(tutorialRailKey)}"` : ''}
+          title="${escape(entry.label)}"
+          onclick="window.serviceShell.handleNavRailClick(event, '${entry.group}')"
+        >
+          <span class="service-nav-item-icon" aria-hidden="true">${navRailIconSvg(entry.navIcon)}</span>
+          <span class="service-nav-item-label">${escape(entry.label)}</span>
+        </button>`;
+      return `
+        <div
+          class="service-nav-slot ${active ? 'is-active' : ''} ${hasSub ? 'has-submenu' : ''}"
+          data-nav-group="${escape(entry.group)}"
+        >
+          ${trigger}
+          ${submenuHtml}
+        </div>`;
+    });
+    return `
+      <nav class="service-nav" aria-label="Hlavní navigace účtu servisu" id="service-shell-left-nav">
+        ${slots.join('')}
+      </nav>
+    `;
+  }
+
+  function ServiceTopBar() {
+    const profile = currentProfile();
+    const mobile = isMobileViewport();
+    const accountMenu = state.accountMenuOpen ? `
+      <div class="service-shell-account-menu">
+        <div class="service-shell-account-summary">
+          <strong>${escape(profile?.name || window.currentUser?.name || 'Servisní účet')}</strong>
+          <span>${escape(profile?.email || window.currentUser?.email || '-')}</span>
+          <span>${escape(String(profile?.role || window.currentUser?.role || 'service_account').replace(/_/g, ' '))}</span>
+          <button type="button" class="service-shell-account-license-hit" onclick="window.serviceShell.openLicenseSettings()" title="Otevřít licence a plány">${escape(licenseSummaryText())}</button>
+        </div>
+        <button type="button" class="service-shell-account-action" onclick="window.serviceShell.openAccountSettings()">Otevřít nastavení účtu</button>
+        <button type="button" class="service-shell-account-action" onclick="window.serviceShell.openLicenseSettings()">Licence a plán</button>
+        <button type="button" class="service-shell-account-action" onclick="window.serviceShell.navigate('team'); window.serviceShell.closeAccountMenu();">Otevřít profil</button>
+        <button type="button" class="service-shell-account-action danger" onclick="window.serviceShell.logout()">Odhlásit se</button>
+      </div>
+    ` : '';
+    
+    return `
+      <header class="service-topbar">
+        <div class="service-topbar-left">
+          <button type="button" class="service-shell-brand" onclick="window.serviceShell.navigate('dashboard')" title="Přejít na přehled" style="background:none;border:none;padding:0;margin:0;font:inherit;cursor:pointer;text-align:left">
+            <span class="service-shell-brand-text" style="font-size: 1.25rem; font-weight: bold; color: var(--service-primary);">${escape(getAppDisplayName())}</span>
+          </button>
+          <time id="serviceShellNavbarClock" class="navbar-digital-clock service-shell-navbar-clock" datetime="" title="Čas v Česku (Europe/Prague)">--:--:--</time>
+        </div>
+        <div class="service-topbar-right">
+          ${workspaceModeSwitchShellHtml()}
+          <button type="button" class="service-shell-icon-btn service-shell-theme-toggle-btn" onclick="window.toggleAppUiTheme()" aria-label="Přepnout motiv">${state.theme === 'light' ? '☀' : '☾'}</button>
+          <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.load(true)" aria-label="Obnovit data">↻</button>
+          <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.openServiceToolsModal()" aria-label="Podpora">🎧</button>
+          ${serviceShellNotificationsButtonHtml()}
+          
+          <div class="service-shell-userbox-wrap">
+            <button type="button" class="service-shell-userbox" onclick="window.serviceShell.toggleAccountMenu()" aria-label="Účet servisu" style="background: transparent; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+              <span class="service-shell-avatar" style="background: var(--service-primary); color: white; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">${escape(initials(profile?.name || profile?.email || window.currentUser?.email || 'SA'))}</span>
+              <div class="service-shell-usertext" style="text-align: left; display: ${mobile ? 'none' : 'block'}">
+                <strong style="display: block; font-size: 0.875rem;">${escape(profile?.name || window.currentUser?.name || window.currentUser?.email || 'Servisní účet')}</strong>
+              </div>
+            </button>
+            ${accountMenu}
+          </div>
+        </div>
+      </header>
     `;
   }
 
@@ -4147,7 +5286,7 @@
           <strong>${escape(profile?.name || window.currentUser?.name || 'Servisní účet')}</strong>
           <span>${escape(profile?.email || window.currentUser?.email || '-')}</span>
           <span>${escape(String(profile?.role || window.currentUser?.role || 'service_account').replace(/_/g, ' '))}</span>
-          <span>${escape(licenseSummaryText())}</span>
+          <button type="button" class="service-shell-account-license-hit" onclick="window.serviceShell.openLicenseSettings()" title="Otevřít licence a plány">${escape(licenseSummaryText())}</button>
         </div>
         <button type="button" class="service-shell-account-action" onclick="window.serviceShell.openAccountSettings()">Otevřít nastavení účtu</button>
         <button type="button" class="service-shell-account-action" onclick="window.serviceShell.openLicenseSettings()">Licence a plán</button>
@@ -4157,22 +5296,31 @@
     ` : '';
     const navGroups = [
       { title: 'Nástěnka', items: [['dashboard', 'Přehled']] },
-      { title: 'Zákazníci', items: [['clients', 'Klienti'], ['vehicles', 'Vozidla zákazníků']] },
+      { title: 'Zákazníci', items: [['clients', 'Přehled zákazníků'], ['vehicles', 'Vozidla zákazníků']] },
       { title: 'Servis', items: [['work-orders', 'Příchozí objednávky'], ['reservations', 'Příchozí rezervace'], ['reminders', 'Připomínky']] },
       { title: 'Sklad', items: [['documents', 'Dokumenty']] },
       { title: 'Reporty', items: [['invoices', 'Faktury']] },
-      { title: 'Nastavení', items: [['team', 'Tým a účet'], ['fakturyweb', 'FakturyWeb test']] },
+      { title: 'Nastavení', items: [['team', 'Tým a účet']] },
     ];
     const navItems = navGroups.map((group) => `
       <div class="service-shell-nav-section" aria-label="${escape(group.title)}">
         <span class="service-shell-nav-section-title">${escape(group.title)}</span>
-        ${group.items.map(([key, label]) => `
+        ${group.items.map(([key, label]) => {
+          const topNavTutorial = `svc-topnav-${String(key)
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9-]+/g, '-')
+            .replace(/^-+|-+$/g, '')}`;
+          return `
           <button
             type="button"
             class="service-shell-nav-btn ${state.activeSection === key ? 'active' : ''}"
+            data-service-section="${escape(key)}"
+            data-tutorial="${escape(topNavTutorial)}"
             onclick="window.serviceShell.navigate('${key}')"
           >${escape(label)}</button>
-        `).join('')}
+        `;
+        }).join('')}
       </div>
     `).join('');
 
@@ -4191,6 +5339,7 @@
           <button type="button" class="service-shell-icon-btn service-shell-theme-toggle-btn" onclick="window.toggleAppUiTheme()" aria-label="Přepnout motiv">${state.theme === 'light' ? '☀' : '☾'}</button>
           <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.load(true)" aria-label="Obnovit data">↻</button>
           <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.openServiceToolsModal()" aria-label="Servisní nástroje">⌘</button>
+          ${serviceShellNotificationsButtonHtml()}
           <div class="service-shell-userbox-wrap">
           <button type="button" class="service-shell-userbox" onclick="window.serviceShell.toggleAccountMenu()" aria-label="Účet servisu">
             <span class="service-shell-avatar">${escape(initials(profile?.name || profile?.email || window.currentUser?.email || 'SA'))}</span>
@@ -4219,6 +5368,436 @@
         </div>
       </div>
     `;
+  }
+
+  function staticInfoSection(title, subtitle, bodyHtml) {
+    return `
+      ${pageHead(title, subtitle)}
+      <div class="service-shell-layout">
+        <div class="service-shell-main">
+          <article class="service-shell-side-card service-shell-static-info">
+            <div class="service-shell-static-body">${bodyHtml}</div>
+          </article>
+        </div>
+      </div>
+    `;
+  }
+
+  function payrollToolbarHtml() {
+    const y = state.payrollPeriod.year;
+    const m = state.payrollPeriod.month;
+    return `
+      <div class="service-shell-payroll-toolbar" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px;">
+        <label style="font-size:0.82rem;color:var(--service-text-soft);">Rok
+          <input type="number" class="service-shell-search" style="width:92px;margin-left:6px" value="${y}"
+            onchange="window.serviceShell.setPayrollPeriod(Number(this.value), ${m})" />
+        </label>
+        <label style="font-size:0.82rem;color:var(--service-text-soft);">Měsíc
+          <input type="number" min="1" max="12" class="service-shell-search" style="width:72px;margin-left:6px" value="${m}"
+            onchange="window.serviceShell.setPayrollPeriod(${y}, Number(this.value))" />
+        </label>
+        <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.refreshPayrollModule(true)">↻ Obnovit data mezd</button>
+      </div>`;
+  }
+
+  function renderPayrollWorkspace(section) {
+    const sec = String(section || '');
+    const loadBlock = state.payrollLoading
+      ? '<div class="service-shell-empty">Načítám mzdová data…</div>'
+      : '';
+    const err = state.payrollError
+      ? `<div class="service-shell-inline-error" style="margin-bottom:12px;">${escape(state.payrollError)}</div>`
+      : '';
+    const d = state.payrollData || {};
+    const offices = Array.isArray(d.offices) ? d.offices : [];
+    const employees = d.employees && Array.isArray(d.employees.items) ? d.employees.items : [];
+    const att = d.attendance && Array.isArray(d.attendance.items) ? d.attendance.items : [];
+    const pays = d.payslips && Array.isArray(d.payslips.items) ? d.payslips.items : [];
+    const journal = d.journal || null;
+    const jmhz = d.jmhz && Array.isArray(d.jmhz.items) ? d.jmhz.items : [];
+
+    const officeOptions = offices.map((o) => `<option value="${Number(o.id)}">${escape(o.name || '')}</option>`).join('');
+
+    if (sec === 'payroll-employees') {
+      const rows = employees.map((e) => `
+        <tr>
+          <td>${escape(`${e.last_name || ''} ${e.first_name || ''}`)}</td>
+          <td>${escape(e.birth_date || '')}</td>
+          <td>${escape(e.health_insurance_code || '—')}</td>
+          <td>${e.is_active ? 'Aktivní' : 'Neaktivní'}</td>
+          <td><button type="button" class="btn btn-secondary" onclick="window.serviceShell.openPayrollEmployeeDetail(${Number(e.id)})">Detail</button></td>
+        </tr>`).join('');
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}${loadBlock}
+        <p class="service-shell-muted" style="font-size:0.84rem;">Citlivé údaje (rodné číslo, účet) jsou v API maskované; plná hodnota jen přes oprávnění a parametr <code>full_sensitive</code>.</p>
+        <div style="overflow:auto;margin-top:10px;">
+          <table class="service-shell-data-table">
+            <thead><tr><th>Zaměstnanec</th><th>Datum narození</th><th>ZP</th><th>Stav</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="5">Žádní zaměstnanci — založte je přes „Nový zaměstnanec“.</td></tr>'}</tbody>
+          </table>
+        </div>`;
+      return staticInfoSection('Zaměstnanci', 'Evidence zaměstnanců servisu (mzdy).', body);
+    }
+
+    if (sec === 'payroll-employee-new') {
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}
+        <form class="service-shell-side-card" style="padding:16px;" onsubmit="window.serviceShell.submitPayrollEmployeeCreate(event)">
+          <h3 style="margin:0 0 12px;">Nový zaměstnanec</h3>
+          <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">
+            <label>Jméno *<input class="service-shell-search" name="first_name" required maxlength="128"></label>
+            <label>Příjmení *<input class="service-shell-search" name="last_name" required maxlength="128"></label>
+            <label>Datum narození *<input class="service-shell-search" name="birth_date" type="date" required></label>
+            <label>Účtárna<select class="service-shell-search" name="primary_office_id"><option value="">—</option>${officeOptions}</select></label>
+            <label>Hodinová hrubá sazba<input class="service-shell-search" name="hourly_gross_rate" type="number" step="0.01" min="0" placeholder="např. 200"></label>
+            <label>Úvazek (hod/týden)<input class="service-shell-search" name="contract_hours_per_week" type="number" step="0.5" min="0" placeholder="40"></label>
+            <label>Zdravotní pojišťovna (kód)<input class="service-shell-search" name="health_insurance_code" maxlength="16"></label>
+            <label>E-mail<input class="service-shell-search" name="email" type="email"></label>
+            <label>Telefon<input class="service-shell-search" name="phone"></label>
+            <label>Rodné číslo<input class="service-shell-search" name="birth_number" maxlength="32"></label>
+            <label>IBAN<input class="service-shell-search" name="iban" maxlength="64"></label>
+          </div>
+          <p style="margin-top:14px;"><button type="submit" class="service-shell-primary-btn">Uložit zaměstnance</button>
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.navigate('payroll-employees')">Zpět</button></p>
+        </form>`;
+      return staticInfoSection('Nový zaměstnanec', 'Založení osoby pro docházku a mzdové listy.', body);
+    }
+
+    if (sec === 'payroll-employee-detail') {
+      const e = state.payrollEmployeeDetailCache;
+      const bodyNoData = `
+        ${payrollToolbarHtml()}
+        ${err}
+        <p>Detail zaměstnance není načten. Vraťte se do seznamu a zvolte znovu <strong>Detail</strong>.</p>
+        <p><button type="button" class="btn btn-secondary" onclick="window.serviceShell.navigate('payroll-employees')">Zpět na seznam</button></p>`;
+      if (!e || !state.payrollDetailEmployeeId) {
+        return staticInfoSection('Zaměstnanec — detail', 'Úprava záznamu.', bodyNoData);
+      }
+      const officeOptionsDetail = offices.map((o) => {
+        const sel = Number(o.id) === Number(e.primary_office_id) ? ' selected' : '';
+        return `<option value="${Number(o.id)}"${sel}>${escape(o.name || '')}</option>`;
+      }).join('');
+      const birthVal = e.birth_date ? String(e.birth_date).slice(0, 10) : '';
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}
+        <form class="service-shell-side-card" style="padding:16px;" onsubmit="window.serviceShell.submitPayrollEmployeeUpdate(event)">
+          <h3 style="margin:0 0 12px;">${escape(`${e.last_name || ''} ${e.first_name || ''}`.trim() || 'Zaměstnanec')}</h3>
+          <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">
+            <label>Jméno *<input class="service-shell-search" name="first_name" required maxlength="128" value="${escape(e.first_name || '')}"></label>
+            <label>Příjmení *<input class="service-shell-search" name="last_name" required maxlength="128" value="${escape(e.last_name || '')}"></label>
+            <label>Datum narození *<input class="service-shell-search" name="birth_date" type="date" required value="${escape(birthVal)}"></label>
+            <label>Účtárna<select class="service-shell-search" name="primary_office_id"><option value="">—</option>${officeOptionsDetail}</select></label>
+            <label>Hodinová hrubá sazba<input class="service-shell-search" name="hourly_gross_rate" type="number" step="0.01" min="0" value="${escape(String(e.hourly_gross_rate ?? ''))}"></label>
+            <label>Úvazek (hod/týden)<input class="service-shell-search" name="contract_hours_per_week" type="number" step="0.5" min="0" value="${escape(String(e.contract_hours_per_week ?? ''))}"></label>
+            <label>Zdravotní pojišťovna (kód)<input class="service-shell-search" name="health_insurance_code" maxlength="16" value="${escape(e.health_insurance_code || '')}"></label>
+            <label>E-mail<input class="service-shell-search" name="email" type="email" value="${escape(e.email || '')}"></label>
+            <label>Telefon<input class="service-shell-search" name="phone" value="${escape(e.phone || '')}"></label>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+            <input type="checkbox" name="is_active" ${e.is_active ? 'checked' : ''}> Aktivní zaměstnanec
+          </label>
+          <p style="margin-top:14px;"><button type="submit" class="service-shell-primary-btn">Uložit změny</button>
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.navigate('payroll-employees')">Zpět</button></p>
+        </form>`;
+      return staticInfoSection('Zaměstnanec — detail', 'Úprava osobních údajů a smluvních parametrů.', body);
+    }
+
+    if (sec === 'payroll-attendance') {
+      const rows = att.map((r) => `
+        <tr>
+          <td>${escape(r.employee_label || '')}</td>
+          <td><input class="service-shell-search" style="width:72px" value="${escape(String(r.fond_hodin))}" id="att-f-${r.id}"
+            onchange="window.serviceShell.patchPayrollAttendance(${Number(r.id)}, { fond_hodin: Number(this.value) })"></td>
+          <td><input class="service-shell-search" style="width:72px" value="${escape(String(r.odpracovano_hodin))}" id="att-o-${r.id}"
+            onchange="window.serviceShell.patchPayrollAttendance(${Number(r.id)}, { odpracovano_hodin: Number(this.value) })"></td>
+          <td><input class="service-shell-search" style="width:72px" value="${escape(String(r.dovolena_hodin))}"
+            onchange="window.serviceShell.patchPayrollAttendance(${Number(r.id)}, { dovolena_hodin: Number(this.value) })"></td>
+          <td><input class="service-shell-search" style="width:72px" value="${escape(String(r.nemoc_hodin))}"
+            onchange="window.serviceShell.patchPayrollAttendance(${Number(r.id)}, { nemoc_hodin: Number(this.value) })"></td>
+          <td><input class="service-shell-search" style="width:72px" value="${escape(String(r.prescas_hodin))}"
+            onchange="window.serviceShell.patchPayrollAttendance(${Number(r.id)}, { prescas_hodin: Number(this.value) })"></td>
+          <td><input class="service-shell-search" style="width:72px" value="${escape(String(r.neomluvena_absence_hodin))}"
+            onchange="window.serviceShell.patchPayrollAttendance(${Number(r.id)}, { neomluvena_absence_hodin: Number(this.value) })"></td>
+          <td><input class="service-shell-search" style="width:72px" value="${escape(String(r.pritomnost_hodin))}"
+            onchange="window.serviceShell.patchPayrollAttendance(${Number(r.id)}, { pritomnost_hodin: Number(this.value) })"></td>
+        </tr>`).join('');
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}${loadBlock}
+        <p><button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.generatePayrollAttendanceMonth()">Vygenerovat řádky pro aktivní zaměstnance</button></p>
+        <div style="overflow:auto;margin-top:10px;">
+          <table class="service-shell-data-table">
+            <thead><tr><th>Zaměstnanec</th><th>Fond</th><th>Odprac.</th><th>Dovol.</th><th>Nemoc</th><th>Přesčas</th><th>Neoml.</th><th>Přítom.</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="8">Žádná docházka — vygenerujte měsíc.</td></tr>'}</tbody>
+          </table>
+        </div>`;
+      return staticInfoSection('Docházka', 'Měsíční přehled hodin a absencí.', body);
+    }
+
+    if (sec === 'payroll-payslip-new') {
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}
+        <p>Nejdřív vyplňte docházku za období, potom vygenerujte mzdové listy.</p>
+        <p><button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.generatePayrollPayslipsMonth()">Vygenerovat / doplnit mzdové listy</button></p>`;
+      return staticInfoSection('Nový mzdový list', 'Založení výpočtu z docházky.', body);
+    }
+
+    if (sec === 'payroll-payslips') {
+      const rows = pays.map((p) => `
+        <tr>
+          <td>${escape(p.employee_label || '')}</td>
+          <td>${escape(String(p.typ_ppv || '').toUpperCase())}</td>
+          <td>${escape(String(p.hruba_mzda))}</td>
+          <td>${escape(String(p.cista_mzda))}</td>
+          <td>${escape(String(p.k_vyplate))}</td>
+          <td>${escape(String(p.naklady_zamestnavatele))}</td>
+          <td>${escape(p.stav || '')}</td>
+          <td>
+            ${p.stav === 'closed' ? '' : `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.recalculatePayrollPayslip(${Number(p.id)})">Přepočítat</button>
+            <button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.closePayrollPayslip(${Number(p.id)})">Uzavřít</button>`}
+          </td>
+        </tr>`).join('');
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}${loadBlock}
+        <p><button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.generatePayrollPayslipsMonth()">Vygenerovat listy z docházky</button></p>
+        <div style="overflow:auto;margin-top:10px;">
+          <table class="service-shell-data-table">
+            <thead><tr><th>Zaměstnanec</th><th>PPV</th><th>Hrubá</th><th>Čistá</th><th>K výplatě</th><th>Náklady</th><th>Stav</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="8">Žádné listy.</td></tr>'}</tbody>
+          </table>
+        </div>`;
+      return staticInfoSection('Mzdové listy', 'Výpočet mzdy z docházky a sazeb (zjednodušený model odvodů).', body);
+    }
+
+    if (sec === 'payroll-journal') {
+      const j = journal || {};
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}${loadBlock}
+        <div class="service-shell-list">
+          <div class="service-shell-list-row"><span class="service-shell-list-title">Uzavření v deníku</span>
+            <span class="service-shell-list-value">${escape(String(j.zamestnancu_pocet ?? '—'))}</span></div>
+          <div class="service-shell-list-row"><span class="service-shell-list-title">Stav</span>
+            <span class="service-shell-list-value">${escape(j.stav || '—')}</span></div>
+        </div>
+        <p style="margin-top:12px;">
+          <button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.refreshPayrollJournal()">Přepočítat souhrn</button>
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.exportPayrollJournalCsv()">Export platebních příkazů (CSV)</button>
+        </p>
+        <p class="service-shell-muted" style="font-size:0.82rem;">CSV používá uzavřené mzdové listy; po exportu se deník označí jako exportovaný.</p>`;
+      return staticInfoSection('Mzdový deník', 'Souhrn za měsíc a export výplat.', body);
+    }
+
+    if (sec === 'payroll-cssz-new') {
+      const oid = offices[0] ? Number(offices[0].id) : '';
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+          <label>Účtárna<select id="jmhzOfficeSel" class="service-shell-search">${officeOptions || '<option value="">Nejdřív založte účtárnu</option>'}</select></label>
+          <button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.createPayrollJmhz(document.getElementById('jmhzOfficeSel').value)">Založit podání</button>
+        </div>`;
+      return staticInfoSection('Nové JMHZ podání', 'Záznam exportu pro ČSSZ (placeholder XML ve ZIP).', body);
+    }
+
+    if (sec === 'payroll-cssz') {
+      const rows = jmhz.map((r) => `
+        <tr>
+          <td>${r.id}</td><td>${r.year}-${String(r.month).padStart(2, '0')}</td><td>${escape(r.typ || '')}</td>
+          <td>${escape(String(r.pocet_zamestnancu))}</td><td>${escape(r.stav || '')}</td>
+          <td>
+            <button type="button" class="btn btn-secondary" onclick="window.serviceShell.buildPayrollJmhzZip(${Number(r.id)})">ZIP</button>
+            <button type="button" class="btn btn-secondary" onclick="window.serviceShell.downloadPayrollJmhz(${Number(r.id)})">Stáhnout</button>
+          </td>
+        </tr>`).join('');
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}${loadBlock}
+        <div style="overflow:auto;margin-top:10px;">
+          <table class="service-shell-data-table">
+            <thead><tr><th>ID</th><th>Období</th><th>Typ</th><th>Zam.</th><th>Stav</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="6">Žádná podání.</td></tr>'}</tbody>
+          </table>
+        </div>`;
+      return staticInfoSection('JMHZ / ČSSZ', 'Evidence podání a stažení ZIP (placeholder pro XSD ČSSZ).', body);
+    }
+
+    if (sec === 'payroll-office-new') {
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}
+        <form class="service-shell-side-card" style="padding:16px;" onsubmit="window.serviceShell.submitPayrollOfficeCreate(event)">
+          <h3 style="margin:0 0 12px;">Nová mzdová účtárna</h3>
+          <label>Název *<input class="service-shell-search" name="name" required maxlength="255"></label>
+          <label style="display:block;margin-top:10px;">VS pro ČSSZ<input class="service-shell-search" name="vs_cssz" maxlength="32"></label>
+          <label style="display:block;margin-top:10px;">ID datové schránky<input class="service-shell-search" name="datovka_id" maxlength="64"></label>
+          <p style="margin-top:14px;"><button type="submit" class="service-shell-primary-btn">Uložit</button>
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.navigate('payroll-offices')">Zpět</button></p>
+        </form>`;
+      return staticInfoSection('Nová účtárna', 'Identifikátor zaměstnavatele pro mzdy a JMHZ.', body);
+    }
+
+    if (sec === 'payroll-offices') {
+      const rows = offices.map((o) => `
+        <tr><td>${escape(o.name || '')}</td><td>${escape(o.vs_cssz || '—')}</td><td>${escape(o.datovka_id || '—')}</td>
+        <td>${o.is_active ? 'Aktivní' : 'Neaktivní'}</td></tr>`).join('');
+      const body = `
+        ${payrollToolbarHtml()}
+        ${err}${loadBlock}
+        <p><button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.navigate('payroll-office-new')">Nová účtárna</button></p>
+        <div style="overflow:auto;margin-top:10px;">
+          <table class="service-shell-data-table">
+            <thead><tr><th>Název</th><th>VS ČSSZ</th><th>Datovka</th><th>Stav</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="4">Žádné účtárny.</td></tr>'}</tbody>
+          </table>
+        </div>`;
+      return staticInfoSection('Mzdové účtárny', 'Evidence zaměstnavatelů vůči ČSSZ.', body);
+    }
+
+    return staticInfoSection('Mzdy', 'Vyberte položku v levém menu.', `${payrollToolbarHtml()}${err}`);
+  }
+
+  function serviceAccountPlaceholderSections() {
+    if (String(state.activeSection || '').startsWith('payroll-')) {
+      return renderPayrollWorkspace(state.activeSection);
+    }
+    const bookReco = `
+      <h3 class="service-shell-static-h3">Doporučení pro váš systém</h3>
+      <ul class="service-shell-static-list">
+        <li><strong>Jednotná datová struktura:</strong> každá entita (zaměstnanec, docházka, mzdový list, podání) má jedinečné ID, vazby a auditní záznam (kdo a kdy změnil).</li>
+        <li><strong>Bezpečnost a práva:</strong> role a oprávnění; export plateb a podání ČSSZ jen pro oprávněné osoby.</li>
+        <li><strong>Integrace:</strong> bankovní API pro platby, datová schránka (ISDS) pro podání.</li>
+        <li><strong>GDPR:</strong> osobní údaje šifrovat a oddělit od veřejných dat; evidence souhlasů.</li>
+      </ul>
+    `;
+    switch (state.activeSection) {
+      case 'messages':
+        return staticInfoSection(
+          'Zprávy',
+          'Interní komunikace a upozornění v účtu servisu.',
+          '<p>Modul zpráv připravujeme. Zatím použijte stávající notifikace, e-mail nebo záznam u zakázky.</p>',
+        );
+      case 'invoice-new':
+        return staticInfoSection(
+          'Nová faktura',
+          'Založení servisní faktury v tomto rozhraní.',
+          `<p>Vyplněním formuláře vytvoříte koncept nebo vystavíte fakturu stejně jako v přehledu faktur.</p>
+          <p style="margin-top:14px;"><button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.openCreateInvoiceModal()">Otevřít formulář nové faktury</button></p>`,
+        );
+      case 'quotes':
+        return staticInfoSection(
+          'Cenové nabídky',
+          'Nabídky a schvalování u zakázek.',
+          `<p>Cenové nabídky v servisu spravujete u konkrétního vozidla a zakázky. Tato položka slouží jako vstupní bod k procesu nabízení.</p>
+          <p style="margin-top:14px;"><button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.navigate('work-orders')">Přejít na příchozí objednávky</button></p>`,
+        );
+      case 'credit-notes':
+        return staticInfoSection(
+          'Opravné doklady',
+          'Evidence opravných daňových dokladů.',
+          '<p>Opravné doklady (dobropisy) zde budou navázané na původní faktury. Implementace rozšíří stávající fakturační modul.</p>',
+        );
+      case 'vat-overview':
+        return staticInfoSection(
+          'Přehled DPH',
+          'Souhrny plnění a řádky přiznání.',
+          '<p>Přehledy DPH a výstupy pro přiznání připravíme v návaznosti na knihu vydaných a přijatých dokladů.</p>',
+        );
+      case 'document-new':
+        return staticInfoSection(
+          'Nový doklad',
+          'Zařazení podkladu do evidence.',
+          `<p>Nový doklad lze nahrát v sekci Dokumenty (OCR) nebo z detailu vozidla.</p>
+          <p style="margin-top:14px;"><button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.navigate('documents')">Otevřít dokumenty</button></p>`,
+        );
+      case 'documents-archive':
+        return staticInfoSection(
+          'Archiv dokladů',
+          'Uložené a uzavřené podklady.',
+          '<p>Archiv rozšíří filtry ve stávající sekci dokumentů (stav, období, vozidlo). Zatím použijte přehled všech dokladů.</p>',
+        );
+      case 'interni-dokumenty':
+        return staticInfoSection(
+          'Interní dokumenty',
+          'Centrální evidence smluv a interních dokumentů.',
+          '<p>Zde bude přehled šablon, verzí a archivu interních dokumentů. Tato stránka je vstupní obrazovka po dokončení napojení modulu.</p>',
+        );
+      case 'interni-dokument-novy':
+        return staticInfoSection(
+          'Nový interní dokument',
+          'Založení dokumentu ze šablony nebo importem.',
+          '<p>Průvodce vytvořením dokumentu doplníme o výběr šablony, metadata a schvalování.</p>',
+        );
+      case 'interni-dokument-sablony':
+        return staticInfoSection(
+          'Šablony interních dokumentů',
+          'Knihovna šablon pro tým servisu.',
+          '<p>Šablony s proměnnými a verzováním budou dostupné po aktivaci modulu.</p>',
+        );
+      case 'bank-statements':
+        return staticInfoSection(
+          'Bankovní výpisy',
+          'Import a párování transakcí.',
+          '<p>Nahrajte výpis (CSV/CAMT) a párujte platby k fakturám. Napojení na konkrétní banku bude v integracích.</p>',
+        );
+      case 'payment-orders':
+        return staticInfoSection(
+          'Příkazy k úhradě',
+          'Hromadné platby dodavatelům a zaměstnancům.',
+          '<p>Generování ABO/GPC a předání do bankovnictví přidáme po napojení na platební kanál.</p>',
+        );
+      case 'payments-settings':
+        return staticInfoSection(
+          'Nastavení plateb',
+          'Účty, formáty a automatizace.',
+          '<p>Zde nastavíte výchozí účet, formáty exportu a pravidla párování. Včetně údajů používaných ve fakturaci (adresa dodavatele z profilu účtu).</p>',
+        );
+      case 'settings-users':
+        return staticInfoSection(
+          'Uživatelé',
+          'Správa přístupů k účtu servisu.',
+          '<p>Pozvánky, role a přiřazení techniků rozšíříme o samostatnou správu uživatelů. Do té doby použijte kartu týmu a hlavní nastavení účtu.</p>',
+        );
+      case 'settings-integrations':
+        return staticInfoSection(
+          'Integrace',
+          'Propojení s účetní a platební infrastrukturou.',
+          `<p>Další napojení (účetnictví, banka) budou centralizovaná zde.</p>`,
+        );
+      case 'settings-access':
+        return staticInfoSection(
+          'Přístupová práva',
+          'Role a oprávnění v modulu.',
+          '<p>Granulární oprávnění (čtení/zápis podle modulu) napojíme na uživatelské role.</p>',
+        );
+      case 'firemni-vzhled':
+        return staticInfoSection(
+          'Firemní vzhled',
+          'Barvy, loga a šablony výstupů.',
+          '<p>Nastavení barev, loga a šablon dokumentů či e-mailů pro konzistentní komunikaci se zákazníky.</p>',
+        );
+      case 'help-center':
+        return staticInfoSection(
+          'Centrum návodů ToozHub Servis',
+          'Interaktivní postupy bez simulovaných API ani obcházení pravidel.',
+          `<p>Průvodce se spouští nad ostrým rozhraním. Postup sleduje elementy aplikace, umí doběhnout i po obnovení stránky prostým znovupalštěním z tohoto modulu „Jak na to“.</p>
+          <p style="margin-top:14px;"><button type="button" class="service-shell-primary-btn" data-testid="service-open-tutorial-hub-btn" onclick="window.openHowToHubModal();">Otevřít Jak na to (návodový hub)</button></p>
+          <p style="margin-top:14px;line-height:1.45"><button type="button" class="btn btn-secondary" onclick="window.serviceShell.openServiceToolsModal()">Servisní nástroje a podpora (⌘ panel)</button></p>`,
+        );
+      case 'company-profile':
+        return staticInfoSection(
+          'Firma',
+          'Údaje o provozovně a veřejný profil.',
+          '<p>Detail firmy, IČO a kontakty upravíte v nastavení týmu (záložka Firma v submenu Nastavení). Zde bude rozšířený profil pro napojené moduly.</p>',
+        );
+      default:
+        return null;
+    }
   }
 
   function clickableAttrs(action) {
@@ -4308,7 +5887,7 @@
   function kpiCards() {
     const summary = dashboardSummary();
     const cards = [
-      ['new_requests', 'Nové požadavky', summary.new_reservations, 'Příchozí od klientů', 'info'],
+      ['new_requests', 'Nové požadavky', summary.new_reservations, 'Příchozí od zákazníků', 'info'],
       ['active', 'Aktivní zakázky', summary.active_jobs, 'Zaznamenáno v servisu', 'success'],
       ['today', 'Dnes k dokončení', summary.due_today, 'Plánované na dnešek', 'warning'],
       ['overdue', 'Nestíháme', summary.overdue, 'Po termínu', 'danger'],
@@ -4316,7 +5895,7 @@
     return `
       <section class="service-shell-kpis">
         ${cards.map(([key, title, value, note, color]) => `
-          <button type="button" class="service-shell-kpi-card service-shell-kpi-card--${color} ${state.kpiFilter === key ? 'is-active' : ''}" onclick="window.serviceShell.openKpiModal('${key}')" aria-pressed="${state.kpiFilter === key}">
+          <button type="button" class="service-shell-kpi-card service-shell-kpi-card--${color} ${state.kpiFilter === key ? 'is-active' : ''}" onclick="window.serviceShell.setKpiFilter('${key}')" aria-pressed="${state.kpiFilter === key}">
             <div class="service-shell-kpi-card-content">
               <span class="service-shell-kpi-card-title">${title}</span>
               <strong class="service-shell-kpi-card-value">${escape(String(value))}</strong>
@@ -4386,7 +5965,7 @@
           <p class="service-shell-action-note">Otevřít detail zakázek a filtrů</p>
           <div class="service-shell-list">
             <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('work-orders')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('work-orders') }"><span class="service-shell-list-title">Nové zakázky</span><span class="service-shell-list-value">${escape(String(queue?.new_jobs || queue?.new_work_orders || 0))}</span></div>
-            <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openKpiModal('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openKpiModal('awaiting') }"><span class="service-shell-list-title">Čeká na schválení</span><span class="service-shell-list-value">${escape(String(queue?.awaiting_approval || 0))}</span></div>
+            <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.setKpiFilter('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.setKpiFilter('awaiting') }"><span class="service-shell-list-title">Čeká na schválení</span><span class="service-shell-list-value">${escape(String(queue?.awaiting_approval || 0))}</span></div>
             <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('reservations')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('reservations') }"><span class="service-shell-list-title">Nové rezervace</span><span class="service-shell-list-value">${escape(String(queue?.new_reservations || summary.new_reservations || 0))}</span></div>
             <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('invoices')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('invoices') }"><span class="service-shell-list-title">Draft faktury</span><span class="service-shell-list-value">${escape(String(queue?.draft_invoices || summary.draft_invoices || 0))}</span></div>
             <div class="service-shell-list-row service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('documents')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('documents') }"><span class="service-shell-list-title">Chybí dokumenty</span><span class="service-shell-list-value">${escape(String(queue?.missing_documents || 0))}</span></div>
@@ -4430,7 +6009,7 @@
             <span class="service-shell-kpi-arrow">↗</span>
           </div>
           <div class="service-shell-queue-grid">
-            <div class="service-shell-queue-tile service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openKpiModal('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openKpiModal('awaiting') }"><span class="service-shell-queue-icon">☑</span><div><strong>${escape(String(queue?.missing_client_consent || 0))}</strong><p>Chybí souhlas klienta</p></div></div>
+            <div class="service-shell-queue-tile service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.setKpiFilter('awaiting')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.setKpiFilter('awaiting') }"><span class="service-shell-queue-icon">☑</span><div><strong>${escape(String(queue?.missing_client_consent || 0))}</strong><p>Chybí souhlas klienta</p></div></div>
             <div class="service-shell-queue-tile service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('vehicles')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('vehicles') }"><span class="service-shell-queue-icon">⦿</span><div><strong>${escape(String(queue?.suspicious_km || 0))}</strong><p>Podezřelé km</p></div></div>
             <div class="service-shell-queue-tile service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.navigate('work-orders')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.navigate('work-orders') }"><span class="service-shell-queue-icon">⌁</span><div><strong>${escape(String(queue?.unfinished_jobs || 0))}</strong><p>Nedokončené zakázky</p></div></div>
             <div class="service-shell-queue-tile service-shell-clickable-row" tabindex="0" role="button" onclick="window.serviceShell.openServiceToolsModal()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.serviceShell.openServiceToolsModal() }"><span class="service-shell-queue-icon">⚑</span><div><strong>${escape(String(queue?.internal_warnings || 0))}</strong><p>Interní varování</p></div></div>
@@ -4506,14 +6085,14 @@
           </div>
           `,
           cards: items.map(item => {
-            const action = \`window.serviceShell.openReservationDetailModal(\${Number(item?.id || 0)})\`;
+            const action = `window.serviceShell.openReservationDetailModal(${Number(item?.id || 0)})`;
             return listCard({
               kicker: vehiclePlate(item),
               title: vehicleTitle(item),
               badge: 'Nová rezervace',
               badgeClass: 'badge-info',
               rows: [
-                ['Klient', item?.customer_name || item?.customer_email_masked || '-'],
+                ['Zákazník', item?.customer_name || item?.customer_email_masked || '-'],
                 ['Termín', item?.scheduled_for || item?.reservation_date || item?.starts_at ? formatDate(item?.scheduled_for || item?.reservation_date || item?.starts_at) : 'Bez termínu'],
                 ['Poznámka', item?.note ? (item.note.length > 30 ? item.note.substring(0, 30) + '...' : item.note) : '-'],
               ],
@@ -4553,12 +6132,27 @@
 
   function dashboardSection() {
     return `
-      ${pageHead('Dashboard servisu', 'Provozní přehled: zakázky, rezervace a klíčové metriky')}
+      ${pageHead(
+        'Přehled',
+        'Operativní nástěnka: filtry zakázek, fronta práce a panely s rezervacemi a fakturací.',
+      )}
       ${kpiCards()}
+      <div class="service-shell-dashboard-cta" role="toolbar" aria-label="Rychlé akce přehledu">
+        <button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.openCreateWorkOrderModal()">+ Nová zakázka</button>
+        <button
+          type="button"
+          class="service-shell-filter-chip"
+          onclick="(function(){ const id = Number(${Number(state.activeVehicle?.vehicleId || 0)}); if (id) window.serviceShell.openServiceRecordModal(id); else window.serviceShell.openServiceToolsModal(); })()"
+        >+ Servisní záznam</button>
+        <button type="button" class="service-shell-filter-chip" onclick="window.serviceShell.openCreateInvoiceModal()">+ Vystavit fakturu</button>
+        <button type="button" class="service-shell-filter-chip" onclick="window.serviceShell.navigate('work-orders')">Celá fronta objednávek</button>
+      </div>
       <div class="service-shell-layout service-shell-layout--dashboard">
         <div class="service-shell-main">
-          ${dashboardOpsStats()}
-          ${workOrdersTableCard('Příchozí objednávky a zakázky', 'Fronta aktivních zakázek, objednávek a schvalovacích procesů.')}
+          ${workOrdersTableCard(
+            'Fronta zakázek',
+            'Vyberte typ fronty klikem na kartu výše, případně použijte filtr. Shodné zobrazení jako v sekci Příchozí objednávky.',
+          )}
         </div>
         ${rightPanel()}
       </div>
@@ -4578,61 +6172,77 @@
 
   function clientsSection() {
     const customers = Array.isArray(state.customers) ? state.customers : [];
-    const cards = customers.length ? customers.map((customer) => listCard({
-      kicker: 'Klient',
-      title: customer?.name || maskCardContact(customer?.email),
-      badge: `${String(customer?.vehicles_count || customer?.vehicle_count || 0)} aut`,
-      badgeClass: 'in_progress',
-      rows: [
-        ['Kontakt', maskCardContact(customer?.email || customer?.phone)],
-        ['Sdíleno', String(customer?.shared_vehicles_count || 0)],
-        ['Aktivita', customer?.last_activity ? formatDate(customer.last_activity) : '-'],
-      ],
-      action: `window.serviceShell.openCustomerDetailModal(${Number(customer?.customer_id || 0)})`,
-      actionLabel: 'Detail',
-    })).join('') : '';
+    const activityLabel = (item) => {
+      if (item?.last_service_date) return formatDate(item.last_service_date);
+      if (item?.last_activity) return formatDate(item.last_activity);
+      return '-';
+    };
+    const cards = customers.length ? customers.map((customer) => {
+      const cid = Number(customer?.customer_id || 0);
+      return listCard({
+        kicker: 'Zákazník',
+        title: customer?.name || maskCardContact(customer?.email),
+        badge: `${String(customer?.vehicles_count || customer?.vehicle_count || 0)} aut`,
+        badgeClass: 'in_progress',
+        rows: [
+          ['Kontakt', maskCardContact(customer?.email || customer?.phone)],
+          ['Sdíleno', String(customer?.shared_vehicles_count || 0)],
+          ['Poslední servis u vás', activityLabel(customer)],
+        ],
+        action: `window.serviceShell.openCustomerDetailModal(${cid})`,
+        actionLabel: 'Detail',
+        moreHtml: `
+          <button type="button" class="btn btn-secondary" onclick="event.stopPropagation(); window.serviceShell.openCustomerLinkNoteModal(${cid}, ${JSON.stringify(String(customer?.note || ''))})">Poznámka</button>
+          <button type="button" class="btn btn-secondary" onclick="event.stopPropagation(); window.serviceShell.unlinkCustomer(${cid})">Odpojit</button>
+        `,
+      });
+    }).join('') : '';
     const stats = `
-      <article class="service-shell-mini-card summary-card"><h3>Klienti</h3><div class="service-shell-stat-value">${customers.length}</div><p class="service-shell-muted">Aktivní servisní vazby</p></article>
-      <article class="service-shell-mini-card summary-card"><h3>Vozidla</h3><div class="service-shell-stat-value">${customers.reduce((sum, item) => sum + Number(item?.vehicles_count || item?.vehicle_count || 0), 0)}</div><p class="service-shell-muted">Sdílená vozidla klientů</p></article>
+      <article class="service-shell-mini-card summary-card"><h3>Zákazníci</h3><div class="service-shell-stat-value">${customers.length}</div><p class="service-shell-muted">Aktivní servisní vazby</p></article>
+      <article class="service-shell-mini-card summary-card"><h3>Vozidla</h3><div class="service-shell-stat-value">${customers.reduce((sum, item) => sum + Number(item?.vehicles_count || item?.vehicle_count || 0), 0)}</div><p class="service-shell-muted">Vozidla napojených zákazníků</p></article>
     `;
     const main = renderCardList({
         head: `
           <div class="service-shell-card-head">
-            <div><h3 class="service-shell-card-title">Klienti servisu</h3><p class="service-shell-subtitle">Napojené účty zákazníků, ke kterým servis zakládá vozidla, zakázky a rezervace.</p></div>
-            <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.load(true)">↗</button>
+            <div><h3 class="service-shell-card-title">Zákazníci servisu</h3><p class="service-shell-subtitle">Účty ze Správy vozidel propojené s tímto servisem — zakládání vozidel, zakázek a rezervací.</p></div>
+            <div class="service-shell-card-head-actions">
+              <button type="button" class="service-shell-filter-chip" onclick="window.serviceShell.openAddCustomerModal()">+ Přidat zákazníka</button>
+              <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.load(true)">↗</button>
+            </div>
           </div>
         `,
         cards,
-        empty: 'Bez klientů.',
+        empty: 'Zatím nemáte propojené zákazníky.',
       });
     const side = `
       <aside class="service-shell-side">
         <section class="service-shell-side-card list-card">
-          <h3>Poslední aktivita</h3>
+          <h3>Nedávná aktivita</h3>
           <div class="service-shell-list">
             ${customers.slice(0, 5).map((item) => `
               <div class="service-shell-list-row">
                 <div>
-                  <p class="service-shell-list-title">${escape(item?.name || 'Klient')}</p>
+                  <p class="service-shell-list-title">${escape(item?.name || 'Zákazník')}</p>
                   <p class="service-shell-list-note">${escape(maskCardContact(item?.email || item?.phone))}</p>
                 </div>
-                <div class="service-shell-list-value">${escape(item?.last_activity ? formatDate(item.last_activity) : '-')}</div>
+                <div class="service-shell-list-value">${escape(activityLabel(item))}</div>
               </div>
-            `).join('') || '<div class="service-shell-empty">Bez aktivit.</div>'}
+            `).join('') || '<div class="service-shell-empty">Bez záznamů.</div>'}
           </div>
         </section>
         <section class="service-shell-side-card list-card">
-          <h3>Akce</h3>
+          <h3>Zkratky</h3>
           <div class="service-shell-list">
-            <div class="service-shell-list-row"><span class="service-shell-list-title">Otevřít detail klienta</span><span class="service-shell-list-value">Klik na řádek</span></div>
-            <div class="service-shell-list-row"><span class="service-shell-list-title">Přidat vozidlo zákazníka</span><span class="service-shell-list-value">Pouze z detailu klienta</span></div>
+            <div class="service-shell-list-row"><span class="service-shell-list-title">Detail zákazníka</span><span class="service-shell-list-value">Klik na kartu</span></div>
+            <div class="service-shell-list-row"><span class="service-shell-list-title">Přidat vozidlo</span><span class="service-shell-list-value">Z detailu zákazníka</span></div>
+            <div class="service-shell-list-row"><span class="service-shell-list-title">Ověřit profil / pozvat</span><span class="service-shell-list-value"><button type="button" class="service-shell-filter-chip" style="margin:0" onclick="window.serviceShell.openAddCustomerModal()">Přidat zákazníka</button></span></div>
           </div>
         </section>
       </aside>
     `;
     return genericSection({
-      title: 'Klienti',
-      subtitle: 'Napojené účty zákazníků, sdílená vozidla a aktivní vazby pro servisní práci.',
+      title: 'Zákazníci',
+      subtitle: 'Propojení na uživatelské účty ve Správě vozidel, sdílená vozidla a servisní vazby.',
       stats,
       main,
       side,
@@ -4676,7 +6286,7 @@
           <div class="service-shell-list">
             <div class="service-shell-list-row"><span class="service-shell-list-title">Schválené vazby</span><span class="service-shell-list-value">${vehicles.length}</span></div>
             <div class="service-shell-list-row"><span class="service-shell-list-title">Otevřít detail</span><span class="service-shell-list-value">Klik na řádek</span></div>
-            <div class="service-shell-list-row"><span class="service-shell-list-title">Přidání nového vozidla</span><span class="service-shell-list-value">Přes konkrétního klienta</span></div>
+            <div class="service-shell-list-row"><span class="service-shell-list-title">Přidání nového vozidla</span><span class="service-shell-list-value">Přes konkrétního zákazníka</span></div>
           </div>
         </section>
       </aside>
@@ -4716,7 +6326,7 @@
         ['Vozidlo', doc?.vehicle_label || '-'],
         ['Dodavatel', doc?.supplier_name || '-'],
         ['Vloženo', doc?.created_at ? formatDate(doc.created_at) : '-'],
-        ['Klient', 'Osobní údaje skryty'],
+        ['Zákazník', 'Osobní údaje skryty'],
       ],
       action: `window.serviceShell.openDocumentDetailModal(${Number(doc?.id || 0)})`,
       actionLabel: 'Detail',
@@ -4768,7 +6378,7 @@
     const invoices = filteredInvoices();
     const draftCount = allInvoices.filter((item) => invoiceStatusKey(item?.status) === 'draft').length;
     const issuedCount = allInvoices.filter((item) => invoiceStatusKey(item?.status) === 'issued').length;
-    const exportedCount = allInvoices.filter((item) => item?.fakturyweb?.code).length;
+    const cancelledCount = allInvoices.filter((item) => invoiceStatusKey(item?.status) === 'cancelled').length;
     const totalIssued = allInvoices
       .filter((item) => invoiceStatusKey(item?.status) === 'issued')
       .reduce((sum, item) => sum + Number(item?.total || 0), 0);
@@ -4777,28 +6387,28 @@
         kicker: inv?.vehicle_label || 'Faktura',
         title: inv?.invoice_number || 'Koncept',
         badge: String(inv?.status_label || inv?.status || '-'),
-        badgeClass: invoiceBadgeClass(inv?.status, inv?.fakturyweb),
+        badgeClass: invoiceBadgeClass(inv?.status),
         rows: [
           ['Celkem', invoiceMoney(inv?.total || 0, inv?.currency || 'CZK')],
-          ['Klient', inv?.customer_label || (inv?.customer_id != null ? `Klient #${inv.customer_id}` : 'Osobní údaje skryty')],
+          ['Zákazník', inv?.customer_label || (inv?.customer_id != null ? `Zákazník #${inv.customer_id}` : 'Osobní údaje skryty')],
           ['Splatnost', inv?.due_at ? formatDate(inv.due_at) : '-'],
-          ['FakturyWeb', inv?.fakturyweb?.number || inv?.fakturyweb?.status || 'neodesláno'],
+          ['VS', inv?.extra?.variable_symbol || '—'],
         ],
         action: `window.serviceShell.openServiceInvoiceDetailModal(${Number(inv?.id || 0)})`,
         actionLabel: 'Detail',
-        moreHtml: `<details class="service-shell-more-actions" onclick="event.stopPropagation()"><summary aria-label="Více akcí">Více</summary><button type="button" onclick="window.serviceShell.openServiceInvoicePdf(${Number(inv?.id || 0)})">PDF</button>${String(inv?.status || '').toLowerCase() === 'issued' ? `<button type="button" onclick="window.serviceShell.exportServiceInvoiceToFakturyWeb(${Number(inv?.id || 0)})">FakturyWeb</button>` : ''}</details>`,
+        moreHtml: `<details class="service-shell-more-actions" onclick="event.stopPropagation()"><summary aria-label="Více akcí">Více</summary><button type="button" onclick="window.serviceShell.openServiceInvoicePdf(${Number(inv?.id || 0)})">PDF</button></details>`,
       })).join('')
       : '';
     const stats = `
       <article class="service-shell-mini-card summary-card"><h3>Koncepty</h3><div class="service-shell-stat-value">${draftCount}</div><p class="service-shell-muted">Rozpracované doklady</p></article>
-      <article class="service-shell-mini-card summary-card"><h3>Vystavené</h3><div class="service-shell-stat-value">${issuedCount}</div><p class="service-shell-muted">Uzavřené lokální faktury</p></article>
-      <article class="service-shell-mini-card summary-card"><h3>FakturyWeb</h3><div class="service-shell-stat-value">${exportedCount}</div><p class="service-shell-muted">Předané do účetního systému</p></article>
+      <article class="service-shell-mini-card summary-card"><h3>Vystavené</h3><div class="service-shell-stat-value">${issuedCount}</div><p class="service-shell-muted">Číslované faktury</p></article>
+      <article class="service-shell-mini-card summary-card"><h3>Zrušené</h3><div class="service-shell-stat-value">${cancelledCount}</div><p class="service-shell-muted">Anulované doklady</p></article>
       <article class="service-shell-mini-card summary-card"><h3>Objem</h3><div class="service-shell-stat-value">${escape(invoiceMoney(totalIssued, 'CZK'))}</div><p class="service-shell-muted">Součet vystavených v přehledu</p></article>
     `;
     const main = renderCardList({
         head: `
           <div class="service-shell-card-head">
-            <div><h3 class="service-shell-card-title">Fakturační program</h3><p class="service-shell-subtitle">Koncepty, vystavení, PDF a předání do FakturyWebu v jednom pracovním panelu.</p></div>
+            <div><h3 class="service-shell-card-title">Fakturace</h3><p class="service-shell-subtitle">Koncepty, vystavení a PDF přímo v aplikaci — hlavička dodavatele z údajů servisu.</p></div>
             <div class="service-shell-card-head-actions">
               <button type="button" class="btn btn-primary" onclick="window.serviceShell.openCreateInvoiceModal()">Nová faktura</button>
               <details class="service-shell-more-actions"><summary aria-label="Více akcí">Více</summary><button type="button" onclick="window.serviceShell.load(true)">Obnovit</button></details>
@@ -4810,7 +6420,6 @@
                 ['all', 'Vše'],
                 ['draft', 'Koncepty'],
                 ['issued', 'Vystavené'],
-                ['exported', 'FakturyWeb'],
                 ['cancelled', 'Zrušené'],
               ].map(([key, label]) => `<button type="button" class="${state.invoiceStatusFilter === key ? 'active' : ''}" onclick="window.serviceShell.setInvoiceStatusFilter('${key}')">${label}</button>`).join('')}
             </div>
@@ -4826,23 +6435,23 @@
           <h3>Workflow dokladu</h3>
           <div class="service-shell-list">
             <div class="service-shell-list-row"><span class="service-shell-list-title">1. Koncept</span><span class="service-shell-list-value">plně editovatelný</span></div>
-            <div class="service-shell-list-row"><span class="service-shell-list-title">2. Vystavení</span><span class="service-shell-list-value">číslování a PDF</span></div>
-            <div class="service-shell-list-row"><span class="service-shell-list-title">3. FakturyWeb</span><span class="service-shell-list-value">export a sync</span></div>
+            <div class="service-shell-list-row"><span class="service-shell-list-title">2. Vystavení</span><span class="service-shell-list-value">číslování</span></div>
+            <div class="service-shell-list-row"><span class="service-shell-list-title">3. PDF</span><span class="service-shell-list-value">dle vyplněné hlavičky</span></div>
             <div class="service-shell-list-row"><span class="service-shell-list-title">4. Historie</span><span class="service-shell-list-value">vázaná na servis</span></div>
           </div>
         </section>
         <section class="service-shell-side-card">
-          <h3>Nastavení API</h3>
+          <h3>Údaje dodavatele</h3>
           <div class="service-shell-list">
-            <div class="service-shell-list-row"><span class="service-shell-list-title">Režim</span><span class="service-shell-list-value">lokální aplikace</span></div>
-            <div class="service-shell-list-row"><span class="service-shell-list-title">Ostrý export</span><span class="service-shell-list-value">až po ověření .env</span></div>
+            <div class="service-shell-list-row"><span class="service-shell-list-title">Zdroj</span><span class="service-shell-list-value">profil účtu / úprava v dokladu</span></div>
+            <div class="service-shell-list-row"><span class="service-shell-list-title">IČO, adresa</span><span class="service-shell-list-value">v sekci Dodavatel</span></div>
           </div>
         </section>
       </aside>
     `;
     return genericSection({
       title: 'Faktury',
-      subtitle: 'Servisní faktury s možností předání do FakturyWeb API.',
+      subtitle: 'Servisní faktury s plnou hlavičkou a tiskovým výstupem v aplikaci.',
       stats,
       main,
       side,
@@ -4861,7 +6470,7 @@
       rows: [
         ['Termín', formatDate(reservation?.scheduled_for || reservation?.reservation_date || reservation?.starts_at || reservation?.created_at || '-')],
         ['Poznámka', reservation?.note || reservation?.service_note || '-'],
-        ['Klient', 'Osobní údaje skryty'],
+        ['Zákazník', 'Osobní údaje skryty'],
       ],
       action: `window.serviceShell.openReservationDetailModal(${Number(reservation?.id || 0)})`,
       actionLabel: 'Detail',
@@ -4930,7 +6539,7 @@
       rows: [
         ['Termín', item?.due_date ? formatDate(item.due_date) : '-'],
         ['Text', item?.text || '-'],
-        ['Klient', 'Osobní údaje skryty'],
+        ['Zákazník', 'Osobní údaje skryty'],
       ],
       action: `window.serviceShell.openReminderDetailModal(${Number(item?.id || 0)})`,
       actionLabel: 'Detail',
@@ -5125,7 +6734,7 @@
 
   function loadingShell() {
     return `
-      ${pageHead('Dashboard', 'Načítám servisní pracovní prostor...')}
+      ${pageHead('Přehled', 'Načítám servisní pracovní prostor…')}
       <div class="service-shell-kpis">
         <div class="service-shell-skeleton"></div>
         <div class="service-shell-skeleton"></div>
@@ -5141,6 +6750,8 @@
 
   function currentSectionHtml() {
     if (state.loading) return loadingShell();
+    const placeholder = serviceAccountPlaceholderSections();
+    if (placeholder) return placeholder;
     if (state.activeSection === 'clients') return clientsSection();
     if (state.activeSection === 'vehicles') return vehiclesSection();
     if (state.activeSection === 'work-orders') return workOrdersSection();
@@ -5149,7 +6760,6 @@
     if (state.activeSection === 'reservations') return reservationsSection();
     if (state.activeSection === 'reminders') return remindersSection();
     if (state.activeSection === 'team') return teamSection();
-    if (state.activeSection === 'fakturyweb') return fakturywebTestSection();
     return dashboardSection();
   }
 
@@ -5191,13 +6801,15 @@
     syncMobileNavScrollLock();
     const root = getRoot();
     try {
-      const header = shellHeader();
+      const topBar = ServiceTopBar();
+      const nav = ServiceNav();
       const banner = activeVehicleBanner();
       const section = currentSectionHtmlSafe();
       root.innerHTML = `
-      <div class="service-shell-root ${isMobileViewport() ? 'service-shell-root--mobile' : ''}" data-service-shell="root">
-        <div class="service-shell-app-shell">
-          ${header}
+      <div class="service-shell-root ${isMobileViewport() ? 'service-shell-root--mobile' : ''}" data-service-shell="root" data-service-active-section="${escape(String(state.activeSection || '').trim())}">
+        ${nav}
+        <div class="service-shell-app-shell" style="flex: 1; display: flex; flex-direction: column; width: 100%;">
+          ${topBar}
           ${banner}
           ${section}
         </div>
@@ -5228,6 +6840,8 @@
     load,
     render,
     navigate,
+    handleNavRailClick,
+    closeNavFlyouts,
     toggleTheme,
     setTheme,
     setSearchTerm,
@@ -5253,8 +6867,17 @@
     logout,
     openServiceToolsModal,
     searchCustomers,
+    linkCustomerFromLookup,
     linkCustomerById,
     sendInvitationFromSearch,
+    openAddCustomerModal,
+    linkExistingCustomerByEmail,
+    patchAddCustomerQuickLinkDraft,
+    patchCreateCustomerDraft,
+    submitCreateCustomer,
+    openCustomerLinkNoteModal,
+    submitCustomerLinkNote,
+    unlinkCustomer,
     searchVehicles,
     requestVehicleAccess,
     openVehicleFromLookup,
@@ -5280,6 +6903,7 @@
     submitServiceRecordModal,
     openQuoteModal,
     createQuoteFromRecord,
+    createInvoiceFromQuote,
     shareQuotePdf,
     copyQuotePublicLinkByUrl,
     copyQuotePublicLink,
@@ -5308,10 +6932,24 @@
     openServiceInvoiceDetailModal,
     issueServiceInvoiceFromModal,
     cancelServiceInvoiceFromModal,
-    exportServiceInvoiceToFakturyWeb,
-    syncServiceInvoiceFromFakturyWeb,
     setCustomerSearchQuery,
     setVehicleLookupQuery,
+    refreshPayrollModule,
+    setPayrollPeriod,
+    patchPayrollAttendance,
+    generatePayrollAttendanceMonth,
+    generatePayrollPayslipsMonth,
+    recalculatePayrollPayslip,
+    closePayrollPayslip,
+    refreshPayrollJournal,
+    exportPayrollJournalCsv,
+    createPayrollJmhz,
+    buildPayrollJmhzZip,
+    downloadPayrollJmhz,
+    submitPayrollOfficeCreate,
+    submitPayrollEmployeeCreate,
+    submitPayrollEmployeeUpdate,
+    openPayrollEmployeeDetail,
     state,
   };
 

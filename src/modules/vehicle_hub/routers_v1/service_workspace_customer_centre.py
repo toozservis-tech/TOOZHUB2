@@ -1,4 +1,8 @@
 """
+SOURCE OF TRUTH pro servisní „Zákazníky“ (HTTP + logika): vyhledávání, vazba, založení účtu, onboarding.
+
+Zastaralý import z kořene balíčku: ``vehicle_hub.service_workspace_customer_centre`` je pouze tenký re-export
+kvůli kompatibilitě testů a starým importům.
 Centrální API „Zákazníci servisu“ — přesné vyhledávání, vazba, založení účtu, onboarding.
 """
 from __future__ import annotations

@@ -191,13 +191,10 @@ def can_access_vehicle(
     if user_owns_vehicle(db, current_user, vehicle):
         return True
 
-    # Service role - přístup pouze k explicitně sdíleným vozidlům
+    # Servis: výhradně VehicleServiceLink (schválený přístup) nebo legacy zrcadlo v service_access.
+    # Obecný vehicle_read_policy zde nesmí otevřít bypass bez explicitního odkazu.
     role_key = normalize_role(current_user.role)
     if is_service(role_key):
-        if service_can_read_vehicle(db, current_user, vehicle_id):
-            return True
-
-        decision = vehicle_read_policy(role=role_key, is_owner=False, has_service_access=False)
-        return decision.allowed
+        return service_can_read_vehicle(db, current_user, vehicle_id)
 
     return vehicle_read_policy(role=role_key, is_owner=False, has_service_access=False).allowed

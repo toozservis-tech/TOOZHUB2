@@ -48,7 +48,11 @@ from ..models import (
     VehicleTachometerHistoryEntry,
 )
 from ..schema_management import assert_module_ready
-from ..service_access import attach_service_access_to_record, require_service_vehicle_link
+from ..service_access import (
+    attach_service_access_to_record,
+    normalize_lookup_query,
+    require_service_vehicle_link,
+)
 from ..service_record_snapshot import service_record_audit_snapshot as _service_record_snapshot
 from ..service_record_snapshot import snapshot_json_and_hash as _snapshot_json_and_hash
 from ..service_record_view import (
@@ -140,7 +144,10 @@ def _enforce_free_service_record_limit(
     user_email: Optional[str],
 ) -> None:
     license_status = get_license_status(db, tenant_id, user_email)
-    if str(license_status.get("plan") or "").strip().lower() != "free":
+    plan_raw = str(license_status.get("plan") or "").strip().lower()
+    plan_base = str(license_status.get("plan_base") or "").strip().lower()
+    # Servisní ZÁKLADní má omezení jako osobní Free (1 záznam), uživatelské Basic+ bez limitu záznamů zde.
+    if plan_raw != "free" and plan_base != "free":
         return
 
     records_count = int(
@@ -153,8 +160,8 @@ def _enforce_free_service_record_limit(
         raise HTTPException(
             status_code=403,
             detail=(
-                "Ve verzi Free můžete uložit pouze 1 servisní záznam. "
-                "Pro další záznamy přejděte na licenci Basic."
+                "V základní (bezplatné) verzi můžete uložit pouze 1 servisní záznam. "
+                "Pro neomezený počet záznamů aktivujte placenou licenci FULL."
             ),
         )
 
@@ -1100,6 +1107,12 @@ def create_service_record(
                 vehicle_id=vehicle_id,
                 require_create_record=True,
             )
+            vin_norm, vin_kind = normalize_lookup_query(getattr(vehicle, "vin", None))
+            if vin_kind != "vin" or not vin_norm:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Pro servisní záznam je nutný platný VIN u vozidla (17 znaků). Doplňte jej v evidenci vozidla.",
+                )
 
         record_status = _normalize_record_status(getattr(record_data, "record_status", None), default="draft")
 
@@ -1143,8 +1156,14 @@ def create_service_record(
             actor_user_id=user_id,
             actor_role=getattr(current_user, "role", None),
             tenant_id=tenant_id,
+            vehicle_id=int(vehicle_id),
             metadata={
                 "vehicle_id": int(vehicle_id),
+                "vin": (str(getattr(vehicle, "vin", None) or "").strip().upper() or None),
+                "service_access_link_id": int(access_link.id) if access_link else None,
+                "created_by_service_customer_id": int(current_user.id)
+                if is_service(getattr(current_user, "role", None))
+                else None,
                 "record_status": record_status,
                 "service_id": getattr(record, "service_id", None),
             },

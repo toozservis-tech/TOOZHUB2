@@ -118,6 +118,11 @@ class Customer(Base):
     registration_user_agent = Column(Text, nullable=True)
     registration_risk_flags = Column(JSON, nullable=True)
 
+    # Servisně založený účet / bezpečné vyhledávání (normalizované hodnoty)
+    force_password_change = Column(Boolean, nullable=False, default=False)
+    email_normalized = Column(String(320), nullable=True, index=True)
+    phone_normalized = Column(String(32), nullable=True, index=True)
+
 
 class CustomerDeletionLabel(Base):
     """Označení smazaného účtu v archivu (#N, ##N) podle pořadí smazání daného čísla."""
@@ -202,6 +207,15 @@ class ServiceCustomerLink(Base):
     status = Column(String, default="active", nullable=False, index=True)  # active, archived
     note = Column(Text, nullable=True)
 
+    link_source = Column(String(40), nullable=True)
+    consent_basis = Column(Text, nullable=True)
+    consent_note = Column(Text, nullable=True)
+    internal_service_note = Column(Text, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    created_by_service_user_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    last_interaction_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -222,6 +236,9 @@ class ServiceVehicleAccess(Base):
 
     status = Column(String, default="active", nullable=False, index=True)  # active, revoked
     granted_by_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    service_tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    access_scope_json = Column(Text, nullable=True)
+    revoke_reason = Column(Text, nullable=True)
     note = Column(Text, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
 
@@ -231,6 +248,25 @@ class ServiceVehicleAccess(Base):
     __table_args__ = (
         UniqueConstraint("service_customer_id", "customer_id", "vehicle_id", name="uq_service_vehicle_access"),
     )
+
+
+class UserOnboardingToken(Base):
+    """Jednorázové tokeny pro založení hesla / pozvánku od servisu (jen hash v DB)."""
+
+    __tablename__ = "user_onboarding_tokens"
+    __table_args__ = ()
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    token_hash = Column(String(128), nullable=False, index=True)
+    token_type = Column(String(64), nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_by_service_tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
+    created_by_user_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    ip_created = Column(String(128), nullable=True)
+    user_agent_created = Column(Text, nullable=True)
 
 
 class ServiceVehicleLookupAudit(Base):
@@ -393,6 +429,8 @@ class Vehicle(Base):
     # Multi-tenant podpora
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
     
+    # Legacy alias majitele pro staré klienty / kompatibilitu. Vlastníka určujte přes vehicle_ownerships,
+    # neprovádějte nad tímto sloupcem nové business rozhodování (GDPR / single source of truth).
     user_email = Column(String, index=True, nullable=False)
     nickname = Column(String, nullable=True)
     brand = Column(String, nullable=True)
@@ -433,15 +471,13 @@ class Vehicle(Base):
     vehicle_technical_overview = Column(JSON, nullable=True)
     insurance_provider = Column(String, nullable=True)  # Pojišťovna
     insurance_valid_until = Column(Date, nullable=True)  # Datum konce pojištění
+    provisioned_by_service_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     status = Column(String(32), nullable=False, default="active", index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    records = relationship(
-        "ServiceRecord",
-        back_populates="vehicle",
-        cascade="all, delete-orphan",
-    )
+    # Bez cascade delete-orphan: při mazání vozidla nesmí ORM „utrhnit“ servisní historii.
+    records = relationship("ServiceRecord", back_populates="vehicle")
 
 
 class VehiclePhoto(Base):

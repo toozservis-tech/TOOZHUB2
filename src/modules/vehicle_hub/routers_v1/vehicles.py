@@ -2649,6 +2649,14 @@ def _vehicle_to_response_payload(
     is_owner = bool(current_email) and current_email == owner_email
     is_admin_role = is_admin(role_key)
 
+    prov_id = getattr(vehicle, "provisioned_by_service_customer_id", None)
+    payload["provisioned_by_service_customer_id"] = int(prov_id) if prov_id else None
+    payload["provisioned_by_service_label"] = None
+    if prov_id and is_owner:
+        svc = db.query(Customer).filter(Customer.id == int(prov_id)).first()
+        if svc:
+            payload["provisioned_by_service_label"] = (svc.name or svc.email or "Servis").strip()
+    payload["added_by_service_name"] = payload.get("provisioned_by_service_label")
     if not is_owner and not is_admin_role:
         payload["user_email"] = "hidden"
         payload["tenant_id"] = None

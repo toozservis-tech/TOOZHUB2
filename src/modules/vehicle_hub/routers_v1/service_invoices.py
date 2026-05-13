@@ -264,6 +264,10 @@ class ServiceInvoiceLineIn(BaseModel):
 class ServiceInvoiceCreateRequest(BaseModel):
     customer_id: int = Field(gt=0)
     vehicle_id: Optional[int] = Field(default=None, gt=0)
+    non_vehicle_invoice: bool = Field(
+        default=False,
+        description="Ruční faktura bez vozidla; do extra_json se uloží manual_non_vehicle_invoice.",
+    )
     currency: str = Field(default="CZK", max_length=8)
     due_at: Optional[datetime] = None
     notes: Optional[str] = Field(default=None, max_length=8000)
@@ -344,6 +348,7 @@ def _clean_invoice_extra(value: Optional[dict[str, Any]]) -> dict[str, Any]:
         "customer_zip",
         "customer_state",
         "customer_email",
+        "manual_non_vehicle_invoice",
     }
     cleaned: dict[str, Any] = {}
     for key in allowed_scalars:
@@ -631,18 +636,42 @@ def create_service_invoice(
     _require_service_invoice_role(current_user)
     _ensure_service_invoices_schema(db)
 
-    _ensure_invoice_party(
-        db,
-        current_user=current_user,
-        customer_id=int(payload.customer_id),
-        vehicle_id=payload.vehicle_id,
-    )
+    if payload.non_vehicle_invoice:
+        if payload.vehicle_id is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="U faktury bez vozidla ponechte vehicle_id prázdné.",
+            )
+        _, vehicle = _ensure_invoice_party(
+            db,
+            current_user=current_user,
+            customer_id=int(payload.customer_id),
+            vehicle_id=None,
+        )
+        vehicle_id_val = None
+    else:
+        if not payload.vehicle_id:
+            raise HTTPException(
+                status_code=422,
+                detail="vehicle_id je povinné pro běžnou servisní fakturu vázanou na vozidlo.",
+            )
+        _, vehicle = _ensure_invoice_party(
+            db,
+            current_user=current_user,
+            customer_id=int(payload.customer_id),
+            vehicle_id=int(payload.vehicle_id),
+        )
+        vehicle_id_val = int(payload.vehicle_id)
+
+    extra_in = dict(payload.extra or {})
+    if payload.non_vehicle_invoice:
+        extra_in["manual_non_vehicle_invoice"] = True
 
     inv = ServiceInvoice(
         tenant_id=int(current_user.tenant_id),
         service_id=int(current_user.id),
         customer_id=int(payload.customer_id),
-        vehicle_id=int(payload.vehicle_id) if payload.vehicle_id else None,
+        vehicle_id=vehicle_id_val,
         status="draft",
         subtotal=0,
         tax_total=0,
@@ -650,7 +679,7 @@ def create_service_invoice(
         currency=str(payload.currency or "CZK").strip()[:8] or "CZK",
         due_at=payload.due_at,
         notes=(str(payload.notes).strip() if payload.notes else None),
-        extra_json=_invoice_extra_json(payload.extra),
+        extra_json=_invoice_extra_json(extra_in),
     )
     db.add(inv)
     db.flush()
@@ -668,7 +697,18 @@ def create_service_invoice(
     inv.total = tot
     db.flush()
 
-    _audit(db, invoice=inv, action="invoice_created", actor=current_user, metadata={"customer_id": inv.customer_id})
+    _audit(
+        db,
+        invoice=inv,
+        action="invoice_created",
+        actor=current_user,
+        metadata={
+            "customer_id": inv.customer_id,
+            "vehicle_id": inv.vehicle_id,
+            "vin": (str(getattr(vehicle, "vin", None) or "").strip().upper() or None),
+            "non_vehicle": bool(payload.non_vehicle_invoice),
+        },
+    )
     db.commit()
     db.refresh(inv)
     lines = (

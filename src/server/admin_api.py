@@ -4630,6 +4630,26 @@ def update_user(
             )
             db.commit()
 
+        acting = get_customer_by_email(db, email)
+        write_global_audit_log(
+            db,
+            entity_type="admin_customer",
+            entity_id=int(user.id),
+            action="admin_user_patch",
+            actor_user_id=int(acting.id) if acting else None,
+            actor_role=str(getattr(acting, "role", None) or "") if acting else None,
+            tenant_id=int(user.tenant_id) if user.tenant_id else None,
+            before_json=before_prof,
+            after_json=after_prof,
+            metadata={
+                "admin_email": email,
+                "target_user_id": int(user.id),
+                "password_updated": bool(pwd_will_update),
+            },
+            ip=(str(request.client.host)[:128] if request.client and request.client.host else None),
+        )
+        db.commit()
+
         return {
             "message": "Uživatel byl upraven",
             "license_plan": (updated_license or {}).get("plan", selected_plan),

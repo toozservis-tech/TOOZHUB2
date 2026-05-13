@@ -65,6 +65,13 @@ def get_active_vehicle_service_link(
 
 
 def service_can_read_vehicle(db: Session, current_user: Customer, vehicle_id: int) -> bool:
+    """
+    Čtení vozidla servisním účtem.
+
+    Autorita: ``VehicleServiceLink`` ve stavu ``approved``.
+    ``ServiceVehicleAccess`` je pouze legacy zrcadlo udržované z ``create_or_update_vehicle_service_link`` —
+    ponecháno pro zpětnou kompatibilitu dat, dokud neproběhne plná migrace.
+    """
     if not is_service(normalize_role(getattr(current_user, "role", None))):
         return False
     if get_active_vehicle_service_link(
@@ -74,12 +81,13 @@ def service_can_read_vehicle(db: Session, current_user: Customer, vehicle_id: in
     ) is not None:
         return True
 
+    # LEGACY read path (bez vlastního rozhodování mimo synchronizaci s VehicleServiceLink)
     legacy_access = (
         db.query(ServiceVehicleAccess.id)
         .filter(
             ServiceVehicleAccess.service_customer_id == int(current_user.id),
             ServiceVehicleAccess.vehicle_id == int(vehicle_id),
-            ServiceVehicleAccess.status == "active",
+            ServiceVehicleAccess.status.in_(["active", "approved"]),
         )
         .first()
     )
@@ -93,6 +101,7 @@ def require_service_vehicle_link(
     vehicle_id: int,
     require_create_record: bool = False,
 ) -> VehicleServiceLink:
+    """Zápisy servisu jen přes aktivní ``VehicleServiceLink`` (legacy tabulka sama o sobě nestačí)."""
     link = get_active_vehicle_service_link(
         db,
         service_customer_id=int(current_user.id),
@@ -313,6 +322,22 @@ def create_or_update_vehicle_service_link(
         service_link.updated_at = now
         if note is not None:
             service_link.note = note
+    else:
+        service_customer = db.query(Customer).filter(Customer.id == int(service_customer_id)).first()
+        owner_customer = db.query(Customer).filter(Customer.id == int(owner_customer_id)).first()
+        if service_customer and owner_customer:
+            db.add(
+                ServiceCustomerLink(
+                    service_tenant_id=service_customer.tenant_id,
+                    service_customer_id=int(service_customer_id),
+                    customer_tenant_id=owner_customer.tenant_id,
+                    customer_id=int(owner_customer_id),
+                    status="active",
+                    note=note or "Propojeno přes schválení vozidla",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
 
     return link
 
@@ -347,7 +372,7 @@ def revoke_vehicle_service_link(
         .filter(
             ServiceVehicleAccess.service_customer_id == int(service_customer_id),
             ServiceVehicleAccess.vehicle_id == int(vehicle_id),
-            ServiceVehicleAccess.status == "active",
+            ServiceVehicleAccess.status.in_(["active", "approved"]),
         )
         .first()
     )
@@ -376,7 +401,7 @@ def revoke_vehicle_service_link(
 def backfill_vehicle_service_links_from_legacy_access(db: Session) -> None:
     rows = (
         db.query(ServiceVehicleAccess)
-        .filter(ServiceVehicleAccess.status == "active")
+        .filter(ServiceVehicleAccess.status.in_(["active", "approved"]))
         .all()
     )
     for row in rows:
