@@ -20,8 +20,8 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, EmailStr, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -68,6 +68,10 @@ from ..service_access import (
     vehicle_label,
 )
 from ..user_in_app_notifications import notify_owner_service_access_requested
+from src.modules.vehicle_hub.routers_v1.service_workspace_customer_centre import (
+    CustomerLinkFromLookupRequestV1,
+    execute_customer_link_from_lookup,
+)
 from ..vehicle_public_history import (
     build_public_history_page_url,
     build_vehicle_qr_signature,
@@ -152,7 +156,32 @@ POSTCODE_RE = re.compile(r"\b\d{5}\b")
 
 
 class LinkExistingCustomerRequest(BaseModel):
-    customer_email: EmailStr
+    """Propojení podle e-mailu (legacy) nebo podle lookup tokenu z POST /customers/search."""
+
+    customer_email: Optional[EmailStr] = None
+    note: Optional[str] = Field(default=None, max_length=500)
+    lookup_id: Optional[str] = Field(default=None, max_length=4096)
+    consent_basis: Optional[str] = Field(default=None, max_length=120)
+    consent_note: Optional[str] = Field(default=None, max_length=2000)
+    internal_service_note: Optional[str] = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def _validate_channel(self) -> LinkExistingCustomerRequest:
+        lk = (self.lookup_id or "").strip()
+        if lk:
+            if self.customer_email is not None:
+                raise ValueError("Nelze kombinovat lookup_id s customer_email.")
+            cb = (self.consent_basis or "").strip()
+            cn = (self.consent_note or "").strip()
+            if len(cb) < 3 or len(cn) < 3:
+                raise ValueError("lookup_id vyžaduje consent_basis a consent_note (min. 3 znaky).")
+            return self
+        if self.customer_email is None:
+            raise ValueError("Zadejte customer_email nebo lookup_id.")
+        return self
+
+
+class ServiceCustomerLinkNotePatchRequest(BaseModel):
     note: Optional[str] = Field(default=None, max_length=500)
 
 
@@ -295,13 +324,57 @@ def _mask_phone_value(value: Optional[str]) -> Optional[str]:
 
 
 def _get_linked_customer_or_404(db: Session, current_user: Customer, customer_id: int) -> Customer:
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    customer = (
+        db.query(Customer)
+        .filter(
+            Customer.id == customer_id,
+            func.lower(Customer.role).notin_(["service", "admin", "developer_admin"]),
+        )
+        .first()
+    )
     if not customer:
         raise HTTPException(status_code=404, detail="Zákazník nebyl nalezen.")
 
-    link = _get_active_link(db, service_customer_id=current_user.id, customer_id=customer.id)
+    link = (
+        db.query(ServiceCustomerLink)
+        .filter(
+            ServiceCustomerLink.service_customer_id == current_user.id,
+            ServiceCustomerLink.customer_id == customer.id,
+            ServiceCustomerLink.status.in_(("active", "invited", "pending_customer_confirm")),
+        )
+        .first()
+    )
     if not link:
         raise HTTPException(status_code=403, detail="Tento zákazník není propojen se servisním účtem.")
+    return customer
+
+
+def _get_active_linked_customer_or_404(db: Session, current_user: Customer, customer_id: int) -> Customer:
+    customer = (
+        db.query(Customer)
+        .filter(
+            Customer.id == customer_id,
+            func.lower(Customer.role).notin_(["service", "admin", "developer_admin"]),
+        )
+        .first()
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Zákazník nebyl nalezen.")
+
+    link = (
+        db.query(ServiceCustomerLink)
+        .filter(
+            ServiceCustomerLink.service_customer_id == current_user.id,
+            ServiceCustomerLink.customer_id == customer.id,
+            ServiceCustomerLink.status.in_(["active", "invited"]),
+        )
+        .first()
+    )
+    if not link:
+        raise HTTPException(
+            status_code=403,
+            detail="Ke klientovi je potřeba aktivní nebo pozvaná servisní vazba.",
+        )
     return customer
 
 
@@ -580,14 +653,14 @@ def _build_customer_detail_payload(
         blocking_reason=(
             None
             if can_create_work_order or not active_link
-            else "Klient je propojen, ale servis zatím nemá schválený přístup k žádnému jeho vozidlu."
+            else "Zákazník je propojen, ale servis zatím nemá schválený přístup k žádnému jeho vozidlu."
         ),
         disclosure=disclosure,
     )
     payload.update(
         {
             "customer_id": int(customer.id),
-            "name": customer.name or customer.email or f"Klient #{int(customer.id)}",
+            "name": customer.name or customer.email or f"Zákazník #{int(customer.id)}",
             "role": customer.role,
             "email": customer.email if disclosure == "full" else None,
             "email_masked": _mask_email_value(customer.email),
@@ -2481,9 +2554,9 @@ def list_service_customers(
         .join(Customer, ServiceCustomerLink.customer_id == Customer.id)
         .filter(
             ServiceCustomerLink.service_customer_id == current_user.id,
-            ServiceCustomerLink.status == "active",
+            ServiceCustomerLink.status.in_(("active", "invited", "pending_customer_confirm")),
         )
-        .order_by(Customer.name.asc(), Customer.email.asc())
+        .order_by(ServiceCustomerLink.updated_at.desc(), Customer.name.asc(), Customer.email.asc())
         .all()
     )
 
@@ -2501,12 +2574,16 @@ def list_service_customers(
             .filter(
                 VehicleOwnership.customer_id == customer.id,
                 VehicleOwnership.is_active.is_(True),
-                ServiceRecordModel.user_id == current_user.id,
+                or_(
+                    ServiceRecordModel.user_id == current_user.id,
+                    ServiceRecordModel.created_by_service_customer_id == current_user.id,
+                ),
             )
             .scalar()
         )
         result.append(
             {
+                "customer_link_id": link.id,
                 "customer_id": customer.id,
                 "email": customer.email,
                 "name": customer.name,
@@ -2515,6 +2592,9 @@ def list_service_customers(
                 "shared_vehicles_count": len(shared_vehicle_ids),
                 "last_service_date": last_service_date.isoformat() if last_service_date else None,
                 "note": link.note,
+                "internal_service_note": getattr(link, "internal_service_note", None),
+                "link_status": link.status,
+                "link_source": getattr(link, "link_source", None),
                 "created_at": link.created_at.isoformat() if link.created_at else None,
             }
         )
@@ -2522,142 +2602,16 @@ def list_service_customers(
 
 
 @router.get("/customers/search")
-def search_service_customers(
+def search_service_customers_deprecated(
     query: str = Query(..., min_length=2, max_length=160),
     limit: int = Query(default=10, ge=1, le=25),
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _require_service_workspace_role(current_user)
-    _ensure_service_workspace_schema(db)
-
-    raw_query = str(_query_value(query) or "").strip()
-    limit_value = int(_query_value(limit) or 10)
-    normalized_query = raw_query.lower()
-    phone_digits = re.sub(r"\D+", "", raw_query)
-
-    linked_ids = {
-        int(item[0])
-        for item in (
-            db.query(ServiceCustomerLink.customer_id)
-            .filter(
-                ServiceCustomerLink.service_customer_id == current_user.id,
-                ServiceCustomerLink.status == "active",
-            )
-            .all()
-        )
-        if item and item[0]
-    }
-
-    db_query = (
-        db.query(Customer)
-        .filter(
-            Customer.id != current_user.id,
-            func.lower(Customer.role).notin_(["service", "admin", "developer_admin"]),
-        )
-        .filter(
-            or_(
-                func.lower(Customer.email).like(f"%{normalized_query}%"),
-                func.lower(func.coalesce(Customer.name, "")).like(f"%{normalized_query}%"),
-                func.replace(func.replace(func.replace(func.coalesce(Customer.phone, ""), " ", ""), "+", ""), "-", "").like(f"%{phone_digits or normalized_query}%"),
-            )
-        )
-        .order_by(Customer.id.desc())
-        .limit(limit_value)
+    raise HTTPException(
+        status_code=410,
+        detail="Vyhledávání podle volného textu již není podporováno. Použijte POST /api/v1/services/workspace/customers/search s přesným e-mailem nebo telefonem.",
     )
-
-    rows = db_query.all()
-    write_global_audit_log(
-        db,
-        entity_type="service_customer_search",
-        entity_id=getattr(current_user, "id", None),
-        action="search",
-        actor_user_id=getattr(current_user, "id", None),
-        actor_role=getattr(current_user, "role", None),
-        tenant_id=getattr(current_user, "tenant_id", None),
-        metadata={
-            "query": raw_query,
-            "result_count": len(rows),
-        },
-    )
-    db.commit()
-
-    items: list[dict[str, Any]] = []
-    for customer in rows:
-        email_value = str(getattr(customer, "email", "") or "").strip().lower()
-        name_value = str(getattr(customer, "name", "") or "").strip().lower()
-        customer_phone_digits = re.sub(r"\D+", "", str(getattr(customer, "phone", "") or ""))
-        if normalized_query and email_value == normalized_query:
-            match_score = 1.0
-            match_type = "fuzzy"
-        elif phone_digits and customer_phone_digits and customer_phone_digits.endswith(phone_digits):
-            match_score = 0.96
-            match_type = "fuzzy"
-        elif normalized_query and normalized_query in name_value:
-            match_score = 0.88
-            match_type = "fuzzy"
-        else:
-            match_score = 0.7
-            match_type = "fuzzy"
-        latest_invite = _get_latest_invitation_for_email(
-            db,
-            service_customer_id=int(current_user.id),
-            invite_email=getattr(customer, "email", None),
-        )
-        invite_status = None
-        invite_status_label = None
-        if latest_invite:
-            invite_status, invite_status_label, _ = _invitation_status_meta(
-                str(latest_invite.status or ""),
-                accepted_at=latest_invite.accepted_at,
-            )
-        already_linked = int(customer.id) in linked_ids
-        has_pending_invite = invite_status == "pending"
-        items.append(
-            {
-                "customer_id": int(customer.id),
-                "name": customer.name or customer.email or f"Klient #{int(customer.id)}",
-                "email_masked": _mask_email_value(customer.email),
-                "phone_masked": _mask_phone_value(customer.phone),
-                "role": customer.role,
-                "already_linked": already_linked,
-                "can_link": not already_linked,
-                "can_open_detail": True,
-                "invite_status": invite_status,
-                "invite_status_label": invite_status_label,
-                "status": (
-                    "linked"
-                    if already_linked
-                    else "invite_pending"
-                    if has_pending_invite
-                    else "not_linked"
-                ),
-                "status_label": (
-                    "Už propojený klient"
-                    if already_linked
-                    else "Pozvánka už byla odeslána"
-                    if has_pending_invite
-                    else "Lze propojit"
-                ),
-                "can_send_invite": not already_linked and not has_pending_invite,
-                "blocking_reason": (
-                    "Klient už je propojený se servisem."
-                    if already_linked
-                    else "Na tento kontakt už čeká dříve odeslaná pozvánka."
-                    if has_pending_invite
-                    else None
-                ),
-                "match_score": match_score,
-                "match_type": match_type,
-            }
-        )
-
-    return {
-        "query": raw_query,
-        "result_count": len(rows),
-        "has_multiple_matches": len(rows) > 1,
-        "items": items,
-    }
 
 
 @router.get("/customers/{customer_id}/detail")
@@ -2669,16 +2623,7 @@ def get_service_customer_detail(
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
 
-    customer = (
-        db.query(Customer)
-        .filter(
-            Customer.id == int(customer_id),
-            func.lower(Customer.role).notin_(["service", "admin", "developer_admin"]),
-        )
-        .first()
-    )
-    if not customer:
-        raise HTTPException(status_code=404, detail="Klient nebyl nalezen.")
+    customer = _get_linked_customer_or_404(db, current_user, int(customer_id))
     return _build_customer_detail_payload(db, current_user=current_user, customer=customer)
 
 
@@ -2874,7 +2819,7 @@ def link_existing_customer_by_id(
             service_customer_id=current_user.id,
             service_tenant_id=current_user.tenant_id,
             target_customer=customer,
-            note="Propojeno z vyhledání klienta",
+            note="Propojeno z vyhledání zákazníka",
         )
         write_global_audit_log(
             db,
@@ -2893,14 +2838,74 @@ def link_existing_customer_by_id(
         return {
             "linked": True,
             "created": created,
-            "message": "Klient byl úspěšně propojen." if created else "Klient už byl propojen, vazba byla potvrzena.",
+            "message": "Zákazník byl úspěšně propojen." if created else "Zákazník už byl propojen, vazba byla potvrzena.",
             "customer_id": int(customer.id),
         }
     except HTTPException:
         raise
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Nepodařilo se propojit klienta: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Nepodařilo se propojit zákazníka: {exc}") from exc
+
+
+@router.patch("/customers/{customer_id}/link")
+def patch_service_customer_link_note(
+    customer_id: int,
+    payload: ServiceCustomerLinkNotePatchRequest,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    link = _get_active_link(db, service_customer_id=current_user.id, customer_id=int(customer_id))
+    if not link:
+        raise HTTPException(status_code=404, detail="Aktivní vazba se zákazníkem neexistuje.")
+
+    note_clean = (payload.note or "").strip() or None
+    link.note = note_clean
+    link.updated_at = datetime.utcnow()
+    write_global_audit_log(
+        db,
+        entity_type="service_customer_link",
+        entity_id=int(customer_id),
+        action="patch_link_note",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=getattr(current_user, "tenant_id", None),
+        metadata={"customer_id": int(customer_id)},
+    )
+    db.commit()
+    return {"customer_id": int(customer_id), "note": note_clean}
+
+
+@router.delete("/customers/{customer_id}/link")
+def delete_service_customer_link(
+    customer_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    link = _get_active_link(db, service_customer_id=current_user.id, customer_id=int(customer_id))
+    if not link:
+        raise HTTPException(status_code=404, detail="Aktivní vazba se zákazníkem neexistuje.")
+
+    link.status = "archived"
+    link.updated_at = datetime.utcnow()
+    write_global_audit_log(
+        db,
+        entity_type="service_customer_link",
+        entity_id=int(customer_id),
+        action="unlink_customer",
+        actor_user_id=getattr(current_user, "id", None),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=getattr(current_user, "tenant_id", None),
+        metadata={"customer_id": int(customer_id)},
+    )
+    db.commit()
+    return {"unlinked": True, "customer_id": int(customer_id)}
 
 
 @router.post("/access-requests")
@@ -3245,13 +3250,31 @@ def regenerate_vehicle_qr_token(
 @router.post("/customers/link-existing")
 def link_existing_customer(
     payload: LinkExistingCustomerRequest,
+    request: Request,
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
 
-    customer = _find_customer_by_email(db, payload.customer_email)
+    if str(payload.lookup_id or "").strip():
+        cen_payload = CustomerLinkFromLookupRequestV1(
+            lookup_id=str(payload.lookup_id).strip(),
+            consent_basis=(payload.consent_basis or "").strip(),
+            consent_note=(payload.consent_note or "").strip(),
+            internal_service_note=payload.internal_service_note,
+        )
+        return execute_customer_link_from_lookup(
+            payload=cen_payload,
+            request=request,
+            current_user=current_user,
+            db=db,
+        )
+
+    customer_email_req = payload.customer_email
+    if customer_email_req is None:
+        raise HTTPException(status_code=422, detail="Chybí customer_email nebo lookup_id.")
+    customer = _find_customer_by_email(db, customer_email_req)
     if not customer:
         raise HTTPException(status_code=404, detail="Účet s tímto emailem nebyl nalezen.")
 
@@ -3284,14 +3307,14 @@ def link_existing_customer(
         return {
             "linked": True,
             "created": created,
-            "message": "Klient byl úspěšně propojen." if created else "Klient už byl propojen, vazba byla aktualizována.",
+            "message": "Zákazník byl úspěšně propojen." if created else "Zákazník už byl propojen, vazba byla aktualizována.",
             "customer_id": customer.id,
         }
     except HTTPException:
         raise
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Nepodařilo se propojit klienta: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Nepodařilo se propojit zákazníka: {exc}") from exc
 
 
 @router.get("/invitations")
@@ -3819,7 +3842,7 @@ def create_customer_vehicle(
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
 
-    customer = _get_linked_customer_or_404(db, current_user, customer_id)
+    customer = _get_active_linked_customer_or_404(db, current_user, customer_id)
     customer_email_key = _normalize_email(customer.email)
     if not customer_email_key:
         raise HTTPException(status_code=400, detail="Klient nemá platný email pro přiřazení vozidla.")
@@ -3872,11 +3895,13 @@ def create_customer_vehicle(
         if duplicate_vin:
             raise HTTPException(status_code=409, detail="Vozidlo s tímto VIN už v tenantu existuje.")
 
+    build_payload = payload.model_copy(update={"stk_valid_until": normalized_stk})
     vehicle = _build_workspace_vehicle_row(
         tenant_id=tenant_id,
         owner_email=customer_email_key,
-        payload=payload,
+        payload=build_payload,
     )
+    setattr(vehicle, "provisioned_by_service_customer_id", int(current_user.id))
     db.add(vehicle)
     db.flush()
     apply_orv_scan_to_vehicle(
@@ -3894,6 +3919,17 @@ def create_customer_vehicle(
         vehicle=vehicle,
         owner=customer,
         assigned_by_customer_id=current_user.id,
+        ownership_origin="service_workspace",
+    )
+    create_or_update_vehicle_service_link(
+        db,
+        tenant_id=int(tenant_id),
+        service_customer_id=int(current_user.id),
+        owner_customer_id=int(customer.id),
+        vehicle_id=int(vehicle.id),
+        approved_by_customer_id=int(customer.id),
+        source_type="service_workspace_vehicle_create",
+        note="Servis založil vozidlo pro klienta",
     )
 
     db.commit()
@@ -4191,7 +4227,7 @@ def create_service_workspace_reminder(
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
 
-    customer = _get_linked_customer_or_404(db, current_user, int(payload.customer_id))
+    customer = _get_active_linked_customer_or_404(db, current_user, int(payload.customer_id))
     vehicle = None
     if payload.vehicle_id:
         vehicle = get_owned_vehicle(
@@ -4656,7 +4692,7 @@ def ingest_service_document(
     if source_type not in ALLOWED_SOURCE_TYPES:
         raise HTTPException(status_code=422, detail="Neplatný typ dokladu.")
 
-    customer = _get_linked_customer_or_404(db, current_user, payload.customer_id)
+    customer = _get_active_linked_customer_or_404(db, current_user, payload.customer_id)
     vehicle: Optional[VehicleModel] = None
     approved_vehicle_link: Optional[VehicleServiceLink] = None
     if payload.vehicle_id:
