@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
+import re
 import secrets
 import time
 from urllib.parse import quote
@@ -51,6 +52,7 @@ from src.server.main_helpers import (
     ResetPasswordRequest,
     ServiceRegisterRequest,
     ServiceRegisterResponse,
+    ServiceInviteOnboardingRequest,
     TokenResponse,
     TwoFactorLoginVerifyRequest,
     UserLogin,
@@ -263,6 +265,8 @@ def register_user(
         owner_name=user_data.name,
     )
 
+    phone_digits = re.sub(r"\D+", "", phone_e164 or "")
+
     customer = Customer(
         tenant_id=dedicated_tenant.id,
         email=normalized_email,
@@ -276,6 +280,8 @@ def register_user(
         zip=user_data.zip,
         phone=user_data.phone,
         phone_e164=phone_e164,
+        email_normalized=normalized_email,
+        phone_normalized=phone_digits or None,
         account_status="pending_email_verification",
         email_verification_token_hash=token_hash,
         email_verification_expires_at=now + _EMAIL_VERIFICATION_TTL,
@@ -647,9 +653,12 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
                 customer_id=customer.id,
                 tenant_id=customer.tenant_id,
                 endpoint=str(request.url.path),
-                details={"reason": "missing_password_hash"},
+                details={"reason": "password_not_set_use_onboarding"},
             )
-            raise HTTPException(status_code=401, detail="Neplatný email nebo heslo")
+            raise HTTPException(
+                status_code=403,
+                detail="Účet dokončete odkazem z e-mailu (nastavení hesla) — přihlášení pouze heslem zatím není k dispozici.",
+            )
 
         if not verify_password(login_data.password, customer.password_hash):
             log_security_event(
@@ -763,7 +772,9 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
                 "name": customer.name,
                 "ico": customer.ico,
                 "role": customer.role or "user",
+                "force_password_change": bool(getattr(customer, "force_password_change", False)),
             },
+            password_change_required=bool(getattr(customer, "force_password_change", False)),
         )
     except HTTPException:
         raise
@@ -881,7 +892,45 @@ def verify_login_two_factor(
             "name": customer.name,
             "ico": customer.ico,
             "role": customer.role or "user",
+            "force_password_change": bool(getattr(customer, "force_password_change", False)),
         },
+    )
+
+
+@router.post("/user/onboarding/service-invite", response_model=LoginResponse)
+def complete_service_invite_onboarding(
+    payload: ServiceInviteOnboardingRequest,
+    request: Request,
+    db=Depends(get_db),
+):
+    from src.modules.vehicle_hub.routers_v1.service_workspace_customer_centre import consume_service_onboarding_token_core
+
+    customer, access_token = consume_service_onboarding_token_core(
+        db,
+        raw_token=payload.token,
+        new_password=payload.password,
+        request=request,
+    )
+    log_security_event(
+        event_type="service_invite_onboarding_completed",
+        request=request,
+        user_email=customer.email,
+        customer_id=customer.id,
+        tenant_id=customer.tenant_id,
+        endpoint=str(request.url.path),
+        details={"source": "service_invite"},
+    )
+    return LoginResponse(
+        access_token=access_token,
+        user={
+            "id": customer.id,
+            "email": customer.email,
+            "name": customer.name,
+            "ico": customer.ico,
+            "role": customer.role or "user",
+            "force_password_change": False,
+        },
+        password_change_required=False,
     )
 
 

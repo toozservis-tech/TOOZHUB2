@@ -212,6 +212,8 @@ def change_password(
         raise HTTPException(status_code=400, detail="Nové heslo musí mít alespoň 6 znaků")
 
     customer.password_hash = hash_password(password_data.new_password)
+    if hasattr(customer, "force_password_change"):
+        customer.force_password_change = False
     db.commit()
 
     email_sent = False

@@ -198,6 +198,8 @@ def api_me(
         role=str(customer.role or "user"),
         license_plan=lic_plan,
         license_status=lic_status,
-        permissions={},
+        permissions={
+            "force_password_change": bool(getattr(customer, "force_password_change", False)),
+        },
     )
     return body.model_dump()

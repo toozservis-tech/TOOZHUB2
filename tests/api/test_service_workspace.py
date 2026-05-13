@@ -230,13 +230,57 @@ def test_service_workspace_invitation_accept_flow(api_url):
     assert any(str(item.get("email", "")).lower() == invited_email.lower() for item in customers)
 
 
-def test_service_workspace_customer_search_and_link_by_id(api_url):
+def test_service_workspace_customer_exact_search_masked_preview(api_url):
+    """POST /customers/search — přesný e-mail, maskovaný náhled; legacy GET vyhledávání je zastaralé (410)."""
     service_email = CI_WS_SERVICE_SEARCH
     customer_email = CI_WS_CUSTOMER_SEARCH
 
     service_token, _ = _register_user(api_url, email=service_email, name="Service Search")
     _promote_user_to_service(service_email)
     _register_user(api_url, email=customer_email, name="Klient Vyhledany")
+
+    service_headers = {"Authorization": f"Bearer {service_token}"}
+
+    not_found = requests.post(
+        f"{api_url}/api/v1/services/workspace/customers/search",
+        headers=service_headers,
+        json={"email": "nikdo-neexistuje@example.invalid"},
+        timeout=8,
+    )
+    assert not_found.status_code == 200, not_found.text
+    assert not_found.json().get("found") is False
+
+    found = requests.post(
+        f"{api_url}/api/v1/services/workspace/customers/search",
+        headers=service_headers,
+        json={"email": customer_email},
+        timeout=8,
+    )
+    assert found.status_code == 200, found.text
+    body = found.json()
+    assert body.get("found") is True
+    preview = body.get("customer_preview") or {}
+    assert preview.get("lookup_id")
+    assert preview.get("email_masked")
+    assert "@" in str(preview.get("email_masked") or "")
+    assert preview.get("link_status") in {"none", "active", "invited"}
+
+    legacy_get = requests.get(
+        f"{api_url}/api/v1/services/workspace/customers/search?query=Vyhledany",
+        headers=service_headers,
+        timeout=8,
+    )
+    assert legacy_get.status_code == 410, legacy_get.text
+
+
+def test_service_workspace_customer_search_and_link_by_id(api_url):
+    """Propojení přes známé customer_id (servisní účet + přímý POST link)."""
+    service_email = CI_WS_SERVICE_SEARCH
+    customer_email = CI_WS_CUSTOMER_SEARCH
+
+    service_token, _ = _register_user(api_url, email=service_email, name="Service Search Link")
+    _promote_user_to_service(service_email)
+    _, customer_id = _register_user(api_url, email=customer_email, name="Klient Propojeny")
 
     db = SessionLocal()
     try:
@@ -245,44 +289,24 @@ def test_service_workspace_customer_search_and_link_by_id(api_url):
             .filter(func.lower(Customer.email) == service_email.lower())
             .first()
         )
-        target_customer = (
-            db.query(Customer)
-            .filter(func.lower(Customer.email) == customer_email.lower())
-            .first()
-        )
         assert service_customer is not None
-        assert target_customer is not None
-
-        search_payload = workspace_router.search_service_customers(
-            query="Vyhledany",
-            current_user=service_customer,
-            db=db,
-        )
-        items = search_payload.get("items", [])
-        assert items, "Search musí vrátit kandidáta klienta"
-        candidate = next((item for item in items if int(item.get("customer_id") or 0) == int(target_customer.id)), None)
-        assert candidate is not None
-        assert candidate.get("already_linked") is False
-        assert candidate.get("can_open_detail") is True
-        assert candidate.get("status") == "not_linked"
 
         link_payload = workspace_router.link_existing_customer_by_id(
-            customer_id=int(target_customer.id),
+            customer_id=int(customer_id),
             current_user=service_customer,
             db=db,
         )
         assert link_payload.get("linked") is True
 
-        search_again = workspace_router.search_service_customers(
-            query="Vyhledany",
-            current_user=service_customer,
-            db=db,
+        found = requests.post(
+            f"{api_url}/api/v1/services/workspace/customers/search",
+            headers={"Authorization": f"Bearer {service_token}"},
+            json={"email": customer_email},
+            timeout=8,
         )
-        items_again = search_again.get("items", [])
-        candidate_again = next((item for item in items_again if int(item.get("customer_id") or 0) == int(target_customer.id)), None)
-        assert candidate_again is not None
-        assert candidate_again.get("already_linked") is True
-        assert candidate_again.get("status") == "linked"
+        assert found.status_code == 200, found.text
+        preview = (found.json().get("customer_preview") or {})
+        assert preview.get("link_status") == "active"
     finally:
         db.close()
 

@@ -104,7 +104,10 @@ class VehicleOutV1(BaseModel):
     tenant_id: Optional[int] = None  # Multi-tenant podpora
     created_at: datetime
     technical_overview: Optional[Dict[str, Any]] = None
-    
+    provisioned_by_service_customer_id: Optional[int] = None
+    provisioned_by_service_label: Optional[str] = None
+    added_by_service_name: Optional[str] = None
+
     class Config:
         from_attributes = True
 

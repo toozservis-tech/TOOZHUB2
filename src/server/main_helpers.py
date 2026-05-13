@@ -123,6 +123,12 @@ class LoginResponse(BaseModel):
     two_factor_required: bool = False
     challenge_token: Optional[str] = None
     challenge_expires_in: Optional[int] = None
+    password_change_required: bool = False
+
+
+class ServiceInviteOnboardingRequest(BaseModel):
+    token: str = Field(..., min_length=12, max_length=4096)
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class RegisterTokenResponse(BaseModel):
