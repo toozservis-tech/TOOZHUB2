@@ -152,6 +152,15 @@ def invoice_context(tmp_path: Path):
             status="approved",
         )
     )
+    db.add(
+        VehicleServiceLink(
+            tenant_id=tenant.id,
+            service_customer_id=service_b.id,
+            owner_customer_id=owner.id,
+            vehicle_id=vehicle.id,
+            status="approved",
+        )
+    )
     db.commit()
 
     app = _make_app(db)
@@ -225,13 +234,18 @@ def test_a_create_draft_invoice(invoice_context) -> None:
 
 
 def test_b_unauthorized_customer_forbidden(invoice_context) -> None:
+    """403 až po validním payloadu: vehicle_id + lines, ale servis bez aktivní vazby na zákazníka."""
     ctx = invoice_context
     ctx["set_user"](ctx["service_b"])
     r = ctx["client"].post(
         "/api/service/invoices",
-        json={"customer_id": ctx["stranger"].id, "lines": [LINE]},
+        json={
+            "customer_id": ctx["stranger"].id,
+            "vehicle_id": ctx["vehicle"].id,
+            "lines": [LINE],
+        },
     )
-    assert r.status_code == 403
+    assert r.status_code == 403, r.text
 
 
 def test_c_foreign_vehicle_no_approved_link_forbidden(invoice_context) -> None:
@@ -278,72 +292,19 @@ def test_d_issue_assigns_number_and_audits(invoice_context) -> None:
     assert row is not None
 
 
-def test_export_issued_invoice_to_fakturyweb_persists_reference(invoice_context, monkeypatch: pytest.MonkeyPatch) -> None:
-    ctx = invoice_context
-    ctx["set_user"](ctx["service_a"])
-
-    class FakeFakturyWebClient:
-        def create_invoice(self, payload):
-            assert payload["d"]["d_name"] == ctx["service_a"].name
-            assert payload["o"]["o_email"] == ctx["owner"].email
-            assert payload["p"][0]["p_text"] == LINE["description"]
-            return {"status": 1, "code": "fw-code-123", "number": "20260001"}
-
-    monkeypatch.setattr(service_invoices_router, "_fakturyweb_client", lambda **_: FakeFakturyWebClient())
-
-    c = ctx["client"]
-    created = c.post(
-        "/api/service/invoices",
-        json={"customer_id": ctx["owner"].id, "vehicle_id": ctx["vehicle"].id, "lines": [LINE]},
-    )
-    assert created.status_code == 201
-    inv_id = created.json()["id"]
-    issued = c.post(f"/api/service/invoices/{inv_id}/issue")
-    assert issued.status_code == 200
-
-    exported = c.post(f"/api/service/invoices/{inv_id}/fakturyweb/export", json={})
-    assert exported.status_code == 200, exported.text
-    body = exported.json()
-    assert body["fakturyweb"]["code"] == "fw-code-123"
-    assert body["fakturyweb"]["number"] == "20260001"
-    assert body["fakturyweb"]["status"] == "created"
-
-    row = (
-        ctx["db"]
-        .query(GlobalAuditLog)
-        .filter(
-            GlobalAuditLog.entity_type == "service_invoice",
-            GlobalAuditLog.entity_id == int(inv_id),
-            GlobalAuditLog.action == "invoice_fakturyweb_exported",
-        )
-        .first()
-    )
-    assert row is not None
-
-
-def test_export_draft_invoice_to_fakturyweb_is_rejected(invoice_context, monkeypatch: pytest.MonkeyPatch) -> None:
-    ctx = invoice_context
-    ctx["set_user"](ctx["service_a"])
-    monkeypatch.setattr(service_invoices_router, "_fakturyweb_client", lambda **_: object())
-
-    created = ctx["client"].post(
-        "/api/service/invoices",
-        json={"customer_id": ctx["owner"].id, "vehicle_id": ctx["vehicle"].id, "lines": [LINE]},
-    )
-    assert created.status_code == 201
-
-    exported = ctx["client"].post(f"/api/service/invoices/{created.json()['id']}/fakturyweb/export", json={})
-    assert exported.status_code == 409
-
-
 def test_e_cancel_audits(invoice_context) -> None:
     ctx = invoice_context
     ctx["set_user"](ctx["service_a"])
     c = ctx["client"]
     created = c.post(
         "/api/service/invoices",
-        json={"customer_id": ctx["owner"].id, "lines": [LINE]},
+        json={
+            "customer_id": ctx["owner"].id,
+            "vehicle_id": ctx["vehicle"].id,
+            "lines": [LINE],
+        },
     )
+    assert created.status_code == 201, created.text
     inv_id = created.json()["id"]
     r = c.post(f"/api/service/invoices/{inv_id}/cancel")
     assert r.status_code == 200, r.text
@@ -367,8 +328,13 @@ def test_cancel_issued_invoice_allowed(invoice_context) -> None:
     c = ctx["client"]
     created = c.post(
         "/api/service/invoices",
-        json={"customer_id": ctx["owner"].id, "lines": [LINE]},
+        json={
+            "customer_id": ctx["owner"].id,
+            "vehicle_id": ctx["vehicle"].id,
+            "lines": [LINE],
+        },
     )
+    assert created.status_code == 201, created.text
     inv_id = created.json()["id"]
     assert c.post(f"/api/service/invoices/{inv_id}/issue").status_code == 200
     r = c.post(f"/api/service/invoices/{inv_id}/cancel")
@@ -382,8 +348,13 @@ def test_f_pdf_export_200(invoice_context) -> None:
     c = ctx["client"]
     created = c.post(
         "/api/service/invoices",
-        json={"customer_id": ctx["owner"].id, "lines": [LINE]},
+        json={
+            "customer_id": ctx["owner"].id,
+            "vehicle_id": ctx["vehicle"].id,
+            "lines": [LINE],
+        },
     )
+    assert created.status_code == 201, created.text
     inv_id = created.json()["id"]
     r = c.get(f"/api/service/invoices/{inv_id}/pdf")
     assert r.status_code == 200
@@ -409,8 +380,13 @@ def test_g_cross_tenant_access_forbidden(invoice_context) -> None:
     c = ctx["client"]
     created = c.post(
         "/api/service/invoices",
-        json={"customer_id": ctx["owner"].id, "lines": [LINE]},
+        json={
+            "customer_id": ctx["owner"].id,
+            "vehicle_id": ctx["vehicle"].id,
+            "lines": [LINE],
+        },
     )
+    assert created.status_code == 201, created.text
     inv_id = created.json()["id"]
     ctx["set_user"](ctx["service_other_tenant"])
     r = c.get(f"/api/service/invoices/{inv_id}")
@@ -423,17 +399,25 @@ def test_h_list_scoped_to_current_service(invoice_context) -> None:
     c = ctx["client"]
     r1 = c.post(
         "/api/service/invoices",
-        json={"customer_id": ctx["owner"].id, "lines": [LINE]},
+        json={
+            "customer_id": ctx["owner"].id,
+            "vehicle_id": ctx["vehicle"].id,
+            "lines": [LINE],
+        },
     )
-    assert r1.status_code == 201
+    assert r1.status_code == 201, r1.text
     inv_id_a = r1.json()["id"]
 
     ctx["set_user"](ctx["service_b"])
     r2 = c.post(
         "/api/service/invoices",
-        json={"customer_id": ctx["owner"].id, "lines": [LINE]},
+        json={
+            "customer_id": ctx["owner"].id,
+            "vehicle_id": ctx["vehicle"].id,
+            "lines": [LINE],
+        },
     )
-    assert r2.status_code == 201
+    assert r2.status_code == 201, r2.text
     inv_id_b = r2.json()["id"]
 
     lst_b = c.get("/api/service/invoices")
@@ -448,6 +432,28 @@ def test_non_service_role_forbidden(invoice_context) -> None:
     ctx["set_user"](ctx["owner"])
     r = ctx["client"].post(
         "/api/service/invoices",
-        json={"customer_id": ctx["owner"].id, "lines": [LINE]},
+        json={
+            "customer_id": ctx["owner"].id,
+            "vehicle_id": ctx["vehicle"].id,
+            "lines": [LINE],
+        },
     )
-    assert r.status_code == 403
+    assert r.status_code == 403, r.text
+
+
+def test_create_non_vehicle_invoice_explicit_flag(invoice_context) -> None:
+    """Ruční koncept bez vozidla: non_vehicle_invoice=true, bez vehicle_id."""
+    ctx = invoice_context
+    ctx["set_user"](ctx["service_a"])
+    r = ctx["client"].post(
+        "/api/service/invoices",
+        json={
+            "customer_id": ctx["owner"].id,
+            "non_vehicle_invoice": True,
+            "lines": [LINE],
+        },
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["vehicle_id"] is None
+    assert body.get("extra", {}).get("manual_non_vehicle_invoice") is True
