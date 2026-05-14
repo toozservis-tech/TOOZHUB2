@@ -15,6 +15,7 @@ from src.modules.vehicle_hub.database import Base, get_db
 from src.modules.vehicle_hub.models import (
     Customer,
     GlobalAuditLog,
+    ServiceCustomerLink,
     SystemNotification,
     Tenant,
     Vehicle,
