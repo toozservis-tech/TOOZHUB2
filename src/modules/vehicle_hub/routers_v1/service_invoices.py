@@ -866,8 +866,18 @@ def get_fakturyweb_integration_status(
     current_user: Customer = Depends(get_current_user),
 ):
     _require_service_invoice_role(current_user)
+    if not config.FAKTURYWEB_ENABLED:
+        return {
+            "enabled": False,
+            "configured": False,
+            "base_url": config.FAKTURYWEB_API_BASE_URL,
+            "email": None,
+            "api_test": config.FAKTURYWEB_API_TEST,
+            "supplier_id_configured": bool(config.FAKTURYWEB_SUPPLIER_ID),
+        }
     fw_config = _fakturyweb_config()
     return {
+        "enabled": True,
         "configured": fw_config.configured,
         "base_url": fw_config.base_url,
         "email": fw_config.email if fw_config.email else None,
@@ -885,6 +895,12 @@ def export_service_invoice_to_fakturyweb(
 ):
     _require_service_invoice_role(current_user)
     _ensure_service_invoices_schema(db)
+
+    if not config.FAKTURYWEB_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="Externí integrace FakturyWeb je vypnutá (FAKTURYWEB_ENABLED=false).",
+        )
 
     payload = payload or FakturyWebExportRequest()
     inv = _get_invoice_for_service(db, current_user=current_user, invoice_id=invoice_id)
@@ -943,6 +959,12 @@ def sync_service_invoice_from_fakturyweb(
 ):
     _require_service_invoice_role(current_user)
     _ensure_service_invoices_schema(db)
+
+    if not config.FAKTURYWEB_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="Externí integrace FakturyWeb je vypnutá (FAKTURYWEB_ENABLED=false).",
+        )
 
     inv = _get_invoice_for_service(db, current_user=current_user, invoice_id=invoice_id)
     if not inv.fakturyweb_code:

@@ -18,6 +18,7 @@ from src.core.config import (
     ENABLE_AUTOPILOT_API,
     ENABLE_CUSTOMER_COMMANDS,
     ENVIRONMENT,
+    FAKTURYWEB_ENABLED,
     HOST,
     JWT_SECRET_KEY,
     LISTEN_HOST,
@@ -474,11 +475,9 @@ def _include_feature_routers(app: FastAPI) -> None:
     try:
         from src.modules.vehicle_hub.routers_v1.service_dashboard import router as service_dashboard_router
         from src.modules.vehicle_hub.routers_v1.service_invoices import router as service_invoices_router
-        from src.modules.service_workspace.fakturyweb_router import router as fakturyweb_test_router
         from src.modules.vehicle_hub.routers_v1.service_canonical import router as service_canonical_router
 
         app.include_router(service_dashboard_router)
-        app.include_router(fakturyweb_test_router)
         app.include_router(service_invoices_router)
         app.include_router(service_canonical_router)
         print("[SERVER] Service Dashboard + Service Invoices + canonical intake routery zaregistrovány: /api/service/")
@@ -487,6 +486,20 @@ def _include_feature_routers(app: FastAPI) -> None:
         import traceback
 
         traceback.print_exc()
+
+    if FAKTURYWEB_ENABLED:
+        try:
+            from src.modules.service_workspace.fakturyweb_router import router as fakturyweb_workspace_router
+
+            app.include_router(fakturyweb_workspace_router)
+            print("[SERVER] FakturyWeb workspace test router zaregistrován (FAKTURYWEB_ENABLED=true)")
+        except ImportError as exc:
+            print(f"[SERVER] Warning: FakturyWeb workspace test router není dostupný: {exc}")
+            import traceback
+
+            traceback.print_exc()
+    else:
+        print("[SERVER] FakturyWeb workspace test router přeskočen (FAKTURYWEB_ENABLED=false)")
 
     try:
         from src.server.routers.public_vehicle_history import router as public_vehicle_history_router

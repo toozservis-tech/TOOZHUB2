@@ -234,6 +234,8 @@ FAKTURYWEB_EMAIL = os.getenv("FAKTURYWEB_EMAIL", "").strip()
 FAKTURYWEB_API_KEY = os.getenv("FAKTURYWEB_API_KEY", "").strip()
 FAKTURYWEB_SUPPLIER_ID = os.getenv("FAKTURYWEB_SUPPLIER_ID", "").strip()
 FAKTURYWEB_API_TEST = _env_flag("FAKTURYWEB_API_TEST", ENVIRONMENT != "production")
+# Externí FakturyWeb (workspace test router + HTTP export/sync ze service_invoices). Výchozí vypnuto.
+FAKTURYWEB_ENABLED = _env_flag("FAKTURYWEB_ENABLED", False)
 
 # AI / Autopilot Configuration
 AUTOPILOT_SHARED_SECRET = os.getenv("AUTOPILOT_SHARED_SECRET", "")
