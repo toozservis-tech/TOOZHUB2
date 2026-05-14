@@ -42,6 +42,7 @@ from ..models import (
     ServiceRecordAuditLog,
     ServiceVehicleAccess,
     Vehicle as VehicleModel,
+    VehicleMileage,
     VehicleOwnership,
     VehicleReportDocument,
     VehicleServiceLink,
@@ -99,6 +100,9 @@ ALLOWED_ATTACHMENT_EXTENSIONS = {
     ".heic",
     ".heif",
 }
+SERVICE_RECORD_ATTACHMENT_KINDS = frozenset(
+    {"before_repair", "after_repair", "invoice_attachment", "protocol", "other"}
+)
 MILEAGE_RE = re.compile(r"(?<!\d)(\d{1,3}(?:[ .]\d{3}){1,2}|\d{4,7})\s*km\b", re.IGNORECASE)
 MILEAGE_KEYWORD_RE = re.compile(
     r"(?:stav\s*(?:tachometru|km)|tachometr|najeto|najazdeno|odometer)\s*[:\-]?\s*(\d{1,3}(?:[ .]\d{3}){1,2}|\d{4,7})",
@@ -336,6 +340,8 @@ def _assert_current_user_can_edit_record(current_user: Customer, record: Service
 
 
 class ServiceRecordAttachmentUploadRequest(BaseModel):
+    service_record_id: int = Field(..., gt=0)
+    attachment_kind: str = Field(..., min_length=4, max_length=32)
     file_name: str = Field(..., min_length=1, max_length=255)
     file_mime_type: str = Field(default="application/octet-stream", max_length=255)
     file_content_base64: str = Field(..., min_length=20, max_length=25_000_000)
@@ -370,6 +376,7 @@ class DocumentsHubAttachmentItemV1(BaseModel):
     mime_type: Optional[str] = None
     download_url: str
     source_type: Optional[str] = None
+    attachment_kind: Optional[str] = None
 
 
 class DocumentsHubReportItemV1(BaseModel):
@@ -1148,6 +1155,62 @@ def create_service_record(
         snapshot = _service_record_snapshot(record)
         _, snapshot_hash = _snapshot_json_and_hash(snapshot)
         record.snapshot_hash = snapshot_hash
+
+        mileage_raw = getattr(record_data, "mileage", None)
+        if mileage_raw is not None:
+            try:
+                mi = int(mileage_raw)
+            except (TypeError, ValueError):
+                mi = None
+            if mi is not None and mi >= 0:
+                prev = vehicle.current_mileage_km
+                prev_i = int(prev) if prev is not None else None
+                if prev_i is None or mi > prev_i:
+                    vehicle.current_mileage_km = mi
+                    vehicle.mileage_checked_at = datetime.utcnow()
+                    db.add(
+                        VehicleMileage(
+                            tenant_id=int(tenant_id),
+                            vehicle_id=int(vehicle_id),
+                            mileage_km=mi,
+                            source="service_record",
+                            note=f"service_record_id={int(record.id)}",
+                            service_record_id=int(record.id),
+                            created_by_user_id=int(current_user.id),
+                        )
+                    )
+                    write_global_audit_log(
+                        db,
+                        entity_type="vehicle",
+                        entity_id=int(vehicle_id),
+                        action="vehicle_mileage_updated_from_service_record",
+                        actor_user_id=user_id,
+                        actor_role=getattr(current_user, "role", None),
+                        tenant_id=tenant_id,
+                        vehicle_id=int(vehicle_id),
+                        metadata={
+                            "service_record_id": int(record.id),
+                            "new_mileage_km": mi,
+                            "previous_mileage_km": prev_i,
+                        },
+                    )
+                elif prev_i is not None and mi < prev_i:
+                    write_global_audit_log(
+                        db,
+                        entity_type="service_record",
+                        entity_id=int(record.id),
+                        action="service_record_mileage_below_current",
+                        actor_user_id=user_id,
+                        actor_role=getattr(current_user, "role", None),
+                        tenant_id=tenant_id,
+                        vehicle_id=int(vehicle_id),
+                        metadata={
+                            "submitted_mileage_km": mi,
+                            "vehicle_current_mileage_km": prev_i,
+                            "severity": "warning",
+                        },
+                    )
+
         write_global_audit_log(
             db,
             entity_type="service_record",
@@ -1189,13 +1252,43 @@ def upload_service_record_attachment(
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Nahraje doklad (PDF/fotka/text) a vrátí metadata pro uložení do attachments záznamu."""
-    if not can_access_vehicle(vehicle_id, current_user, db):
+    """Nahraje přílohu k servisnímu záznamu (typ před/po apod.) a připojí ji k záznamu."""
+    role_key = str(getattr(current_user, "role", "") or "").strip().lower()
+    if role_key == "service":
+        require_service_vehicle_link(
+            db,
+            current_user=current_user,
+            vehicle_id=vehicle_id,
+            require_create_record=False,
+        )
+    elif not can_access_vehicle(vehicle_id, current_user, db):
         raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
 
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+
+    kind = str(payload.attachment_kind or "").strip()
+    if kind not in SERVICE_RECORD_ATTACHMENT_KINDS:
+        raise HTTPException(
+            status_code=422,
+            detail="Neplatný attachment_kind (očekáváno: before_repair, after_repair, invoice_attachment, protocol, other).",
+        )
+
+    record = (
+        db.query(ServiceRecordModel)
+        .filter(
+            ServiceRecordModel.id == int(payload.service_record_id),
+            ServiceRecordModel.vehicle_id == int(vehicle_id),
+            ServiceRecordModel.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Servisní záznam nebyl nalezen.")
+    if role_key == "service":
+        assert_viewer_may_mutate_service_record(db, vehicle_id, current_user, record)
+
     if not _attachment_request_looks_like_image(
         file_name=payload.file_name, file_mime_type=payload.file_mime_type
     ):
@@ -1210,7 +1303,43 @@ def upload_service_record_attachment(
         file_mime_type=payload.file_mime_type,
         content=content,
     )
+
+    items = _parse_attachments_payload(record.attachments)
+    new_item = {
+        "attachment_kind": kind,
+        "service_record_id": int(record.id),
+        "vehicle_id": int(vehicle_id),
+        "file_name": attachment_meta["file_name"],
+        "mime_type": attachment_meta["mime_type"],
+        "file_size": attachment_meta["file_size"],
+        "storage_key": attachment_meta["storage_key"],
+        "download_url": attachment_meta["download_url"],
+        "source_type": kind,
+    }
+    items.append(new_item)
+    record.attachments = json.dumps(items, ensure_ascii=False)
+
+    write_global_audit_log(
+        db,
+        entity_type="service_record",
+        entity_id=int(record.id),
+        action="service_record_attachment_upload",
+        actor_user_id=int(current_user.id),
+        actor_role=getattr(current_user, "role", None),
+        tenant_id=int(record.tenant_id),
+        vehicle_id=int(vehicle_id),
+        metadata={
+            "attachment_kind": kind,
+            "storage_key": attachment_meta["storage_key"],
+            "vehicle_id": int(vehicle_id),
+        },
+    )
+    db.commit()
+
     return {
+        "service_record_id": int(record.id),
+        "attachment_kind": kind,
+        "vehicle_id": int(vehicle_id),
         "file_name": attachment_meta["file_name"],
         "mime_type": attachment_meta["mime_type"],
         "file_size": attachment_meta["file_size"],
@@ -1470,6 +1599,20 @@ def download_service_record_attachment(
     if not attachment_file or not attachment_file.is_file():
         raise HTTPException(status_code=404, detail="Příloha nebyla nalezena.")
 
+    if owning_record is not None:
+        write_global_audit_log(
+            db,
+            entity_type="service_record",
+            entity_id=int(owning_record.id),
+            action="service_record_attachment_download",
+            actor_user_id=int(current_user.id),
+            actor_role=str(getattr(current_user, "role", None) or ""),
+            tenant_id=int(owning_record.tenant_id),
+            vehicle_id=int(vehicle_id),
+            metadata={"storage_key": normalized_key, "attachment_view": "download"},
+        )
+        db.commit()
+
     media_type = mimetypes.guess_type(str(attachment_file.name))[0] or "application/octet-stream"
     safe_filename_ascii = attachment_file.name.encode("ascii", "ignore").decode("ascii") or "doklad"
     safe_filename_utf8 = quote(attachment_file.name, safe="")
@@ -1553,6 +1696,11 @@ def get_documents_hub_summary(
                     mime_type=(str(attachment.get("mime_type")).strip() if attachment.get("mime_type") else None),
                     download_url=download_url,
                     source_type=(str(attachment.get("source_type")).strip() if attachment.get("source_type") else None),
+                    attachment_kind=(
+                        str(attachment.get("attachment_kind")).strip()
+                        if attachment.get("attachment_kind")
+                        else None
+                    ),
                 )
             )
             if len(attachment_items) >= attachments_limit:

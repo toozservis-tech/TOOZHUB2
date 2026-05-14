@@ -61,12 +61,14 @@ from ..service_access import (
     create_or_update_vehicle_service_link,
     get_active_vehicle_service_link,
     log_vehicle_lookup,
+    masked_plate,
     masked_vin,
     normalize_lookup_query,
     require_service_vehicle_link,
     resolve_vehicle_for_lookup,
     vehicle_label,
 )
+from ..service_access_messaging import try_email_owner_about_service_access_request
 from ..user_in_app_notifications import notify_owner_service_access_requested
 from src.modules.vehicle_hub.routers_v1.service_workspace_customer_centre import (
     CustomerLinkFromLookupRequestV1,
@@ -469,7 +471,7 @@ def _lookup_candidate_payload(
         "nickname": vehicle.nickname,
         "brand": vehicle.brand,
         "model": vehicle.model,
-        "plate_masked": vehicle.plate,
+        "plate_masked": masked_plate(vehicle.plate),
         "vin_masked": masked_vin(vehicle.vin),
         "city": owner_customer.city if owner_customer else None,
         "owner_label": None,
@@ -749,7 +751,7 @@ def _build_vehicle_detail_payload(
             "year": vehicle.year,
             "engine": vehicle.engine,
             "plate": vehicle.plate if disclosure == "full" else None,
-            "plate_masked": vehicle.plate,
+            "plate_masked": masked_plate(vehicle.plate),
             "vin": vehicle.vin if disclosure == "full" else None,
             "vin_masked": masked_vin(vehicle.vin),
             "stk_valid_until": vehicle.stk_valid_until.isoformat() if vehicle.stk_valid_until else None,
@@ -3005,6 +3007,7 @@ def create_service_access_request(
         updated_at=datetime.utcnow(),
     )
     db.add(request_row)
+    db.flush()
     try:
         notify_owner_service_access_requested(
             db,
@@ -3015,6 +3018,17 @@ def create_service_access_request(
         )
     except Exception as exc:
         print(f"[SERVICE_WORKSPACE] In-app oznámení majiteli o žádosti o přístup selhalo: {exc}")
+    try:
+        try_email_owner_about_service_access_request(
+            db,
+            owner=owner_customer,
+            service=current_user,
+            vehicle=vehicle,
+            request_id=int(request_row.id),
+            tenant_id=getattr(request_row, "tenant_id", None),
+        )
+    except Exception as exc:
+        print(f"[SERVICE_WORKSPACE] E-mail majiteli (žádost o přístup) selhalo neočekávaně: {exc}")
     db.commit()
     db.refresh(request_row)
     return {
@@ -3796,7 +3810,7 @@ def get_service_workspace_reservation_detail(
                 else None
             ),
             "vehicle_plate": vehicle.plate if vehicle and disclosure == "full" else None,
-            "vehicle_plate_masked": vehicle.plate if vehicle else None,
+            "vehicle_plate_masked": masked_plate(vehicle.plate) if vehicle else None,
             "vehicle_vin_masked": masked_vin(vehicle.vin) if vehicle else None,
             "customer_linked": linked_customer,
             "vehicle_access_approved": approved_vehicle,
@@ -4362,7 +4376,7 @@ def get_service_workspace_reminder_detail(
                 or (vehicle.plate if vehicle and disclosure == "full" else None)
                 or ("Vozidlo bez schváleného přístupu" if vehicle else "Bez vozidla")
             ),
-            "vehicle_plate_masked": vehicle.plate if vehicle else None,
+            "vehicle_plate_masked": masked_plate(vehicle.plate) if vehicle else None,
             "vehicle_vin_masked": masked_vin(vehicle.vin) if vehicle else None,
             "type": reminder.type,
             "text": reminder.text if disclosure == "full" else None,

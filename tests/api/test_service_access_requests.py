@@ -97,7 +97,9 @@ def test_service_access_request_approval_flow(api_url):
     assert lookup_payload["candidates"]
     candidate = lookup_payload["candidates"][0]
     assert candidate["vehicle_id"] == vehicle_id
-    assert candidate["plate_masked"] == plate
+    assert candidate["plate_masked"]
+    assert candidate["plate_masked"] != plate
+    assert "***" in candidate["plate_masked"]
     assert candidate["vin_masked"]
     assert "owner" not in candidate
 

@@ -44,7 +44,12 @@ from ..reports.vehicle_report_builder import build_vehicle_service_report_payloa
 from ..reports.vehicle_report_pdf import render_vehicle_service_report_pdf
 from ..reports.vehicle_report_verification import finalize_vehicle_report_document
 from ..schema_management import assert_module_ready
-from ..service_access import create_or_update_vehicle_service_link, revoke_vehicle_service_link, vehicle_label
+from ..service_access import (
+    create_or_update_vehicle_service_link,
+    finalize_service_access_decision,
+    revoke_vehicle_service_link,
+    vehicle_label,
+)
 from ..user_in_app_notifications import (
     APP_AUTOMATED_NOTIFICATION_SENDER,
     notify_service_access_decided,
@@ -583,35 +588,31 @@ def approve_service_access(
     ).first()
     if not request_row:
         raise HTTPException(status_code=404, detail="Žádost o přístup nebyla nalezena.")
+    if int(request_row.owner_customer_id) != int(current_user.id):
+        raise HTTPException(status_code=403, detail="Tuto žádost nemůžete schválit.")
     if request_row.status != "pending":
         raise HTTPException(status_code=409, detail="Žádost už byla vyřízena.")
-    link = create_or_update_vehicle_service_link(
-        db,
-        tenant_id=int(vehicle.tenant_id),
-        service_customer_id=int(request_row.service_customer_id),
-        owner_customer_id=int(current_user.id),
-        vehicle_id=int(vehicle.id),
-        approved_by_customer_id=int(current_user.id),
-        source_type="request_approved",
-        source_request_id=int(request_row.id),
-        note=(payload.note if payload else None) or request_row.request_message,
+    service_customer = (
+        db.query(Customer)
+        .filter(
+            Customer.id == int(request_row.service_customer_id),
+            Customer.role.in_(["service", "developer_admin"]),
+        )
+        .first()
     )
-    request_row.status = "approved"
-    request_row.decided_at = datetime.utcnow()
-    request_row.decided_by_customer_id = int(current_user.id)
-    request_row.decision_note = payload.note if payload else None
-    request_row.approved_link_id = int(link.id)
-    write_global_audit_log(
+    if not service_customer:
+        raise HTTPException(status_code=404, detail="Servis spojený se žádostí nebyl nalezen.")
+
+    finalize_service_access_decision(
         db,
-        entity_type="vehicle_service_access",
-        entity_id=int(link.id),
-        action="service_access_approved",
-        actor_type="user",
-        actor_user_id=int(current_user.id),
-        actor_role=getattr(current_user, "role", None),
-        tenant_id=int(vehicle.tenant_id),
-        vehicle_id=int(vehicle.id),
-        metadata={"request_id": int(request_row.id)},
+        request_row=request_row,
+        vehicle=vehicle,
+        owner_customer=current_user,
+        service_customer=service_customer,
+        decision="approved",
+        decided_by=current_user,
+        decision_note=(payload.note if payload else None) or None,
+        source_route="post_vehicle_service_access_approve",
     )
     try:
         notify_service_access_decided(
@@ -624,7 +625,7 @@ def approve_service_access(
     except Exception as exc:
         print(f"[VEHICLE_LIFECYCLE] In-app oznámení servisu (schváleno) selhalo: {exc}")
     db.commit()
-    return {"approved": True, "access_id": int(link.id), "request_id": int(request_row.id)}
+    return {"approved": True, "access_id": int(request_row.approved_link_id or 0), "request_id": int(request_row.id)}
 
 
 @router.post("/{vehicle_id}/service-access/{access_id}/reject")

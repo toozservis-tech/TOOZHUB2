@@ -9,6 +9,8 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from src.core.branding import APP_DISPLAY_NAME
+
 from .models import Customer, ServiceInvoice, ServiceQuote, SystemNotification, Vehicle
 from .schema_management import assert_module_ready
 from .service_access import vehicle_label
@@ -62,8 +64,12 @@ def notify_owner_service_access_requested(
     vehicle: Vehicle,
     request_message: Optional[str] = None,
 ) -> None:
+    from .service_access import masked_plate, masked_vin
+
     service_disp = (service.name or service.email or "Servis").strip()
-    vlabel = vehicle_label(vehicle)
+    vin_m = masked_vin(getattr(vehicle, "vin", None))
+    plate_m = masked_plate(getattr(vehicle, "plate", None))
+    vref = " ".join(x for x in [plate_m, vin_m] if x) or vehicle_label(vehicle)
     extra = ""
     if request_message and str(request_message).strip():
         extra = f"\n\nZpráva od servisu: {str(request_message).strip()[:500]}"
@@ -72,8 +78,8 @@ def notify_owner_service_access_requested(
         customer_id=int(owner_customer_id),
         title="Žádost servisu o přístup",
         message=(
-            f"{service_disp} žádá o přístup k vozidlu {vlabel}. "
-            f"Schválení nebo zamítnutí najdete u vozidla v záložce Servis, případně v nastavení žádostí o přístup."
+            f"{service_disp} žádá o přístup k vozidlu ({vref}). "
+            f"Schválení proveďte po přihlášení v aplikaci {APP_DISPLAY_NAME} v detailu vozidla (záložka Servis / žádosti o přístup)."
             f"{extra}"
         ),
         severity="info",

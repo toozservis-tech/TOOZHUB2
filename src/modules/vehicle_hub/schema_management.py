@@ -138,6 +138,7 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
             "service_access_requests",
             "vehicle_service_links",
             "service_vehicle_lookup_audit",
+            "user_onboarding_tokens",
             "vehicle_qr_tokens",
             "vehicle_qr_access_logs",
             "service_intakes",
@@ -149,6 +150,27 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
             "customers": {
                 "partner_catalog_approved",
                 "partner_public_profile",
+                "force_password_change",
+                "email_normalized",
+                "phone_normalized",
+            },
+            "vehicles": {
+                "provisioned_by_service_customer_id",
+            },
+            "service_customer_links": {
+                "link_source",
+                "consent_basis",
+                "consent_note",
+                "internal_service_note",
+                "approved_at",
+                "revoked_at",
+                "created_by_service_user_id",
+                "last_interaction_at",
+            },
+            "service_vehicle_access": {
+                "service_tenant_id",
+                "access_scope_json",
+                "revoke_reason",
             },
             "vehicle_qr_tokens": {
                 "token",
@@ -196,6 +218,8 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
                 "fakturyweb_pdf_url",
                 "fakturyweb_exported_at",
                 "fakturyweb_last_sync_at",
+                "service_record_id",
+                "work_order_id",
             },
             "service_invoice_lines": {
                 "description",
@@ -253,6 +277,28 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
                 "remote_addr",
                 "user_agent",
             },
+        },
+    },
+    "service_payroll": {
+        "tables": {
+            "payroll_offices",
+            "payroll_employees",
+            "payroll_employee_offices",
+            "payroll_attendance",
+            "payroll_payslips",
+            "payroll_journals",
+            "payroll_jmhz_submissions",
+            "audit_log",
+            "customers",
+            "tenants",
+        },
+        "columns": {
+            "payroll_offices": {"name", "vs_cssz", "datovka_id", "is_active", "created_at", "updated_at"},
+            "payroll_employees": {"first_name", "last_name", "birth_date", "is_active", "hourly_gross_rate", "default_ppv"},
+            "payroll_attendance": {"year", "month", "fond_hodin", "odpracovano_hodin"},
+            "payroll_payslips": {"stav", "hruba_mzda", "cista_mzda", "k_vyplate"},
+            "payroll_journals": {"zamestnancu_pocet", "payment_order_generated"},
+            "payroll_jmhz_submissions": {"typ", "stav", "zip_file_path"},
         },
     },
     "reservations": {

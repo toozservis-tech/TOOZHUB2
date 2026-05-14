@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from src.core.rbac import is_service, normalize_role
 
+from .audit_log import write_global_audit_log
 from .models import (
     Customer,
     ServiceAccessRequest,
@@ -40,6 +41,16 @@ def masked_vin(vin: Optional[str]) -> Optional[str]:
     if len(normalized) < 7:
         return None
     return f"{normalized[:3]}***{normalized[-4:]}"
+
+
+def masked_plate(plate: Optional[str]) -> Optional[str]:
+    """SPZ nikdy nevracet plně v poli označeném jako maskované."""
+    raw = str(plate or "").strip().upper().replace(" ", "")
+    if not raw:
+        return None
+    if len(raw) <= 4:
+        return "***"
+    return f"{raw[:2]}***{raw[-2:]}"
 
 
 def vehicle_label(vehicle: Vehicle) -> str:
@@ -426,3 +437,138 @@ def attach_service_access_to_record(
     if is_service(normalize_role(getattr(current_user, "role", None))):
         record.created_by_service_customer_id = int(current_user.id)
         record.service_access_link_id = int(access_link.id) if access_link else None
+
+
+def upsert_service_customer_link_after_request_approval(
+    db: Session,
+    *,
+    service_customer_id: int,
+    service_tenant_id: Optional[int],
+    owner_customer: Customer,
+    note: Optional[str] = None,
+) -> None:
+    """Po schválení žádosti o přístup aktivuje řádek ServiceCustomerLink (stejná logika jako services router)."""
+    existing = (
+        db.query(ServiceCustomerLink)
+        .filter(
+            ServiceCustomerLink.service_customer_id == int(service_customer_id),
+            ServiceCustomerLink.customer_id == int(owner_customer.id),
+        )
+        .first()
+    )
+    if existing:
+        existing.status = "active"
+        existing.service_tenant_id = service_tenant_id
+        existing.customer_tenant_id = owner_customer.tenant_id
+        if note is not None:
+            existing.note = note
+        existing.updated_at = datetime.utcnow()
+        db.flush()
+        return
+
+    db.add(
+        ServiceCustomerLink(
+            service_tenant_id=service_tenant_id,
+            service_customer_id=int(service_customer_id),
+            customer_tenant_id=owner_customer.tenant_id,
+            customer_id=int(owner_customer.id),
+            status="active",
+            note=note,
+        )
+    )
+    db.flush()
+
+
+def finalize_service_access_decision(
+    db: Session,
+    *,
+    request_row: ServiceAccessRequest,
+    vehicle: Vehicle,
+    owner_customer: Customer,
+    service_customer: Customer,
+    decision: str,
+    decided_by: Customer,
+    decision_note: Optional[str],
+    source_route: str,
+) -> Optional[VehicleServiceLink]:
+    """
+    Jednotná persist vrstva: VehicleServiceLink + ServiceCustomerLink + globální audit.
+    Volá se z PUT /services/access-requests i z POST /vehicles/.../approve.
+    """
+    decision_key = str(decision or "").strip().lower()
+    now = datetime.utcnow()
+    request_row.decided_at = now
+    request_row.decided_by_customer_id = int(decided_by.id)
+    request_row.decision_note = (decision_note or "").strip() or None
+    request_row.updated_at = now
+
+    vin_norm = str(getattr(vehicle, "vin", None) or "").strip().upper() or None
+
+    if decision_key == "approved":
+        link = create_or_update_vehicle_service_link(
+            db,
+            tenant_id=vehicle.tenant_id or owner_customer.tenant_id or service_customer.tenant_id,
+            service_customer_id=int(service_customer.id),
+            owner_customer_id=int(owner_customer.id),
+            vehicle_id=int(vehicle.id),
+            approved_by_customer_id=int(decided_by.id),
+            source_type="request_approved",
+            source_request_id=int(request_row.id),
+            note=(request_row.request_message or "").strip() or None,
+        )
+        request_row.status = "approved"
+        request_row.approved_link_id = int(link.id)
+        upsert_service_customer_link_after_request_approval(
+            db,
+            service_customer_id=int(service_customer.id),
+            service_tenant_id=service_customer.tenant_id,
+            owner_customer=owner_customer,
+            note="Propojeno přes schválenou žádost o přístup k vozidlu",
+        )
+        write_global_audit_log(
+            db,
+            entity_type="vehicle_service_access",
+            entity_id=int(link.id),
+            action="service_access_approved",
+            actor_type="user",
+            actor_user_id=int(decided_by.id),
+            actor_role=getattr(decided_by, "role", None),
+            tenant_id=int(vehicle.tenant_id or owner_customer.tenant_id or 1),
+            vehicle_id=int(vehicle.id),
+            metadata={
+                "request_id": int(request_row.id),
+                "service_id": int(service_customer.id),
+                "vehicle_id": int(vehicle.id),
+                "owner_customer_id": int(owner_customer.id),
+                "approved_by_customer_id": int(decided_by.id),
+                "vin": vin_norm,
+                "source_route": source_route,
+            },
+        )
+        return link
+
+    if decision_key != "rejected":
+        raise ValueError("decision must be approved or rejected")
+
+    request_row.status = "rejected"
+    write_global_audit_log(
+        db,
+        entity_type="service_access_request",
+        entity_id=int(request_row.id),
+        action="service_access_rejected",
+        actor_type="user",
+        actor_user_id=int(decided_by.id),
+        actor_role=getattr(decided_by, "role", None),
+        tenant_id=int(vehicle.tenant_id or owner_customer.tenant_id or 1),
+        vehicle_id=int(vehicle.id),
+        metadata={
+            "request_id": int(request_row.id),
+            "service_id": int(service_customer.id),
+            "vehicle_id": int(vehicle.id),
+            "owner_customer_id": int(owner_customer.id),
+            "decided_by_customer_id": int(decided_by.id),
+            "vin": vin_norm,
+            "source_route": source_route,
+        },
+    )
+    return None

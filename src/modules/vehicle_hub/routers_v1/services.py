@@ -29,7 +29,7 @@ from ..models import (
 from ..ownership import get_customer_by_email, get_owned_vehicle, get_owned_vehicle_ids
 from ..partner_public_profile import partner_public_profile_from_db
 from ..schema_management import assert_module_ready
-from ..service_access import create_or_update_vehicle_service_link, revoke_vehicle_service_link, vehicle_label
+from ..service_access import create_or_update_vehicle_service_link, finalize_service_access_decision, revoke_vehicle_service_link, vehicle_label
 from ..user_in_app_notifications import notify_service_access_decided
 from .auth import get_current_user
 from .schemas import (
@@ -48,8 +48,15 @@ router = APIRouter(prefix="/services", tags=["services-v1"])
 _SERVICE_GEO_CACHE: Dict[str, Dict[str, Any]] = {}
 _SERVICE_GEO_CACHE_TTL_SEC = 7 * 24 * 60 * 60  # 7 dní
 _SERVICE_GEO_CACHE_MAX_ITEMS = 3000
+_SERVICE_GEO_SUGGEST_CACHE_TTL_SEC = 24 * 60 * 60  # 24 h (stejný zdroj jako vyhledávání na mapě)
+_SERVICE_GEO_SUGGEST_CACHE_MAX_ITEMS = 8000
+_LAST_NOMINATIM_CALL_MONO = 0.0
 _SERVICE_GEOLOOKUP_URL = (
     "https://nominatim.openstreetmap.org/search?format=jsonv2&accept-language=cs&limit=1&q={query}"
+)
+_SERVICE_GEO_SUGGEST_URL = (
+    "https://nominatim.openstreetmap.org/search?format=jsonv2&accept-language=cs"
+    "&countrycodes=cz&limit={limit}&q={query}"
 )
 _SERVICE_GEOLOOKUP_TIMEOUT_SEC = 1.8
 _DEFAULT_OWNER_DISCOVERY_RADIUS_KM = 50.0
@@ -170,6 +177,96 @@ def _cache_set(key: str, payload: Dict[str, Any]) -> None:
         "expires_at": time.time() + _SERVICE_GEO_CACHE_TTL_SEC,
         "payload": payload,
     }
+
+
+_SERVICE_GEO_SUGGEST_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _suggest_cache_get(key: str) -> Optional[list]:
+    cached = _SERVICE_GEO_SUGGEST_CACHE.get(key)
+    if not cached:
+        return None
+    if cached.get("expires_at", 0) < time.time():
+        _SERVICE_GEO_SUGGEST_CACHE.pop(key, None)
+        return None
+    val = cached.get("payload")
+    return val if isinstance(val, list) else None
+
+
+def _suggest_cache_set(key: str, payload: list) -> None:
+    if len(_SERVICE_GEO_SUGGEST_CACHE) >= _SERVICE_GEO_SUGGEST_CACHE_MAX_ITEMS:
+        oldest_key = next(iter(_SERVICE_GEO_SUGGEST_CACHE.keys()), None)
+        if oldest_key is not None:
+            _SERVICE_GEO_SUGGEST_CACHE.pop(oldest_key, None)
+    _SERVICE_GEO_SUGGEST_CACHE[key] = {
+        "expires_at": time.time() + _SERVICE_GEO_SUGGEST_CACHE_TTL_SEC,
+        "payload": payload,
+    }
+
+
+def _respect_nominatim_interval() -> None:
+    """OpenStreetMap Nominatim vyžaduje max. ~1 požadavek/s na projekt — držíme rozestup."""
+    global _LAST_NOMINATIM_CALL_MONO
+    gap = 1.08
+    now = time.monotonic()
+    elapsed = now - _LAST_NOMINATIM_CALL_MONO
+    if elapsed < gap:
+        time.sleep(gap - elapsed)
+    _LAST_NOMINATIM_CALL_MONO = time.monotonic()
+
+
+def _subtitle_from_nominatim_address(addr: Any) -> str:
+    if not isinstance(addr, dict):
+        return ""
+    locality_keys = ("village", "town", "city", "municipality", "hamlet")
+    loc = ""
+    for k in locality_keys:
+        v = addr.get(k)
+        if v:
+            loc = str(v)
+            break
+    county = addr.get("county") or addr.get("state_district") or ""
+    region = addr.get("state") or ""
+    parts_raw = [p for p in (loc, str(county) if county else "", str(region) if region else "") if p]
+    seen: set[str] = set()
+    parts: list[str] = []
+    for p in parts_raw:
+        if p not in seen:
+            seen.add(p)
+            parts.append(p)
+    return ", ".join(parts)
+
+
+def _nominatim_search_results(query: str, *, limit: int) -> list[Dict[str, Any]]:
+    q = str(query or "").strip()
+    if len(q) < 2:
+        return []
+    lim = max(1, min(int(limit), 12))
+    cache_key = f"suggest:{lim}:{q.lower()}"
+    cached_list = _suggest_cache_get(cache_key)
+    if cached_list is not None:
+        return [x for x in cached_list if isinstance(x, dict)]
+
+    _respect_nominatim_interval()
+    try:
+        request_url = _SERVICE_GEO_SUGGEST_URL.format(limit=lim, query=quote(q, safe=""))
+        req = UrlRequest(
+            request_url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": f"{APP_SERVER_PRODUCT_TOKEN}-ServicesDirectorySuggest/1.0",
+            },
+        )
+        with urlopen(req, timeout=_SERVICE_GEOLOOKUP_TIMEOUT_SEC) as response:
+            body = response.read().decode("utf-8", errors="ignore")
+        data = json.loads(body)
+        if not isinstance(data, list):
+            _suggest_cache_set(cache_key, [])
+            return []
+        _suggest_cache_set(cache_key, data)
+        return [x for x in data if isinstance(x, dict)]
+    except Exception:
+        return []
 
 
 def _build_service_address(service: Customer) -> str:
@@ -548,28 +645,29 @@ def resolve_service_access_request(
         request_row.decision_note = (payload.note or "").strip() or None
 
         if decision == "approved":
-            link = create_or_update_vehicle_service_link(
+            finalize_service_access_decision(
                 db,
-                tenant_id=vehicle.tenant_id or current_user.tenant_id or service.tenant_id,
-                service_customer_id=service.id,
-                owner_customer_id=current_user.id,
-                vehicle_id=vehicle.id,
-                approved_by_customer_id=current_user.id,
-                source_type="request_approved",
-                source_request_id=request_row.id,
-                note=(request_row.request_message or "").strip() or None,
-            )
-            request_row.status = "approved"
-            request_row.approved_link_id = link.id
-            _upsert_service_customer_link(
-                db,
-                service_customer_id=service.id,
-                service_tenant_id=service.tenant_id,
-                target_customer=current_user,
-                note="Propojeno přes schválenou žádost o přístup k vozidlu",
+                request_row=request_row,
+                vehicle=vehicle,
+                owner_customer=current_user,
+                service_customer=service,
+                decision="approved",
+                decided_by=current_user,
+                decision_note=(payload.note or "").strip() or None,
+                source_route="put_access_requests",
             )
         else:
-            request_row.status = "rejected"
+            finalize_service_access_decision(
+                db,
+                request_row=request_row,
+                vehicle=vehicle,
+                owner_customer=current_user,
+                service_customer=service,
+                decision="rejected",
+                decided_by=current_user,
+                decision_note=(payload.note or "").strip() or None,
+                source_route="put_access_requests",
+            )
 
         request_row.updated_at = datetime.utcnow()
         try:
@@ -1007,6 +1105,48 @@ def connect_my_account_to_service_by_email(
         raise HTTPException(status_code=500, detail=f"Nepodařilo se propojit účty: {exc}") from exc
 
 
+@router.get("/geocode-suggest")
+def geocode_suggest_places(
+    q: str = Query("", min_length=2, max_length=180),
+    limit: int = Query(8, ge=1, le=12),
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Návrhy míst v ČR pro adresář servisních partnerů (OSM Nominatim, přednostně ČR).
+
+    Použití: uživatel píše město / okres / ulici a vybere přesný bod; výpis partnerů se pak
+    řadí a filtruje podle /services/discovery?s ref_lat & ref_lon.
+    """
+    _ensure_services_schema(db)
+    raw_hits = _nominatim_search_results(q, limit=limit)
+    items: list[dict[str, Any]] = []
+    for hit in raw_hits:
+        lat = _safe_float(hit.get("lat"))
+        lon = _safe_float(hit.get("lon"))
+        if lat is None or lon is None:
+            continue
+        if lat < -90 or lat > 90 or lon < -180 or lon > 180:
+            continue
+        addr = hit.get("address")
+        subtitle = _subtitle_from_nominatim_address(addr)
+        disp = hit.get("display_name")
+        label = str(disp).strip() if isinstance(disp, str) else subtitle or q
+        if len(label) > 240:
+            label = label[:237] + "…"
+        items.append(
+            {
+                "label": label,
+                "subtitle": subtitle or None,
+                "lat": round(lat, 6),
+                "lon": round(lon, 6),
+                "type": hit.get("type"),
+                "category": hit.get("category"),
+            }
+        )
+    return {"items": items}
+
+
 @router.get("/discovery")
 def get_services_discovery(
     request: Request,
@@ -1018,6 +1158,14 @@ def get_services_discovery(
         le=500,
         description="Majitel vozidla: max. vzdálenost v km od polohy (hlavičky / profil). 0 = bez omezení.",
     ),
+    ref_lat: Optional[float] = Query(
+        default=None,
+        description="Volitelná referenční zeměpisná šířka (např. výběr z našeptávače adres). Spolu s ref_lon přebije GPS a profil.",
+    ),
+    ref_lon: Optional[float] = Query(
+        default=None,
+        description="Volitelná referenční zeměpisná délka.",
+    ),
 ):
     """
     Katalog aktivních servisů pro uživatele.
@@ -1028,7 +1176,8 @@ def get_services_discovery(
     - Majitel vozidla: pokud je známá reference poloha, výchozí filtr **do radius_km km**
       (výchozí 50 km); **propojené** servisy jsou vždy zahrnuty i mimo kruh.
     - Interně: servisní účty mají výpis omezený na vlastní tenant; propojení nadále přidá výjimku.
-    - Geolokační řazení jako dříve (hlavičky / profilová adresa).
+    - Geolokační řazení jako dříve (hlavičky / profilová adresa), nebo explicitní ref_lat/ref_lon
+      (např. místo na dovolené — uživatel ho vybere z našeptávače adres).
     """
     _ensure_services_schema(db)
 
@@ -1037,9 +1186,11 @@ def get_services_discovery(
     if actor_role != ROLE_SERVICE:
         linked_rows = (
             db.query(ServiceCustomerLink.service_customer_id)
+            .join(Customer, Customer.id == ServiceCustomerLink.service_customer_id)
             .filter(
                 ServiceCustomerLink.customer_id == current_user.id,
                 ServiceCustomerLink.status == "active",
+                Customer.role.in_(["service", "developer_admin"]),
             )
             .all()
         )
@@ -1055,7 +1206,12 @@ def get_services_discovery(
             )
         ]
         if linked_service_ids:
-            owner_parts.append(Customer.id.in_(list(linked_service_ids)))
+            owner_parts.append(
+                and_(
+                    Customer.id.in_(list(linked_service_ids)),
+                    Customer.role.in_(["service", "developer_admin"]),
+                )
+            )
         query = db.query(Customer).filter(or_(*owner_parts))
 
     if not _is_admin_role(current_user.role):
@@ -1124,8 +1280,22 @@ def get_services_discovery(
 
     active_access_counts = vehicle_access_counts
 
-    reference_coords = _extract_client_coordinates(request)
-    reference_source = "browser"
+    reference_coords: Optional[tuple[float, float]] = None
+    reference_source = "none"
+
+    if ref_lat is not None and ref_lon is not None:
+        flat = float(ref_lat)
+        flon = float(ref_lon)
+        if flat < -90 or flat > 90 or flon < -180 or flon > 180:
+            raise HTTPException(status_code=422, detail="Neplatné souřadnice ref_lat/ref_lon.")
+        reference_coords = (round(flat, 6), round(flon, 6))
+        reference_source = "explore_place"
+    elif ref_lat is not None or ref_lon is not None:
+        raise HTTPException(status_code=422, detail="Zadejte společně ref_lat i ref_lon, nebo je vynechte.")
+
+    if reference_coords is None:
+        reference_coords = _extract_client_coordinates(request)
+        reference_source = "browser"
 
     if reference_coords is None:
         profile_address = _build_service_address(current_user)
@@ -1258,3 +1428,19 @@ def list_approved_service_vehicles_product_path(
     from . import service_workspace as _service_workspace
 
     return _service_workspace.list_approved_service_vehicles(current_user, db)
+
+
+class ServiceCustomerLinkConfirmRequestV1(BaseModel):
+    confirm_token: str = Field(..., min_length=12, max_length=4096)
+
+
+@router.post("/customer-links/confirm-as-owner")
+def confirm_service_customer_link_as_owner(
+    payload: ServiceCustomerLinkConfirmRequestV1,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Zákazník potvrdí žádost servisu o propojení účtu (e-mailový odkaz)."""
+    from ..service_workspace_customer_centre import confirm_service_customer_link_core
+
+    return confirm_service_customer_link_core(db, token=payload.confirm_token, acting_customer=current_user)

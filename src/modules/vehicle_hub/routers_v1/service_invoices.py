@@ -23,6 +23,8 @@ from ..models import (
     ServiceInvoice,
     ServiceInvoiceCounter,
     ServiceInvoiceLine,
+    ServiceRecord,
+    ServiceWorkOrder,
     Vehicle as VehicleModel,
 )
 from ..reports.service_invoice_pdf import render_service_invoice_pdf
@@ -60,6 +62,48 @@ def _ensure_invoice_customer(db: Session, *, current_user: Customer, customer_id
     if not link:
         raise HTTPException(status_code=403, detail="Servis nemá vazbu na tohoto zákazníka.")
     return owner
+
+
+def _validate_service_invoice_links(
+    db: Session,
+    *,
+    tenant_id: int,
+    vehicle_id: Optional[int],
+    service_record_id: Optional[int],
+    work_order_id: Optional[int],
+) -> None:
+    if service_record_id is not None:
+        rec = (
+            db.query(ServiceRecord)
+            .filter(
+                ServiceRecord.id == int(service_record_id),
+                ServiceRecord.tenant_id == int(tenant_id),
+            )
+            .first()
+        )
+        if not rec:
+            raise HTTPException(status_code=404, detail="Servisní záznam nebyl nalezen.")
+        if vehicle_id is not None and int(rec.vehicle_id) != int(vehicle_id):
+            raise HTTPException(
+                status_code=422,
+                detail="service_record_id musí patřit ke stejnému vehicle_id jako faktura.",
+            )
+    if work_order_id is not None:
+        wo = (
+            db.query(ServiceWorkOrder)
+            .filter(
+                ServiceWorkOrder.id == int(work_order_id),
+                ServiceWorkOrder.tenant_id == int(tenant_id),
+            )
+            .first()
+        )
+        if not wo:
+            raise HTTPException(status_code=404, detail="Servisní zakázka nebyla nalezena.")
+        if vehicle_id is not None and int(wo.vehicle_id) != int(vehicle_id):
+            raise HTTPException(
+                status_code=422,
+                detail="work_order_id musí patřit ke stejnému vehicle_id jako faktura.",
+            )
 
 
 def _ensure_invoice_party(
@@ -187,6 +231,8 @@ def _serialize_invoice(
         "service_id": int(inv.service_id),
         "customer_id": int(inv.customer_id),
         "vehicle_id": int(inv.vehicle_id) if inv.vehicle_id is not None else None,
+        "service_record_id": int(inv.service_record_id) if getattr(inv, "service_record_id", None) else None,
+        "work_order_id": int(inv.work_order_id) if getattr(inv, "work_order_id", None) else None,
         "invoice_number": inv.invoice_number,
         "status": inv.status,
         "status_label": _status_label(str(inv.status or "")),
@@ -264,6 +310,12 @@ class ServiceInvoiceLineIn(BaseModel):
 class ServiceInvoiceCreateRequest(BaseModel):
     customer_id: int = Field(gt=0)
     vehicle_id: Optional[int] = Field(default=None, gt=0)
+    service_record_id: Optional[int] = Field(default=None, gt=0)
+    work_order_id: Optional[int] = Field(default=None, gt=0)
+    from_service_record: bool = Field(
+        default=False,
+        description="Pokud True, service_record_id je povinné (faktura vzniká ze servisního záznamu).",
+    )
     non_vehicle_invoice: bool = Field(
         default=False,
         description="Ruční faktura bez vozidla; do extra_json se uloží manual_non_vehicle_invoice.",
@@ -278,6 +330,8 @@ class ServiceInvoiceCreateRequest(BaseModel):
 class ServiceInvoiceUpdateRequest(BaseModel):
     customer_id: Optional[int] = Field(default=None, gt=0)
     vehicle_id: Optional[int] = None
+    service_record_id: Optional[int] = None
+    work_order_id: Optional[int] = None
     currency: Optional[str] = Field(default=None, max_length=8)
     due_at: Optional[datetime] = None
     notes: Optional[str] = Field(default=None, max_length=8000)
@@ -642,6 +696,11 @@ def create_service_invoice(
                 status_code=422,
                 detail="U faktury bez vozidla ponechte vehicle_id prázdné.",
             )
+        if payload.service_record_id or payload.work_order_id or payload.from_service_record:
+            raise HTTPException(
+                status_code=422,
+                detail="Faktura bez vozidla nesmí nést vazbu na servisní záznam ani zakázku.",
+            )
         _, vehicle = _ensure_invoice_party(
             db,
             current_user=current_user,
@@ -649,11 +708,18 @@ def create_service_invoice(
             vehicle_id=None,
         )
         vehicle_id_val = None
+        sr_id = None
+        wo_id = None
     else:
         if not payload.vehicle_id:
             raise HTTPException(
                 status_code=422,
                 detail="vehicle_id je povinné pro běžnou servisní fakturu vázanou na vozidlo.",
+            )
+        if bool(payload.from_service_record) and not payload.service_record_id:
+            raise HTTPException(
+                status_code=422,
+                detail="Faktura vznikající ze servisního záznamu musí mít vyplněné service_record_id.",
             )
         _, vehicle = _ensure_invoice_party(
             db,
@@ -662,6 +728,15 @@ def create_service_invoice(
             vehicle_id=int(payload.vehicle_id),
         )
         vehicle_id_val = int(payload.vehicle_id)
+        sr_id = int(payload.service_record_id) if payload.service_record_id else None
+        wo_id = int(payload.work_order_id) if payload.work_order_id else None
+        _validate_service_invoice_links(
+            db,
+            tenant_id=int(current_user.tenant_id),
+            vehicle_id=vehicle_id_val,
+            service_record_id=sr_id,
+            work_order_id=wo_id,
+        )
 
     extra_in = dict(payload.extra or {})
     if payload.non_vehicle_invoice:
@@ -672,6 +747,8 @@ def create_service_invoice(
         service_id=int(current_user.id),
         customer_id=int(payload.customer_id),
         vehicle_id=vehicle_id_val,
+        service_record_id=sr_id,
+        work_order_id=wo_id,
         status="draft",
         subtotal=0,
         tax_total=0,
@@ -707,6 +784,8 @@ def create_service_invoice(
             "vehicle_id": inv.vehicle_id,
             "vin": (str(getattr(vehicle, "vin", None) or "").strip().upper() or None),
             "non_vehicle": bool(payload.non_vehicle_invoice),
+            "service_record_id": sr_id,
+            "work_order_id": wo_id,
         },
     )
     db.commit()
@@ -775,6 +854,10 @@ def update_service_invoice(
         inv.customer_id = cust_id
     if "vehicle_id" in fields_set:
         inv.vehicle_id = int(payload.vehicle_id) if payload.vehicle_id else None
+    if "service_record_id" in fields_set:
+        inv.service_record_id = int(payload.service_record_id) if payload.service_record_id is not None else None
+    if "work_order_id" in fields_set:
+        inv.work_order_id = int(payload.work_order_id) if payload.work_order_id is not None else None
     if "currency" in fields_set and payload.currency is not None:
         inv.currency = str(payload.currency).strip()[:8] or "CZK"
     if "due_at" in fields_set:
@@ -799,6 +882,14 @@ def update_service_invoice(
         inv.subtotal = sub
         inv.tax_total = tax
         inv.total = tot
+
+    _validate_service_invoice_links(
+        db,
+        tenant_id=int(inv.tenant_id),
+        vehicle_id=int(inv.vehicle_id) if inv.vehicle_id is not None else None,
+        service_record_id=int(inv.service_record_id) if inv.service_record_id is not None else None,
+        work_order_id=int(inv.work_order_id) if inv.work_order_id is not None else None,
+    )
 
     db.flush()
     _audit(db, invoice=inv, action="invoice_updated", actor=current_user)
@@ -853,7 +944,10 @@ def issue_service_invoice(
         invoice=inv,
         action="invoice_issued",
         actor=current_user,
-        metadata={"invoice_number": inv.invoice_number},
+        metadata={
+            "invoice_number": inv.invoice_number,
+            "service_record_id": int(inv.service_record_id) if inv.service_record_id is not None else None,
+        },
     )
     db.commit()
     db.refresh(inv)
@@ -1041,19 +1135,17 @@ def get_service_invoice_pdf(
     _ensure_service_invoices_schema(db)
 
     inv = _get_invoice_for_service(db, current_user=current_user, invoice_id=invoice_id)
-    lines = (
-        db.query(ServiceInvoiceLine)
-        .filter(ServiceInvoiceLine.invoice_id == int(inv.id))
-        .order_by(ServiceInvoiceLine.sort_order, ServiceInvoiceLine.id)
-        .all()
-    )
-    pdf_bytes = render_service_invoice_pdf(_pdf_payload(db, invoice=inv, lines=lines, service_customer=current_user))
+    pdf_bytes = render_internal_service_invoice_pdf(db, invoice=inv)
     _audit(
         db,
         invoice=inv,
         action="invoice_pdf_exported",
         actor=current_user,
-        metadata={"invoice_number": inv.invoice_number, "status": inv.status},
+        metadata={
+            "invoice_number": inv.invoice_number,
+            "status": inv.status,
+            "service_record_id": getattr(inv, "service_record_id", None),
+        },
     )
     db.commit()
     return Response(
@@ -1061,3 +1153,17 @@ def get_service_invoice_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="service-invoice-{int(inv.id)}.pdf"'},
     )
+
+
+def render_internal_service_invoice_pdf(db: Session, *, invoice: ServiceInvoice) -> bytes:
+    """PDF bytes pro interní fakturu (issuer podle invoice.service_id), bez zápisu auditu."""
+    issuer = db.query(Customer).filter(Customer.id == int(invoice.service_id)).first()
+    if not issuer:
+        raise HTTPException(status_code=404, detail="Vystavitel faktury nebyl nalezen.")
+    lines = (
+        db.query(ServiceInvoiceLine)
+        .filter(ServiceInvoiceLine.invoice_id == int(invoice.id))
+        .order_by(ServiceInvoiceLine.sort_order, ServiceInvoiceLine.id)
+        .all()
+    )
+    return render_service_invoice_pdf(_pdf_payload(db, invoice=invoice, lines=lines, service_customer=issuer))

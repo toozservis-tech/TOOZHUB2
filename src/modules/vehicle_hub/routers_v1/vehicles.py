@@ -28,7 +28,7 @@ from fastapi import APIRouter, HTTPException, Depends, Body, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 import requests
-from sqlalchemy import func
+from sqlalchemy import func, nullslast
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import Any, Dict, List, Optional
@@ -50,7 +50,7 @@ except Exception:
 
 from src.core import config as app_config
 from src.core.config import DATA_DIR
-from src.core.rbac import is_admin, vehicle_write_policy
+from src.core.rbac import is_admin, is_service, normalize_role, vehicle_write_policy
 from src.server.security_tracking import extract_client_ip
 from ..tachometer_parser import normalize_result as normalize_tachometer_result
 from ..database import get_db
@@ -72,6 +72,7 @@ from ..models import (
     VehicleQrToken as VehicleQrTokenModel,
     Customer,
     GlobalAuditLog as GlobalAuditLogModel,
+    ServiceInvoice,
     ServiceRecord as ServiceRecordModel,
     VehicleTachometerHistoryEntry as VehicleTachometerHistoryEntryModel,
 )
@@ -4726,6 +4727,95 @@ def delete_vehicle_photo(
             pass
 
     return {"message": "Fotka vozidla byla smazána."}
+
+
+@router.get("/{vehicle_id}/invoices")
+def user_list_vehicle_invoices(
+    vehicle_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if is_service(normalize_role(getattr(current_user, "role", None))):
+        raise HTTPException(status_code=403, detail="Pouze uživatelský účet.")
+    assert_module_ready(db, "service_invoices", detail_prefix="Faktury nejsou připravené")
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k fakturám tohoto vozidla.")
+
+    rows = (
+        db.query(ServiceInvoice)
+        .filter(
+            ServiceInvoice.vehicle_id == int(vehicle_id),
+            ServiceInvoice.status == "issued",
+        )
+        .order_by(nullslast(ServiceInvoice.issued_at.desc()), ServiceInvoice.id.desc())
+        .limit(200)
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": int(inv.id),
+                "invoice_number": inv.invoice_number,
+                "status": inv.status,
+                "total": inv.total,
+                "currency": inv.currency,
+                "issued_at": inv.issued_at.isoformat() if inv.issued_at else None,
+                "service_record_id": int(inv.service_record_id) if getattr(inv, "service_record_id", None) else None,
+            }
+            for inv in rows
+        ]
+    }
+
+
+@router.get("/{vehicle_id}/invoices/{invoice_id}/pdf")
+def user_download_vehicle_invoice_pdf(
+    vehicle_id: int,
+    invoice_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from .service_invoices import render_internal_service_invoice_pdf
+
+    if is_service(normalize_role(getattr(current_user, "role", None))):
+        raise HTTPException(status_code=403, detail="Pouze uživatelský účet.")
+    assert_module_ready(db, "service_invoices", detail_prefix="Faktury nejsou připravené")
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k dokladu.")
+
+    inv = (
+        db.query(ServiceInvoice)
+        .filter(
+            ServiceInvoice.id == int(invoice_id),
+            ServiceInvoice.vehicle_id == int(vehicle_id),
+            ServiceInvoice.status == "issued",
+        )
+        .first()
+    )
+    if not inv:
+        raise HTTPException(status_code=404, detail="Faktura nebyla nalezena.")
+
+    pdf_bytes = render_internal_service_invoice_pdf(db, invoice=inv)
+    write_global_audit_log(
+        db,
+        entity_type="service_invoice",
+        entity_id=int(inv.id),
+        action="service_invoice_user_pdf_download",
+        actor_type="user",
+        actor_user_id=int(current_user.id),
+        actor_role=str(getattr(current_user, "role", None) or ""),
+        tenant_id=int(inv.tenant_id),
+        vehicle_id=int(vehicle_id),
+        metadata={
+            "invoice_number": inv.invoice_number,
+            "service_record_id": int(inv.service_record_id) if getattr(inv, "service_record_id", None) else None,
+        },
+    )
+    db.commit()
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="invoice-{int(inv.id)}.pdf"'},
+    )
 
 
 @router.delete("/{vehicle_id}")

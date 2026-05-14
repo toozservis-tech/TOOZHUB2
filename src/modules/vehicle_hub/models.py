@@ -592,7 +592,8 @@ class VehicleMileage(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False, index=True)
     mileage_km = Column(Integer, nullable=False)
-    source = Column(String(32), nullable=False)  # manual, stk, service, import
+    source = Column(String(32), nullable=False)  # manual, stk, service, import, service_record
+    service_record_id = Column(Integer, ForeignKey("service_records.id"), nullable=True, index=True)
     note = Column(Text, nullable=True)
     created_by_user_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
@@ -1025,6 +1026,8 @@ class ServiceInvoice(Base):
     service_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)
+    service_record_id = Column(Integer, ForeignKey("service_records.id"), nullable=True, index=True)
+    work_order_id = Column(Integer, ForeignKey("service_work_orders.id"), nullable=True, index=True)
 
     invoice_number = Column(String(64), nullable=True, unique=True, index=True)
     status = Column(String(32), nullable=False, default="draft", index=True)  # draft | issued | cancelled

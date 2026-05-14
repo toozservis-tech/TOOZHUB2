@@ -25,6 +25,7 @@ from . import (
     push,
     system_notifications,
     capabilities,
+    admin_service_read,
 )
 
 # Hlavní router pro v1 API
@@ -55,6 +56,7 @@ api_router.include_router(ares_lookup.router)  # ARES lookup
 api_router.include_router(push.router)  # Web Push notifications
 api_router.include_router(system_notifications.router)  # System notifications
 api_router.include_router(capabilities.router)  # Runtime capabilities
+api_router.include_router(admin_service_read.router)
 
 # License status router - explicitní kontrola
 try:

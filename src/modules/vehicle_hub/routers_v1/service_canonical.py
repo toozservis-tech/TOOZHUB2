@@ -34,6 +34,8 @@ from ..ownership import get_primary_vehicle_owner
 from ..schema_management import assert_module_ready
 from ..service_access import (
     get_active_vehicle_service_link,
+    masked_plate,
+    masked_vin,
     normalize_lookup_query,
     require_service_vehicle_link,
     resolve_vehicle_for_lookup,
@@ -479,8 +481,8 @@ def search_service_vehicles(
             {
                 "vehicle_id": int(vehicle.id),
                 "vehicle_name": vehicle_label(vehicle),
-                "plate_masked": vehicle.plate,
-                "vin_masked": f"{str(vehicle.vin or '')[:3]}***{str(vehicle.vin or '')[-4:]}" if vehicle.vin else None,
+                "plate_masked": masked_plate(vehicle.plate),
+                "vin_masked": masked_vin(vehicle.vin),
                 "can_open_detail": approved,
                 "can_request_access": bool(vehicle and owner and not approved and status != "pending_request"),
             }
