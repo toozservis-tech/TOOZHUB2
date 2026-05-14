@@ -14,6 +14,7 @@ tunnel.log
 *.db
 *.sqlite
 *.sqlite3
+*.tar.gz
 vehicles.db
 test_vehicles.db
 
@@ -29,7 +30,10 @@ __pycache__/
 artifacts/qa/
 test_vehicles.db
 artifacts/
-backups/control_center/
+artifacts/*.pdf
+artifacts/runtime-*.pdf
+# Celý strom záloh (snapshot manifesty, DB dumpy, exporty) — necommitovat
+backups/
 playwright-report/
 tests/e2e/playwright-report/
 tests/e2e/test-results/
