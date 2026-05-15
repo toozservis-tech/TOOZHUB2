@@ -26,6 +26,8 @@ from sqlalchemy.orm import Session
 
 from src.core.config import FRONTEND_BASE_URL, JWT_ALGORITHM, JWT_SECRET_KEY
 from src.core.rate_limiter import rate_limiter
+from src.modules.licensing.service import LicenseError, assert_service_customer_link_quota, assert_vehicle_quota
+
 from src.core.security import hash_password
 from src.modules.email_client.service import EmailService
 from src.modules.email_client.templates import render_email_layout, render_panel
@@ -464,6 +466,7 @@ def execute_customer_link_from_lookup(
         row.created_by_service_user_id = int(current_user.id)
         row.updated_at = now
     else:
+        assert_service_customer_link_quota(db, service_customer_id=int(current_user.id))
         row = ServiceCustomerLink(
             service_tenant_id=int(current_user.tenant_id),
             service_customer_id=int(current_user.id),
@@ -605,6 +608,7 @@ def customer_create_with_onboarding(
     db.add(customer)
     db.flush()
 
+    assert_service_customer_link_quota(db, service_customer_id=int(current_user.id))
     link = ServiceCustomerLink(
         service_tenant_id=int(current_user.tenant_id),
         service_customer_id=int(current_user.id),
@@ -652,6 +656,25 @@ def customer_create_with_onboarding(
         stk_default = datetime.utcnow().date() + timedelta(days=365)
         nickname_parts = [p for p in [v.brand, v.model] if p]
         nickname = " ".join(nickname_parts).strip() or (v.plate or v.vin or "Vozidlo")
+        try:
+            assert_vehicle_quota(db, int(customer.tenant_id))
+        except LicenseError as exc:
+            write_global_audit_log(
+                db,
+                entity_type="license",
+                entity_id=int(customer.tenant_id),
+                action="vehicle_quota_denied_service_onboarding",
+                actor_user_id=int(current_user.id),
+                actor_role=getattr(current_user, "role", None),
+                tenant_id=int(current_user.tenant_id),
+                vehicle_id=None,
+                metadata={
+                    "target_customer_id": int(customer.id),
+                    "target_tenant_id": int(customer.tenant_id),
+                    "code": getattr(exc, "code", None),
+                },
+            )
+            raise exc
         vehicle = VehicleModel(
             tenant_id=int(customer.tenant_id),
             user_email=email_n,

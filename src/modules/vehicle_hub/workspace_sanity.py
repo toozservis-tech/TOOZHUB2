@@ -6,12 +6,12 @@ Used by scripts and tests; does not change routing architecture.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Dict, List
 
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from .models import Customer, Tenant
+from .models import Customer, License, Tenant
 from .workspace_routing import ensure_tenant_workspace_slug, resolve_workspace_route_kind_for_customer
 
 
@@ -103,6 +103,91 @@ def repair_empty_workspace_slugs(db: Session) -> int:
     if touched:
         db.commit()
     return touched
+
+
+def collect_license_workspace_mismatch_report(db: Session) -> Dict[str, Any]:
+    """
+    Hlásí nekonzistence mezi tenants.workspace_route_kind a licences.plan.
+
+    - service_license_non_service_route_kind: řádek licences začíná na service_,
+      ale tenant nemá workspace_route_kind == service (typicky starý stav před opravou párování).
+    - service_route_kind_user_license_plan: tenant má route_kind service, ale plán v licences
+      je uživatelský (free/basic/premium/lifetime) — často omyl při ruční úpravě DB.
+    """
+    sql = text(
+        """
+        SELECT
+            t.id AS tenant_id,
+            t.workspace_route_kind,
+            COALESCE(LOWER(TRIM(l.plan)), '') AS license_plan,
+            EXISTS (
+                SELECT 1 FROM customers c
+                WHERE c.tenant_id = t.id AND LOWER(TRIM(COALESCE(c.role, ''))) = 'service'
+            ) AS has_service_role_customer
+        FROM tenants t
+        LEFT JOIN licenses l ON l.tenant_id = t.id
+        ORDER BY t.id ASC
+        """
+    )
+    rows_out: List[Dict[str, Any]] = []
+    for r in db.execute(sql):
+        row = dict(r._mapping)
+        tid = int(row["tenant_id"])
+        rk = str(row["workspace_route_kind"] or "").strip().lower()
+        plan = str(row["license_plan"] or "").strip().lower()
+        has_svc = bool(row["has_service_role_customer"])
+        issues: List[str] = []
+        if plan.startswith("service_"):
+            if rk != "service":
+                issues.append("service_license_non_service_route_kind")
+        elif rk == "service" and plan and not plan.startswith("service_"):
+            issues.append("service_route_kind_user_license_plan")
+        if issues:
+            rows_out.append(
+                {
+                    "tenant_id": tid,
+                    "workspace_route_kind": row["workspace_route_kind"],
+                    "license_plan": plan or None,
+                    "has_service_role_customer": has_svc,
+                    "issues": issues,
+                }
+            )
+
+    auto_fixable = sum(
+        1 for item in rows_out if "service_license_non_service_route_kind" in item["issues"]
+    )
+    return {
+        "mismatch_count": len(rows_out),
+        "auto_fixable_non_service_route_with_service_license_count": auto_fixable,
+        "rows": rows_out,
+    }
+
+
+def repair_service_license_route_kinds(db: Session, *, dry_run: bool = False) -> Dict[str, Any]:
+    """
+    Nastaví tenants.workspace_route_kind = 'service' tam, kde licences.plan začíná na service_
+    a dosud route_kind není service.
+
+    Nevrací opačnou kategorii (service_route_kind_user_license_plan) — tu je potřeba řešit ručně.
+    """
+    touched_ids: List[int] = []
+    q = db.query(Tenant).order_by(Tenant.id.asc())
+    for tenant in q.all():
+        rk = str(tenant.workspace_route_kind or "").strip().lower()
+        if rk == "service":
+            continue
+        lic = db.query(License).filter(License.tenant_id == tenant.id).first()
+        if lic is None:
+            continue
+        plan = str(lic.plan or "").strip().lower()
+        if not plan.startswith("service_"):
+            continue
+        touched_ids.append(int(tenant.id))
+        if not dry_run:
+            tenant.workspace_route_kind = "service"
+    if touched_ids and not dry_run:
+        db.commit()
+    return {"dry_run": dry_run, "updated_count": len(touched_ids), "tenant_ids": touched_ids}
 
 
 def normalize_invalid_tenant_route_kinds(db: Session) -> int:

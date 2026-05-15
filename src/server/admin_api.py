@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect, func
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timezone, timedelta
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from pathlib import Path
 from copy import deepcopy
 import gzip
@@ -87,6 +87,12 @@ from src.modules.vehicle_hub.models import (
     VehicleMileage,
     VehicleStkImportAuditLog,
     VehicleTachometerHistoryEntry,
+    ServiceCustomerLink,
+    ServiceVehicleAccess,
+    VehicleServiceLink,
+    ServiceAccessRequest,
+    ServiceCustomerInvite,
+    ServiceInvoice,
 )
 from src.server.admin_customer_change_notify import (
     admin_change_table_exists,
@@ -154,7 +160,10 @@ try:
         get_license_plan_base,
         get_license_plan_public_label,
         get_license_workspace_kind_for_role,
+        get_license_plan_workspace_kind,
         normalize_license_plan_key as normalize_license_plan_for_role,
+        pairing_role_for_tenant_license,
+        effective_service_license_storage_plan,
     )
     LICENSE_MANAGEMENT_AVAILABLE = True
 except Exception:
@@ -164,7 +173,10 @@ except Exception:
     get_license_plan_base = None
     get_license_plan_public_label = None
     get_license_workspace_kind_for_role = None
+    get_license_plan_workspace_kind = None
     normalize_license_plan_for_role = None
+    pairing_role_for_tenant_license = None
+    effective_service_license_storage_plan = None
     LICENSE_MANAGEMENT_AVAILABLE = False
 
 router = APIRouter(prefix="/admin-api", tags=["admin"])
@@ -1212,7 +1224,10 @@ def require_control_center_admin(
     db: Session = Depends(get_db)
 ):
     """
-    Přísný přístup pouze pro roli developer_admin (Control Center).
+    Přísný přístup pouze pro roli developer_admin (infra Control Center: zálohy, konzole, monitory).
+
+    Pozn.: Účetní zásahy u uživatele (disable / licence / reset hesla) pod `/control-center/users/…`
+    používají `require_developer_admin`, aby je mohl provádět i běžný admin (`admin`).
     """
     ensure_customer_account_state_schema(db)
     customer = db.query(Customer).filter(Customer.email == email).first()
@@ -1327,6 +1342,123 @@ def normalize_license_plan(plan: Optional[str], role: Optional[str] = None) -> O
         allowed = ", ".join(sorted(allowed_plans))
         raise HTTPException(status_code=400, detail=f"Neplatný plán licence '{plan}'. Povolené plány: {allowed}")
     return normalized_plan
+
+
+def _customer_presensed_as_service_operator(*, role: str, tenant_workspace_route_kind: str) -> bool:
+    r = str(role or "").strip().lower()
+    if r == "service":
+        return True
+    if r == "developer_admin" and str(tenant_workspace_route_kind or "").strip().lower() == "service":
+        return True
+    return False
+
+
+def _revoke_service_operator_graph(
+    db: Session,
+    *,
+    service_customer_id: int,
+    admin_email: str,
+) -> Dict[str, int]:
+    """
+    Po přechodu účtu ze servisního operátora na běžného uživatele zruší veškeré aktivní vazby,
+    které jiným účtům způsobovaly zobrazení tohoto ID jako „servisu“.
+    """
+    now = datetime.utcnow()
+    counts: Dict[str, int] = {
+        "customer_links_archived": 0,
+        "vehicle_access_revoked": 0,
+        "vehicle_service_links_revoked": 0,
+        "access_requests_revoked": 0,
+        "invites_cancelled": 0,
+        "reservations_cancelled": 0,
+    }
+    bind = db.bind
+    reason = f"admin_demotion:{admin_email}"
+
+    if inspect(bind).has_table("service_customer_links"):
+        for link in (
+            db.query(ServiceCustomerLink)
+            .filter(ServiceCustomerLink.service_customer_id == int(service_customer_id))
+            .filter(ServiceCustomerLink.status != "archived")
+            .all()
+        ):
+            link.status = "archived"
+            link.revoked_at = now
+            link.updated_at = now
+            counts["customer_links_archived"] += 1
+
+    if inspect(bind).has_table("service_vehicle_access"):
+        for row in (
+            db.query(ServiceVehicleAccess)
+            .filter(ServiceVehicleAccess.service_customer_id == int(service_customer_id))
+            .filter(ServiceVehicleAccess.status == "active")
+            .all()
+        ):
+            row.status = "revoked"
+            row.revoked_at = now
+            row.updated_at = now
+            row.revoke_reason = reason
+            counts["vehicle_access_revoked"] += 1
+
+    if inspect(bind).has_table("vehicle_service_links"):
+        for row in (
+            db.query(VehicleServiceLink)
+            .filter(VehicleServiceLink.service_customer_id == int(service_customer_id))
+            .filter(VehicleServiceLink.status == "approved")
+            .all()
+        ):
+            row.status = "revoked"
+            row.revoked_at = now
+            row.updated_at = now
+            row.revoked_reason = "admin_role_demotion"
+            counts["vehicle_service_links_revoked"] += 1
+
+    if inspect(bind).has_table("service_access_requests"):
+        for req in (
+            db.query(ServiceAccessRequest)
+            .filter(ServiceAccessRequest.service_customer_id == int(service_customer_id))
+            .filter(ServiceAccessRequest.status == "pending")
+            .all()
+        ):
+            req.status = "revoked"
+            req.decided_at = now
+            req.decision_note = reason
+            req.updated_at = now
+            counts["access_requests_revoked"] += 1
+
+    if inspect(bind).has_table("service_customer_invites"):
+        for inv in (
+            db.query(ServiceCustomerInvite)
+            .filter(ServiceCustomerInvite.service_customer_id == int(service_customer_id))
+            .filter(ServiceCustomerInvite.status == "pending")
+            .all()
+        ):
+            inv.status = "cancelled"
+            inv.updated_at = now
+            counts["invites_cancelled"] += 1
+
+    if inspect(bind).has_table("reservations"):
+        rc = (
+            db.query(Reservation)
+            .filter(Reservation.service_id == int(service_customer_id))
+            .filter(Reservation.status.in_(["PENDING", "CONFIRMED"]))
+            .update({Reservation.status: "CANCELLED"}, synchronize_session=False)
+        )
+        counts["reservations_cancelled"] += int(rc or 0)
+
+    return counts
+
+
+def _map_service_license_storage_to_user_plan(plan_raw: Optional[str]) -> str:
+    """Po převodu účtu ze servisu na uživatele — ekvivalent uživatelského tarifu v DB."""
+    if not LICENSE_MANAGEMENT_AVAILABLE or not effective_service_license_storage_plan:
+        return "free"
+    eff = effective_service_license_storage_plan(str(plan_raw or "").strip().lower())
+    return {
+        "service_free": "free",
+        "service_full": "premium",
+        "service_lifetime": "lifetime",
+    }.get(eff, "free")
 
 
 def normalize_license_status(status: Optional[str]) -> Optional[str]:
@@ -1796,7 +1928,7 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
-    name: Optional[str] = Field(None, min_length=2, max_length=200)
+    name: Optional[str] = Field(None, max_length=200)
     password: Optional[str] = None
     role: Optional[str] = None
     ico: Optional[str] = None
@@ -1810,6 +1942,35 @@ class UserUpdate(BaseModel):
     # JSON pole ["user","service"] — rozšíření pracovních režimů (None = beze změny)
     workspace_entitlements: Optional[List[str]] = None
     workspace_ui_default: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _validate_name_optional(cls, value):
+        if value is None or value == "":
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if len(text) < 2:
+            raise ValueError("Jméno musí mít alespoň 2 znaky.")
+        return text
+
+    @field_validator(
+        "phone",
+        "ico",
+        "dic",
+        "street",
+        "street_number",
+        "city",
+        "zip",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_text(cls, value):
+        if value is None or value == "":
+            return None
+        text = str(value).strip()
+        return text or None
 
 class VehicleCreate(BaseModel):
     user_email: EmailStr
@@ -4381,8 +4542,8 @@ def create_user(
         target_email = str(user_data.email).strip().lower()
         target_role = validate_role_value(user_data.role)
         selected_plan = normalize_license_plan(user_data.license_plan, target_role)
-        if selected_plan and (not LICENSE_MANAGEMENT_AVAILABLE or not upgrade_license_plan):
-            raise HTTPException(status_code=503, detail="Správa licencí není momentálně dostupná")
+        can_manage_license = bool(LICENSE_MANAGEMENT_AVAILABLE and upgrade_license_plan)
+        plan_for_upgrade = selected_plan if can_manage_license else None
         if user_data.tenant_id is not None:
             tenant_id = resolve_tenant_id_for_create(db, acting_admin, user_data.tenant_id)
         else:
@@ -4461,8 +4622,8 @@ def create_user(
         db.refresh(new_user)
 
         ensure_default_license_for_tenant(db, new_user.tenant_id)
-        if selected_plan:
-            upgrade_license_plan(db, new_user.tenant_id, selected_plan)
+        if plan_for_upgrade:
+            upgrade_license_plan(db, new_user.tenant_id, plan_for_upgrade)
         db.refresh(new_user)
 
         return {
@@ -4504,9 +4665,61 @@ def update_user(
             raise HTTPException(status_code=400, detail="Smazaný účet nelze upravovat")
 
         target_role = validate_role_value(user_data.role) if user_data.role is not None else str(user.role or "user")
-        selected_plan = normalize_license_plan(user_data.license_plan, target_role)
-        if selected_plan and (not LICENSE_MANAGEMENT_AVAILABLE or not upgrade_license_plan):
-            raise HTTPException(status_code=503, detail="Správa licencí není momentálně dostupná")
+
+        old_role_l = str(user.role or "").strip().lower()
+        tenant_row = db.query(Tenant).filter(Tenant.id == user.tenant_id).first() if user.tenant_id else None
+        old_tenant_kind = str(tenant_row.workspace_route_kind or "").strip().lower() if tenant_row else ""
+
+        if tenant_row:
+            nr = str(target_role or "").strip().lower()
+            if nr == "service":
+                tenant_row.workspace_route_kind = "service"
+            elif old_tenant_kind == "service" and nr not in ("service", "developer_admin"):
+                tenant_row.workspace_route_kind = "user"
+
+        tenant_kind_after = str(tenant_row.workspace_route_kind or "").strip().lower() if tenant_row else ""
+        demotion_counts: Optional[Dict[str, int]] = None
+        old_svc_operator = _customer_presensed_as_service_operator(
+            role=old_role_l,
+            tenant_workspace_route_kind=old_tenant_kind,
+        )
+        new_svc_operator = _customer_presensed_as_service_operator(
+            role=str(target_role or "").strip().lower(),
+            tenant_workspace_route_kind=tenant_kind_after,
+        )
+        service_operator_demotion = old_svc_operator and not new_svc_operator
+        if service_operator_demotion:
+            demotion_counts = _revoke_service_operator_graph(
+                db,
+                service_customer_id=int(user.id),
+                admin_email=email,
+            )
+            if hasattr(user, "partner_catalog_approved"):
+                user.partner_catalog_approved = False
+            increment_customer_session_version(user)
+
+        db.flush()
+
+        plan_role_for_license = target_role
+        if LICENSE_MANAGEMENT_AVAILABLE and pairing_role_for_tenant_license and user.tenant_id:
+            plan_role_for_license = pairing_role_for_tenant_license(db, int(user.tenant_id))
+
+        lic_row_for_plan = None
+        if inspect(db.bind).has_table("licenses") and user.tenant_id:
+            lic_row_for_plan = db.query(License).filter(License.tenant_id == user.tenant_id).first()
+
+        if service_operator_demotion:
+            fallback_user_plan = _map_service_license_storage_to_user_plan(
+                lic_row_for_plan.plan if lic_row_for_plan else None
+            )
+            try:
+                selected_plan = normalize_license_plan(user_data.license_plan, "user")
+            except HTTPException:
+                selected_plan = fallback_user_plan
+        else:
+            selected_plan = normalize_license_plan(user_data.license_plan, plan_role_for_license)
+        can_manage_license = bool(LICENSE_MANAGEMENT_AVAILABLE and upgrade_license_plan)
+        plan_for_upgrade = selected_plan if can_manage_license else None
 
         license_before = (None, None)
         if inspect(db.bind).has_table("licenses"):
@@ -4554,6 +4767,15 @@ def update_user(
             user.dic = user_data.dic
         if user_data.phone is not None:
             user.phone = user_data.phone
+            phone_e164_val = None
+            if user_data.phone:
+                from src.modules.vehicle_hub.registration_security import normalize_validate_phone_e164
+
+                try:
+                    phone_e164_val = normalize_validate_phone_e164(str(user_data.phone))
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+            user.phone_e164 = phone_e164_val
         if user_data.street is not None:
             user.street = user_data.street
         if user_data.street_number is not None:
@@ -4589,12 +4811,18 @@ def update_user(
                     )
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
-        
+
+        if service_operator_demotion and str(target_role or "").strip().lower() == "user":
+            if "workspace_entitlements" not in payload:
+                user.workspace_entitlements = None
+            if "workspace_ui_default" not in payload:
+                user.workspace_ui_default = None
+
         db.commit()
 
         updated_license = None
-        if selected_plan:
-            updated_license = upgrade_license_plan(db, user.tenant_id, selected_plan)
+        if plan_for_upgrade:
+            updated_license = upgrade_license_plan(db, user.tenant_id, plan_for_upgrade)
 
         db.refresh(user)
 
@@ -4650,12 +4878,36 @@ def update_user(
         )
         db.commit()
 
+        resp_license_plan = (updated_license or {}).get("plan")
+        resp_license_status = (updated_license or {}).get("status")
+        if (
+            (resp_license_plan is None or resp_license_status is None)
+            and LICENSE_MANAGEMENT_AVAILABLE
+            and get_tenant_license_status
+        ):
+            try:
+                lic_snap = get_tenant_license_status(db, int(user.tenant_id), user_email=user.email)
+                if isinstance(lic_snap, dict):
+                    if resp_license_plan is None:
+                        resp_license_plan = lic_snap.get("plan") or resp_license_plan
+                    if resp_license_status is None:
+                        resp_license_status = lic_snap.get("status") or resp_license_status
+            except Exception:
+                pass
+        if resp_license_plan is None:
+            resp_license_plan = selected_plan
+
         return {
             "message": "Uživatel byl upraven",
-            "license_plan": (updated_license or {}).get("plan", selected_plan),
-            "license_status": (updated_license or {}).get("status"),
+            "license_plan": resp_license_plan,
+            "license_status": resp_license_status,
             "workspace_entitlements": sorted(effective_workspace_kinds(user)),
             "workspace_ui_default": getattr(user, "workspace_ui_default", None),
+            "service_binding_cleanup": demotion_counts,
+            "service_operator_demotion": {
+                "applied": bool(service_operator_demotion),
+                "license_plan_applied": selected_plan if service_operator_demotion else None,
+            },
         }
         
     except HTTPException:
@@ -5290,6 +5542,10 @@ def get_user_detail(
         tid_u = user.tenant_id
         disk_u = int(tenant_disk_map.get(int(tid_u), 0)) if tid_u is not None else 0
 
+        tenant_license_pair_role = str(user.role or "user")
+        if LICENSE_MANAGEMENT_AVAILABLE and pairing_role_for_tenant_license and tid_u is not None:
+            tenant_license_pair_role = pairing_role_for_tenant_license(db, int(tid_u))
+
         return {
             "admin_notify_pending_count": admin_notify_pending,
             "user": {
@@ -5327,12 +5583,16 @@ def get_user_detail(
                 "license_plan": license_plan,
                 "license_plan_base": get_license_plan_base(license_plan) if get_license_plan_base else license_plan,
                 "license_workspace_kind": (
-                    get_license_workspace_kind_for_role(user.role)
-                    if get_license_workspace_kind_for_role
-                    else ("service" if str(user.role or "").lower() == "service" else "user")
+                    get_license_plan_workspace_kind(license_plan)
+                    if LICENSE_MANAGEMENT_AVAILABLE and get_license_plan_workspace_kind
+                    else (
+                        get_license_workspace_kind_for_role(user.role)
+                        if get_license_workspace_kind_for_role
+                        else ("service" if str(user.role or "").lower() == "service" else "user")
+                    )
                 ),
                 "license_allowed_plans": (
-                    get_allowed_license_plans_for_role(user.role)
+                    get_allowed_license_plans_for_role(tenant_license_pair_role)
                     if get_allowed_license_plans_for_role
                     else ["free", "basic", "premium", "lifetime"]
                 ),
@@ -5380,12 +5640,16 @@ def get_user_detail(
                         else ((license_row.plan if license_row else license_plan) or "free")
                     ),
                     "workspace_kind": (
-                        get_license_workspace_kind_for_role(user.role)
-                        if get_license_workspace_kind_for_role
-                        else ("service" if str(user.role or "").lower() == "service" else "user")
+                        get_license_plan_workspace_kind((license_row.plan if license_row else license_plan) or "free")
+                        if LICENSE_MANAGEMENT_AVAILABLE and get_license_plan_workspace_kind
+                        else (
+                            get_license_workspace_kind_for_role(user.role)
+                            if get_license_workspace_kind_for_role
+                            else ("service" if str(user.role or "").lower() == "service" else "user")
+                        )
                     ),
                     "allowed_plans": (
-                        get_allowed_license_plans_for_role(user.role)
+                        get_allowed_license_plans_for_role(tenant_license_pair_role)
                         if get_allowed_license_plans_for_role
                         else ["free", "basic", "premium", "lifetime"]
                     ),
@@ -5726,6 +5990,7 @@ def update_service(
         
         if service_data.password is not None:
             service.password_hash = hash_password(service_data.password)
+            increment_customer_session_version(service)
 
         if service_data.partner_catalog_approved is not None:
             service.partner_catalog_approved = bool(service_data.partner_catalog_approved)
@@ -6431,6 +6696,79 @@ def list_archived_service_records_for_restore(
     return _admin_deleted_service_records_response(db, limit=limit, offset=offset)
 
 
+@router.get("/service-invoices")
+def admin_service_invoices_list(
+    vehicle_id: Optional[int] = Query(None),
+    vin: Optional[str] = Query(None, max_length=32),
+    service_id: Optional[int] = Query(None),
+    customer_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None, description="draft | issued | cancelled"),
+    date_from: Optional[datetime] = Query(None),
+    date_to: Optional[datetime] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """Read-only přehled servisních faktur (JOIN vozidlo kvůli VIN / filtrům)."""
+    if not inspect(db.bind).has_table("service_invoices"):
+        return {"items": [], "total": 0, "limit": limit, "offset": offset}
+
+    def _apply_filters(qs):
+        if vehicle_id is not None:
+            qs = qs.filter(ServiceInvoice.vehicle_id == int(vehicle_id))
+        if vin:
+            qs = qs.filter(Vehicle.vin == str(vin).strip().upper())
+        if service_id is not None:
+            qs = qs.filter(ServiceInvoice.service_id == int(service_id))
+        if customer_id is not None:
+            qs = qs.filter(ServiceInvoice.customer_id == int(customer_id))
+        if status:
+            qs = qs.filter(ServiceInvoice.status == str(status).strip().lower())
+        ref_ts = func.coalesce(ServiceInvoice.issued_at, ServiceInvoice.created_at)
+        if date_from is not None:
+            qs = qs.filter(ref_ts >= date_from)
+        if date_to is not None:
+            qs = qs.filter(ref_ts <= date_to)
+        return qs
+
+    cq = (
+        db.query(func.count(func.distinct(ServiceInvoice.id)))
+        .select_from(ServiceInvoice)
+        .outerjoin(Vehicle, Vehicle.id == ServiceInvoice.vehicle_id)
+    )
+    total = int(_apply_filters(cq).scalar() or 0)
+
+    q = db.query(ServiceInvoice, Vehicle).outerjoin(Vehicle, Vehicle.id == ServiceInvoice.vehicle_id)
+    q = _apply_filters(q)
+    rows = (
+        q.order_by(ServiceInvoice.id.desc())
+        .offset(int(offset))
+        .limit(int(limit))
+        .all()
+    )
+    items: List[Dict[str, Any]] = []
+    for inv, veh in rows:
+        items.append(
+            {
+                "invoice_id": int(inv.id),
+                "invoice_number": inv.invoice_number,
+                "status": inv.status,
+                "vehicle_id": int(inv.vehicle_id) if inv.vehicle_id is not None else None,
+                "vin": getattr(veh, "vin", None) if veh else None,
+                "service_id": int(inv.service_id),
+                "customer_id": int(inv.customer_id),
+                "total": float(inv.total) if inv.total is not None else 0.0,
+                "issued_at": to_iso_datetime(inv.issued_at),
+                "service_record_id": int(inv.service_record_id) if inv.service_record_id is not None else None,
+                "work_order_id": int(inv.work_order_id) if inv.work_order_id is not None else None,
+                "created_at": to_iso_datetime(inv.created_at),
+            }
+        )
+
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
 @router.get("/records")
 def get_all_records(
     limit: int = 50,
@@ -6868,12 +7206,16 @@ def update_record(
             user = db.query(Customer).filter(Customer.id == record_data.user_id).first()
             if not user:
                 raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-            if user.tenant_id != record.tenant_id:
+            vehicle_scope = db.query(Vehicle).filter(Vehicle.id == record.vehicle_id).first()
+            if not vehicle_scope:
+                raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+            if int(user.tenant_id or 0) != int(vehicle_scope.tenant_id or 0):
                 raise HTTPException(
                     status_code=400,
-                    detail="Uživatel záznamu musí být ze stejného tenantu jako servisní záznam",
+                    detail="Uživatel záznamu musí patřit ke stejnému tenantu jako vozidlo záznamu",
                 )
             record.user_id = record_data.user_id
+            record.tenant_id = vehicle_scope.tenant_id
         
         if record_data.performed_at is not None:
             record.performed_at = record_data.performed_at
@@ -8724,7 +9066,7 @@ def disable_user_account(
     user_id: int,
     payload: UserStateActionRequest,
     request: FastAPIRequest,
-    email: str = Depends(require_control_center_admin),
+    email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db),
 ):
     user = _load_user_for_control_action(db, user_id)
@@ -8770,7 +9112,7 @@ def enable_user_account(
     user_id: int,
     payload: UserStateActionRequest,
     request: FastAPIRequest,
-    email: str = Depends(require_control_center_admin),
+    email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db),
 ):
     user = _load_user_for_control_action(db, user_id)
@@ -8816,7 +9158,7 @@ def force_logout_user_account(
     user_id: int,
     payload: UserStateActionRequest,
     request: FastAPIRequest,
-    email: str = Depends(require_control_center_admin),
+    email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db),
 ):
     user = _load_user_for_control_action(db, user_id)
@@ -8845,7 +9187,7 @@ def reset_user_password_admin(
     user_id: int,
     payload: UserPasswordResetRequest,
     request: FastAPIRequest,
-    email: str = Depends(require_control_center_admin),
+    email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db),
 ):
     user = _load_user_for_control_action(db, user_id)
@@ -8901,7 +9243,7 @@ def update_user_license_admin(
     user_id: int,
     payload: UserLicenseUpdateRequest,
     request: FastAPIRequest,
-    email: str = Depends(require_control_center_admin),
+    email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db),
 ):
     user = _load_user_for_control_action(db, user_id)

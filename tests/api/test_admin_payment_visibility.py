@@ -410,27 +410,69 @@ def test_restore_user_scope_uses_legacy_email_bridge_when_backup_ownership_rows_
             """
             INSERT INTO customers (
                 id, tenant_id, email, password_hash, role, name,
-                is_disabled, is_deleted, session_version, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_disabled, is_deleted, session_version, created_at,
+                partner_catalog_approved, account_status, force_password_change
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (1, 1, "restore@example.com", "hash", "user", "Restore User", 0, 0, 0, datetime.utcnow().isoformat()),
+            (
+                1,
+                1,
+                "restore@example.com",
+                "hash",
+                "user",
+                "Restore User",
+                0,
+                0,
+                0,
+                datetime.utcnow().isoformat(),
+                0,
+                "pending_email_verification",
+                0,
+            ),
         )
         conn.execute(
             """
             INSERT INTO vehicles (
-                id, tenant_id, user_email, nickname, brand, model, vin, plate, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, tenant_id, user_email, nickname, brand, model, vin, plate, status,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (10, 1, "restore@example.com", "Legacy Car", "Skoda", "Fabia", "TMBARESTORE123456", "1AB2345", datetime.utcnow().isoformat()),
+            (
+                10,
+                1,
+                "restore@example.com",
+                "Legacy Car",
+                "Skoda",
+                "Fabia",
+                "TMBARESTORE123456",
+                "1AB2345",
+                "active",
+                datetime.utcnow().isoformat(),
+                datetime.utcnow().isoformat(),
+            ),
         )
         conn.execute(
             """
             INSERT INTO service_records (
                 id, tenant_id, vehicle_id, user_id, performed_at, description, price,
-                created_by_ai, is_deleted
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_by_ai, is_deleted, record_status, origin, visibility_scope, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (100, 1, 10, 1, datetime.utcnow().isoformat(), "Legacy restore record", 1500.0, 0, 0),
+            (
+                100,
+                1,
+                10,
+                1,
+                datetime.utcnow().isoformat(),
+                "Legacy restore record",
+                1500.0,
+                0,
+                0,
+                "draft",
+                "user_manual",
+                "full_current_owner",
+                datetime.utcnow().isoformat(),
+            ),
         )
         conn.execute("DELETE FROM vehicle_ownerships")
         conn.commit()
@@ -457,18 +499,46 @@ def test_restore_vehicle_scope_uses_legacy_email_bridge_when_backup_ownership_ro
             """
             INSERT INTO customers (
                 id, tenant_id, email, password_hash, role, name,
-                is_disabled, is_deleted, session_version, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_disabled, is_deleted, session_version, created_at,
+                partner_catalog_approved, account_status, force_password_change
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (7, 1, "vehicle-owner@example.com", "hash", "user", "Vehicle Owner", 0, 0, 0, datetime.utcnow().isoformat()),
+            (
+                7,
+                1,
+                "vehicle-owner@example.com",
+                "hash",
+                "user",
+                "Vehicle Owner",
+                0,
+                0,
+                0,
+                datetime.utcnow().isoformat(),
+                0,
+                "pending_email_verification",
+                0,
+            ),
         )
         conn.execute(
             """
             INSERT INTO vehicles (
-                id, tenant_id, user_email, nickname, brand, model, vin, plate, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, tenant_id, user_email, nickname, brand, model, vin, plate, status,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (11, 1, "vehicle-owner@example.com", "Legacy Vehicle", "VW", "Golf", "WVWRESTORE1234567", "2BC3456", datetime.utcnow().isoformat()),
+            (
+                11,
+                1,
+                "vehicle-owner@example.com",
+                "Legacy Vehicle",
+                "VW",
+                "Golf",
+                "WVWRESTORE1234567",
+                "2BC3456",
+                "active",
+                datetime.utcnow().isoformat(),
+                datetime.utcnow().isoformat(),
+            ),
         )
         conn.execute("DELETE FROM vehicle_ownerships")
         conn.commit()

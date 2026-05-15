@@ -29,6 +29,7 @@ from ..models import (
 )
 from ..reports.service_invoice_pdf import render_service_invoice_pdf
 from ..schema_management import assert_module_ready
+from src.modules.licensing.service import assert_service_invoice_monthly_quota
 from .auth import get_current_user
 from .service_dashboard import _resolve_owner_and_vehicle
 
@@ -926,6 +927,8 @@ def issue_service_invoice(
     )
     if not lines:
         raise HTTPException(status_code=422, detail="Faktura musí obsahovat alespoň jednu položku.")
+
+    assert_service_invoice_monthly_quota(db, service_customer_id=int(current_user.id))
 
     inv.invoice_number = _allocate_invoice_number(db, tenant_id=int(inv.tenant_id))
     inv.status = "issued"

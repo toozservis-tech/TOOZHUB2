@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from src.core.auth import get_current_user_email
 from src.modules.vehicle_hub.database import Base, get_db
 from src.modules.vehicle_hub.models import (
     Customer,
@@ -32,6 +33,7 @@ from src.modules.vehicle_hub.routers_v1 import service_invoices as invoices_rout
 from src.modules.vehicle_hub.routers_v1 import vehicles as vehicles_router
 from src.modules.vehicle_hub.routers_v1 import admin_service_read as admin_read_router
 from src.modules.vehicle_hub.routers_v1.auth import get_current_user
+from src.server import admin_api as admin_api_module
 
 
 def _tiny_png_b64() -> str:
@@ -135,6 +137,7 @@ def full_flow_ctx(tmp_path, monkeypatch):
     app.include_router(invoices_router.router)
     app.include_router(vehicles_router.router, prefix="/api/v1")
     app.include_router(admin_read_router.router, prefix="/api/v1")
+    app.include_router(admin_api_module.router)
 
     def override_db():
         try:
@@ -143,6 +146,7 @@ def full_flow_ctx(tmp_path, monkeypatch):
             pass
 
     app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user_email] = lambda: admin.email
 
     email_calls: list[dict] = []
 
@@ -355,6 +359,14 @@ def test_full_service_user_visible_flow(full_flow_ctx):
     assert client.get("/api/v1/admin/service-read/vehicle-service-links").status_code == 200
     assert client.get("/api/v1/admin/service-read/service-invoices").status_code == 200
     assert client.get("/api/v1/admin/service-read/service-records").status_code == 200
+
+    api_inv = client.get(f"/admin-api/service-invoices?vehicle_id={vehicle.id}&status=issued")
+    assert api_inv.status_code == 200, api_inv.text
+    inv_payload = api_inv.json()
+    assert inv_payload.get("total", 0) >= 1
+    assert any(int(x.get("invoice_id", 0)) == inv_id for x in inv_payload.get("items", []))
+
+    assert db.query(GlobalAuditLog).filter(GlobalAuditLog.action == "service_record_create").count() >= 1
 
 
 def test_smtp_failure_does_not_block_access_request(full_flow_ctx, monkeypatch):

@@ -25,6 +25,7 @@ from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from src.modules.licensing.service import LicenseError, assert_service_customer_link_quota, assert_vehicle_quota
 from src.core.branding import APP_DISPLAY_NAME
 from src.core.config import DATA_DIR, FRONTEND_BASE_URL
 from src.core.datetime_cz import naive_utc_to_iso_z, prague_today
@@ -863,6 +864,7 @@ def _upsert_service_customer_link(
         db.flush()
         return existing, False
 
+    assert_service_customer_link_quota(db, service_customer_id=service_customer_id)
     link = ServiceCustomerLink(
         service_tenant_id=service_tenant_id,
         service_customer_id=service_customer_id,
@@ -3908,6 +3910,26 @@ def create_customer_vehicle(
         )
         if duplicate_vin:
             raise HTTPException(status_code=409, detail="Vozidlo s tímto VIN už v tenantu existuje.")
+
+    try:
+        assert_vehicle_quota(db, int(tenant_id))
+    except LicenseError as exc:
+        write_global_audit_log(
+            db,
+            entity_type="license",
+            entity_id=int(tenant_id),
+            action="vehicle_quota_denied_service_add_vehicle",
+            actor_user_id=int(current_user.id),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=int(getattr(current_user, "tenant_id", None) or 0) or None,
+            vehicle_id=None,
+            metadata={
+                "target_customer_id": int(customer.id),
+                "target_customer_tenant_id": int(tenant_id),
+                "code": getattr(exc, "code", None),
+            },
+        )
+        raise exc
 
     build_payload = payload.model_copy(update={"stk_valid_until": normalized_stk})
     vehicle = _build_workspace_vehicle_row(

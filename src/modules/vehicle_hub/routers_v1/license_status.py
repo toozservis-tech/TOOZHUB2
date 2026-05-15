@@ -39,7 +39,15 @@ from src.server.runtime_settings import (
     load_runtime_settings,
 )
 from .auth import get_current_user
-from ...licensing.service import get_license_status, upgrade_license_plan, ADMIN_TENANT_ID
+from ...licensing.service import (
+    ADMIN_TENANT_ID,
+    get_license_plan_base,
+    get_license_status,
+    map_catalog_plan_to_storage_plan,
+    normalize_license_plan_key,
+    pairing_role_for_tenant_license,
+    upgrade_license_plan,
+)
 from ...email_client.service import EmailService, EmailMessage
 from ...email_client.templates import build_app_url, render_email_layout, render_panel
 from ..push_notifications import send_push_to_customer
@@ -47,7 +55,7 @@ from ..push_notifications import send_push_to_customer
 router = APIRouter(prefix="/license", tags=["license"])
 logger = logging.getLogger(__name__)
 
-_PLAN_CODES = {"basic": "B", "premium": "P"}
+_PLAN_CODES = {"basic": "B", "premium": "P", "full": "F"}
 _PLAN_CODES_REVERSED = {value: key for key, value in _PLAN_CODES.items()}
 _BILLING_PERIOD_CODES = {"monthly": "M", "yearly": "Y"}
 _BILLING_PERIOD_CODES_REVERSED = {value: key for key, value in _BILLING_PERIOD_CODES.items()}
@@ -55,7 +63,7 @@ _COMGATE_REF_PREFIX = "L"
 _COMGATE_REF_TENANT_WIDTH = 6
 _COMGATE_REF_NONCE_WIDTH = 8
 _COMGATE_REF_MAX_TENANT_ID = (36 ** _COMGATE_REF_TENANT_WIDTH) - 1
-_SUBSCRIPTION_PLAN_SET = {"free", "basic", "premium", "lifetime"}
+_SUBSCRIPTION_PLAN_SET = {"free", "basic", "premium", "lifetime", "full"}
 _SUBSCRIPTION_PERIOD_SET = {"monthly", "yearly"}
 _SUBSCRIPTION_STATUS_SET = {
     "active",
@@ -64,7 +72,7 @@ _SUBSCRIPTION_STATUS_SET = {
     "canceled",
     "legacy_manual",
 }
-_PAID_PLAN_SET = {"basic", "premium"}
+_PAID_PLAN_SET = {"basic", "premium", "full"}
 _SUBSCRIPTION_REQUIRED_TABLES = (
     "license_subscriptions",
     "license_payment_transactions",
@@ -129,6 +137,13 @@ class LicenseStatusResponse(BaseModel):
     sharing_with_service_enabled: bool = False
     is_lifetime: bool = False
     subscription: Optional["SubscriptionStatusResponse"] = None
+    license_banner: Optional["LicenseBannerResponse"] = None
+
+
+class LicenseBannerResponse(BaseModel):
+    tone: str = "warning"
+    message: str
+    cta_label: Optional[str] = "Detail"
 
 
 class LicenseUpgradeRequest(BaseModel):
@@ -153,7 +168,10 @@ class SubscriptionStatusResponse(BaseModel):
 try:  # pydantic v2
     LicenseStatusResponse.model_rebuild()
 except AttributeError:  # pydantic v1
-    LicenseStatusResponse.update_forward_refs(SubscriptionStatusResponse=SubscriptionStatusResponse)
+    LicenseStatusResponse.update_forward_refs(
+        SubscriptionStatusResponse=SubscriptionStatusResponse,
+        LicenseBannerResponse=LicenseBannerResponse,
+    )
 
 
 class ComgateConfigResponse(BaseModel):
@@ -271,8 +289,18 @@ def _load_comgate_config() -> Dict[str, object]:
             settings=runtime_settings,
         ),
     )
+    full_monthly = max(
+        0,
+        get_runtime_setting_int(
+            "comgate",
+            "price_full_monthly_halers",
+            _env_int("COMGATE_PRICE_FULL_HALERS", 59900),
+            settings=runtime_settings,
+        ),
+    )
     basic_yearly_default = basic_monthly * 10 if basic_monthly > 0 else 0
     premium_yearly_default = premium_monthly * 10 if premium_monthly > 0 else 0
+    full_yearly_default = full_monthly * 10 if full_monthly > 0 else 0
     plans = {
         "basic": {
             "monthly": basic_monthly,
@@ -298,6 +326,18 @@ def _load_comgate_config() -> Dict[str, object]:
                 ),
             ),
         },
+        "full": {
+            "monthly": full_monthly,
+            "yearly": max(
+                0,
+                get_runtime_setting_int(
+                    "comgate",
+                    "price_full_yearly_halers",
+                    _env_int("COMGATE_PRICE_FULL_YEARLY_HALERS", full_yearly_default),
+                    settings=runtime_settings,
+                ),
+            ),
+        },
     }
     configured = bool(
         enabled
@@ -309,6 +349,8 @@ def _load_comgate_config() -> Dict[str, object]:
         and plans["premium"]["monthly"] > 0
         and plans["basic"]["yearly"] > 0
         and plans["premium"]["yearly"] > 0
+        and plans["full"]["monthly"] > 0
+        and plans["full"]["yearly"] > 0
     )
     return {
         "provider": "comgate",
@@ -359,8 +401,11 @@ def _is_comgate_card_method_not_available(code: str, message: str) -> bool:
 
 def _normalize_plan(plan: str) -> str:
     normalized = str(plan or "").strip().lower()
-    if normalized not in {"free", "basic", "premium"}:
-        raise HTTPException(status_code=400, detail="Neplatný plán. Povolené: free, basic, premium.")
+    if normalized not in {"free", "basic", "premium", "full"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Neplatný plán. Povolené hodnoty: free, basic, premium, full.",
+        )
     return normalized
 
 
@@ -393,7 +438,7 @@ def _build_comgate_ref_id(tenant_id: int, plan: str, billing_period: str = "mont
     normalized_plan = _normalize_plan(plan)
     normalized_period = _normalize_billing_period(billing_period)
     if normalized_plan not in _PLAN_CODES:
-        raise ValueError("Comgate checkout je dostupný jen pro BASIC/PREMIUM.")
+        raise ValueError("Comgate checkout je dostupný jen pro BASIC / PREMIUM / FULL.")
     if tenant_id < 0 or tenant_id > _COMGATE_REF_MAX_TENANT_ID:
         raise ValueError("tenant_id je mimo podporovaný rozsah pro refId.")
 
@@ -510,6 +555,8 @@ def _resolve_plan_from_status_payload(status_payload: Dict[str, str]) -> Optiona
         return parsed_ref[1]
 
     label = str(status_payload.get("label") or "").strip().lower()
+    if "full" in label:
+        return "full"
     if "premium" in label:
         return "premium"
     if "basic" in label:
@@ -585,6 +632,67 @@ def sanitize_comgate_payload(payload: Optional[Dict[str, object]]) -> Dict[str, 
 
 def _utcnow() -> datetime:
     return datetime.utcnow()
+
+
+def _billing_catalog_plan_from_subscription_storage(db: Session, tenant_id: int, storage_plan: Optional[str]) -> str:
+    raw = str(storage_plan or "").strip().lower()
+    pair = pairing_role_for_tenant_license(db, tenant_id)
+    norm = normalize_license_plan_key(raw, pair) or "free"
+    if pair == "service":
+        return "full" if get_license_plan_base(norm) == "full" else "free"
+    base = get_license_plan_base(norm)
+    if base in {"basic", "premium"}:
+        return base
+    return "free"
+
+
+def _compute_license_ui_banner(
+    *,
+    status: Dict[str, Any],
+    subscription_payload: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, str]]:
+    if str(status.get("plan_workspace_kind") or "") != "service":
+        return None
+    if not subscription_payload:
+        return None
+    now = _utcnow()
+    sub_status = str(subscription_payload.get("status") or "").strip().lower()
+    period_end = _from_iso(str(subscription_payload.get("current_period_end") or ""))
+    days_left = _days_until(period_end, now)
+
+    if sub_status == "grace":
+        grace_until = _from_iso(str(subscription_payload.get("grace_until") or ""))
+        gu = grace_until.strftime("%d.%m.%Y") if grace_until else "–"
+        return {
+            "tone": "warning",
+            "message": (
+                f"⚠ Platba předplatného se nepovedla. Před omezením účtu máte ochranou lhůtu do {gu}. "
+                "Zkontrolujte kartu nebo aktivujte platbu v sekci Licence."
+            ),
+            "cta_label": "Detail",
+        }
+
+    plan_base = str(status.get("plan_base") or "").strip().lower()
+    if plan_base != "full":
+        return None
+    if period_end is None:
+        return None
+    if days_left is None:
+        return None
+    if days_left < 0:
+        return {
+            "tone": "warning",
+            "message": "⚠ Platné období licence vypršelo. Obnovte předplatné v sekci Licence.",
+            "cta_label": "Detail",
+        }
+    if days_left <= 25:
+        ds = period_end.strftime("%d.%m.%Y")
+        return {
+            "tone": "warning",
+            "message": f"⚠ Licence vyprší za {days_left} dní ({ds}). Zajistěte včasnou obnovu.",
+            "cta_label": "Detail",
+        }
+    return None
 
 
 def _to_iso(value: Optional[datetime]) -> Optional[str]:
@@ -723,7 +831,7 @@ def _build_legacy_checkout_quote(
 ) -> Dict[str, Any]:
     current_now = now or _utcnow()
     current_plan = _normalize_plan_soft(subscription.plan_current or "free")
-    target_plan_norm = _normalize_plan(target_plan)
+    target_plan_norm = _normalize_plan_soft(str(target_plan or "").strip().lower(), default="premium")
     billing_period_norm = _normalize_billing_period(billing_period)
     effective_period = _normalize_billing_period_soft(subscription.billing_period, default=billing_period_norm)
 
@@ -862,9 +970,16 @@ def _load_subscription_runtime_config() -> Dict[str, object]:
 
 def _normalize_plan_soft(plan: Optional[str], default: str = "free") -> str:
     normalized = str(plan or "").strip().lower()
+    if normalized.startswith("service_"):
+        normalized = normalized[len("service_") :]
     if normalized in _SUBSCRIPTION_PLAN_SET:
         return normalized
     return default
+
+
+def _catalog_base_plan_soft(plan: Optional[str], default: str = "free") -> str:
+    """Stejné jako `_normalize_plan_soft` — alias pro kontext „Comgate/basic katalog“. """
+    return _normalize_plan_soft(plan, default=default)
 
 
 def _normalize_billing_period_soft(period: Optional[str], default: str = "monthly") -> str:
@@ -925,7 +1040,7 @@ def _serialize_subscription(
 ) -> Optional[Dict[str, object]]:
     current_now = now or _utcnow()
     if not subscription:
-        if str(license_plan or "").lower() in {"basic", "premium"}:
+        if get_license_plan_base(license_plan) in {"basic", "premium", "full"}:
             return {
                 "status": "legacy_manual",
                 "auto_renew_enabled": False,
@@ -957,6 +1072,20 @@ def _serialize_subscription(
         "days_to_end": _days_until(period_end, current_now),
         "credit_balance_halers": int(subscription.credit_balance_halers or 0),
     }
+
+
+def _finalize_license_http_payload(
+    db: Session,
+    *,
+    tenant_id: int,
+    status: Dict[str, Any],
+) -> Dict[str, Any]:
+    subscription = _get_subscription(db, tenant_id)
+    sub_payload = _serialize_subscription(subscription, license_plan=status.get("plan", "free"))
+    merged = dict(status)
+    merged["subscription"] = sub_payload
+    merged["license_banner"] = _compute_license_ui_banner(status=merged, subscription_payload=sub_payload)
+    return merged
 
 
 def _get_subscription(db: Session, tenant_id: int) -> Optional[LicenseSubscription]:
@@ -1357,14 +1486,15 @@ def _apply_legacy_quote_without_payment(
     quote: Dict[str, Any],
 ) -> LicenseSubscription:
     now = _utcnow()
-    target_plan = _normalize_plan(str(quote.get("target_plan") or subscription.plan_current or "free"))
+    cat_plan = _catalog_base_plan_soft(str(quote.get("target_plan") or subscription.plan_current or "free"))
+    storage_plan = map_catalog_plan_to_storage_plan(db, tenant_id, cat_plan)
     billing_period = _normalize_billing_period_soft(str(quote.get("billing_period") or subscription.billing_period), default="monthly")
     keep_period_boundaries = bool(quote.get("keep_period_boundaries"))
 
-    upgrade_license_plan(db, tenant_id, target_plan)
+    upgrade_license_plan(db, tenant_id, storage_plan)
     subscription.provider = "comgate"
     subscription.status = "legacy_manual"
-    subscription.plan_current = target_plan
+    subscription.plan_current = storage_plan
     subscription.billing_period = billing_period
     subscription.auto_renew_enabled = False
     subscription.pending_plan_change = None
@@ -1405,7 +1535,7 @@ def _apply_legacy_quote_without_payment(
         trans_id=None,
         ref_id=None,
         payment_type="manual_renewal",
-        plan=target_plan,
+        plan=storage_plan,
         billing_period=billing_period,
         period_start=subscription.current_period_start,
         period_end=subscription.current_period_end,
@@ -1431,7 +1561,8 @@ def _apply_legacy_quote_after_paid_callback(
     paid_amount_halers: int,
 ) -> LicenseSubscription:
     now = _utcnow()
-    target_plan = _normalize_plan(str(quote.get("target_plan") or subscription.plan_current or "free"))
+    cat_plan = _catalog_base_plan_soft(str(quote.get("target_plan") or subscription.plan_current or "free"))
+    storage_plan = map_catalog_plan_to_storage_plan(db, tenant_id, cat_plan)
     billing_period = _normalize_billing_period_soft(str(quote.get("billing_period") or subscription.billing_period), default="monthly")
     keep_period_boundaries = bool(quote.get("keep_period_boundaries"))
     base_amount_halers = _safe_int(quote.get("base_amount_halers")) or 0
@@ -1442,10 +1573,10 @@ def _apply_legacy_quote_after_paid_callback(
         paid_amount_halers=int(paid_amount_halers),
     )
 
-    upgrade_license_plan(db, tenant_id, target_plan)
+    upgrade_license_plan(db, tenant_id, storage_plan)
     subscription.provider = "comgate"
     subscription.status = "legacy_manual"
-    subscription.plan_current = target_plan
+    subscription.plan_current = storage_plan
     subscription.billing_period = billing_period
     subscription.auto_renew_enabled = False
     subscription.pending_plan_change = None
@@ -1708,9 +1839,9 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
         try:
             tenant_id = int(subscription.tenant_id)
             lic = db.query(License).filter(License.tenant_id == tenant_id).first()
-            if lic and str(lic.plan or "").lower() == "lifetime":
+            if lic and get_license_plan_base(str(lic.plan or "")) == "lifetime":
                 continue
-            plan = _normalize_plan_soft(subscription.plan_current, default="free")
+            billing_catalog = _billing_catalog_plan_from_subscription_storage(db, tenant_id, subscription.plan_current)
             billing_period = _normalize_billing_period_soft(subscription.billing_period, default="monthly")
             status = _normalize_subscription_status(subscription.status)
 
@@ -1721,16 +1852,17 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     if days_to_end == notify_day:
                         stamp_field = _subscription_notification_stamp_field(notify_day)
                         if stamp_field and getattr(subscription, stamp_field) is None:
+                            plan_note = billing_catalog.upper()
                             payload = _send_subscription_notification(
                                 db,
                                 tenant_id=tenant_id,
                                 email_subject=f"{APP_DISPLAY_NAME}: blíží se konec předplatného",
                                 email_text=(
-                                    f"Vaše předplatné {plan.upper()} končí za {notify_day} dní. "
+                                    f"Vaše předplatné ({plan_note}) končí za {notify_day} dní. "
                                     "V aplikaci můžete předplatné obnovit, změnit plán nebo zrušit automatické prodloužení."
                                 ),
                                 push_title="Předplatné brzy končí",
-                                push_body=f"Plán {plan.upper()} končí za {notify_day} dní. Zkontrolujte volby v sekci Licence.",
+                                push_body=f"Předplatné končí za {notify_day} dní. Zkontrolujte volby v sekci Licence.",
                             )
                             if payload["email_sent"] > 0 or payload["push_sent"] > 0:
                                 setattr(subscription, stamp_field, now)
@@ -1738,11 +1870,12 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
 
             # Finalizace cancel-at-period-end
             if status == "cancel_at_period_end" and subscription.current_period_end and subscription.current_period_end <= now:
-                target_plan = _normalize_plan_soft(subscription.pending_plan_change, default="free")
-                upgrade_license_plan(db, tenant_id, target_plan)
+                catalog_end = _normalize_plan_soft(subscription.pending_plan_change, default="free")
+                storage_plan = map_catalog_plan_to_storage_plan(db, tenant_id, catalog_end)
+                upgrade_license_plan(db, tenant_id, storage_plan)
                 subscription.status = "canceled"
                 subscription.auto_renew_enabled = False
-                subscription.plan_current = target_plan
+                subscription.plan_current = storage_plan
                 subscription.pending_plan_change = None
                 subscription.next_charge_at = None
                 subscription.grace_until = None
@@ -1755,10 +1888,11 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
 
             # Grace expirovala -> downgrade na FREE
             if status == "grace" and subscription.grace_until and subscription.grace_until <= now:
-                upgrade_license_plan(db, tenant_id, "free")
+                storage_free = map_catalog_plan_to_storage_plan(db, tenant_id, "free")
+                upgrade_license_plan(db, tenant_id, storage_free)
                 subscription.status = "canceled"
                 subscription.auto_renew_enabled = False
-                subscription.plan_current = "free"
+                subscription.plan_current = storage_free
                 subscription.pending_plan_change = None
                 subscription.next_charge_at = None
                 subscription.failed_renewal_attempts = 0
@@ -1790,7 +1924,7 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                 and subscription.auto_renew_enabled
                 and subscription.next_charge_at is not None
                 and subscription.next_charge_at <= now
-                and plan in {"basic", "premium"}
+                and billing_catalog in {"basic", "premium", "full"}
             ):
                 if not cfg["configured"]:
                     summary["renewal_failed"] += 1
@@ -1802,7 +1936,7 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     runtime_cfg=runtime_cfg,
                     subscription=subscription,
                     tenant_id=tenant_id,
-                    plan=plan,
+                    plan=billing_catalog,
                     billing_period=billing_period,
                 )
                 subscription.last_recurring_attempt_at = now
@@ -1814,14 +1948,16 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     continue
                 if result.get("ok"):
                     trans_id = str(result.get("trans_id") or "").strip()
-                    resolved_plan = _normalize_plan(subscription.pending_plan_change or plan)
-                    upgrade_license_plan(db, tenant_id, resolved_plan)
+                    catalog_plan_raw = str(subscription.pending_plan_change or billing_catalog).strip().lower()
+                    catalog_plan = _normalize_plan_soft(catalog_plan_raw, default=billing_catalog)
+                    storage_plan = map_catalog_plan_to_storage_plan(db, tenant_id, catalog_plan)
+                    upgrade_license_plan(db, tenant_id, storage_plan)
                     period_start = result.get("period_start") or subscription.current_period_end or now
                     period_end = result.get("period_end") or _add_billing_period(period_start, billing_period)
 
                     previous_status = _normalize_subscription_status(subscription.status)
                     subscription.status = "active"
-                    subscription.plan_current = resolved_plan
+                    subscription.plan_current = storage_plan
                     subscription.pending_plan_change = None
                     subscription.current_period_start = period_start
                     subscription.current_period_end = period_end
@@ -1847,7 +1983,7 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                         payment_type="recurring",
                         parent_provider_transaction_id=str(result.get("parent_provider_transaction_id") or "") or None,
                         parent_init_recurring_id=str(result.get("parent_init_recurring_id") or "") or None,
-                        plan=resolved_plan,
+                        plan=storage_plan,
                         billing_period=billing_period,
                         period_start=period_start,
                         period_end=period_end,
@@ -1901,11 +2037,11 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     payment_type="recurring",
                     parent_provider_transaction_id=str(subscription.provider_init_transaction_id or subscription.last_trans_id or "") or None,
                     parent_init_recurring_id=str(subscription.init_recurring_id or "") or None,
-                    plan=plan,
+                    plan=billing_catalog,
                     billing_period=billing_period,
                     period_start=result.get("period_start"),
                     period_end=result.get("period_end"),
-                    amount_halers=_price_for_plan(cfg, plan, billing_period),
+                    amount_halers=_price_for_plan(cfg, billing_catalog, billing_period),
                     currency=str(cfg["currency"]),
                     event_type="renewal_failed",
                     provider_status=reason or "FAILED",
@@ -1980,9 +2116,7 @@ def get_license_status_endpoint(
     
     _ensure_subscription_schema(db)
     status = get_license_status(db, tenant_id, current_user.email)
-    subscription = _get_subscription(db, tenant_id)
-    status["subscription"] = _serialize_subscription(subscription, license_plan=status.get("plan", "free"))
-    return LicenseStatusResponse(**status)
+    return LicenseStatusResponse(**_finalize_license_http_payload(db, tenant_id=int(tenant_id), status=status))
 
 
 @router.post("/upgrade", response_model=LicenseStatusResponse)
@@ -2019,7 +2153,7 @@ def upgrade_license_endpoint(
         metadata={"plan": payload.plan},
     )
     db.commit()
-    return LicenseStatusResponse(**status)
+    return LicenseStatusResponse(**_finalize_license_http_payload(db, tenant_id=int(target_tenant_id), status=status))
 
 
 @router.post("/subscription/cancel", response_model=LicenseStatusResponse)
@@ -2036,8 +2170,8 @@ def cancel_subscription_endpoint(
     if not subscription:
         raise HTTPException(status_code=409, detail="Pro tento účet zatím není aktivní předplatné.")
 
-    current_plan = _normalize_plan(subscription.plan_current or "free")
-    if current_plan == "free":
+    current_catalog = _billing_catalog_plan_from_subscription_storage(db, int(tenant_id), subscription.plan_current)
+    if current_catalog == "free":
         raise HTTPException(status_code=400, detail="FREE plán nemá aktivní předplatné pro zrušení.")
 
     if _normalize_subscription_status(subscription.status) == "canceled":
@@ -2065,8 +2199,7 @@ def cancel_subscription_endpoint(
     db.commit()
 
     status = get_license_status(db, tenant_id, current_user.email)
-    status["subscription"] = _serialize_subscription(subscription, license_plan=status.get("plan", "free"))
-    return LicenseStatusResponse(**status)
+    return LicenseStatusResponse(**_finalize_license_http_payload(db, tenant_id=int(tenant_id), status=status))
 
 
 @router.post("/subscription/resume", response_model=LicenseStatusResponse)
@@ -2083,8 +2216,8 @@ def resume_subscription_endpoint(
     if not subscription:
         raise HTTPException(status_code=409, detail="Pro tento účet zatím není aktivní předplatné.")
 
-    current_plan = _normalize_plan(subscription.plan_current or "free")
-    if current_plan == "free":
+    current_catalog = _billing_catalog_plan_from_subscription_storage(db, int(tenant_id), subscription.plan_current)
+    if current_catalog == "free":
         raise HTTPException(status_code=400, detail="FREE plán nemá předplatné k obnovení.")
 
     if not str(subscription.init_recurring_id or "").strip():
@@ -2114,8 +2247,7 @@ def resume_subscription_endpoint(
     db.commit()
 
     status = get_license_status(db, tenant_id, current_user.email)
-    status["subscription"] = _serialize_subscription(subscription, license_plan=status.get("plan", "free"))
-    return LicenseStatusResponse(**status)
+    return LicenseStatusResponse(**_finalize_license_http_payload(db, tenant_id=int(tenant_id), status=status))
 
 
 @router.post("/subscription/change-plan", response_model=LicenseStatusResponse)
@@ -2129,19 +2261,29 @@ def change_subscription_plan_endpoint(
         raise HTTPException(status_code=400, detail="Tenant není k dispozici.")
 
     _ensure_subscription_schema(db)
+    workspace = pairing_role_for_tenant_license(db, int(tenant_id))
     target_plan = _normalize_plan(payload.plan)
+
+    if workspace == "service":
+        if target_plan not in {"free", "full"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Servisní předplatné lze měnit jen na FULL nebo ukončit přechodem na základní verzi (FREE).",
+            )
+    elif target_plan == "full":
+        raise HTTPException(status_code=400, detail="Plán FULL je určený jen pro servisní účty.")
+
     subscription = _get_subscription(db, tenant_id)
     if not subscription:
         raise HTTPException(status_code=409, detail="Pro tento účet zatím není aktivní předplatné.")
 
-    current_plan = _normalize_plan(subscription.plan_current or "free")
-    if current_plan == "free":
+    current_catalog = _billing_catalog_plan_from_subscription_storage(db, int(tenant_id), subscription.plan_current)
+    if current_catalog == "free":
         raise HTTPException(status_code=409, detail="Plán FREE nemá předplatné. Nejprve aktivujte placený plán.")
 
-    if target_plan == current_plan:
+    if target_plan == current_catalog:
         status = get_license_status(db, tenant_id, current_user.email)
-        status["subscription"] = _serialize_subscription(subscription, license_plan=status.get("plan", "free"))
-        return LicenseStatusResponse(**status)
+        return LicenseStatusResponse(**_finalize_license_http_payload(db, tenant_id=int(tenant_id), status=status))
 
     if target_plan == "free":
         subscription.pending_plan_change = "free"
@@ -2163,8 +2305,7 @@ def change_subscription_plan_endpoint(
     db.commit()
 
     status = get_license_status(db, tenant_id, current_user.email)
-    status["subscription"] = _serialize_subscription(subscription, license_plan=status.get("plan", "free"))
-    return LicenseStatusResponse(**status)
+    return LicenseStatusResponse(**_finalize_license_http_payload(db, tenant_id=int(tenant_id), status=status))
 
 
 @router.get("/comgate/config", response_model=ComgateConfigResponse)
@@ -2192,6 +2333,10 @@ def get_comgate_config(
                 "monthly": int(cfg["plans"]["premium"]["monthly"]) if cfg["plans"]["premium"]["monthly"] else None,
                 "yearly": int(cfg["plans"]["premium"]["yearly"]) if cfg["plans"]["premium"]["yearly"] else None,
             },
+            "full": {
+                "monthly": int(cfg["plans"]["full"]["monthly"]) if cfg["plans"]["full"]["monthly"] else None,
+                "yearly": int(cfg["plans"]["full"]["yearly"]) if cfg["plans"]["full"]["yearly"] else None,
+            },
         },
     )
 
@@ -2204,7 +2349,7 @@ def create_comgate_checkout(
     db: Session = Depends(get_db),
 ):
     """
-    Vytvoří Comgate platbu pro BASIC/PREMIUM a vrátí redirect URL.
+    Vytvoří Comgate platbu pro BASIC / PREMIUM (uživatelé) nebo FULL (servis) a vrátí redirect URL.
     """
     plan = _normalize_plan(payload.plan)
     billing_period = _normalize_billing_period(payload.billing_period)
@@ -2222,9 +2367,9 @@ def create_comgate_checkout(
         raise HTTPException(
             status_code=503,
             detail=(
-                "Comgate není nakonfigurovaný. Nastavte COMGATE_ENABLED=1, COMGATE_MERCHANT, "
-                "COMGATE_SECRET, COMGATE_PRICE_BASIC_HALERS, COMGATE_PRICE_PREMIUM_HALERS "
-                "a volitelně COMGATE_PRICE_BASIC_YEARLY_HALERS/COMGATE_PRICE_PREMIUM_YEARLY_HALERS."
+                "Comgate není nakonfigurovaný. Nastavte COMGATE_ENABLED=1, COMGATE_MERCHANT, COMGATE_SECRET "
+                "a ceny v haléřích: COMGATE_PRICE_BASIC_HALERS, COMGATE_PRICE_PREMIUM_HALERS, COMGATE_PRICE_FULL_HALERS "
+                "(servis FULL), volitelně roční varianty *_YEARLY_HALERS."
             ),
         )
 
@@ -2232,6 +2377,16 @@ def create_comgate_checkout(
         raise HTTPException(status_code=400, detail="Tenant ID je mimo podporovaný rozsah pro Comgate refId.")
 
     tenant_id_int = int(tenant_id)
+    workspace = pairing_role_for_tenant_license(db, tenant_id_int)
+    if workspace == "service":
+        if plan != "full":
+            raise HTTPException(
+                status_code=400,
+                detail="Servisní placená licence je pouze FULL. Základní verze je zdarma — bez platby přes Comgate.",
+            )
+    elif plan == "full":
+        raise HTTPException(status_code=400, detail="Plán FULL je určený jen pro servisní účty.")
+
     subscription = _get_subscription(db, tenant_id_int)
     subscription_status = _normalize_subscription_status(subscription.status) if subscription else ""
     legacy_quote: Optional[Dict[str, Any]] = None
@@ -2606,6 +2761,8 @@ async def comgate_result(
             )
             return PlainTextResponse("PRICE_TX_MISMATCH", status_code=200)
 
+    storage_plan = map_catalog_plan_to_storage_plan(db, tenant_id, resolved_plan)
+
     legacy_quote = _legacy_quote_payload_from_checkout_tx(existing_checkout_tx)
     fallback_non_recurring_checkout = _checkout_is_non_recurring_fallback(existing_checkout_tx)
     payment_type = str(getattr(existing_checkout_tx, "payment_type", "") or "").strip().lower() or "initial"
@@ -2645,7 +2802,7 @@ async def comgate_result(
             subscription = _apply_recurring_payment_success(
                 db,
                 subscription=subscription,
-                plan=resolved_plan,
+                plan=storage_plan,
                 billing_period=resolved_billing_period,
                 trans_id=trans_id,
                 period_start=existing_checkout_tx.period_start,
@@ -2655,7 +2812,7 @@ async def comgate_result(
             subscription = _activate_subscription_from_paid_payment(
                 db,
                 tenant_id=tenant_id,
-                plan=resolved_plan,
+                plan=storage_plan,
                 billing_period=resolved_billing_period,
                 trans_id=trans_id,
                 init_recurring_id=init_recurring_id,
@@ -2665,7 +2822,7 @@ async def comgate_result(
             subscription = _activate_legacy_manual_subscription_from_paid_payment(
                 db,
                 tenant_id=tenant_id,
-                plan=resolved_plan,
+                plan=storage_plan,
                 billing_period=resolved_billing_period,
                 trans_id=trans_id,
             )
@@ -2674,7 +2831,7 @@ async def comgate_result(
             subscription = _activate_subscription_from_paid_payment(
                 db,
                 tenant_id=tenant_id,
-                plan=resolved_plan,
+                plan=storage_plan,
                 billing_period=resolved_billing_period,
                 trans_id=trans_id,
                 init_recurring_id=None,
@@ -2700,7 +2857,7 @@ async def comgate_result(
                 str(existing_checkout_tx.parent_init_recurring_id or init_recurring_id or "") or None
                 if existing_checkout_tx else (str(init_recurring_id or "") or None)
             ),
-            plan=resolved_plan,
+            plan=storage_plan,
             billing_period=resolved_billing_period,
             period_start=getattr(existing_checkout_tx, "period_start", None),
             period_end=getattr(existing_checkout_tx, "period_end", None),

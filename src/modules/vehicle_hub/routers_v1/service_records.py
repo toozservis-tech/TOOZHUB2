@@ -71,7 +71,11 @@ from ..services.vehicle_large_technical_certificate_storage import (
 )
 from ..reports.vehicle_report_pdf import render_vehicle_service_report_pdf
 from ..reports.vehicle_report_verification import finalize_vehicle_report_document
-from ...licensing.service import FREE_SERVICE_RECORDS_LIMIT, get_license_status
+from ...licensing.service import (
+    FREE_SERVICE_RECORDS_LIMIT,
+    assert_service_monthly_service_record_quota,
+    get_license_status,
+)
 from .auth import get_current_user, can_access_vehicle
 from .schemas import ServiceRecordCreateV1, ServiceRecordUpdateV1, ServiceRecordOutV1
 from .service_workspace import (
@@ -690,12 +694,18 @@ def _store_attachment_for_vehicle(
 
     tenant_id = int(getattr(vehicle, "tenant_id", None) or getattr(current_user, "tenant_id", None) or 0)
     target_dir = SERVICE_RECORD_ATTACHMENTS_DIR / f"tenant_{tenant_id}" / f"vehicle_{vehicle_id}"
-    target_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=507, detail=f"Nelze připravit úložiště přílohy: {exc}") from exc
 
     safe_stem = _sanitize_file_stem(filename)
     unique_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{safe_stem}_{secrets.token_hex(4)}{extension}"
     target_file = target_dir / unique_name
-    target_file.write_bytes(content)
+    try:
+        target_file.write_bytes(content)
+    except OSError as exc:
+        raise HTTPException(status_code=507, detail=f"Nelze uložit přílohu servisního záznamu: {exc}") from exc
 
     storage_key = target_file.relative_to(SERVICE_RECORD_ATTACHMENTS_DIR).as_posix()
     return {
@@ -1099,6 +1109,8 @@ def create_service_record(
 
         # Tenant kontext je povinný - primárně z vozidla, fallback z uživatele (legacy) a nakonec tenant 1
         tenant_id = vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1
+        if is_service(getattr(current_user, "role", None)):
+            assert_service_monthly_service_record_quota(db, service_customer_id=int(current_user.id))
         _enforce_free_service_record_limit(
             db,
             tenant_id=tenant_id,
@@ -1367,6 +1379,8 @@ def create_service_record_from_document(
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
     _require_documents_plan(db, tenant_id=vehicle.tenant_id)
     tenant_id = vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1
+    if is_service(getattr(current_user, "role", None)):
+        assert_service_monthly_service_record_quota(db, service_customer_id=int(current_user.id))
     _enforce_free_service_record_limit(
         db,
         tenant_id=tenant_id,

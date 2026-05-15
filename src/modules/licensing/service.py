@@ -11,7 +11,17 @@ from fastapi import HTTPException
 
 from src.core.env_aliases import env_prefer_new
 
-from ..vehicle_hub.models import License, LicenseSubscription, Vehicle, Tenant
+from ..vehicle_hub.models import (
+    Customer,
+    License,
+    LicenseSubscription,
+    ServiceCustomerLink,
+    ServiceInvoice,
+    ServiceRecord,
+    Tenant,
+    Vehicle,
+    VehicleServiceLink,
+)
 from ..vehicle_hub.database import Base
 from ..vehicle_hub.ownership import get_customer_by_email, get_owned_vehicle_ids
 
@@ -54,7 +64,8 @@ class LicenseError(HTTPException):
 
 
 USER_LICENSE_PLANS = ("free", "basic", "premium", "lifetime")
-SERVICE_LICENSE_PLANS = ("service_free", "service_basic", "service_premium", "service_lifetime")
+# Servis: základní (zdarma, omezeně) + FULL (placené předplatné) + lifetime (jen admin)
+SERVICE_LICENSE_PLANS = ("service_free", "service_full", "service_lifetime")
 ALL_LICENSE_PLANS = USER_LICENSE_PLANS + SERVICE_LICENSE_PLANS
 
 USER_PLAN_METADATA: Dict[str, Dict[str, object]] = {
@@ -65,9 +76,8 @@ USER_PLAN_METADATA: Dict[str, Dict[str, object]] = {
 }
 
 SERVICE_PLAN_METADATA: Dict[str, Dict[str, object]] = {
-    "service_free": {"label": "Service Free", "workspace_kind": "service"},
-    "service_basic": {"label": "Service Basic", "workspace_kind": "service"},
-    "service_premium": {"label": "Service Premium", "workspace_kind": "service"},
+    "service_free": {"label": "Základní (zdarma)", "workspace_kind": "service"},
+    "service_full": {"label": "FULL", "workspace_kind": "service"},
     "service_lifetime": {"label": "Service Lifetime", "workspace_kind": "service"},
 }
 
@@ -96,11 +106,62 @@ def get_license_plan_workspace_kind(plan: Optional[str]) -> str:
     return "user"
 
 
+def pairing_role_for_tenant_license(db: Session, tenant_id: int) -> str:
+    """Určení user vs service pro mapování Comgate/UI plánů na řádek licences.
+
+    Dříve stačilo `tenants.workspace_route_kind == user` a ignoroval se skutečný plán
+    v tabulce licences i role service účtu → admin nastavil service_full, ale API dál
+    párovalo jako uživatelský tenant a UI vidělo nesmysl / starý stav.
+    """
+    tid = int(tenant_id)
+    row = db.query(Tenant.workspace_route_kind).filter(Tenant.id == tid).first()
+    rk = str(row[0] or "").strip().lower() if row else ""
+
+    lic_plan: Optional[str] = None
+    lic_obj = db.query(License).filter(License.tenant_id == tid).first()
+    if lic_obj is not None:
+        lic_plan = effective_service_license_storage_plan(str(lic_obj.plan or "").strip().lower())
+
+    if lic_plan and str(lic_plan).startswith("service_"):
+        return "service"
+
+    svc = (
+        db.query(Customer.id)
+        .filter(Customer.tenant_id == tid, Customer.role == "service")
+        .limit(1)
+        .first()
+    )
+    if svc:
+        return "service"
+
+    if rk == "service":
+        return "service"
+    if rk == "user":
+        return "user"
+
+    return "user"
+
+
+def map_catalog_plan_to_storage_plan(db: Session, tenant_id: int, catalog_plan: Optional[str]) -> str:
+    """Z Comgate/UI katalogu na kanonický klíč v tabulce licences."""
+    pair = pairing_role_for_tenant_license(db, tenant_id)
+    raw = str(catalog_plan or "").strip().lower()
+    if pair == "service":
+        if raw in {"full"}:
+            return "service_full"
+        if raw == "free":
+            return "service_free"
+        # Zpětná kompatibilita plateb/stavu: dřívější „basic/premium“ servisu → jedna placená FULL
+        if raw in {"basic", "premium"}:
+            return "service_full"
+    return normalize_license_plan_key(raw, pair) or "free"
+
+
 def get_license_plan_base(plan: Optional[str]) -> str:
     normalized_plan = str(plan or "").strip().lower()
     if normalized_plan.startswith("service_"):
         normalized_plan = normalized_plan[len("service_"):]
-    if normalized_plan in {"free", "basic", "premium", "lifetime"}:
+    if normalized_plan in {"free", "basic", "premium", "lifetime", "full"}:
         return normalized_plan
     return "free"
 
@@ -117,11 +178,22 @@ def normalize_license_plan_key(plan: Optional[str], role: Optional[str] = None) 
     if workspace_kind == "service":
         if normalized_plan in SERVICE_LICENSE_PLANS:
             return normalized_plan
-        return f"service_{base_plan}"
+        resolved = f"service_{base_plan}"
+        if resolved in {"service_basic", "service_premium"}:
+            return "service_full"
+        return resolved
 
     if normalized_plan in USER_LICENSE_PLANS:
         return normalized_plan
     return base_plan
+
+
+def effective_service_license_storage_plan(plan: Optional[str]) -> str:
+    """Zpětná kompatibilita řádků v DB se starými klíči service_basic / service_premium."""
+    p = str(plan or "").strip().lower()
+    if p in {"service_basic", "service_premium"}:
+        return "service_full"
+    return p
 
 
 def get_license_plan_public_label(plan: Optional[str]) -> str:
@@ -138,14 +210,200 @@ PLAN_LIMITS = {
     "basic": 3,
     "premium": 0,  # 0 = unlimited
     "lifetime": 0,  # neomezeně, administrátorské přidělení
-    "service_free": 10,
-    "service_basic": 75,
-    "service_premium": 0,
+    "service_free": 1,
+    "service_full": 0,
     "service_lifetime": 0,
+    # Legacy řádky (alias přes effective_plan při čtení)
+    "service_basic": 0,
+    "service_premium": 0,
 }
 
 FREE_SERVICE_RECORDS_LIMIT = 1
 FREE_ACTIVE_MANUAL_REMINDERS_LIMIT = 1
+
+# Servisní FREE: technické kvóty (oddělené od uživatelských tarifů zákazníka)
+SERVICE_FREE_MAX_CUSTOMER_LINKS = 3
+SERVICE_FREE_MAX_APPROVED_VEHICLE_SERVICE_LINKS = 3
+SERVICE_FREE_MAX_ISSUED_INVOICES_PER_CALENDAR_MONTH = 3
+SERVICE_FREE_MAX_SERVICE_RECORDS_PER_CALENDAR_MONTH = 3
+
+SERVICE_CUSTOMER_LINK_STATUSES_COUNTED = (
+    "active",
+    "invited",
+    "pending_customer_confirm",
+)
+
+
+def _normalized_service_workspace_plan(db: Session, service_customer_id: int) -> Optional[str]:
+    """Efektivní servisní plán (service_free / service_full / …) pro účet Customer role=service."""
+    svc = db.query(Customer).filter(Customer.id == int(service_customer_id)).first()
+    if not svc or str(svc.role or "").strip().lower() != "service":
+        return None
+    lic = get_or_create_license(db, int(svc.tenant_id))
+    pair = pairing_role_for_tenant_license(db, int(svc.tenant_id))
+    return normalize_license_plan_key(
+        effective_service_license_storage_plan(lic.plan),
+        pair,
+    ) or "free"
+
+
+def assert_service_customer_link_quota(db: Session, *, service_customer_id: int) -> None:
+    """Limit aktivních/čekajících zákaznických vazeb pro SERVICE FREE."""
+    tid = db.query(Customer.tenant_id).filter(Customer.id == int(service_customer_id)).scalar()
+    if tid is not None and ADMIN_FORCE_PREMIUM and is_admin_tenant(int(tid)):
+        return
+    plan = _normalized_service_workspace_plan(db, service_customer_id)
+    if plan != "service_free":
+        return
+    current = (
+        int(
+            db.query(func.count(ServiceCustomerLink.id))
+            .filter(
+                ServiceCustomerLink.service_customer_id == int(service_customer_id),
+                ServiceCustomerLink.status.in_(SERVICE_CUSTOMER_LINK_STATUSES_COUNTED),
+            )
+            .scalar()
+            or 0
+        )
+    )
+    if current >= SERVICE_FREE_MAX_CUSTOMER_LINKS:
+        raise LicenseError(
+            code="SERVICE_FREE_CUSTOMER_LINKS_EXCEEDED",
+            message=(
+                "Ve tarifu Základní (zdarma) můžete mít nejvýše "
+                f"{SERVICE_FREE_MAX_CUSTOMER_LINKS} aktivní zákaznické vazby. Upgradujte na FULL."
+            ),
+            details={
+                "plan": plan,
+                "limit": SERVICE_FREE_MAX_CUSTOMER_LINKS,
+                "current": current,
+                "service_customer_id": int(service_customer_id),
+            },
+        )
+
+
+def assert_service_vehicle_link_quota(db: Session, *, service_customer_id: int) -> None:
+    """Limit schválených VehicleServiceLink řádků pro SERVICE FREE (nová nebo reaktivovaná vazba)."""
+    plan = _normalized_service_workspace_plan(db, service_customer_id)
+    if plan != "service_free":
+        return
+    svc_tid = db.query(Customer.tenant_id).filter(Customer.id == int(service_customer_id)).scalar()
+    if svc_tid and ADMIN_FORCE_PREMIUM and is_admin_tenant(int(svc_tid)):
+        return
+    current = (
+        int(
+            db.query(func.count(VehicleServiceLink.id))
+            .filter(
+                VehicleServiceLink.service_customer_id == int(service_customer_id),
+                VehicleServiceLink.status == "approved",
+            )
+            .scalar()
+            or 0
+        )
+    )
+    if current >= SERVICE_FREE_MAX_APPROVED_VEHICLE_SERVICE_LINKS:
+        raise LicenseError(
+            code="SERVICE_FREE_VEHICLE_LINKS_EXCEEDED",
+            message=(
+                "Ve tarifu Základní (zdarma) lze mít nejvýše "
+                f"{SERVICE_FREE_MAX_APPROVED_VEHICLE_SERVICE_LINKS} aktivní vozidla propojená se servisem. Upgradujte na FULL."
+            ),
+            details={
+                "plan": plan,
+                "limit": SERVICE_FREE_MAX_APPROVED_VEHICLE_SERVICE_LINKS,
+                "current": current,
+                "service_customer_id": int(service_customer_id),
+            },
+        )
+
+
+def assert_service_invoice_monthly_quota(db: Session, *, service_customer_id: int) -> None:
+    """Limit vystavených faktur (issued) za kalendářní měsíc pro SERVICE FREE."""
+    plan = _normalized_service_workspace_plan(db, service_customer_id)
+    if plan != "service_free":
+        return
+    svc_tid = db.query(Customer.tenant_id).filter(Customer.id == int(service_customer_id)).scalar()
+    if svc_tid and ADMIN_FORCE_PREMIUM and is_admin_tenant(int(svc_tid)):
+        return
+    now = datetime.utcnow()
+    month_start = datetime(now.year, now.month, 1)
+    current = (
+        int(
+            db.query(func.count(ServiceInvoice.id))
+            .filter(
+                ServiceInvoice.service_id == int(service_customer_id),
+                ServiceInvoice.status == "issued",
+                ServiceInvoice.issued_at.isnot(None),
+                ServiceInvoice.issued_at >= month_start,
+            )
+            .scalar()
+            or 0
+        )
+    )
+    if current >= SERVICE_FREE_MAX_ISSUED_INVOICES_PER_CALENDAR_MONTH:
+        raise LicenseError(
+            code="SERVICE_FREE_MONTHLY_INVOICES_EXCEEDED",
+            message=(
+                "Ve tarifu Základní (zdarma) lze vystavit nejvýše "
+                f"{SERVICE_FREE_MAX_ISSUED_INVOICES_PER_CALENDAR_MONTH} faktur za kalendářní měsíc. Upgradujte na FULL."
+            ),
+            details={
+                "plan": plan,
+                "limit": SERVICE_FREE_MAX_ISSUED_INVOICES_PER_CALENDAR_MONTH,
+                "current": current,
+                "service_customer_id": int(service_customer_id),
+            },
+        )
+
+
+def assert_service_monthly_service_record_quota(db: Session, *, service_customer_id: int) -> None:
+    """Limit servisních záznamů vytvořených servisem za měsíc (SERVICE FREE)."""
+    plan = _normalized_service_workspace_plan(db, service_customer_id)
+    if plan != "service_free":
+        return
+    svc_tid = db.query(Customer.tenant_id).filter(Customer.id == int(service_customer_id)).scalar()
+    if svc_tid and ADMIN_FORCE_PREMIUM and is_admin_tenant(int(svc_tid)):
+        return
+    now = datetime.utcnow()
+    month_start = datetime(now.year, now.month, 1)
+    current = (
+        int(
+            db.query(func.count(ServiceRecord.id))
+            .filter(
+                ServiceRecord.created_by_service_customer_id == int(service_customer_id),
+                ServiceRecord.is_deleted.is_(False),
+                ServiceRecord.updated_at >= month_start,
+            )
+            .scalar()
+            or 0
+        )
+    )
+    if current >= SERVICE_FREE_MAX_SERVICE_RECORDS_PER_CALENDAR_MONTH:
+        raise LicenseError(
+            code="SERVICE_FREE_MONTHLY_SERVICE_RECORDS_EXCEEDED",
+            message=(
+                "Ve tarifu Základní (zdarma) lze za kalendářní měsíc založit nejvýše "
+                f"{SERVICE_FREE_MAX_SERVICE_RECORDS_PER_CALENDAR_MONTH} servisní záznamy. Upgradujte na FULL."
+            ),
+            details={
+                "plan": plan,
+                "limit": SERVICE_FREE_MAX_SERVICE_RECORDS_PER_CALENDAR_MONTH,
+                "current": current,
+                "service_customer_id": int(service_customer_id),
+            },
+        )
+
+
+def assert_service_payroll_or_advanced_forbidden(db: Session, *, service_customer_id: int) -> None:
+    """Mzdový / pokročilý modul pouze pro FULL (ne SERVICE FREE)."""
+    plan = _normalized_service_workspace_plan(db, service_customer_id)
+    if plan != "service_free":
+        return
+    raise LicenseError(
+        code="SERVICE_FREE_MODULE_BLOCKED",
+        message="Mzdový modul a pokročilé funkce nejsou v tarifu Základní (zdarma). Upgradujte na FULL.",
+        details={"plan": plan or "unknown", "service_customer_id": int(service_customer_id)},
+    )
 
 # Mapování plánů na dostupné funkce (ARES necháváme povolený pro všechny)
 PLAN_FEATURES = {
@@ -199,13 +457,25 @@ PLAN_FEATURES = {
         "vin_decode_enabled": False,
         "ares_enabled": True,
         "reminders_enabled": True,
-        "reservations_enabled": True,
-        "vehicle_history_enabled": True,
-        "documents_enabled": True,
+        "reservations_enabled": False,
+        "vehicle_history_enabled": False,
+        "documents_enabled": False,
         "costs_tracking_enabled": False,
         "statistics_enabled": False,
         "sharing_with_service_enabled": False,
     },
+    "service_full": {
+        "vin_decode_enabled": True,
+        "ares_enabled": True,
+        "reminders_enabled": True,
+        "reservations_enabled": True,
+        "vehicle_history_enabled": True,
+        "documents_enabled": True,
+        "costs_tracking_enabled": True,
+        "statistics_enabled": True,
+        "sharing_with_service_enabled": True,
+    },
+    # Zachováno pro přímý tah z legacy DB (stejné jako FULL)
     "service_basic": {
         "vin_decode_enabled": True,
         "ares_enabled": True,
@@ -214,8 +484,8 @@ PLAN_FEATURES = {
         "vehicle_history_enabled": True,
         "documents_enabled": True,
         "costs_tracking_enabled": True,
-        "statistics_enabled": False,
-        "sharing_with_service_enabled": False,
+        "statistics_enabled": True,
+        "sharing_with_service_enabled": True,
     },
     "service_premium": {
         "vin_decode_enabled": True,
@@ -277,12 +547,17 @@ def get_or_create_license(db: Session, tenant_id: int) -> License:
                 license_obj.valid_from = datetime.utcnow()
                 needs_update = True
 
-        current_plan_key = normalize_license_plan_key(license_obj.plan, get_license_plan_workspace_kind(license_obj.plan)) or "free"
-        if current_plan_key != license_obj.plan:
+        pairing = pairing_role_for_tenant_license(db, tenant_id)
+        effective_row_plan = effective_service_license_storage_plan(license_obj.plan)
+        current_plan_key = normalize_license_plan_key(effective_row_plan, pairing) or "free"
+        if pairing == "service" and license_obj.plan != current_plan_key and license_obj.plan in {
+            "service_basic",
+            "service_premium",
+        }:
             license_obj.plan = current_plan_key
             needs_update = True
 
-        features = PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"])
+        features = PLAN_FEATURES.get(current_plan_key, PLAN_FEATURES["free"])
 
         # Synchronizovat feature flagy, které máme uložené v DB
         db_feature_keys = ["vin_decode_enabled", "ares_enabled", "reminders_enabled"]
@@ -293,7 +568,7 @@ def get_or_create_license(db: Session, tenant_id: int) -> License:
                 needs_update = True
 
         # Aktualizovat limit podle plánu, pokud se liší
-        expected_limit = 0 if admin_force_premium else PLAN_LIMITS.get(license_obj.plan, 1)
+        expected_limit = 0 if admin_force_premium else PLAN_LIMITS.get(current_plan_key, 1)
         if license_obj.vehicles_limit != expected_limit:
             license_obj.vehicles_limit = expected_limit
             needs_update = True
@@ -307,16 +582,24 @@ def get_or_create_license(db: Session, tenant_id: int) -> License:
     if not license_obj:
         # Vytvořit default free licenci
         plan = "premium" if admin_force_premium else "free"
+        
+        # Zjistit roli tenanta, pokud to jde
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        if tenant and tenant.workspace_route_kind == "service" and not admin_force_premium:
+            plan = "service_free"
+
         vehicles_limit = PLAN_LIMITS.get(plan, 1)
         features = PLAN_FEATURES.get(plan, PLAN_FEATURES["free"])
         now = datetime.utcnow()
+        valid_to = None
+            
         license_obj = License(
             tenant_id=tenant_id,
             plan=plan,
             status="active",
             vehicles_limit=vehicles_limit,
             valid_from=now,
-            valid_to=None,
+            valid_to=valid_to,
             vin_decode_enabled=features["vin_decode_enabled"],
             ares_enabled=features.get("ares_enabled", True),
             reminders_enabled=features["reminders_enabled"]
@@ -458,8 +741,14 @@ def assert_feature(db: Session, tenant_id: int, feature_name: str) -> None:
     if ADMIN_FORCE_PREMIUM and is_admin_tenant(tenant_id):
         return
 
+    pairing = pairing_role_for_tenant_license(db, tenant_id)
+    feat_key = (
+        normalize_license_plan_key(effective_service_license_storage_plan(license_obj.plan), pairing)
+        or "free"
+    )
+    features = PLAN_FEATURES.get(feat_key, PLAN_FEATURES["free"])
+
     if feature_name == "documents":
-        features = PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"])
         if not bool(features.get("documents_enabled", False)):
             raise LicenseError(
                 code="FEATURE_DISABLED",
@@ -477,7 +766,6 @@ def assert_feature(db: Session, tenant_id: int, feature_name: str) -> None:
         return
 
     if feature_name == "reservations":
-        features = PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"])
         if not bool(features.get("reservations_enabled", False)):
             raise LicenseError(
                 code="FEATURE_DISABLED",
@@ -539,22 +827,30 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
     license_obj = get_or_create_license(db, tenant_id)
     tenant_vehicle_count = get_vehicle_count(db, tenant_id)
     user_vehicle_count = get_vehicle_count_for_user(db, tenant_id, user_email)
-    is_unl = is_unlimited(license_obj)
-    
-    vehicles_remaining = None if is_unl else max(0, license_obj.vehicles_limit - tenant_vehicle_count)
-    
-    features = PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"])
-    normalized_plan = normalize_license_plan_key(license_obj.plan, get_license_plan_workspace_kind(license_obj.plan)) or "free"
+    pairing = pairing_role_for_tenant_license(db, tenant_id)
+    normalized_plan = normalize_license_plan_key(
+        effective_service_license_storage_plan(license_obj.plan),
+        pairing,
+    ) or "free"
+    features = PLAN_FEATURES.get(normalized_plan, PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"]))
+    tier_limit = PLAN_LIMITS.get(normalized_plan, license_obj.vehicles_limit)
+    is_unl = tier_limit == 0
 
-    over_limit = (not is_unl) and tenant_vehicle_count > int(license_obj.vehicles_limit or 0)
+    vehicles_remaining = None if is_unl else max(0, tier_limit - tenant_vehicle_count)
+
+    is_expired_trial = False
+
+    over_limit = (not is_unl) and tenant_vehicle_count > int(tier_limit or 0)
     status = {
+        "is_expired_trial": is_expired_trial,
+        "valid_to": license_obj.valid_to.isoformat() if license_obj.valid_to else None,
         "tenant_id": str(tenant_id),
         "plan": normalized_plan,
         "plan_base": get_license_plan_base(normalized_plan),
         "plan_workspace_kind": get_license_plan_workspace_kind(normalized_plan),
         "plan_public_label": get_license_plan_public_label(normalized_plan),
         "status": license_obj.status,
-        "vehicles_limit": license_obj.vehicles_limit,
+        "vehicles_limit": tier_limit if not is_unl else 0,
         # Tenant-wide počet (používá se pro licenční limity)
         "vehicles_current": tenant_vehicle_count,
         # Uživatelský počet (pro UI kontext "moje vozidla")
@@ -563,14 +859,14 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
         "is_unlimited": is_unl,
         # Aliasy pro klientské UI (dashboard)
         "vehicles_count": tenant_vehicle_count,
-        "license_limit": None if is_unl else int(license_obj.vehicles_limit or 0),
+        "license_limit": None if is_unl else int(tier_limit or 0),
         "is_over_limit": bool(over_limit),
-        "vin_decode_enabled": license_obj.vin_decode_enabled,
-        "ares_enabled": license_obj.ares_enabled,
-        "reminders_enabled": license_obj.reminders_enabled,
+        "vin_decode_enabled": bool(features.get("vin_decode_enabled", license_obj.vin_decode_enabled)),
+        "ares_enabled": bool(features.get("ares_enabled", license_obj.ares_enabled)),
+        "reminders_enabled": bool(features.get("reminders_enabled", license_obj.reminders_enabled)),
     }
 
-    # Doplnit ostatní feature flagy podle plánu (nejsou uložené v DB)
+    # Doplnit ostatní feature flagy podle efektivního plánu (nejsou vždy v DB řádku Licence)
     status.update({
         "reservations_enabled": bool(features.get("reservations_enabled", False)),
         "vehicle_history_enabled": bool(features.get("vehicle_history_enabled", False)),
@@ -597,19 +893,21 @@ def upgrade_license_plan(db: Session, tenant_id: int, plan: str) -> dict:
         dict ve formátu get_license_status
     """
     plan_key = str(plan or "").strip().lower()
+    legacy_upgrade_aliases = {"service_basic": "service_full", "service_premium": "service_full"}
+    plan_key = legacy_upgrade_aliases.get(plan_key, plan_key)
     if plan_key not in PLAN_FEATURES:
         raise HTTPException(
             status_code=400,
             detail=(
                 "Neplatný plán. Povolené hodnoty: free, basic, premium, lifetime, "
-                "service_free, service_basic, service_premium, service_lifetime."
+                "service_free, service_full, service_lifetime (+ legacy alias service_basic/service_premium → FULL)."
             ),
         )
-    
+
     license_obj = get_or_create_license(db, tenant_id)
     features = PLAN_FEATURES[plan_key]
     vehicles_limit = PLAN_LIMITS.get(plan_key, 1)
-    
+
     license_obj.plan = plan_key
     license_obj.status = "active"
     license_obj.vehicles_limit = vehicles_limit
@@ -617,6 +915,8 @@ def upgrade_license_plan(db: Session, tenant_id: int, plan: str) -> dict:
     license_obj.ares_enabled = features.get("ares_enabled", True)
     license_obj.reminders_enabled = features["reminders_enabled"]
     license_obj.updated_at = datetime.utcnow()
+    if plan_key == "service_full":
+        license_obj.valid_to = None
 
     if get_license_plan_base(plan_key) == "lifetime":
         license_obj.valid_to = None
@@ -641,4 +941,4 @@ def upgrade_license_plan(db: Session, tenant_id: int, plan: str) -> dict:
     db.commit()
     db.refresh(license_obj)
     
-    return get_license_status(db, tenant_id)
+    return get_license_status(db, tenant_id, user_email=None)

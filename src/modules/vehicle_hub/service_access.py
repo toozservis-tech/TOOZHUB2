@@ -248,6 +248,13 @@ def create_or_update_vehicle_service_link(
         )
         .first()
     )
+    previously_approved = bool(
+        link and str(getattr(link, "status", "") or "").strip().lower() == "approved"
+    )
+    if not previously_approved:
+        from src.modules.licensing.service import assert_service_vehicle_link_quota
+
+        assert_service_vehicle_link_quota(db, service_customer_id=int(service_customer_id))
     if link:
         link.owner_customer_id = int(owner_customer_id)
         link.source_request_id = source_request_id
@@ -337,6 +344,9 @@ def create_or_update_vehicle_service_link(
         service_customer = db.query(Customer).filter(Customer.id == int(service_customer_id)).first()
         owner_customer = db.query(Customer).filter(Customer.id == int(owner_customer_id)).first()
         if service_customer and owner_customer:
+            from src.modules.licensing.service import assert_service_customer_link_quota
+
+            assert_service_customer_link_quota(db, service_customer_id=int(service_customer_id))
             db.add(
                 ServiceCustomerLink(
                     service_tenant_id=service_customer.tenant_id,
@@ -466,6 +476,9 @@ def upsert_service_customer_link_after_request_approval(
         db.flush()
         return
 
+    from src.modules.licensing.service import assert_service_customer_link_quota
+
+    assert_service_customer_link_quota(db, service_customer_id=int(service_customer_id))
     db.add(
         ServiceCustomerLink(
             service_tenant_id=service_tenant_id,
