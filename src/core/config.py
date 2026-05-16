@@ -346,3 +346,22 @@ def _ensure_directory(path: Path) -> None:
 
 for directory in [DATA_DIR, UPLOADS_DIR, PDF_DIR, IMAGES_DIR]:
     _ensure_directory(directory)
+
+# =============================================================================
+# TRAFFIC REPORT (GoAccess / nginx access log) — odděleno od vozidel a účtů
+# =============================================================================
+
+def _optional_path_env(name: str, default: Path) -> Path:
+    raw = os.getenv(name, "").strip()
+    return Path(raw).expanduser() if raw else default
+
+
+GOACCESS_REPORT_DIR = _optional_path_env(
+    "GOACCESS_REPORT_DIR", WORKSPACE_ROOT / "runtime" / "reports"
+)
+GOACCESS_REPORT_HTML_PATH = _optional_path_env(
+    "GOACCESS_REPORT_HTML_PATH", GOACCESS_REPORT_DIR / "goaccess-admin.html"
+)
+GOACCESS_REPORT_META_PATH = _optional_path_env(
+    "GOACCESS_REPORT_META_PATH", GOACCESS_REPORT_DIR / "goaccess-admin.meta.json"
+)
