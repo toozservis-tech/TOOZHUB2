@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from src.core.rbac import is_service, normalize_role
+from src.core.rbac import is_admin, is_service, normalize_role
 
 from .audit_log import write_global_audit_log
 from .models import (
@@ -131,6 +131,41 @@ def require_service_vehicle_link(
     link.last_used_at = datetime.utcnow()
     db.flush()
     return link
+
+
+def require_approved_service_vehicle_access(
+    db: Session,
+    *,
+    current_user: Customer,
+    vehicle_id: int,
+) -> tuple[Vehicle, Customer, VehicleServiceLink]:
+    """
+    Schválený VehicleServiceLink + vozidlo + majitel (řádek z linku, fallback primary owner).
+
+    Pro PR service-cases API: pouze servisní účty s aktivním approved linkem.
+    """
+    role = normalize_role(getattr(current_user, "role", None))
+    if not is_service(role) and not is_admin(role):
+        raise HTTPException(status_code=403, detail="Přístup mají pouze servisní účty.")
+    link = get_active_vehicle_service_link(
+        db,
+        service_customer_id=int(current_user.id),
+        vehicle_id=int(vehicle_id),
+    )
+    if not link:
+        raise HTTPException(
+            status_code=403,
+            detail="Servis nemá schválený přístup k tomuto vozidlu.",
+        )
+    vehicle = db.query(Vehicle).filter(Vehicle.id == int(vehicle_id)).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vozidlo nebylo nalezeno.")
+    owner = db.query(Customer).filter(Customer.id == int(link.owner_customer_id)).first()
+    if not owner:
+        owner = get_primary_vehicle_owner(db, vehicle)
+    if not owner:
+        raise HTTPException(status_code=422, detail="K vozidlu nelze určit majitele pro servisní případ.")
+    return vehicle, owner, link
 
 
 def forbid_service_record_mutation(current_user: Customer) -> None:

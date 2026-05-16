@@ -18,6 +18,7 @@ from . import (
     services,
     vehicle_lifecycle,
     service_workspace,
+    service_workspace_cases,
     bot,
     vin_lookup,
     ares_lookup,
@@ -46,6 +47,7 @@ api_router.include_router(reminders.router)
 api_router.include_router(reminder_settings.router)  # Nastavení připomínek
 api_router.include_router(services.router)
 api_router.include_router(service_workspace.router)
+api_router.include_router(service_workspace_cases.router)
 from .service_workspace_customer_centre import router as service_workspace_customer_centre_router
 
 api_router.include_router(service_workspace_customer_centre_router, prefix="/services/workspace")

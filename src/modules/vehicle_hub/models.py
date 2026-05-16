@@ -1108,7 +1108,22 @@ class ServiceIntake(Base):
     photos = Column(Text, nullable=True)  # JSON string s listem URL
     work_description = Column(Text, nullable=True)
     signature = Column(Text, nullable=True)
-    
+
+    # Servisní případ (fasáda service-cases API) — rozšíření oproti historickému příjmu
+    customer_request = Column(Text, nullable=True)
+    intake_note = Column(Text, nullable=True)
+    diagnosis_summary = Column(Text, nullable=True)
+    repair_summary = Column(Text, nullable=True)
+    internal_note = Column(Text, nullable=True)
+    visible_to_owner_note = Column(Text, nullable=True)
+    mileage_out = Column(Integer, nullable=True)
+    mileage_source = Column(String(64), nullable=True)
+    intake_completed_at = Column(DateTime, nullable=True)
+    diagnosis_started_at = Column(DateTime, nullable=True)
+    diagnosis_completed_at = Column(DateTime, nullable=True)
+    handed_over_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
