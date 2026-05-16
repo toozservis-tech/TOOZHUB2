@@ -33835,9 +33835,9 @@
                                 <div class="auth-form-head">
                                     <p class="auth-form-kicker">Téměř hotovo</p>
                                     <h2>Registrace přijata</h2>
-                                    <p class="auth-form-subtitle">Ověřte e-mail kliknutím na odkaz, který jsme vám poslali (platnost 30 minut). Dokud e-mail neověříte, přihlášení nebude možné.</p>
+                                    <p id="registerPendingSubtitle" class="auth-form-subtitle">Ověřte e-mail kliknutím na odkaz, který jsme vám poslali (platnost 30 minut). Dokud e-mail neověříte, přihlášení nebude možné.</p>
                                 </div>
-                                <p class="form-hint" style="margin-bottom:16px;">Telefon je uložen ve formátu E.164. Plné SMS ověření telefonu zatím není zapnuté — v profilu uvidíte stav „telefon neověřen“, dokud nepřibude OTP / SMS provider.</p>
+                                <p id="registerPendingHint" class="form-hint" style="margin-bottom:16px;">Telefon je uložen ve formátu E.164. Plné SMS ověření telefonu zatím není zapnuté — v profilu uvidíte stav „telefon neověřen“, dokud nepřibude OTP / SMS provider.</p>
                                 <div class="auth-register-actions" style="flex-direction:column;align-items:stretch;gap:10px;">
                                     <button type="button" class="btn auth-primary-btn" id="resendVerificationBtn" onclick="handleResendVerificationEmail()">Poslat ověřovací e-mail znovu</button>
                                     <button type="button" class="btn btn-secondary" onclick="exitRegisterPendingState()">Zpět k přihlášení</button>
@@ -42188,8 +42188,32 @@
             };
         }
 
-        function enterRegisterPendingFlow(emailTrim) {
+        function applyRegisterPendingUi(kind) {
+            const sub = document.getElementById('registerPendingSubtitle');
+            const hint = document.getElementById('registerPendingHint');
+            if (!sub) {
+                return;
+            }
+            if (kind === 'service') {
+                sub.textContent =
+                    'Ověřte e-mail kliknutím na odkaz, který jsme vám poslali (platnost 30 minut). Po ověření e-mailu bude vaše žádost o servisní účet zpracována administrátorem. Přihlášení bude možné až po schválení žádosti.';
+                if (hint) {
+                    hint.textContent =
+                        'Administrátor žádost zpracuje až po ověření e-mailu. Do té doby se nepřihlásíte — účet v systému ještě neexistuje.';
+                }
+            } else {
+                sub.textContent =
+                    'Ověřte e-mail kliknutím na odkaz, který jsme vám poslali (platnost 30 minut). Dokud e-mail neověříte, přihlášení nebude možné.';
+                if (hint) {
+                    hint.textContent =
+                        'Telefon je uložen ve formátu E.164. Plné SMS ověření telefonu zatím není zapnuté — v profilu uvidíte stav „telefon neověřen“, dokud nepřibude OTP / SMS provider.';
+                }
+            }
+        }
+
+        function enterRegisterPendingFlow(emailTrim, options = {}) {
             window.__showRegisterPending = String(emailTrim || '').trim();
+            window.__registerPendingKind = options.kind || 'user';
             showRegister();
         }
 
@@ -42348,14 +42372,9 @@
                         errorContainer.innerHTML = '';
                     }
 
-                    setLoginMode('service');
-                    showLogin();
-                    const loginEmailInput = document.getElementById('loginEmail');
-                    if (loginEmailInput) {
-                        loginEmailInput.value = email;
-                    }
+                    enterRegisterPendingFlow(email, { kind: 'service' });
                     showAlert(
-                        response?.message || 'Žádost o servisní účet byla přijata. Po schválení developerem se budete moci přihlásit.',
+                        response?.message || 'Žádost byla přijata. Ověřte e-mail podle zprávy v schránce.',
                         'success'
                     );
                     return;
@@ -42595,8 +42614,21 @@
         }
 
         function getCanonicalWorkspaceRouteKind() {
+            try {
+                const parsed =
+                    typeof parseAppWorkspaceRoute === 'function'
+                        ? parseAppWorkspaceRoute(window.location.pathname)
+                        : null;
+                if (parsed && parsed.routeToken === 's') return 'service';
+                if (parsed && parsed.routeToken === 'u') return 'user';
+            } catch (e) {
+                /* ignore */
+            }
             if (lastWorkspaceMePayload && lastWorkspaceMePayload.authenticated) {
-                return String(lastWorkspaceMePayload.workspace_route_kind || '').toLowerCase() === 'service' ? 'service' : 'user';
+                const raw = String(lastWorkspaceMePayload.workspace_route_kind || '').trim().toLowerCase();
+                if (raw === 'service') return 'service';
+                if (raw === 'user') return 'user';
+                return '';
             }
             return '';
         }
@@ -42828,6 +42860,125 @@
             } catch (error) {
                 pendingReservationClaimToken = null;
                 pendingReservationClaimReservationId = null;
+            }
+        }
+
+        function capturePendingServiceLinkConfirmTokenFromUrl() {
+            try {
+                const params = new URLSearchParams(window.location.search || '');
+                const token = String(params.get('service_link_confirm') || '').trim();
+                if (token) {
+                    sessionStorage.setItem('pendingServiceLinkConfirmToken', token);
+                    params.delete('service_link_confirm');
+                    const clean = params.toString();
+                    const cleanUrl = `${window.location.pathname}${clean ? `?${clean}` : ''}${window.location.hash || ''}`;
+                    window.history.replaceState({}, document.title, cleanUrl);
+                }
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
+        async function openOwnerPendingServiceAccessModal() {
+            if (!isAuthenticated() || isServiceWorkspaceRole()) return;
+            let data;
+            try {
+                data = await apiCall('/api/v1/services/access-requests', 'GET');
+            } catch (e) {
+                console.warn('[SERVICE_LINK] access-requests:', e);
+                return;
+            }
+            const requests = Array.isArray(data?.requests) ? data.requests : [];
+            const existing = document.getElementById('ownerServiceAccessOverlay');
+            if (existing) existing.remove();
+            const overlay = document.createElement('div');
+            overlay.id = 'ownerServiceAccessOverlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.style.cssText =
+                'position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:1300;display:flex;align-items:center;justify-content:center;padding:16px;';
+            const rows = requests.length
+                ? requests
+                      .map((r) => {
+                          const id = Number(r.id);
+                          const title = escapeHtml(r.vehicle_name || 'Vozidlo');
+                          const svc = escapeHtml(r.service_name || 'Servis');
+                          const plate = r.vehicle_plate ? ` · ${escapeHtml(r.vehicle_plate)}` : '';
+                          return `<div style="border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:10px;">
+                <div style="font-weight:600;margin-bottom:6px;">${title}${plate}</div>
+                <div style="font-size:0.9rem;color:#64748b;margin-bottom:10px;">Žádost od: ${svc}</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <button type="button" class="btn btn-primary btn-sm" data-access-approve="${id}">Schválit přístup</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-access-reject="${id}">Zamítnout</button>
+                </div>
+              </div>`;
+                      })
+                      .join('')
+                : '<p style="color:#64748b;margin:0;">Žádné čekající žádosti o přístup. Jakmile servis požádá o konkrétní vozidlo, zobrazí se zde.</p>';
+            overlay.innerHTML = `<div style="background:#fff;border-radius:16px;max-width:520px;width:100%;max-height:90vh;overflow:auto;padding:20px;box-shadow:0 24px 48px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 8px;font-size:1.15rem;">Žádosti servisů o přístup k vozidlům</h3>
+      <p style="margin:0 0 16px;color:#475569;font-size:0.95rem;line-height:1.5;">Nyní můžete schválit přístup jen k těm vozidlům, se kterými má servis pracovat.</p>
+      <div id="ownerServiceAccessList">${rows}</div>
+      <button type="button" class="btn btn-secondary" style="margin-top:12px;width:100%;" id="ownerServiceAccessOverlayClose">Zavřít</button>
+    </div>`;
+            document.body.appendChild(overlay);
+            const close = () => overlay.remove();
+            overlay.querySelector('#ownerServiceAccessOverlayClose')?.addEventListener('click', close);
+            overlay.addEventListener('click', (ev) => {
+                if (ev.target === overlay) close();
+            });
+            overlay.querySelectorAll('[data-access-approve]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const rid = Number(btn.getAttribute('data-access-approve'));
+                    try {
+                        await apiCall(`/api/v1/services/access-requests/${rid}`, 'PUT', {
+                            decision: 'approved',
+                            note: null,
+                        });
+                        showAlert('Přístup servisu byl schválen.', 'success');
+                        close();
+                        if (typeof refreshServiceVehicleAccessGrantsIfUser === 'function') {
+                            await refreshServiceVehicleAccessGrantsIfUser();
+                        }
+                    } catch (e) {
+                        showAlert(e?.message || 'Schválení se nepodařilo.', 'error');
+                    }
+                });
+            });
+            overlay.querySelectorAll('[data-access-reject]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const rid = Number(btn.getAttribute('data-access-reject'));
+                    try {
+                        await apiCall(`/api/v1/services/access-requests/${rid}`, 'PUT', {
+                            decision: 'rejected',
+                            note: null,
+                        });
+                        showAlert('Žádost byla zamítnuta.', 'info');
+                        close();
+                    } catch (e) {
+                        showAlert(e?.message || 'Zamítnutí se nepodařilo.', 'error');
+                    }
+                });
+            });
+        }
+
+        async function processPendingServiceLinkConfirmToken() {
+            const token = String(sessionStorage.getItem('pendingServiceLinkConfirmToken') || '').trim();
+            if (!token || !isAuthenticated() || isServiceWorkspaceRole()) return;
+
+            sessionStorage.removeItem('pendingServiceLinkConfirmToken');
+            try {
+                const data = await apiCall('/api/v1/services/customer-links/confirm-as-owner', 'POST', {
+                    confirm_token: token,
+                });
+                showAlert(data?.message || 'Propojení se servisem bylo potvrzeno.', 'success');
+                if (typeof loadManagedServiceContacts === 'function') {
+                    await loadManagedServiceContacts(true);
+                }
+                await openOwnerPendingServiceAccessModal();
+            } catch (err) {
+                const msg = err?.message || err?.detail || 'Potvrzení propojení se nezdařilo.';
+                showAlert(String(msg), 'error');
             }
         }
 
@@ -43341,6 +43492,14 @@
                     if (typeof applyWorkspaceRouteFromUrl === 'function') {
                         applyWorkspaceRouteFromUrl({ skipUnsavedGuard: true });
                     }
+                    if (typeof loadLicenseStatus === 'function') {
+                        licenseLastFetch = 0;
+                        try {
+                            await loadLicenseStatus();
+                        } catch (eLic) {
+                            console.warn('[WORKSPACE] Licence po obnově /api/me selhala:', eLic);
+                        }
+                    }
                     return;
                 } catch (e) {
                     if (e && e.workspaceRouting && e.defaultAppPath && attempt < maxAttempts - 1) {
@@ -43414,17 +43573,48 @@
             if (!nodes.length) {
                 return;
             }
-            let enabled = false;
-            try {
-                const base = getApiBaseUrl();
-                if (base) {
-                    const r = await fetch(`${base}/api/public/demo-account`, { method: 'GET', credentials: 'omit' });
-                    const j = r.ok ? await r.json().catch(() => ({})) : {};
-                    enabled = !!(j && j.enabled);
-                }
-            } catch (e) {
-                enabled = false;
+            window.__spravaPublicDemoGate = window.__spravaPublicDemoGate || {};
+            const g = window.__spravaPublicDemoGate;
+            const ttlMs = 120000;
+            const now = Date.now();
+            if (g.cache && now - g.cache.ts < ttlMs) {
+                nodes.forEach((el) => {
+                    el.classList.toggle('hidden', !g.cache.enabled);
+                });
+                return;
             }
+            if (g.inflight) {
+                try {
+                    await g.inflight;
+                } catch (eDemoWait) {
+                    /* ignore */
+                }
+                const en = g.cache ? g.cache.enabled : false;
+                nodes.forEach((el) => {
+                    el.classList.toggle('hidden', !en);
+                });
+                return;
+            }
+            g.inflight = (async () => {
+                let enabled = false;
+                try {
+                    const base = getApiBaseUrl();
+                    if (base) {
+                        const r = await fetch(`${base}/api/public/demo-account`, { method: 'GET', credentials: 'omit' });
+                        const j = r.ok ? await r.json().catch(() => ({})) : {};
+                        enabled = !!(j && j.enabled);
+                    }
+                } catch (e) {
+                    enabled = false;
+                }
+                g.cache = { ts: Date.now(), enabled };
+            })();
+            try {
+                await g.inflight;
+            } finally {
+                g.inflight = null;
+            }
+            const enabled = g.cache ? g.cache.enabled : false;
             nodes.forEach((el) => {
                 el.classList.toggle('hidden', !enabled);
             });
@@ -43725,6 +43915,16 @@
                 const pendingEmail = window.__showRegisterPending;
                 if (pendingEmail && pendingEl && registerFormEl) {
                     pendingEl.dataset.pendingEmail = pendingEmail;
+                    let kind = window.__registerPendingKind || 'user';
+                    if (window.__registerPendingKind) {
+                        try {
+                            delete window.__registerPendingKind;
+                        } catch (e) {
+                            /* ignore */
+                        }
+                    }
+                    pendingEl.dataset.pendingKind = kind;
+                    applyRegisterPendingUi(kind);
                     pendingEl.classList.remove('hidden');
                     registerFormEl.classList.add('hidden');
                     window.__showRegisterPending = null;
@@ -44002,6 +44202,7 @@
             }, 220);
             deferNonCriticalUiTask('managed-service-contacts', () => loadManagedServiceContacts(false), 260);
             deferNonCriticalUiTask('pending-service-invite', () => acceptPendingServiceInviteToken(), 300);
+            deferNonCriticalUiTask('pending-service-link-confirm', () => processPendingServiceLinkConfirmToken(), 320);
             deferNonCriticalUiTask('pending-reservation-claim', () => acceptPendingReservationClaimToken(), 340);
             deferNonCriticalUiTask('push-subscription-sync', async () => {
                 await ensurePushSubscribed({ interactive: false });
@@ -44021,22 +44222,28 @@
                 closeLicenseModal();
                 return;
             }
-            
+
             const labelEl = document.getElementById("licenseQuickLabel");
             const currentEl = document.getElementById("licenseQuickCurrent");
             const vehiclesEl = document.getElementById("licenseQuickVehicles");
             const featuresEl = document.getElementById("licenseQuickFeatures");
-            
-            if (!labelEl || !currentEl || !vehiclesEl || !featuresEl) {
-                console.warn("[LICENSE] license quick elements not found");
-                return;
+            const hasQuickDom = !!(labelEl && currentEl && vehiclesEl && featuresEl);
+
+            if (hasQuickDom) {
+                labelEl.textContent = "Licence: načítám…";
+                currentEl.textContent = "Načítám informace o licenci...";
+                vehiclesEl.textContent = "";
+                featuresEl.innerHTML = "";
             }
-            
-            labelEl.textContent = "Licence: načítám…";
-            currentEl.textContent = "Načítám informace o licenci...";
-            vehiclesEl.textContent = "";
-            featuresEl.innerHTML = "";
-            
+
+            const applyQuickError = (title, subtitle, detail) => {
+                if (!hasQuickDom) return;
+                labelEl.textContent = title;
+                currentEl.textContent = subtitle || '';
+                vehiclesEl.textContent = detail || '';
+                featuresEl.innerHTML = "";
+            };
+
             try {
                 const apiUrl = getApiBaseUrl();
                 const headers = {
@@ -44048,7 +44255,7 @@
                     headers['Authorization'] = `Bearer ${accessToken}`;
                 }
                 appendClientGeoHeaders(headers);
-                
+
                 const response = await fetch(`${apiUrl}/api/v1/license/status`, {
                     method: 'GET',
                     headers,
@@ -44056,19 +44263,16 @@
                     mode: 'cors',
                     cache: 'no-cache'
                 });
-                
+
                 const contentType = response.headers.get('content-type') || '';
                 const isJson = contentType.includes('application/json');
-                
+
                 if (response.status === 401) {
-                    labelEl.textContent = "Licence: (nepřihlášen)";
-                    currentEl.textContent = "Pro zobrazení licence se přihlaste.";
-                    vehiclesEl.textContent = "";
-                    featuresEl.innerHTML = "";
+                    applyQuickError('Licence: (nepřihlášen)', 'Pro zobrazení licence se přihlaste.', '');
                     licenseLastFetch = Date.now();
                     return;
                 }
-                
+
                 if (!response.ok) {
                     let detail = '';
                     if (isJson) {
@@ -44079,27 +44283,37 @@
                             // ignore parse error
                         }
                     }
-                    labelEl.textContent = "Licence: chyba";
-                    currentEl.textContent = "Nepodařilo se načíst licenci.";
-                    vehiclesEl.textContent = detail ? `${response.status} – ${detail}` : `HTTP ${response.status}`;
-                    featuresEl.innerHTML = "";
+                    applyQuickError(
+                        'Licence: chyba',
+                        'Nepodařilo se načíst licenci.',
+                        detail ? `${response.status} – ${detail}` : `HTTP ${response.status}`,
+                    );
                     licenseLastFetch = Date.now();
                     return;
                 }
-                
+
                 const payload = isJson ? await response.json() : null;
                 const data = payload && payload.data ? payload.data : (payload || {});
-                renderLicenseMenu(data);
                 if (typeof applyLicenseToUI === 'function') {
                     applyLicenseToUI(data);
+                }
+                renderLicenseMenu(data);
+                try {
+                    if (
+                        window.serviceShell
+                        && window.serviceShell.state
+                        && window.serviceShell.state.mounted
+                        && typeof window.serviceShell.render === 'function'
+                    ) {
+                        window.serviceShell.render();
+                    }
+                } catch (rer) {
+                    console.warn('[LICENSE] service shell re-render:', rer?.message || rer);
                 }
                 licenseLastFetch = Date.now();
             } catch (e) {
                 console.error("[LICENSE] failed:", e);
-                labelEl.textContent = "Licence: chyba";
-                currentEl.textContent = "Nepodařilo se načíst licenci.";
-                vehiclesEl.textContent = e.message || String(e);
-                featuresEl.innerHTML = "";
+                applyQuickError('Licence: chyba', 'Nepodařilo se načíst licenci.', e.message || String(e));
                 licenseLastFetch = Date.now();
             }
         }
@@ -44110,7 +44324,8 @@
 
         function getLicensePlanRank(plan) {
             const normalized = normalizeLicensePlanKey(plan);
-            if (normalized === 'premium' || normalized === 'lifetime') return 3;
+            if (normalized === 'lifetime') return 5;
+            if (normalized === 'premium' || normalized === 'full') return 3;
             if (normalized === 'basic') return 2;
             return 1;
         }
@@ -45176,10 +45391,9 @@
         function startLicenseRefresh() {
             if (licenseRefreshTimer) return;
             licenseRefreshTimer = setInterval(() => {
-                const navbar = document.getElementById('mainNavbar');
-                if (accessToken && navbar && !navbar.classList.contains('hidden')) {
-                    loadLicenseStatus();
-                }
+                if (!accessToken) return;
+                if (!document.body.classList.contains('route-app-view')) return;
+                loadLicenseStatus();
             }, 60000);
         }
 
@@ -45346,27 +45560,57 @@
                 }
             }
         }
-        
+
+        function updateServiceLicenseGlobalBanner(license) {
+            const bar = document.getElementById('serviceGlobalLicenseBanner');
+            if (!bar) return;
+            const ws = getLicensePlanWorkspaceKind(license?.plan || '', getActiveWorkspaceMode());
+            const banner = license?.license_banner;
+            if (ws !== 'service' || !banner || !String(banner.message || '').trim()) {
+                bar.setAttribute('hidden', '');
+                bar.innerHTML = '';
+                document.body.classList.remove('has-service-license-banner');
+                return;
+            }
+            bar.removeAttribute('hidden');
+            document.body.classList.add('has-service-license-banner');
+            const cta = String(banner.cta_label || 'Detail').trim() || 'Detail';
+            const msg = String(banner.message || '');
+            bar.innerHTML = `<div class="svc-banner-msg">${escapeHtml(msg)}</div><button type="button" class="svc-banner-detail-btn">${escapeHtml(cta)}</button>`;
+        }
+
         // LICENSE_UI_START: Renderování licence do TopBar menu
         function renderLicenseMenu(license) {
             // Kontrola autentizace - pokud není přihlášený, nezobrazovat licence
             if (!isAuthenticated()) {
                 console.warn('[LICENSE] Uživatel není přihlášen - nesmí se zobrazit licence');
                 closeLicenseModal();
+                const bar = document.getElementById('serviceGlobalLicenseBanner');
+                if (bar) {
+                    bar.setAttribute('hidden', '');
+                    bar.innerHTML = '';
+                }
+                document.body.classList.remove('has-service-license-banner');
                 return;
             }
-            
+
+            const workspaceKind = getLicensePlanWorkspaceKind(license?.plan || '', getActiveWorkspaceMode());
+            applyLicenseCatalogPresentation(workspaceKind);
+            updateServiceLicenseGlobalBanner(license);
+
+            if (isAuthenticated() && typeof updateLicenseModal === 'function') {
+                updateLicenseModal(license);
+            }
+
             const labelEl = document.getElementById("licenseQuickLabel");
             const currentEl = document.getElementById("licenseQuickCurrent");
             const vehiclesEl = document.getElementById("licenseQuickVehicles");
             const featuresEl = document.getElementById("licenseQuickFeatures");
-            
+
             if (!labelEl || !currentEl || !vehiclesEl || !featuresEl) {
                 return;
             }
-            
-            const workspaceKind = getLicensePlanWorkspaceKind(license?.plan || '', getActiveWorkspaceMode());
-            applyLicenseCatalogPresentation(workspaceKind);
+
             const planLabel = formatLicensePlanDisplayName(license?.plan || 'free', workspaceKind).toUpperCase();
             const plan = planLabel;
             const tenantCurrent = Number(license.vehicles_current ?? 0);
@@ -45466,12 +45710,6 @@
                     return `<div class="license-quick-feature"><span class="${iconClass}">${icon}</span><span>${label} — ${statusText}</span></div>`;
                 }).join('');
             }
-            
-            // Aktualizovat modal pouze pokud je uživatel přihlášený
-            if (isAuthenticated() && typeof updateLicenseModal === 'function') {
-                updateLicenseModal(license);
-            }
-            
         }
         
         function ensureLicenseModalRoot() {
@@ -56647,6 +56885,7 @@
             initApiUrl();
             capturePendingServiceInviteTokenFromUrl();
             capturePendingReservationClaimTokenFromUrl();
+            capturePendingServiceLinkConfirmTokenFromUrl();
             capturePendingPaymentReturnFromUrl();
             
             // Nastavit DEV API URL panel (skrýt v produkci)
@@ -56790,6 +57029,11 @@
                         });
                     if (pendingServiceInviteToken) {
                         showAlert('Máte pozvánku od servisu. Přihlaste se nebo se zaregistrujte, pozvánka se po přihlášení automaticky přijme.', 'info');
+                    } else if (String(sessionStorage.getItem('pendingServiceLinkConfirmToken') || '').trim()) {
+                        showAlert(
+                            'Servis žádá o propojení účtu. Přihlaste se jako zákazník — potvrzení proběhne po přihlášení.',
+                            'info'
+                        );
                     } else if (pendingReservationClaimToken) {
                         showAlert('Máte odkaz pro přiřazení klienta k rezervaci. Přihlaste se jako servis, vazba se po přihlášení automaticky potvrdí.', 'info');
                     }

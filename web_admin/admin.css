@@ -3610,6 +3610,19 @@ pre.tool-result {
 }
 
 /* ============ GLOBAL ERROR ============ */
+/* Nad modal overlay (z-index ~1000–1200), aby byly API chyby vidět při otevřeném dialogu */
+#global-error.global-error {
+  position: fixed;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4000;
+  max-width: min(560px, calc(100vw - 32px));
+  margin-bottom: 0;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.22);
+  pointer-events: auto;
+}
+
 .global-error {
   background: #fee2e2;
   color: #991b1b;

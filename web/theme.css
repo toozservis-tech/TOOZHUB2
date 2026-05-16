@@ -1015,7 +1015,18 @@ body.modal-open {
 }
 
 .reminder-primary-actions .btn {
-  flex: 0 1 320px;
+  flex: 0 1 auto;
+  max-width: min(320px, 100%);
+}
+
+/* Hlavní „+ Přidat připomínku“ nesmí řídit flex jako obecná .reminder-actions (stretch / grow),
+   část layoutu používá .reminder-actions + .reminder-primary-actions zároveň. */
+.reminder-actions.reminder-primary-actions {
+  align-items: flex-start;
+}
+
+.reminder-actions-container > .reminder-primary-actions {
+  align-self: flex-start;
 }
 
 .reminder-per-item-note {
@@ -1226,7 +1237,7 @@ body.modal-open {
     width: 100% !important;
   }
 
-  .reminder-actions .btn {
+  .reminder-actions:not(.reminder-primary-actions) .btn {
     flex: 1 0 100%;
     width: 100% !important;
   }

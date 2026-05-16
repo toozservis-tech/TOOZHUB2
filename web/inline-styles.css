@@ -83,14 +83,12 @@
     min-height: 20px;
 }
 
-/* ARES data fields */
+/* Registrace: jméno/adresa – vždy viditelné (ručně i po doplnění z ARES). Dříve display:none bránilo vyplnění bez úspěšného ARES. */
 #aresDataFields {
-    display: none;
-    margin-top: 20px;
-    padding: 15px;
-    background: rgba(99, 102, 241, 0.1);
-    border-radius: 8px;
-    border-left: 3px solid #6366f1;
+    margin-top: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
 }
 
 /* Readonly input fields */
