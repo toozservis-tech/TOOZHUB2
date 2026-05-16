@@ -288,6 +288,10 @@ def test_access_request_notifications_keys(access_stack, monkeypatch: pytest.Mon
     assert "email_sent" in data
     assert data["notification"]["channel"] == "email"
     assert "message" in data["notification"]
+    assert int(data["vehicle_id"]) == int(vehicle.id)
+    assert data["message"] == "Žádost o přístup k vozidlu byla odeslána. Čeká se na vyjádření uživatele."
+    assert data["notification"]["sent"] is True
+    assert data["notification"]["message"] == "Uživatel byl upozorněn e-mailem."
 
 
 @pytest.fixture()
@@ -374,6 +378,9 @@ def test_access_request_email_success(access_stack, monkeypatch: pytest.MonkeyPa
 
     def fake_send(*, to_email: str, subject: str, plain_body: str) -> bool:
         sent.append(True)
+        assert "Servis žádá o přístup k vozidlu" in subject
+        assert "servis" in plain_body.lower()
+        assert "EM" in plain_body or "SPZ" in plain_body or "vozidlu" in plain_body.lower()
         return True
 
     monkeypatch.setattr(
@@ -388,6 +395,11 @@ def test_access_request_email_success(access_stack, monkeypatch: pytest.MonkeyPa
     data = r.json()
     assert data["created"] is True
     assert data["email_sent"] is True
+    assert int(data["vehicle_id"]) == int(vehicle.id)
+    assert data["message"] == "Žádost o přístup k vozidlu byla odeslána. Čeká se na vyjádření uživatele."
+    assert data["notification"]["sent"] is True
+    assert data["notification"]["reason"] is None
+    assert data["notification"]["message"] == "Uživatel byl upozorněn e-mailem."
     assert sent == [True]
     rid = int(data["request_id"])
     aud = (
@@ -429,6 +441,8 @@ def test_access_request_smtp_unavailable(access_stack, monkeypatch: pytest.Monke
     assert data["created"] is True
     assert data["email_sent"] is False
     assert data["notification"]["reason"] == "smtp_not_configured"
+    assert data["notification"]["message"] == "Žádost byla uložena, ale e-mail se nepodařilo odeslat."
+    assert int(data["vehicle_id"]) == int(vehicle.id)
     rid = int(data["request_id"])
     row = (
         db.query(GlobalAuditLog)
@@ -439,6 +453,82 @@ def test_access_request_smtp_unavailable(access_stack, monkeypatch: pytest.Monke
         .first()
     )
     assert row is not None
+
+
+def test_access_request_send_returns_false_counts_as_failed(access_stack, monkeypatch: pytest.MonkeyPatch):
+    client, db, owner, service, vehicle = access_stack
+
+    def fake_send(*, to_email: str, subject: str, plain_body: str) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        "src.modules.vehicle_hub.service_access_messaging.send_service_access_request_email",
+        fake_send,
+    )
+    r = client.post(
+        "/api/v1/services/workspace/access-requests",
+        json={"vehicle_id": vehicle.id, "lookup_query": vehicle.plate},
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["created"] is True
+    assert data["email_sent"] is False
+    assert data["notification"]["reason"] == "send_failed"
+    assert data["notification"]["message"] == "Žádost byla uložena, ale e-mail se nepodařilo odeslat."
+    rid = int(data["request_id"])
+    row = (
+        db.query(GlobalAuditLog)
+        .filter(
+            GlobalAuditLog.action == "service_access_request_email_failed",
+            GlobalAuditLog.entity_id == rid,
+        )
+        .first()
+    )
+    assert row is not None
+
+
+def test_access_request_send_raises_no_500(access_stack, monkeypatch: pytest.MonkeyPatch):
+    client, db, owner, service, vehicle = access_stack
+
+    def boom(**_kwargs):
+        raise RuntimeError("smtp transport error")
+
+    monkeypatch.setattr(
+        "src.modules.vehicle_hub.service_access_messaging.send_service_access_request_email",
+        boom,
+    )
+    r = client.post(
+        "/api/v1/services/workspace/access-requests",
+        json={"vehicle_id": vehicle.id, "lookup_query": vehicle.plate},
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["created"] is True
+    assert data["email_sent"] is False
+    assert data["notification"]["reason"] == "send_failed"
+    rid = int(data["request_id"])
+    row = (
+        db.query(GlobalAuditLog)
+        .filter(
+            GlobalAuditLog.action == "service_access_request_email_failed",
+            GlobalAuditLog.entity_id == rid,
+        )
+        .first()
+    )
+    assert row is not None
+
+
+def test_workspace_access_request_forbidden_for_non_service(access_stack):
+    client, db, owner, service, vehicle = access_stack
+    client.app.dependency_overrides[get_current_user] = lambda: owner
+    try:
+        r = client.post(
+            "/api/v1/services/workspace/access-requests",
+            json={"vehicle_id": vehicle.id, "lookup_query": vehicle.plate},
+        )
+        assert r.status_code == 403, r.text
+    finally:
+        client.app.dependency_overrides[get_current_user] = lambda: service
 
 
 def test_access_request_existing_pending_no_duplicate_email(access_stack, monkeypatch: pytest.MonkeyPatch):
@@ -471,6 +561,9 @@ def test_access_request_existing_pending_no_duplicate_email(access_stack, monkey
     assert data["created"] is False
     assert data["email_sent"] is False
     assert data["notification"]["reason"] == "existing_pending"
+    assert int(data["vehicle_id"]) == int(vehicle.id)
+    assert data["message"] == "Žádost už čeká na potvrzení."
+    assert data["notification"]["message"] == "Žádost už čeká na potvrzení. Nový e-mail nebyl odeslán."
     assert calls == [1]
     assert db.query(ServiceAccessRequest).filter(ServiceAccessRequest.vehicle_id == vehicle.id).count() == 1
 

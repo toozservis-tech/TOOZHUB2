@@ -986,10 +986,17 @@
   }
 
   function renderDetailPills(detail) {
+    const vid = Number(detail?.vehicle_id || detail?.id || 0);
+    const st = String(detail?.status || detail?.access_status || '').toLowerCase();
+    const localPending =
+      vid && state.pendingAccessVehicleIds && state.pendingAccessVehicleIds[vid] && st !== 'pending_request';
     const pills = [
       `<span class="service-shell-detail-pill">${escape(accessStatusLabel(detail?.status || detail?.access_status))}</span>`,
       `<span class="service-shell-detail-pill">${escape(disclosureLabel(detail?.disclosure))}</span>`,
     ];
+    if (localPending) {
+      pills.push('<span class="service-shell-detail-pill">Čeká na schválení</span>');
+    }
     if (detail?.can_edit) pills.push('<span class="service-shell-detail-pill">Lze upravit</span>');
     if (detail?.can_request_access) pills.push('<span class="service-shell-detail-pill">Lze žádat přístup</span>');
     if (detail?.can_create_work_order) pills.push('<span class="service-shell-detail-pill">Lze založit zakázku</span>');
@@ -2866,29 +2873,34 @@
         lookup_query: lookupQuery,
         note: 'Žádost vytvořená z nového servisního shellu.',
       });
-      const primary =
-        response?.created
-          ? 'Žádost o přístup k vozidlu byla odeslána. Čeká se na vyjádření uživatele.'
-          : response?.notification?.reason === 'existing_pending'
-            ? 'Žádost už čeká na potvrzení. Nová žádost nebyla odeslána.'
-            : response?.message || 'Žádost byla zpracována.';
-      const parts = [primary];
-      if (response?.created) {
-        if (response?.email_sent) parts.push('Uživatel byl upozorněn e-mailem.');
-        else parts.push('E-mail se nepodařilo odeslat, ale žádost je uložená v aplikaci.');
-      }
       state.pendingAccessVehicleIds = { ...(state.pendingAccessVehicleIds || {}) };
       state.pendingAccessVehicleIds[vid] = true;
-      showServiceToast(
-        response?.created ? 'success' : 'warning',
-        'Žádost o přístup',
-        parts.join('\n'),
-      );
-      if (isModalOpen('service-tools')) {
-        await searchVehicles(lookupQuery);
-      } else if (String(state.modal?.entityType || '') === 'vehicle' || String(state.modal?.entityType || '') === 'document' || String(state.modal?.entityType || '') === 'reservation' || String(state.modal?.entityType || '') === 'reminder') {
-        await reloadModalData();
+
+      const created = response?.created === true;
+      const existingPending = response?.notification?.reason === 'existing_pending';
+      const emailSent = response?.email_sent === true;
+
+      if (created) {
+        const lines = ['Čeká se na vyjádření uživatele.'];
+        if (emailSent) lines.push('Uživatel byl upozorněn e-mailem.');
+        else lines.push('E-mail se nepodařilo odeslat, ale žádost je uložená v aplikaci.');
+        showServiceToast('success', 'Žádost odeslána', lines.join('\n'));
+      } else if (existingPending) {
+        showServiceToast(
+          'info',
+          'Žádost už čeká',
+          'Žádost o přístup k tomuto vozidlu už čeká na potvrzení uživatelem.',
+        );
+      } else {
+        showServiceToast('warning', 'Žádost o přístup', response?.message || 'Žádost byla zpracována.');
       }
+
+      const wasServiceTools = isModalOpen('service-tools');
+      if (wasServiceTools) {
+        closeModal();
+      }
+      openVehicleDetailModal(vid);
+      await load(true, true);
       refreshAccessRequestDependentUi();
     } catch (error) {
       showServiceToast('error', 'Žádost o přístup', error?.message || 'Operace se nepodařila.');

@@ -114,15 +114,8 @@ logger = logging.getLogger(__name__)
 
 def _service_access_email_notification_message(email_result: dict[str, Any]) -> str:
     if email_result.get("sent"):
-        return "E-mail s upozorněním byl odeslán majiteli vozidla."
-    r = email_result.get("reason")
-    if r == "smtp_not_configured":
-        return "Žádost byla uložena, ale e-mail majiteli se nepodařilo odeslat (SMTP není nakonfigurováno)."
-    if r == "owner_email_missing":
-        return "Žádost byla uložena. Majitel nemá v profilu e-mail — e-mail se neodeslal."
-    if r == "send_failed":
-        return "Žádost byla uložena, ale e-mail majiteli se nepodařilo odeslat."
-    return "Žádost byla uložena."
+        return "Uživatel byl upozorněn e-mailem."
+    return "Žádost byla uložena, ale e-mail se nepodařilo odeslat."
 
 
 router = APIRouter(prefix="/services/workspace", tags=["service-workspace-v1"])
@@ -3017,14 +3010,15 @@ def create_service_access_request(
         return {
             "created": False,
             "request_id": int(existing_pending.id),
+            "vehicle_id": int(vehicle.id),
             "status": "pending",
-            "message": "Pro toto vozidlo už existuje čekající žádost o přístup.",
+            "message": "Žádost už čeká na potvrzení.",
             "email_sent": False,
             "notification": {
                 "channel": "email",
                 "sent": False,
                 "reason": "existing_pending",
-                "message": "Pro toto vozidlo už čekající žádost existuje. Nový e-mail nebyl odeslán.",
+                "message": "Žádost už čeká na potvrzení. Nový e-mail nebyl odeslán.",
             },
         }
 
@@ -3076,13 +3070,14 @@ def create_service_access_request(
     return {
         "created": True,
         "request_id": int(request_row.id),
+        "vehicle_id": int(vehicle.id),
         "status": "pending",
-        "message": "Žádost o přístup byla uložena a čeká na schválení uživatelem.",
+        "message": "Žádost o přístup k vozidlu byla odeslána. Čeká se na vyjádření uživatele.",
         "email_sent": bool(email_result.get("sent")),
         "notification": {
             "channel": "email",
             "sent": bool(email_result.get("sent")),
-            "reason": email_result.get("reason"),
+            "reason": email_result.get("reason") if not email_result.get("sent") else None,
             "message": notif_msg,
         },
     }

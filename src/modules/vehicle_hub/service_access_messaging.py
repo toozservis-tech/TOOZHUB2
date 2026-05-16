@@ -14,11 +14,33 @@ from src.modules.email_client.service import EmailMessage, EmailService
 
 from .audit_log import write_global_audit_log
 from .models import Customer, Vehicle
-from .service_access import masked_plate, masked_vin
+from .service_access import masked_plate, vehicle_label
 
 logger = logging.getLogger(__name__)
 
 send_service_access_request_email: Callable[..., bool] | None = None
+
+
+def _vehicle_label_for_access_email(vehicle: Vehicle) -> str:
+    """
+    Bezpečný popis vozidla pro e-mail majiteli: SPZ (maskovaná) + značka/model,
+    případně zkrácený VIN (koncovka), bez dalších osobních údajů.
+    """
+    parts: list[str] = []
+    pm = masked_plate(getattr(vehicle, "plate", None))
+    if pm:
+        parts.append(f"SPZ {pm}")
+    bm = " ".join(
+        p for p in [getattr(vehicle, "brand", None), getattr(vehicle, "model", None)] if p
+    ).strip()
+    if bm:
+        parts.append(bm)
+    vin_raw = str(getattr(vehicle, "vin", None) or "").strip().upper()
+    if vin_raw and len(vin_raw) >= 6 and not pm:
+        parts.append(f"koncovka VIN …{vin_raw[-6:]}")
+    if parts:
+        return " – ".join(parts)
+    return vehicle_label(vehicle)
 
 
 def _sanitize_email_error(exc: BaseException, *, max_len: int = 300) -> str:
@@ -61,17 +83,15 @@ def try_email_owner_about_service_access_request(
         return {"attempted": False, "sent": False, "reason": "owner_email_missing", "error": None}
 
     service_disp = (service.name or service.email or "Servis").strip()
-    plate_m = masked_plate(getattr(vehicle, "plate", None)) or "—"
-    vin_m = masked_vin(getattr(vehicle, "vin", None)) or "—"
-    subject = f"{APP_DISPLAY_NAME}: žádost servisu o přístup k vozidlu"
+    vlabel = _vehicle_label_for_access_email(vehicle)
+    subject = f"Servis žádá o přístup k vozidlu — {APP_DISPLAY_NAME}"
     body = (
-        f"Dobrý den,\n\n"
-        f"servis „{service_disp}“ žádá o přístup k vašemu vozidlu.\n"
-        f"SPZ (ukázka): {plate_m}\n"
-        f"VIN (ukázka): {vin_m}\n\n"
-        f"Schválení nebo zamítnutí prosím proveďte po přihlášení v aplikaci {APP_DISPLAY_NAME} "
-        f"(detail vozidla — záložka Servis / žádosti o přístup).\n\n"
-        f"Neodpovídejte na tento e-mail — neobsahuje odkaz s oprávněním mimo aplikaci.\n"
+        "Dobrý den,\n\n"
+        f"servis {service_disp} žádá o přístup k vozidlu {vlabel} ve vaší aplikaci {APP_DISPLAY_NAME}.\n\n"
+        "Žádost můžete schválit nebo odmítnout po přihlášení do aplikace.\n\n"
+        "Bez vašeho schválení servis nezíská přístup k detailu vozidla.\n\n"
+        "Pokud tuto žádost nečekáte, můžete ji v aplikaci odmítnout.\n\n"
+        f"S pozdravem\n{APP_DISPLAY_NAME}\n"
     )
 
     sender = send_service_access_request_email or _default_send_owner_email
