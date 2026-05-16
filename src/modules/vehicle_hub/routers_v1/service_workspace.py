@@ -68,6 +68,7 @@ from ..service_access import (
     normalize_lookup_query,
     require_service_vehicle_link,
     resolve_vehicle_for_lookup,
+    revoke_vehicle_service_link,
     vehicle_label,
 )
 from ..service_access_messaging import try_email_owner_about_service_access_request
@@ -733,6 +734,7 @@ def _build_vehicle_detail_payload(
     )
     disclosure = "full" if approved_link else "limited"
     can_create_work_order = bool(approved_link and linked_customer and owner_customer)
+    can_revoke_service_access = bool(approved_link and status == "already_approved")
     can_request_access = bool(
         owner_customer
         and owner_customer.id != current_user.id
@@ -776,6 +778,7 @@ def _build_vehicle_detail_payload(
             "linked_customer": linked_customer,
             "request_id": int(pending_request.id) if pending_request else None,
             "request_status": pending_request.status if pending_request else None,
+            "can_revoke_service_access": can_revoke_service_access,
             "service_link_id": int(approved_link.id) if approved_link else None,
             "records_count": int(visible_records_count),
             "has_qr_token": bool(active_qr_token),
@@ -3142,6 +3145,54 @@ def get_service_vehicle_detail(
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nebylo nalezeno.")
     return _build_vehicle_detail_payload(db, current_user=current_user, vehicle=vehicle)
+
+
+@router.post("/vehicles/{vehicle_id}/revoke-my-access")
+def service_revoke_own_vehicle_access(
+    vehicle_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Servis dobrovolně odebere svůj schválený přístup k vozidlu (bez zásahu majitele)."""
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+
+    link = get_active_vehicle_service_link(
+        db,
+        service_customer_id=int(current_user.id),
+        vehicle_id=int(vehicle_id),
+    )
+    if not link:
+        raise HTTPException(
+            status_code=404,
+            detail="Ke vozidlu nemáte aktivní schválený přístup.",
+        )
+    try:
+        revoke_vehicle_service_link(
+            db,
+            service_customer_id=int(current_user.id),
+            vehicle_id=int(vehicle_id),
+            revoked_by_customer_id=int(current_user.id),
+            reason="service_self_revoke",
+        )
+        write_global_audit_log(
+            db,
+            entity_type="vehicle_service_access",
+            entity_id=int(link.id),
+            action="service_access_revoked_by_service",
+            actor_user_id=int(current_user.id),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=getattr(current_user, "tenant_id", None),
+            vehicle_id=int(vehicle_id),
+            metadata={"vehicle_id": int(vehicle_id), "source": "service_workspace_self_revoke"},
+        )
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Nepodařilo se odebrat přístup: {exc}") from exc
+    return {"revoked": True, "vehicle_id": int(vehicle_id)}
 
 
 @router.get("/vehicles/{vehicle_id}/qr", response_model=VehicleQrTokenOutV1)

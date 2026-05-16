@@ -531,6 +531,29 @@ def test_workspace_access_request_forbidden_for_non_service(access_stack):
         client.app.dependency_overrides[get_current_user] = lambda: service
 
 
+def test_service_revoke_own_vehicle_workspace(access_stack):
+    client, db, owner, service, vehicle = access_stack
+    from src.modules.vehicle_hub.service_access import create_or_update_vehicle_service_link
+
+    create_or_update_vehicle_service_link(
+        db,
+        tenant_id=owner.tenant_id,
+        service_customer_id=int(service.id),
+        owner_customer_id=int(owner.id),
+        vehicle_id=int(vehicle.id),
+        approved_by_customer_id=int(owner.id),
+        source_type="test_grant",
+    )
+    db.commit()
+
+    r = client.post(f"/api/v1/services/workspace/vehicles/{vehicle.id}/revoke-my-access")
+    assert r.status_code == 200, r.text
+    assert r.json()["revoked"] is True
+
+    r2 = client.post(f"/api/v1/services/workspace/vehicles/{vehicle.id}/revoke-my-access")
+    assert r2.status_code == 404
+
+
 def test_access_request_existing_pending_no_duplicate_email(access_stack, monkeypatch: pytest.MonkeyPatch):
     client, db, owner, service, vehicle = access_stack
     calls: list[int] = []

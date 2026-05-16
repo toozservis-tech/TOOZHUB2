@@ -2843,7 +2843,8 @@
       rows.forEach((item) => {
         const id = Number(item?.vehicle_id || 0);
         if (!id) return;
-        if (!item?.can_request_access) delete nextPending[id];
+        const st = String(item?.status || '').toLowerCase();
+        if (!item?.can_request_access && st !== 'pending_request') delete nextPending[id];
       });
       state.pendingAccessVehicleIds = nextPending;
       renderServiceToolsModal();
@@ -2910,12 +2911,65 @@
     }
   }
 
+  async function revokeMyVehicleAccess(vehicleId) {
+    const vid = Number(vehicleId || 0);
+    if (!vid) return;
+    if (!window.confirm('Odebrat váš přístup k tomuto vozidlu? Majitel zůstane vlastníkem, pouze zrušíte servisní oprávnění.')) return;
+    try {
+      await window.apiCall(`/api/v1/services/workspace/vehicles/${vid}/revoke-my-access`, 'POST', {});
+      if (state.pendingAccessVehicleIds) delete state.pendingAccessVehicleIds[vid];
+      showServiceToast('success', 'Přístup odebrán', 'Vazba servisu k vozidlu byla zrušena.');
+      await reloadModalData();
+      await load(true, true);
+      refreshAccessRequestDependentUi();
+    } catch (error) {
+      showServiceToast('error', 'Odebrání se nepodařilo', error?.message || 'Operace selhala.');
+    }
+  }
+
+  /** Patka vozidla: čekání / žádost / odebrání — onclick v jednoduchých uvozovkách kvůli JSON.stringify v argumentu. */
+  function renderVehicleAccessFooterButtons(detail, vehicleId) {
+    const id = Number(vehicleId || detail?.vehicle_id || 0);
+    if (!id) return '';
+    const st = String(detail?.status || '').toLowerCase();
+    const busy = state.accessRequestBusyVehicleId === id;
+    const localPending = state.pendingAccessVehicleIds && state.pendingAccessVehicleIds[id];
+    if (st === 'pending_request' || localPending) {
+      return '<button type="button" class="btn btn-secondary" disabled>Čeká na potvrzení majitele</button>';
+    }
+    if (detail?.can_revoke_service_access && st === 'already_approved') {
+      return `<button type="button" class="btn btn-warning" onclick="window.serviceShell.revokeMyVehicleAccess(${id})">Odebrat přístup k vozidlu</button>`;
+    }
+    if (detail?.can_request_access) {
+      return accessRequestPrimaryButton(id, detail?.plate_masked || '');
+    }
+    return '';
+  }
+
   /** Tlačítko žádosti o přístup — jednotně disabled / „Odesílám…“ při běžícím requestu. */
   function accessRequestPrimaryButton(vehicleId, lookupQueryStr) {
     const vid = Number(vehicleId || 0);
     if (!vid) return '';
     const busy = state.accessRequestBusyVehicleId === vid;
-    return `<button type="button" class="btn btn-primary" ${busy ? 'disabled' : ''} onclick="window.serviceShell.requestVehicleAccess(${vid}, ${JSON.stringify(String(lookupQueryStr || ''))})">${busy ? 'Odesílám…' : 'Požádat o přístup'}</button>`;
+    return `<button type="button" class="btn btn-primary" ${busy ? 'disabled' : ''} onclick='window.serviceShell.requestVehicleAccess(${vid}, ${JSON.stringify(String(lookupQueryStr || ''))})'>${busy ? 'Odesílám…' : 'Požádat o přístup'}</button>`;
+  }
+
+  /** Řádek ve výsledcích lookup vozidla — stejné stavy jako v detailu vozidla. */
+  function accessRequestLookupRowButton(item) {
+    const vid = Number(item?.vehicle_id || 0);
+    if (!vid) return '';
+    const busy = state.accessRequestBusyVehicleId === vid;
+    const st = String(item?.status || '').toLowerCase();
+    const localPending = state.pendingAccessVehicleIds && state.pendingAccessVehicleIds[vid];
+    if (st === 'pending_request' || localPending) {
+      return '<button type="button" class="btn btn-secondary" disabled>Čeká na potvrzení majitele</button>';
+    }
+    if (!item?.can_request_access) return '';
+    const q = String(item?.plate_masked || item?.vin_masked || state.vehicleLookupQuery || '').trim();
+    if (q.length < 2) {
+      return `<button type="button" class="btn btn-primary" disabled title="Chybí identifikátor">Požádat o přístup</button>`;
+    }
+    return `<button type="button" class="btn btn-primary" ${busy ? 'disabled' : ''} onclick='window.serviceShell.requestVehicleAccess(${vid}, ${JSON.stringify(q)})'>${busy ? 'Odesílám…' : 'Požádat o přístup'}</button>`;
   }
 
   function openVehicleFromLookup(candidate) {
@@ -3048,7 +3102,7 @@
             <div class="service-shell-modal-actions">
               ${item?.can_open_detail ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openVehicleFromLookupByIndex(${index})">Detail</button>` : ''}
               ${item?.can_create_work_order ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCreateWorkOrderFromLookupByIndex(${index})">Nová zakázka</button>` : ''}
-              ${item?.can_request_access ? `<button type="button" class="btn btn-primary" ${state.accessRequestBusyVehicleId === vid ? 'disabled' : ''} onclick="window.serviceShell.requestVehicleAccess(${vid})">${state.accessRequestBusyVehicleId === vid ? 'Odesílám…' : 'Požádat o přístup'}</button>` : ''}
+              ${accessRequestLookupRowButton(item)}
             </div>
           </div>
         `;
@@ -5337,7 +5391,7 @@
       `,
       renderFooter: (detail) => `
         <div class="service-shell-modal-footer">
-          ${detail?.can_request_access ? accessRequestPrimaryButton(id, detail?.plate_masked || '') : ''}
+          ${renderVehicleAccessFooterButtons(detail, id)}
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openVehicleQrModal(${id})">Zobrazit QR</button>
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openFirstRecordForQuote()">Vytvořit nabídku</button>
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openServiceRecordModal(${id})">Nový záznam</button>
@@ -7413,6 +7467,7 @@
     unlinkCustomer,
     searchVehicles,
     requestVehicleAccess,
+    revokeMyVehicleAccess,
     openVehicleFromLookup,
     openVehicleFromLookupByIndex,
     openCreateWorkOrderFromLookup,
