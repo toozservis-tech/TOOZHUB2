@@ -1,0 +1,16 @@
+[Unit]
+Description=Správa vozidel — GoAccess admin traffic report (nginx access log)
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=toozhub2
+Group=toozhub2
+# Čtení /var/log/nginx/*.log (skupina adm na Debian/Ubuntu)
+SupplementaryGroups=adm
+WorkingDirectory=/opt/toozhub2/app
+ExecStart=/bin/bash /opt/toozhub2/app/scripts/admin_generate_traffic_report.sh
+
+# Chyba generátoru nesmí shodit jiné služby; skript končí exit 0 i při chybě v metadatech.
+SuccessExitStatus=0

@@ -173,6 +173,14 @@ def test_public_quote_approve_updates_quote_and_work_order(db_context) -> None:
     ).fetchone()
     assert wo_audit is not None
     assert wo_audit[0] == "public_quote_approved"
+    notification = db.execute(
+        text(
+            "SELECT title, message FROM system_notifications WHERE target_type = 'user' AND target_value = :target ORDER BY id DESC LIMIT 1"
+        ),
+        {"target": str(db_context["service"].id)},
+    ).fetchone()
+    assert notification is not None
+    assert "schválil" in (notification[1] or "").lower()
     assert service_dashboard_module._quote_status_consistency_note(quote=quote, work_order=work_order) is None
 
 
@@ -209,6 +217,14 @@ def test_public_quote_reject_updates_status_and_audits(db_context) -> None:
     ).fetchone()
     assert wo_audit is not None
     assert wo_audit[0] == "public_quote_rejected_work_order_sync"
+    notification = db.execute(
+        text(
+            "SELECT title, message FROM system_notifications WHERE target_type = 'user' AND target_value = :target ORDER BY id DESC LIMIT 1"
+        ),
+        {"target": str(db_context["service"].id)},
+    ).fetchone()
+    assert notification is not None
+    assert "odmítl" in (notification[1] or "").lower()
     assert service_dashboard_module._quote_status_consistency_note(quote=quote, work_order=work_order) is None
 
 

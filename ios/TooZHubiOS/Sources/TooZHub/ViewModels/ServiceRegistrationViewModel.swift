@@ -18,7 +18,6 @@ final class ServiceRegistrationViewModel: ObservableObject {
     @Published var city = ""
     @Published var zip = ""
     @Published var dic = ""
-    @Published var registrationPurpose = ""
 
     func lookupAres(auth: AuthManager) async {
         let digits = ico.filter(\.isNumber)
@@ -76,10 +75,6 @@ final class ServiceRegistrationViewModel: ObservableObject {
             errorMessage = "Vyplňte zodpovědnou osobu."
             return false
         }
-        if registrationPurpose.trimmingCharacters(in: .whitespacesAndNewlines).count < 10 {
-            errorMessage = "Účel registrace musí mít alespoň 10 znaků."
-            return false
-        }
 
         isLoading = true
         defer { isLoading = false }
@@ -97,8 +92,7 @@ final class ServiceRegistrationViewModel: ObservableObject {
                     streetNumber: normalize(streetNumber),
                     city: city.trimmingCharacters(in: .whitespacesAndNewlines),
                     zip: zip.trimmingCharacters(in: .whitespacesAndNewlines),
-                    dic: normalize(dic),
-                    registrationPurpose: registrationPurpose.trimmingCharacters(in: .whitespacesAndNewlines)
+                    dic: normalize(dic)
                 )
             )
             infoMessage = response.message

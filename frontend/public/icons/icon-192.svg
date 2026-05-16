@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="TooZHub">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14b8a6" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" rx="44" fill="url(#bg)" />
+  <path
+    d="M38 108c0-11 9-20 20-20h76c11 0 20 9 20 20v8H38v-8Zm20-34h76l-10-16c-3-5-8-8-14-8H82c-6 0-11 3-14 8L58 74Zm8 54a12 12 0 1 1 0 24 12 12 0 0 1 0-24Zm60 0a12 12 0 1 1 0 24 12 12 0 0 1 0-24Z"
+    fill="#f8fafc"
+  />
+  <path d="M74 114h44" stroke="#99f6e4" stroke-width="8" stroke-linecap="round" />
+</svg>

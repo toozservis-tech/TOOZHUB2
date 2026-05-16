@@ -350,6 +350,12 @@
     payrollError: '',
     payrollDetailEmployeeId: null,
     payrollEmployeeDetailCache: null,
+    /** Objekt `{ [reminderId]: true }` — přehlédnuto v aktuální návštěvě sekce Připomínky kvůli frontě propadlých úkolů. */
+    overdueReminderSkipIds: null,
+    /** ID připomínky při rozbalení formuláře „Posunout připomenutí“ přímo v sekci */
+    overdueReminderRescheduleId: null,
+    /** Blokovat tlačítka během ukládání z overlay připomínek po termínu */
+    overdueReminderActionSaving: false,
   };
 
   state.modal = createEmptyModalState();
@@ -511,12 +517,303 @@
     return items;
   }
 
+  function reminderIsIncomplete(item) {
+    if (!item) return false;
+    const v = item.is_completed;
+    if (v === true || v === 1 || v === '1') return false;
+    if (String(v).toLowerCase() === 'true') return false;
+    return true;
+  }
+
+  /** Propadlé: aktivní připomínka s datumem úkolu před dneškem nebo s časem notify_at už v minulosti. */
+  function reminderIsOverdueAttention(item) {
+    if (!reminderIsIncomplete(item)) return false;
+    const dk = toDateKey(item?.due_date);
+    if (dk && dk < todayKey()) return true;
+    const na = item?.notify_at;
+    if (na) {
+      const t = new Date(na).getTime();
+      if (!Number.isNaN(t) && t < Date.now()) return true;
+    }
+    return false;
+  }
+
+  function getOverdueRemindersSortedByDue() {
+    const items = Array.isArray(state.reminders) ? state.reminders.filter(reminderIsOverdueAttention) : [];
+    items.sort((a, b) => {
+      const left = `${toDateKey(a?.due_date)}|${String(a?.notify_at || '')}`;
+      const right = `${toDateKey(b?.due_date)}|${String(b?.notify_at || '')}`;
+      return left.localeCompare(right);
+    });
+    return items;
+  }
+
+  function overdueAttentionSummaryLabel(item) {
+    const dk = toDateKey(item?.due_date);
+    if (dk && dk < todayKey()) return `Úkol měl stanovený termín ${formatDate(item.due_date)}.`;
+    if (item?.notify_at) return `Plánované připomenutí (${formatDateTime(item.notify_at)}) už proběhlo.`;
+    return 'Vyřešte dokončením úkolu nebo posunem termínu.';
+  }
+
+  function resetRemindersSectionOverdueSkips() {
+    state.overdueReminderSkipIds = {};
+    state.overdueReminderRescheduleId = null;
+    state.overdueReminderActionSaving = false;
+  }
+
+  function resolveRemindersPastDueOverlayPack() {
+    const list = getOverdueRemindersSortedByDue();
+    if (!list.length) return null;
+    const rescheduleId = Number(state.overdueReminderRescheduleId || 0);
+    if (rescheduleId) {
+      const hit = list.find((entry) => Number(entry?.id || 0) === rescheduleId);
+      if (!hit) {
+        state.overdueReminderRescheduleId = null;
+      } else {
+        const index = Math.max(0, list.indexOf(hit));
+        return {
+          reminder: hit,
+          index: index + 1,
+          total: list.length,
+          step: 'reschedule',
+        };
+      }
+    }
+    const pack = nextOverdueReminderForPrompt();
+    return pack ? { ...pack, step: 'action' } : null;
+  }
+
+  function remindersPastDueAttentionOverlayHtml() {
+    if (!state.mounted || state.activeSection !== 'reminders') return '';
+    const pack = resolveRemindersPastDueOverlayPack();
+    if (!pack) return '';
+
+    const reminder = pack.reminder || {};
+    const id = Number(reminder?.id || 0);
+    if (!id) return '';
+
+    const vehicleLabel = String(reminder?.vehicle_label || 'Připomínka').trim() || 'Připomínka';
+    const excerpt = String(reminder?.text || '').trim();
+    const excerptShort = excerpt.length > 280 ? `${excerpt.slice(0, 277)}…` : excerpt;
+    const busy = !!state.overdueReminderActionSaving;
+    const step = pack.step === 'reschedule' ? 'reschedule' : 'action';
+    const defaults = overdueReminderDefaultRescheduleFields(reminder);
+
+    let bodyInner = '';
+    if (step === 'reschedule') {
+      bodyInner = `
+          <div class="service-shell-inline-error" role="alert" style="margin:0 0 14px;line-height:1.45;font-size:0.89rem;color:#fca5a5;">
+            Vyberte nový termín a volitelný čas dalšího připomenutí.
+          </div>
+          <form class="service-dashboard-modal-form" onsubmit="event.preventDefault(); window.serviceShell.submitOverdueReminderReschedule();">
+            <div class="service-dashboard-modal-grid cols-2">
+              <div class="form-group">
+                <label for="serviceShellOverdueReminderDue">Nový termín úkolu (datum)</label>
+                <input type="date" id="serviceShellOverdueReminderDue" required ${busy ? 'disabled' : ''} value="${escape(defaults.due)}">
+              </div>
+              <div class="form-group">
+                <label for="serviceShellOverdueReminderNotify">Další připomenutí (datum a čas)</label>
+                <input type="datetime-local" id="serviceShellOverdueReminderNotify" ${busy ? 'disabled' : ''} value="${escape(defaults.notifyAt)}">
+              </div>
+            </div>
+          </form>
+      `;
+    } else {
+      const notice = overdueAttentionSummaryLabel(reminder);
+      const bodyText = excerptShort
+        ? `<p style="margin:0 0 12px;line-height:1.5;">${escape(excerptShort)}</p>`
+        : '<p class="service-shell-muted" style="margin:0 0 12px;">Bez doprovodného textu.</p>';
+      bodyInner = `
+        <div class="service-shell-inline-error" role="alert" style="margin:0 0 14px;line-height:1.45;font-size:0.9rem;color:#fcd34d;">
+          ${escape(notice)}
+        </div>
+        ${bodyText}
+        <div class="service-shell-list" style="margin-top:12px;font-size:0.9rem;">
+          <div class="service-shell-list-row"><span class="service-shell-list-title">Vozidlo / kontext</span><span class="service-shell-list-value">${escape(vehicleLabel)}</span></div>
+        </div>
+      `;
+    }
+
+    const footerBtns =
+      step === 'reschedule'
+        ? `
+        <button type="button" class="btn btn-secondary" ${busy ? 'disabled' : ''} onclick="window.serviceShell.backOverdueReminderPromptToAction()">Zpět</button>
+        <button type="button" class="btn btn-primary" ${busy ? 'disabled' : ''} onclick="window.serviceShell.submitOverdueReminderReschedule()">${busy ? 'Ukládám…' : 'Uložit nový termín'}</button>
+      `
+        : `
+        <button type="button" class="btn btn-secondary" ${busy ? 'disabled' : ''} onclick="window.serviceShell.dismissOverdueReminderPromptAndContinue(${id})">Teď ne</button>
+        <button type="button" class="btn btn-secondary" ${busy ? 'disabled' : ''} onclick="window.serviceShell.markOverdueReminderDoneFromPrompt(${id})">${busy ? 'Ukládám…' : 'Splněno'}</button>
+        <button type="button" class="btn btn-primary" ${busy ? 'disabled' : ''} onclick="window.serviceShell.openOverdueReminderRescheduleStep(${id})">Posunout připomenutí</button>
+      `;
+
+    return `
+      <div class="service-shell-reminders-overdue-backdrop"
+        onclick="if (event.target === this) window.serviceShell.dismissOverdueReminderPromptAndContinue(${id})"
+        style="position:fixed;inset:0;z-index:2147483200;display:flex;align-items:center;justify-content:center;padding:clamp(12px,3vw,20px);background:rgba(14,17,21,0.62);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);">
+        <div class="service-shell-reminders-overdue-dialog" role="dialog" aria-modal="true" onclick="event.stopPropagation();"
+          style="position:relative;background:#171b21;color:#f4f7fb;width:min(520px,calc(100vw - 8px));max-height:90vh;overflow:auto;border-radius:14px;border:1px solid rgba(255,255,255,0.12);box-shadow:0 24px 54px rgba(0,0,0,0.55);padding:clamp(14px,2.5vw,22px);">
+          <header style="margin:0 0 12px;padding-right:36px;">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;opacity:0.75;margin:0 0 6px;">Připomínka po termínu (${Number(pack.index || 1)} z ${Number(pack.total || 1)})</div>
+            <h2 id="service-shell-overdue-title" style="margin:0;font-size:1.2rem;line-height:1.25;">${escape(vehicleLabel)}</h2>
+            <p class="service-shell-muted" style="margin:8px 0 0;line-height:1.45;font-size:0.9rem;">Ujistěte se, že servis ví, zda už je úkol hotový, nebo jej potřebujete jen znovu připomenout v budoucnu.</p>
+          </header>
+          <button type="button" aria-label="Zavřít" onclick="window.serviceShell.dismissOverdueReminderPromptAndContinue(${id})"
+            style="position:absolute;top:12px;right:12px;width:36px;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:inherit;font-size:22px;line-height:1;cursor:pointer;">×</button>
+          <section style="margin-top:12px;">${bodyInner}</section>
+          <footer style="display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;">
+            ${footerBtns}
+          </footer>
+        </div>
+      </div>
+    `;
+  }
+
+  function closeOverdueReminderFloatingModalOnly() {
+    if (
+      state.modal?.open &&
+      (state.modal.entityType === 'reminder-overdue' ||
+        String(state.modal?.key || '').startsWith('reminder-overdue-prompt-'))
+    ) {
+      closeModal();
+    }
+  }
+
+  function nextOverdueReminderForPrompt() {
+    const skip = state.overdueReminderSkipIds || {};
+    const list = getOverdueRemindersSortedByDue();
+    for (let index = 0; index < list.length; index += 1) {
+      const raw = list[index];
+      const rid = Number(raw?.id || 0);
+      if (!rid || skip[rid]) continue;
+      return { reminder: raw, index: index + 1, total: list.length };
+    }
+    return null;
+  }
+
+  function dismissOverdueReminderPromptAndContinue(reminderId) {
+    const id = Number(reminderId || state.modal?.context?.reminderId || 0);
+    if (!state.overdueReminderSkipIds) state.overdueReminderSkipIds = {};
+    if (id) state.overdueReminderSkipIds[id] = true;
+    state.overdueReminderRescheduleId = null;
+    closeOverdueReminderFloatingModalOnly();
+    render();
+  }
+
+  const REMINDERS_OVERDUE_OVERLAY_MOUNT_ID = 'serviceShellRemindersOverdueLayer';
+
+  function removeRemindersOverdueOverlayMount() {
+    document.getElementById(REMINDERS_OVERDUE_OVERLAY_MOUNT_ID)?.remove();
+  }
+
+  /** Upozornění nad celou aplikací — mimo DOM shellu kvůli z-indexu / stacking contextům */
+  function mountRemindersOverdueOverlayIfNeeded() {
+    removeRemindersOverdueOverlayMount();
+    if (!state.mounted || !isServiceRole()) return;
+    if (state.activeSection !== 'reminders') return;
+    const html = remindersPastDueAttentionOverlayHtml();
+    if (!html) return;
+    const layer = document.createElement('div');
+    layer.id = REMINDERS_OVERDUE_OVERLAY_MOUNT_ID;
+    layer.dataset.serviceShellOverlay = 'reminders-overdue';
+    layer.innerHTML = html;
+    document.body.appendChild(layer);
+  }
+
+  function overdueReminderDefaultRescheduleFields(snapshot = {}) {
+    const today = todayKey();
+    const prevDue = toDateKey(snapshot?.due_date);
+    const due = prevDue && prevDue > today ? prevDue : today;
+    const base = new Date();
+    base.setDate(base.getDate() + 1);
+    base.setHours(9, 0, 0, 0);
+    return {
+      due,
+      notifyAt: toDateTimeInputValue(base),
+    };
+  }
+
+  async function markOverdueReminderDoneFromPrompt(reminderId) {
+    const id = Number(reminderId || state.modal?.context?.reminderId || 0);
+    if (!id) return;
+    state.overdueReminderActionSaving = true;
+    render();
+    try {
+      await window.apiCall(`/api/v1/services/workspace/reminders/${id}`, 'PUT', { is_completed: true });
+      showToast('Připomínka byla označena jako splněná.', 'success');
+      state.overdueReminderRescheduleId = null;
+      closeOverdueReminderFloatingModalOnly();
+      await load(true, true);
+    } catch (error) {
+      showToast(String(error?.message || 'Nepodařilo se uložit změnu.'), 'error');
+    } finally {
+      state.overdueReminderActionSaving = false;
+      render();
+    }
+  }
+
+  function openOverdueReminderRescheduleStep(reminderId) {
+    const id = Number(reminderId || state.modal?.context?.reminderId || 0);
+    if (!id) return;
+    state.overdueReminderRescheduleId = id;
+    render();
+  }
+
+  function backOverdueReminderPromptToAction() {
+    state.overdueReminderRescheduleId = null;
+    if (
+      state.modal?.open &&
+      String(state.modal.key || '').startsWith('reminder-overdue-prompt-')
+    ) {
+      state.modal.context = { ...(state.modal.context || {}), step: 'action' };
+      setModalState({ context: state.modal.context, saving: false, error: '' });
+    }
+    render();
+  }
+
+  async function submitOverdueReminderReschedule() {
+    const id = Number(
+      state.overdueReminderRescheduleId || state.modal?.context?.reminderId || 0
+    );
+    if (!id) return;
+    const dueEl = document.getElementById('serviceShellOverdueReminderDue');
+    const notifyEl = document.getElementById('serviceShellOverdueReminderNotify');
+    const dueVal = String(dueEl?.value || '').trim().slice(0, 10) || '';
+    const today = todayKey();
+    if (!dueVal) {
+      showToast('Vyberte nový termín (datum).', 'warning');
+      return;
+    }
+    if (dueVal < today) {
+      showToast('Vyberte termín nepředcházející dnešku.', 'warning');
+      return;
+    }
+    const rawNotify = String(notifyEl?.value || '').trim();
+    const payload = { due_date: dueVal };
+    if (rawNotify) {
+      payload.notify_at = fromDateTimeInputValue(rawNotify);
+    }
+    state.overdueReminderActionSaving = true;
+    render();
+    try {
+      await window.apiCall(`/api/v1/services/workspace/reminders/${id}`, 'PUT', payload);
+      showToast('Termín připomenutí byl aktualizován.', 'success');
+      state.overdueReminderRescheduleId = null;
+      closeOverdueReminderFloatingModalOnly();
+      await load(true, true);
+    } catch (error) {
+      showToast(String(error?.message || 'Nepodařilo se uložit termín.'), 'error');
+    } finally {
+      state.overdueReminderActionSaving = false;
+      render();
+    }
+  }
+
   function filteredReminders() {
     const query = String(state.searchTerm ?? '').trim().toLowerCase();
     let items = Array.isArray(state.reminders) ? [...state.reminders] : [];
 
     if (!state.showCompletedReminders) {
-      items = items.filter((item) => !item?.is_completed);
+      items = items.filter((item) => reminderIsIncomplete(item));
     }
 
     if (query) {
@@ -781,6 +1078,13 @@
   function handleModalBackdrop(event) {
     if (event?.target !== event?.currentTarget) return;
     if (!state.modal?.allowBackdropClose || state.modal?.saving) return;
+    if (
+      state.modal.entityType === 'reminder-overdue' ||
+      (typeof state.modal.key === 'string' && state.modal.key.startsWith('reminder-overdue-prompt-'))
+    ) {
+      dismissOverdueReminderPromptAndContinue();
+      return;
+    }
     closeModal();
   }
 
@@ -1133,6 +1437,10 @@
     }
     try {
       showAppShellForService();
+      if (typeof window.applyServiceDashboardAppChrome === 'function') {
+        window.applyServiceDashboardAppChrome(false);
+      }
+      document.body.classList.remove('service-dashboard-app', 'service-dashboard-theme-light');
       const root = getRoot();
       if (!root) {
         throw new Error('Element #serviceAppRoot neexistuje — zkontrolujte šablonu index.html');
@@ -1169,6 +1477,7 @@
     state.mobileNavOpen = false;
     state.accountMenuOpen = false;
     syncMobileNavScrollLock();
+    removeRemindersOverdueOverlayMount();
     const root = getRoot();
     if (root) {
       root.classList.add('hidden');
@@ -1287,9 +1596,13 @@
   function navigate(section, options = {}) {
     closeNavFlyouts();
     const next = mapSection(section) || defaultSection;
+    const prevSection = state.activeSection;
     state.accountMenuOpen = false;
     state.mobileNavOpen = false;
     state.filterSheetOpen = false;
+    if (prevSection !== 'reminders' && next === 'reminders') {
+      resetRemindersSectionOverdueSkips();
+    }
     state.activeSection = next;
     if (typeof options.kpiFilter === 'string') {
       state.kpiFilter = options.kpiFilter;
@@ -1979,13 +2292,20 @@
             name: p.display_name_masked || 'Uživatel',
             email_masked: p.email_masked || '-',
             phone_masked: p.phone_masked || '-',
-            status: p.link_status === 'active' ? 'linked' : 'found',
+            status:
+              p.link_status === 'active'
+                ? 'linked'
+                : p.link_status === 'pending_customer_confirm'
+                  ? 'pending_confirm'
+                  : 'found',
             status_label:
               p.link_status === 'active'
                 ? 'Aktivní vazba'
-                : p.link_status === 'invited'
-                  ? 'Čeká na dokončení'
-                  : 'Lze propojit',
+                : p.link_status === 'pending_customer_confirm'
+                  ? 'Čeká na potvrzení zákazníka'
+                  : p.link_status === 'invited'
+                    ? 'Čeká na dokončení'
+                    : 'Lze propojit',
             already_linked: p.link_status === 'active',
             blocking_reason: null,
           },
@@ -2034,7 +2354,11 @@
   async function linkCustomerById(customerId) {
     try {
       const response = await window.apiCall(`/api/v1/services/workspace/customers/${Number(customerId)}/link`, 'POST');
-      showToast(response?.message || 'Zákazník byl propojen.', 'success');
+      if (response?.pending_customer_confirm) {
+        showToast(response?.message || 'Zákazník musí propojení potvrdit v e-mailu nebo v aplikaci.', 'info');
+      } else {
+        showToast(response?.message || 'Zákazník byl propojen.', 'success');
+      }
       await load(true, true);
       if (isModalOpen('service-tools') || isModalOpen('add-customer')) {
         await searchCustomers(state.customerSearchQuery);
@@ -2183,7 +2507,11 @@
         customer_email: email,
         note: note || null,
       });
-      showToast(response?.message || 'Zákazník byl propojen.', 'success');
+      if (response?.pending_customer_confirm) {
+        showToast(response?.message || 'Zákazník musí propojení potvrdit v e-mailu.', 'info');
+      } else {
+        showToast(response?.message || 'Zákazník byl propojen.', 'success');
+      }
       state.addCustomerQuickLinkDraft = { email: '', note: '' };
       await load(true, true);
       refreshCustomerSearchDependentModals();
@@ -5117,7 +5445,7 @@
       draft_invoices: Number(summary.draft_invoices || invoices.filter((item) => String(item?.status || '').toLowerCase() === 'draft').length),
       invoices_total: Number(summary.invoices_total || invoices.length),
       open_reminders: Number(summary.open_reminders || reminders.filter((item) => !item?.is_completed).length),
-      overdue_reminders: Number(summary.overdue_reminders || reminders.filter((item) => !item?.is_completed && toDateKey(item?.due_date) && toDateKey(item?.due_date) < todayKey()).length),
+      overdue_reminders: Number(summary.overdue_reminders || reminders.filter((item) => reminderIsOverdueAttention(item)).length),
     };
   }
 
@@ -6530,12 +6858,13 @@
   function remindersSection() {
     const reminders = filteredReminders();
     const allReminders = Array.isArray(state.reminders) ? state.reminders : [];
+    const overdueAttentionSection = reminders.filter(reminderIsOverdueAttention).length;
     const completedReminders = allReminders.filter((item) => item?.is_completed).length;
     const cards = reminders.length ? reminders.map((item) => listCard({
       kicker: item?.vehicle_label || 'Připomínka',
       title: item?.vehicle_label || 'Obecná připomínka',
       badge: item?.is_completed ? 'Dokončeno' : 'Aktivní',
-      badgeClass: item?.is_completed ? 'completed' : (toDateKey(item?.due_date) && toDateKey(item?.due_date) < todayKey() ? 'issue' : 'in_progress'),
+      badgeClass: item?.is_completed ? 'completed' : (reminderIsOverdueAttention(item) ? 'issue' : 'in_progress'),
       rows: [
         ['Termín', item?.due_date ? formatDate(item.due_date) : '-'],
         ['Text', item?.text || '-'],
@@ -6546,7 +6875,7 @@
     })).join('') : '';
     const stats = `
       <article class="service-shell-mini-card summary-card"><h3>Aktivní připomínky</h3><div class="service-shell-stat-value">${reminders.length}</div><p class="service-shell-muted">Ve výchozím pohledu bez dokončených</p></article>
-      <article class="service-shell-mini-card summary-card"><h3>Po termínu</h3><div class="service-shell-stat-value">${reminders.filter((item) => !item?.is_completed && toDateKey(item?.due_date) && toDateKey(item?.due_date) < todayKey()).length}</div><p class="service-shell-muted">Kritické termíny</p></article>
+      <article class="service-shell-mini-card summary-card"><h3>Po termínu / nutná akce</h3><div class="service-shell-stat-value">${overdueAttentionSection}</div><p class="service-shell-muted">Propadlý termín nebo připomenutí</p></article>
       <article class="service-shell-mini-card summary-card"><h3>Dokončeno</h3><div class="service-shell-stat-value">${completedReminders}</div><p class="service-shell-muted">Lze zobrazit nebo smazat z archivu</p></article>
     `;
     const main = renderCardList({
@@ -6821,9 +7150,11 @@
       if (typeof window.refreshWorkspaceModeSwitcher === 'function') {
         window.refreshWorkspaceModeSwitcher();
       }
+      mountRemindersOverdueOverlayIfNeeded();
     } catch (error) {
       console.error('[SERVICE_SHELL] render failed:', error);
       try {
+        removeRemindersOverdueOverlayMount();
         root.innerHTML = renderFatalShellFallback(error);
       } catch (e2) {
         console.error('[SERVICE_SHELL] fatal shell fallback failed:', e2);
@@ -6922,6 +7253,11 @@
     openDocumentDetailModal,
     openReservationDetailModal,
     openReminderDetailModal,
+    markOverdueReminderDoneFromPrompt,
+    openOverdueReminderRescheduleStep,
+    backOverdueReminderPromptToAction,
+    submitOverdueReminderReschedule,
+    dismissOverdueReminderPromptAndContinue,
     updateReservationStatus,
     deleteReservation,
     deleteReminder,

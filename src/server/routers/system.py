@@ -291,10 +291,20 @@ def _apply_shell_index_headers(response: FileResponse, index_path: Path) -> None
     response.headers["Surrogate-Control"] = "no-store"
 
 
-def _spa_index_response() -> FileResponse:
-    index_path = web_path / "index.html"
+def _spa_index_response(request_path: str = "") -> FileResponse:
+    target_file = "index.html"
+    if request_path.startswith("app/u/") or request_path == "app/u":
+        target_file = "user-index.html"
+    elif request_path.startswith("app/s/") or request_path == "app/s":
+        target_file = "service-index.html"
+        
+    index_path = web_path / target_file
     if not index_path.exists():
-        raise HTTPException(status_code=404, detail="Web interface není k dispozici")
+        # Fallback to index.html if the specific index doesn't exist yet
+        index_path = web_path / "index.html"
+        if not index_path.exists():
+            raise HTTPException(status_code=404, detail="Web interface není k dispozici")
+            
     response = FileResponse(index_path)
     _apply_shell_index_headers(response, index_path)
     return response
@@ -327,6 +337,7 @@ _ASSET_FILE_SUFFIXES: tuple[str, ...] = (
 
 
 def _serve_web_relative_file_or_spa(relative_path: str) -> FileResponse:
+    full_path = relative_path
     """
     Obsluha cest pod /web/…: existující soubor z disku, jinak SPA index (deep link).
     Chybějící soubor s typickou příponou assetu → 404 (aby se nevracel HTML místo 404 u /web/assets/…).
@@ -353,14 +364,14 @@ def _serve_web_relative_file_or_spa(relative_path: str) -> FileResponse:
     lower = rel.lower()
     if any(lower.endswith(sfx) for sfx in _ASSET_FILE_SUFFIXES):
         raise HTTPException(status_code=404, detail="Not Found")
-    return _spa_index_response()
+    return _spa_index_response(relative_path if "relative_path" in locals() else "")
 
 
 @router.api_route("/web", methods=["GET", "HEAD"])
 @router.api_route("/web/", methods=["GET", "HEAD"])
 def spa_web_root_shell():
     """SPA shell pro /web a /web/ (F5, přímý vstup)."""
-    return _spa_index_response()
+    return _spa_index_response(relative_path if "relative_path" in locals() else "")
 
 
 @router.api_route("/web/{full_path:path}", methods=["GET", "HEAD"])
@@ -380,7 +391,7 @@ def spa_web_deep_shell(full_path: str):
 @router.get("/kontakt")
 def spa_public_shell():
     """Deep-link friendly HTML shell (routing řeší SPA v prohlížeči)."""
-    return _spa_index_response()
+    return _spa_index_response(relative_path if "relative_path" in locals() else "")
 
 
 @router.get("/favicon.ico")
@@ -395,13 +406,15 @@ def favicon_redirect():
 @router.api_route("/app/", methods=["GET", "HEAD"])
 def spa_app_root_shell():
     """Kořen /app po reloadu (bez další cesty)."""
-    return _spa_index_response()
+    # Stejný prefix jako při řešení pod /web/… — bez app/u nebo app/s → veřejný shell (index.html).
+    return _spa_index_response("app")
 
 
 @router.api_route("/app/{full_path:path}", methods=["GET", "HEAD"])
 def spa_app_workspace_shell(full_path: str):
-    """Privátní /app/... URL musí vrátit index.html, aby SPA mohla načíst stav z relace."""
-    return _spa_index_response()
+    """Privátní /app/... URL musí vrátit správný HTML shell jako /web/app/… (F5 deep link)."""
+    request_path = f"app/{full_path}" if full_path else "app"
+    return _spa_index_response(request_path)
 
 
 @router.get("/verify/{token:path}")

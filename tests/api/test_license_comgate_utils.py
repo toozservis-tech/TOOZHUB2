@@ -241,6 +241,7 @@ def test_status_transition_cancel_at_period_end_to_canceled_free(db_session, mon
             "plans": {
                 "basic": {"monthly": 9900, "yearly": 99000},
                 "premium": {"monthly": 29900, "yearly": 299000},
+                "full": {"monthly": 59900, "yearly": 599000},
             },
         },
     )
@@ -305,6 +306,7 @@ def test_status_transition_active_to_grace_then_downgrade_free(db_session, monke
             "plans": {
                 "basic": {"monthly": 9900, "yearly": 99000},
                 "premium": {"monthly": 29900, "yearly": 299000},
+                "full": {"monthly": 59900, "yearly": 599000},
             },
         },
     )
@@ -413,6 +415,7 @@ def test_build_legacy_checkout_quote_downgrade_creates_credit(db_session, monkey
         "plans": {
             "basic": {"monthly": 9900, "yearly": 99000},
             "premium": {"monthly": 29900, "yearly": 299000},
+            "full": {"monthly": 59900, "yearly": 599000},
         }
     }
     quote = license_status._build_legacy_checkout_quote(
@@ -452,6 +455,7 @@ def test_build_legacy_checkout_quote_upgrade_uses_existing_credit(db_session, mo
         "plans": {
             "basic": {"monthly": 9900, "yearly": 99000},
             "premium": {"monthly": 29900, "yearly": 299000},
+            "full": {"monthly": 59900, "yearly": 599000},
         }
     }
     quote = license_status._build_legacy_checkout_quote(
@@ -577,6 +581,7 @@ def test_recurring_worker_creates_recurring_payment_row(db_session, monkeypatch)
             "plans": {
                 "basic": {"monthly": 9900, "yearly": 99000},
                 "premium": {"monthly": 29900, "yearly": 299000},
+                "full": {"monthly": 59900, "yearly": 599000},
             },
         },
     )
@@ -644,6 +649,7 @@ def test_duplicate_callback_does_not_extend_period_twice(db_session, monkeypatch
             "plans": {
                 "basic": {"monthly": 9900, "yearly": 99000},
                 "premium": {"monthly": 29900, "yearly": 299000},
+                "full": {"monthly": 59900, "yearly": 599000},
             },
         },
     )

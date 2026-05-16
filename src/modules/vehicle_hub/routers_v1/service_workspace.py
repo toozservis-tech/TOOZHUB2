@@ -74,6 +74,7 @@ from ..user_in_app_notifications import notify_owner_service_access_requested
 from src.modules.vehicle_hub.routers_v1.service_workspace_customer_centre import (
     CustomerLinkFromLookupRequestV1,
     execute_customer_link_from_lookup,
+    initiate_pending_service_customer_link,
 )
 from ..vehicle_public_history import (
     build_public_history_page_url,
@@ -2805,6 +2806,7 @@ def lookup_vehicle_for_service(
 @router.post("/customers/{customer_id}/link")
 def link_existing_customer_by_id(
     customer_id: int,
+    request: Request,
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -2818,31 +2820,23 @@ def link_existing_customer_by_id(
         raise HTTPException(status_code=400, detail="Nelze propojit servisní účet se sebou samým.")
 
     try:
-        _, created = _upsert_service_customer_link(
-            db,
-            service_customer_id=current_user.id,
-            service_tenant_id=current_user.tenant_id,
+        result = initiate_pending_service_customer_link(
+            db=db,
+            request=request,
+            current_user=current_user,
             target_customer=customer,
-            note="Propojeno z vyhledání zákazníka",
+            consent_basis="customer_requested_service",
+            consent_note="Servis zadal propojení ze seznamu zákazníků nebo z detailu zákazníka ve workspace.",
+            internal_service_note=None,
+            link_source="service_link_by_customer_id",
+            audit_lookup_flow=False,
         )
-        write_global_audit_log(
-            db,
-            entity_type="service_customer_link",
-            entity_id=int(customer.id),
-            action="link_existing_customer",
-            actor_user_id=getattr(current_user, "id", None),
-            actor_role=getattr(current_user, "role", None),
-            tenant_id=getattr(current_user, "tenant_id", None),
-            metadata={
-                "customer_id": int(customer.id),
-                "created": bool(created),
-            },
-        )
-        db.commit()
         return {
-            "linked": True,
-            "created": created,
-            "message": "Zákazník byl úspěšně propojen." if created else "Zákazník už byl propojen, vazba byla potvrzena.",
+            "linked": bool(result.get("linked")),
+            "pending_customer_confirm": bool(result.get("pending_customer_confirm")),
+            "customer_link_id": result.get("customer_link_id"),
+            "link_status": result.get("link_status"),
+            "message": result.get("message"),
             "customer_id": int(customer.id),
         }
     except HTTPException:
@@ -3297,34 +3291,31 @@ def link_existing_customer(
     if customer.id == current_user.id:
         raise HTTPException(status_code=400, detail="Nelze propojit servisní účet se sebou samým.")
 
+    note_clean = (payload.note or "").strip()
+    basis = (payload.consent_basis or "customer_requested_service").strip()
+    consent_line = (payload.consent_note or "").strip()
+    if len(consent_line) < 3:
+        consent_line = note_clean if len(note_clean) >= 3 else "Propojení podle e-mailu zadaného servisem ve Správě vozidel."
+
     try:
-        _, created = _upsert_service_customer_link(
-            db,
-            service_customer_id=current_user.id,
-            service_tenant_id=current_user.tenant_id,
+        result = initiate_pending_service_customer_link(
+            db=db,
+            request=request,
+            current_user=current_user,
             target_customer=customer,
-            note=(payload.note or "").strip() or None,
+            consent_basis=basis,
+            consent_note=consent_line,
+            internal_service_note=payload.internal_service_note,
+            link_source="service_link_by_email",
+            audit_lookup_flow=False,
         )
-        write_global_audit_log(
-            db,
-            entity_type="service_customer_link",
-            entity_id=int(customer.id),
-            action="link_existing_customer_by_email",
-            actor_user_id=getattr(current_user, "id", None),
-            actor_role=getattr(current_user, "role", None),
-            tenant_id=getattr(current_user, "tenant_id", None),
-            metadata={
-                "customer_id": int(customer.id),
-                "created": bool(created),
-                "channel": "email",
-            },
-        )
-        db.commit()
         return {
-            "linked": True,
-            "created": created,
-            "message": "Zákazník byl úspěšně propojen." if created else "Zákazník už byl propojen, vazba byla aktualizována.",
-            "customer_id": customer.id,
+            "linked": bool(result.get("linked")),
+            "pending_customer_confirm": bool(result.get("pending_customer_confirm")),
+            "customer_link_id": result.get("customer_link_id"),
+            "link_status": result.get("link_status"),
+            "message": result.get("message"),
+            "customer_id": int(customer.id),
         }
     except HTTPException:
         raise

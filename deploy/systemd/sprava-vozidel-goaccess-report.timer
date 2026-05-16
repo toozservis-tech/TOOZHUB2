@@ -1,0 +1,11 @@
+[Unit]
+Description=Správa vozidel — hodinová obnova GoAccess traffic reportu
+
+[Timer]
+OnCalendar=hourly
+Unit=sprava-vozidel-goaccess-report.service
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

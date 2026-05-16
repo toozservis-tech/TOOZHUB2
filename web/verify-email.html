@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ověření e-mailu — Správa vozidel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: radial-gradient(circle at top, #1e293b 0%, #020617 55%, #020617 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            color: #e5e7eb;
+        }
+        .box {
+            background: rgba(15, 23, 42, 0.96);
+            border-radius: 18px;
+            padding: 40px;
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+            text-align: center;
+        }
+        h1 { font-size: 1.5rem; margin-bottom: 12px; color: #f9fafb; }
+        p { color: #9ca3af; font-size: 0.95rem; line-height: 1.5; margin-bottom: 8px; }
+        .ok { color: #86efac; }
+        .err { color: #fecaca; }
+        a.btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 24px;
+            background: #6366f1;
+            color: white;
+            text-decoration: none;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h1>Ověření e-mailu</h1>
+        <p id="status">Ověřuji odkaz…</p>
+        <p id="detail"></p>
+        <a class="btn" id="loginLink" href="/login" style="display:none;">Přihlásit se</a>
+    </div>
+    <script>
+        function getApiBaseUrl() {
+            const saved = localStorage.getItem('API_URL') || localStorage.getItem('toozhub_api_url');
+            if (saved) return saved.replace(/\/$/, '');
+            if (window.location.hostname === 'hub.toozservis.cz') return 'https://hub.toozservis.cz';
+            if (window.location.hostname === 'staging.hub.toozservis.cz') return 'https://staging.hub.toozservis.cz';
+            return window.location.origin.replace(/\/$/, '');
+        }
+        (async function () {
+            const statusEl = document.getElementById('status');
+            const detailEl = document.getElementById('detail');
+            const loginLink = document.getElementById('loginLink');
+            const params = new URLSearchParams(window.location.search);
+            const token = params.get('token');
+            if (!token) {
+                statusEl.textContent = 'Chybí ověřovací token v odkazu.';
+                statusEl.className = 'err';
+                loginLink.style.display = 'inline-block';
+                return;
+            }
+            const api = getApiBaseUrl();
+            try {
+                const res = await fetch(api + '/user/verify-email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ token: token.trim() }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    statusEl.textContent = data.message || 'E-mail byl ověřen.';
+                    statusEl.className = 'ok';
+                    if (data.flow === 'service') {
+                        detailEl.textContent =
+                            'Žádost o servisní účet nyní zpracuje administrátor. Po schválení se přihlásíte tlačítkem níže.';
+                    } else {
+                        detailEl.textContent = 'Nyní se můžete přihlásit.';
+                    }
+                    loginLink.style.display = 'inline-block';
+                } else {
+                    statusEl.textContent = 'Ověření se nepodařilo.';
+                    statusEl.className = 'err';
+                    detailEl.textContent = data.detail || ('HTTP ' + res.status);
+                    loginLink.style.display = 'inline-block';
+                }
+            } catch (e) {
+                statusEl.textContent = 'Chyba spojení se serverem.';
+                statusEl.className = 'err';
+                detailEl.textContent = e.message || '';
+                loginLink.style.display = 'inline-block';
+            }
+        })();
+    </script>
+</body>
+</html>

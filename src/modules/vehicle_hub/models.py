@@ -181,6 +181,11 @@ class ServiceRegistrationRequest(Base):
 
     registration_purpose = Column(Text, nullable=False)
 
+    email_verified_at = Column(DateTime, nullable=True)
+    email_verification_token_hash = Column(String(128), nullable=True, index=True)
+    email_verification_expires_at = Column(DateTime, nullable=True)
+    email_verification_sent_at = Column(DateTime, nullable=True)
+
     reviewed_by_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     reviewed_at = Column(DateTime, nullable=True)
     review_note = Column(Text, nullable=True)

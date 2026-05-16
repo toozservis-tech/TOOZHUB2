@@ -26,10 +26,10 @@ test.describe('Service shell account and navigation', () => {
     await page.getByRole('button', { name: 'Otevřít profil' }).click();
     await expect(page.locator('[data-service-shell="root"]')).toContainText('Aktivní technici');
 
-    await page.getByRole('button', { name: 'Faktury' }).click();
+    await page.getByRole('button', { name: 'Fakturace' }).click();
     await expect(page.locator('[data-service-shell="root"]')).toContainText('Servisní faktury');
 
-    await page.getByRole('button', { name: 'Dashboard' }).click();
+    await page.getByRole('button', { name: 'Přehled' }).click();
     await page.locator('.service-shell-kpi').nth(0).click();
     await expect(page.locator('[data-service-shell="root"]')).toContainText('Aktivní zakázky');
     await page.locator('.service-shell-kpi').nth(1).click();

@@ -665,6 +665,22 @@ def create_orv_scan_record(
     if tenant_id is None:
         raise HTTPException(status_code=403, detail="Uživatel nemá přiřazený tenant.")
 
+    from src.modules.licensing.service import (
+        effective_service_license_storage_plan,
+        get_or_create_license,
+        normalize_license_plan_key,
+        pairing_role_for_tenant_license,
+    )
+
+    license_obj = get_or_create_license(db, tenant_id)
+    pairing = pairing_role_for_tenant_license(db, tenant_id)
+    eff = normalize_license_plan_key(
+        effective_service_license_storage_plan(license_obj.plan),
+        pairing,
+    )
+    if eff == "service_free":
+        raise HTTPException(status_code=403, detail="OCR vytěžování dokladů je dostupné od placené licence FULL.")
+
     overall_started = time.perf_counter()
     single_raw = (single_orv_image_base64 or "").strip()
 

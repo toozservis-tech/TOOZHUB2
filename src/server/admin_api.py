@@ -4,7 +4,8 @@ Přístupné pouze pro developer_admin/admin role
 
 Struktura (datový tok, ne UI):
 - Sekce Uživatelé: /admin-api/users, /admin-api/users/{id}, /admin-api/users/{id}/vehicles,
-  /admin-api/users/{id}/detail, control-center akce nad uživateli.
+  /admin-api/users/{id}/detail, control-center akce nad uživateli,
+  POST /admin-api/user-archive-purge (alias, stejné tělo jako /user-deletion-archive/purge).
 - Sekce Servisy: /admin-api/services, /admin-api/services/{id}, /admin-api/service-registration-requests.
 """
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request as FastAPIRequest
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect, func
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timezone, timedelta
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 from pathlib import Path
 from copy import deepcopy
 import gzip
@@ -112,6 +113,7 @@ from src.server.customer_soft_delete import (
     soft_delete_customer,
     sync_vehicle_user_email_display_for_customer,
 )
+from src.server.main_helpers import delete_customer_account
 from src.modules.vehicle_hub.ownership import (
     ensure_vehicle_owner_assignment,
     get_primary_vehicle_owner,
@@ -1869,6 +1871,7 @@ class UserSummary(BaseModel):
     tenant_id: Optional[int] = None
     city: Optional[str] = None
     phone: Optional[str] = None
+    ico: Optional[str] = None
     created_at: Optional[datetime] = None
     vehicles_count: int = 0
     last_ip_address: Optional[str] = None
@@ -2018,6 +2021,8 @@ class ServiceRegistrationRequestItem(BaseModel):
     id: int
     status: str
     email: str
+    email_verified_at: Optional[datetime] = None
+    email_verification_state: str = "legacy"
     ico: str
     service_name: str
     responsible_person: str
@@ -2262,6 +2267,27 @@ class UserStateActionRequest(BaseModel):
 class UserSoftRestoreRequest(BaseModel):
     customer_id: int = Field(..., ge=1)
     reason: Optional[str] = Field(default=None, max_length=2000)
+
+
+ARCHIVED_USERS_PURGE_CONFIRM_PHRASE = "VYMAZAT ARCHIV"
+
+
+class ArchivedUsersPurgeRequest(BaseModel):
+    """Trvalé odstranění soft-smazaných zákazníků z databáze (uvolní IČO aj.)."""
+
+    customer_ids: List[int] = Field(default_factory=list)
+    purge_all: bool = False
+    confirm_phrase: str = Field(..., min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def _xor_ids_or_all(self) -> "ArchivedUsersPurgeRequest":
+        ids = [int(x) for x in self.customer_ids if int(x) > 0]
+        self.customer_ids = ids
+        if self.purge_all and ids:
+            raise ValueError("Zvolte buď purge_all (celý archiv), nebo konkrétní customer_ids.")
+        if not self.purge_all and not ids:
+            raise ValueError("Zvolte účty (customer_ids) nebo purge_all=true.")
+        return self
 
 
 class UserPasswordResetRequest(BaseModel):
@@ -4055,16 +4081,70 @@ def list_demo_access_leads(
     }
 
 
+def _admin_users_search_include_deleted(search: Optional[str]) -> bool:
+    """U hledání s dlouhým číselným řetězcem zahrnout i soft-smazané účty (typicky IČO / telefon)."""
+    digits = re.sub(r"\D", "", (search or "").strip())
+    return len(digits) >= 6
+
+
+def _customers_admin_search_sql(
+    search: Optional[str], *, dialect_name: str
+) -> tuple[str, dict[str, Any]]:
+    """Fragment ``AND (...)` pro alias `c` (tabulka customers) + parametry k ``text()``."""
+    raw = (search or "").strip()
+    if not raw:
+        return "", {}
+    dn = (dialect_name or "").lower()
+    pos_fn = "strpos" if dn in ("postgresql", "postgres") else "instr"
+    sub = raw.lower()
+    sub_ns = sub.replace(" ", "")
+    parts = [
+        f"{pos_fn}(lower(coalesce(c.email, '')), :adm_u_sub) > 0",
+        f"{pos_fn}(lower(coalesce(c.name, '')), :adm_u_sub) > 0",
+        f"{pos_fn}(lower(coalesce(c.city, '')), :adm_u_sub) > 0",
+        f"{pos_fn}(lower(coalesce(c.phone, '')), :adm_u_sub) > 0",
+        f"{pos_fn}(lower(coalesce(c.ico, '')), :adm_u_sub) > 0",
+        f"{pos_fn}(lower(coalesce(c.dic, '')), :adm_u_sub) > 0",
+        f"{pos_fn}(replace(lower(coalesce(c.ico, '')), ' ', ''), :adm_u_sub_ns) > 0",
+        f"{pos_fn}(cast(c.id as text), :adm_u_sub) > 0",
+        f"(c.tenant_id IS NOT NULL AND {pos_fn}(cast(c.tenant_id as text), :adm_u_sub) > 0)",
+    ]
+    bind: dict[str, Any] = {"adm_u_sub": sub, "adm_u_sub_ns": sub_ns}
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) >= 3:
+        parts.append(
+            f"{pos_fn}(replace(replace(replace(coalesce(c.ico, ''), ' ', ''), '-', ''), '/', ''), "
+            ":adm_u_ico_digits) > 0"
+        )
+        parts.append(
+            f"{pos_fn}(replace(replace(replace(coalesce(c.dic, ''), ' ', ''), '-', ''), '/', ''), "
+            ":adm_u_dic_digits) > 0"
+        )
+        bind["adm_u_ico_digits"] = digits
+        bind["adm_u_dic_digits"] = digits
+    return f" AND ({' OR '.join(parts)})", bind
+
+
 @router.get("/users", response_model=List[UserSummary])
 def get_all_users(
     limit: int = 50,
     offset: int = 0,
+    search: Optional[str] = Query(None, max_length=160),
     email: str = Depends(require_developer_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Vrátí seznam všech uživatelů s počtem vozidel - pouze pro developer_admin"""
     try:
         ensure_customer_account_state_schema(db)
+        user_search_sql, user_search_bind = _customers_admin_search_sql(
+            search, dialect_name=str(db.get_bind().dialect.name)
+        )
+        exec_bind: dict[str, Any] = {"limit": limit, "offset": offset}
+        exec_bind.update(user_search_bind)
+        adm_include_deleted = (
+            1 if (user_search_sql and _admin_users_search_include_deleted(search)) else 0
+        )
+        exec_bind["adm_include_deleted"] = adm_include_deleted
         security_logs_available = inspect(db.bind).has_table("security_access_logs")
         licenses_available = inspect(db.bind).has_table("licenses")
         payments_available = inspect(db.bind).has_table("license_payment_transactions")
@@ -4129,6 +4209,7 @@ def get_all_users(
                         c.tenant_id as tenant_id,
                         c.city as city,
                         c.phone as phone,
+                        c.ico as ico,
                         c.created_at as created_at,
                         COALESCE(c.is_disabled, 0) as is_disabled,
                         COALESCE(c.is_deleted, 0) as is_deleted,
@@ -4144,8 +4225,11 @@ def get_all_users(
                         {pending_notify_sql} as pending_admin_notify_count
                     FROM customers c
                     {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
-                    WHERE COALESCE(c.is_deleted, 0) = 0
-                    GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, c.admin_ordinal, c.workspace_entitlements, c.workspace_ui_default, vehicle_counts.vehicles_count
+                    WHERE (
+                        COALESCE(c.is_deleted, 0) = 0
+                        OR :adm_include_deleted = 1
+                    ){user_search_sql}
+                    GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.ico, c.created_at, c.is_disabled, c.is_deleted, c.session_version, c.admin_ordinal, c.workspace_entitlements, c.workspace_ui_default, vehicle_counts.vehicles_count
                     ORDER BY c.created_at DESC
                     LIMIT :limit OFFSET :offset
                 ),
@@ -4179,7 +4263,7 @@ def get_all_users(
                 FROM page_customers pc
                 LEFT JOIN latest_security ls ON ls.user_email_norm = lower(pc.email)
                 ORDER BY pc.created_at DESC
-            """), {"limit": limit, "offset": offset})
+            """), exec_bind)
         else:
             result = db.execute(text(f"""
                 WITH page_customers AS (
@@ -4191,6 +4275,7 @@ def get_all_users(
                         c.tenant_id as tenant_id,
                         c.city as city,
                         c.phone as phone,
+                        c.ico as ico,
                         c.created_at as created_at,
                         COALESCE(c.is_disabled, 0) as is_disabled,
                         COALESCE(c.is_deleted, 0) as is_deleted,
@@ -4206,15 +4291,18 @@ def get_all_users(
                         {pending_notify_sql} as pending_admin_notify_count
                     FROM customers c
                     {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
-                    WHERE COALESCE(c.is_deleted, 0) = 0
-                    GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, c.admin_ordinal, c.workspace_entitlements, c.workspace_ui_default, vehicle_counts.vehicles_count
+                    WHERE (
+                        COALESCE(c.is_deleted, 0) = 0
+                        OR :adm_include_deleted = 1
+                    ){user_search_sql}
+                    GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.ico, c.created_at, c.is_disabled, c.is_deleted, c.session_version, c.admin_ordinal, c.workspace_entitlements, c.workspace_ui_default, vehicle_counts.vehicles_count
                     ORDER BY c.created_at DESC
                     LIMIT :limit OFFSET :offset
                 )
                 SELECT *
                 FROM page_customers
                 ORDER BY created_at DESC
-            """), {"limit": limit, "offset": offset})
+            """), exec_bind)
 
         rows = result.fetchall()
         payment_state_by_tenant: Dict[int, Dict[str, Any]] = {}
@@ -4273,6 +4361,7 @@ def get_all_users(
                 tenant_id=data.get("tenant_id"),
                 city=data.get("city"),
                 phone=data.get("phone"),
+                ico=data.get("ico"),
                 created_at=created_at,
                 vehicles_count=data.get("vehicles_count") or 0,
                 last_ip_address=last_ip_address,
@@ -4398,6 +4487,91 @@ def get_deleted_users_archive(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chyba při načítání archivu smazaných: {str(e)}")
+
+
+@router.post("/user-deletion-archive/purge")
+@router.post("/user-archive-purge")
+def purge_archived_customer_accounts(
+    payload: ArchivedUsersPurgeRequest,
+    request: FastAPIRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Trvalě odebere soft-smazané účty z databáze (stejný proces jako sebehoda „smazat účet“),
+    včetně vozidel vlastníka dle ownershipu a případně tenantu bez zbývajících zákazníků.
+    Uvolní IČO pro novou servisní registraci.
+    """
+    try:
+        if (payload.confirm_phrase or "").strip() != ARCHIVED_USERS_PURGE_CONFIRM_PHRASE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Pro potvrzení opište přesně: {ARCHIVED_USERS_PURGE_CONFIRM_PHRASE}",
+            )
+        actor = get_customer_by_email(db, email)
+        if payload.purge_all:
+            targets = (
+                db.query(Customer)
+                .filter(Customer.is_deleted.is_(True))
+                .order_by(Customer.id.asc())
+                .all()
+            )
+        else:
+            want = sorted({int(x) for x in payload.customer_ids if int(x) > 0})
+            targets = (
+                db.query(Customer)
+                .filter(Customer.id.in_(want))
+                .order_by(Customer.id.asc())
+                .all()
+            )
+            found_ids = {int(t.id) for t in targets}
+            missing = [i for i in want if i not in found_ids]
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Účty neexistují nebo již byly trvale odstraněny (ID): {missing}",
+                )
+
+        if not targets:
+            return {"purged": 0, "details": [], "message": "Archiv je prázdný — nic k odstranění."}
+
+        details: List[Dict[str, Any]] = []
+        for user in targets:
+            if actor and int(user.id) == int(actor.id):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Nelze trvale smazat účet, pod kterým jste přihlášeni.",
+                )
+            if not customer_is_deleted(user):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Zákazník #{user.id} není ve stavu soft-delete — přeskočeno nebo zrušeno.",
+                )
+            counts = delete_customer_account(user, email=user.email or "", db=db)
+            details.append({"customer_id": int(user.id), "deleted_counts": counts})
+            log_developer_action(
+                db,
+                developer_email=email,
+                request=request,
+                action_type="user.purge_hard_delete",
+                target_resource=f"customer:{user.id}",
+                parameters={"purge_all": payload.purge_all, "by": (email or "").lower()},
+                result="success",
+                status_code=200,
+            )
+        db.commit()
+        return {
+            "purged": len(details),
+            "details": details,
+            "message": f"Trvale odstraněno záznamů: {len(details)}.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Chyba při trvalém mazání archivu: {str(e)}")
 
 
 @router.post("/user-soft-restore")
@@ -4667,6 +4841,9 @@ def update_user(
         target_role = validate_role_value(user_data.role) if user_data.role is not None else str(user.role or "user")
 
         old_role_l = str(user.role or "").strip().lower()
+        effective_role_changed = (
+            user_data.role is not None and str(target_role or "").strip().lower() != old_role_l
+        )
         tenant_row = db.query(Tenant).filter(Tenant.id == user.tenant_id).first() if user.tenant_id else None
         old_tenant_kind = str(tenant_row.workspace_route_kind or "").strip().lower() if tenant_row else ""
 
@@ -4755,17 +4932,19 @@ def update_user(
             user.email = new_email
             sync_vehicle_user_email_display_for_customer(db, user.id, new_email)
         
-        if user_data.name is not None:
+        # Volitelná textová pole: JSON null / prázdný řetězec → None musí přepisovat DB hodnotu.
+        # (Samotná kontrola user_data.ico is not None by mazání nikdy neprovedla.)
+        if "name" in payload:
             user.name = user_data.name
-        
+
         if user_data.role is not None:
             user.role = target_role
 
-        if user_data.ico is not None:
+        if "ico" in payload:
             user.ico = user_data.ico
-        if user_data.dic is not None:
+        if "dic" in payload:
             user.dic = user_data.dic
-        if user_data.phone is not None:
+        if "phone" in payload:
             user.phone = user_data.phone
             phone_e164_val = None
             if user_data.phone:
@@ -4775,14 +4954,16 @@ def update_user(
                     phone_e164_val = normalize_validate_phone_e164(str(user_data.phone))
                 except ValueError as exc:
                     raise HTTPException(status_code=422, detail=str(exc)) from exc
+            elif hasattr(user, "phone_verified_at"):
+                user.phone_verified_at = None
             user.phone_e164 = phone_e164_val
-        if user_data.street is not None:
+        if "street" in payload:
             user.street = user_data.street
-        if user_data.street_number is not None:
+        if "street_number" in payload:
             user.street_number = user_data.street_number
-        if user_data.city is not None:
+        if "city" in payload:
             user.city = user_data.city
-        if user_data.zip is not None:
+        if "zip" in payload:
             user.zip = user_data.zip
         
         if user_data.password is not None:
@@ -4798,6 +4979,11 @@ def update_user(
                     user.workspace_entitlements = normalize_workspace_entitlements_for_storage(raw_ent)
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
+        elif effective_role_changed or (
+            service_operator_demotion and str(target_role or "").strip().lower() == "user"
+        ):
+            # Změna primární role → výchozí režimy z role, pokud admin neposlal explicitní JSON.
+            user.workspace_entitlements = None
 
         if "workspace_ui_default" in payload:
             raw_ui = payload.get("workspace_ui_default")
@@ -4811,12 +4997,13 @@ def update_user(
                     )
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
+        elif effective_role_changed or (
+            service_operator_demotion and str(target_role or "").strip().lower() == "user"
+        ):
+            user.workspace_ui_default = None
 
-        if service_operator_demotion and str(target_role or "").strip().lower() == "user":
-            if "workspace_entitlements" not in payload:
-                user.workspace_entitlements = None
-            if "workspace_ui_default" not in payload:
-                user.workspace_ui_default = None
+        if effective_role_changed and not service_operator_demotion:
+            increment_customer_session_version(user)
 
         db.commit()
 
@@ -5964,9 +6151,14 @@ def update_service(
         if not _customer_qualifies_for_admin_service_directory(db, service):
             raise HTTPException(status_code=400, detail="Zadaný uživatel není servis v této evidenci.")
         
-        # Aktualizovat pole
-        if service_data.email is not None:
-            new_email = str(service_data.email).strip().lower()
+        # Jen pole z těla požadavku; explicitní null vymaže volitelné údaje (IČO, telefon, …).
+        updates = service_data.model_dump(exclude_unset=True)
+
+        if "email" in updates:
+            new_email_raw = updates.get("email")
+            if not new_email_raw:
+                raise HTTPException(status_code=400, detail="E-mail servisu je povinný.")
+            new_email = str(new_email_raw).strip().lower()
             existing = db.query(Customer).filter(
                 func.lower(Customer.email) == new_email,
                 Customer.id != service_id
@@ -5975,25 +6167,26 @@ def update_service(
                 raise HTTPException(status_code=400, detail="Servis s tímto emailem již existuje")
             service.email = new_email
             sync_vehicle_user_email_display_for_customer(db, service.id, new_email)
-        
-        if service_data.name is not None:
-            service.name = service_data.name
-        
-        if service_data.city is not None:
-            service.city = service_data.city
-        
-        if service_data.phone is not None:
-            service.phone = service_data.phone
-        
-        if service_data.ico is not None:
-            service.ico = service_data.ico
-        
-        if service_data.password is not None:
-            service.password_hash = hash_password(service_data.password)
+
+        if "name" in updates:
+            service.name = updates["name"]
+
+        if "city" in updates:
+            service.city = updates["city"]
+
+        if "phone" in updates:
+            service.phone = updates["phone"]
+
+        if "ico" in updates:
+            service.ico = updates["ico"]
+
+        pwd = updates.get("password") if "password" in updates else None
+        if pwd:
+            service.password_hash = hash_password(str(pwd))
             increment_customer_session_version(service)
 
-        if service_data.partner_catalog_approved is not None:
-            service.partner_catalog_approved = bool(service_data.partner_catalog_approved)
+        if "partner_catalog_approved" in updates and updates["partner_catalog_approved"] is not None:
+            service.partner_catalog_approved = bool(updates["partner_catalog_approved"])
 
         db.commit()
         return {"message": "Servis byl upraven"}
@@ -6115,6 +6308,12 @@ def list_service_registration_requests(
                 id=row.id,
                 status=row.status,
                 email=row.email,
+                email_verified_at=row.email_verified_at,
+                email_verification_state=(
+                    "verified"
+                    if row.email_verified_at
+                    else ("pending" if row.email_verification_token_hash else "legacy")
+                ),
                 ico=row.ico,
                 service_name=row.service_name,
                 responsible_person=row.responsible_person,
@@ -6163,6 +6362,13 @@ def approve_service_registration_request(
         if req.status != "pending":
             raise HTTPException(status_code=400, detail=f"Žádost není ve stavu pending (aktuálně: {req.status})")
 
+        if req.email_verified_at is None:
+            if req.email_verification_token_hash is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="E-mail žádosti ještě nebyl ověřen. Žadatel musí kliknout na odkaz v ověřovacím e-mailu.",
+                )
+
         existing_customer = get_customer_by_email(db, req.email)
         if existing_customer:
             raise HTTPException(status_code=400, detail="Účet s tímto emailem už existuje. Žádost nelze schválit.")
@@ -6175,6 +6381,7 @@ def approve_service_registration_request(
                     Customer.role == "service",
                     Customer.ico == normalized_ico,
                     func.lower(Customer.email) != req.email.strip().lower(),
+                    Customer.is_deleted.is_(False),
                 )
                 .first()
             )
@@ -7899,6 +8106,8 @@ def global_admin_search(
                     OR lower(COALESCE(c.name, '')) LIKE :like
                     OR lower(COALESCE(c.city, '')) LIKE :like
                     OR lower(COALESCE(c.phone, '')) LIKE :like
+                    OR lower(COALESCE(c.ico, '')) LIKE :like
+                    OR lower(COALESCE(c.dic, '')) LIKE :like
                   )
                 ORDER BY c.created_at DESC
                 LIMIT :per_type_limit

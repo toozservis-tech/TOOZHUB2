@@ -74,10 +74,28 @@ export function getServiceTestCredentials(): { email: string; password: string }
 }
 
 /**
- * Zajistí existenci testovacího uživatele.
- * Registrace je idempotentní: pokud uživatel existuje, pokračujeme dál.
+ * Konzistentní uživatel pro návodové E2E: výhradně přihlášení bez `/user/register`.
+ * Přepsat v CI: `E2E_TUTORIAL_USER_EMAIL`, `E2E_TUTORIAL_USER_PASSWORD`.
  */
-export async function ensureTestUser(page: any, email?: string, password?: string): Promise<void> {
+export const TUTORIAL_E2E_USER_DEFAULT = Object.freeze({
+  email: process.env.E2E_TUTORIAL_USER_EMAIL ?? 'djtooz91@gmail.com',
+  password: process.env.E2E_TUTORIAL_USER_PASSWORD ?? '123456',
+});
+
+export function getTutorialE2ECredentials(): { email: string; password: string } {
+  const email = (TUTORIAL_E2E_USER_DEFAULT.email ?? '').trim();
+  const password = String(TUTORIAL_E2E_USER_DEFAULT.password ?? '');
+  if (!email || !password) {
+    throw new Error('getTutorialE2ECredentials: chybí e-mail nebo heslo — nastavte E2E_TUTORIAL_USER_*');
+  }
+  return { email, password };
+}
+
+/**
+ * Zajistí existenci testovacího uživatele přes registraci – volá jen `loginUser` (ne tutorial login).
+ * Backend `UserRegister` vyžaduje mimo jiné `phone`; bez něj dostanete HTTP 422.
+ */
+export async function ensureTestUser(page: Page, email?: string, password?: string): Promise<void> {
   const credentials = getTestCredentials();
   const targetEmail = email || credentials.email;
   const targetPassword = password || credentials.password;
@@ -95,6 +113,97 @@ export async function ensureTestUser(page: any, email?: string, password?: strin
   }
 
   throw new Error(`Unable to ensure test user. HTTP ${response.status()}`);
+}
+
+/**
+ * Jako `loginUser`, ale bez `ensureTestUser` – pouze formulář /login uživatelský režim.
+ * Pokud se zobrazí 2FA panel, končí chybou (bez obcházení).
+ */
+export async function loginExistingUser(page: Page, credentials: { email: string; password: string }) {
+  const targetEmail = String(credentials.email || '').trim();
+  const targetPassword = String(credentials.password || '');
+  if (!targetEmail || !targetPassword) {
+    throw new Error('loginExistingUser: prázdný e-mail nebo heslo');
+  }
+
+  await page.goto('/login', { waitUntil: 'load', timeout: AUTH_PAGE_GOTO_TIMEOUT_MS });
+  await waitForAuthLoginFormVisible(page);
+  await page.locator('#loginModeUserBtn').click();
+  await page.fill('[data-testid="input-email"]', targetEmail);
+  await page.fill('[data-testid="input-password"]', targetPassword);
+  await page.click('[data-testid="btn-login"]');
+
+  const rateLimitAlert = page.locator('[data-testid="alert-error"]', {
+    hasText: 'Příliš mnoho pokusů',
+  });
+  const twoFaPanel = page.locator('#loginTwoFactorPanel');
+  const loginFormVisible = async () =>
+    page
+      .locator('[data-testid="login-form"]')
+      .isVisible()
+      .catch(() => false);
+  const serviceRoot = page.locator('[data-service-shell="root"]');
+  const userDashboard = page.locator('[data-testid="dashboard"]');
+  const deadline = Date.now() + 90_000;
+
+  while (Date.now() < deadline) {
+    if (await twoFaPanel.isVisible().catch(() => false)) {
+      throw new Error(
+        'loginExistingUser: zobrazeno dvoufázové ověření — E2E návody 2FA neobcházejí; vypněte 2FA u tutoriálového účtu.',
+      );
+    }
+    if (await serviceRoot.isVisible().catch(() => false)) {
+      return;
+    }
+    if (await userDashboard.isVisible().catch(() => false)) {
+      return;
+    }
+
+    /** Nejprve výjimka pro rate limit — jiná větev háže ihned na stejném alert-error */
+    if (await rateLimitAlert.isVisible().catch(() => false)) {
+      await page.waitForTimeout(61_000);
+      await page.click('[data-testid="btn-login"]');
+      await userDashboard.waitFor({ state: 'visible', timeout: 25_000 }).catch(async () => {
+        await serviceRoot.waitFor({ state: 'visible', timeout: 25_000 });
+      });
+      return;
+    }
+
+    /** Stále na přihlašovacím formuláři + viditelná chyba nad formulářem */
+    const err = page.locator('[data-testid="alert-error"]');
+    const nErr = await err.count();
+    if ((await loginFormVisible()) && nErr > 0) {
+      const txt = await err.first().innerText().catch(() => '');
+      throw new Error(`loginExistingUser: přihlášení se nezdařilo: ${txt || 'bez textu hlášky'}`);
+    }
+
+    /** Formulář zmizí, ale ještě není znám dashboard — počkat bootstrap */
+    if (!(await loginFormVisible()) && !(await serviceRoot.isVisible()) && !(await userDashboard.isVisible())) {
+      await page.waitForTimeout(400);
+      continue;
+    }
+
+    await page.waitForTimeout(250);
+  }
+
+  throw new Error('loginExistingUser: po přihlášení se nezobrazil dashboard ani servisní shell (zkontrolujte účet / síť)');
+}
+
+/** Po přihlášení uživatele přepíná do servisu, pokud UI nabízí dvojí workspace (/api/me). */
+export async function clickServiceWorkspaceSwitchWhenVisible(page: Page): Promise<void> {
+  const btn = page.locator(
+    '.workspace-mode-switch:not(.hidden) button.workspace-mode-switch-btn[data-workspace-mode="service"]',
+  );
+
+  await btn.waitFor({ state: 'visible', timeout: 30_000 });
+
+  /** `switchWorkspaceUIMode('service')` může otevřít confirm při rozpracovaném vozidle */
+  page.once('dialog', async (dialog) => {
+    await dialog.accept().catch(() => {});
+  });
+
+  await btn.click();
+  await page.locator('[data-service-shell="root"]').waitFor({ state: 'visible', timeout: 60_000 });
 }
 
 /**

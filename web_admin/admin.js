@@ -20,12 +20,16 @@ let usersCurrentPage = 1;
 let userDetailData = null;
 let userDetailActivePanel = 'vehicles';
 let userDetailReturnContext = null;
+let usersSearchDebounceTimer = null;
+let usersListFetchGeneration = 0;
 const ADMIN_VIEW_SECTIONS = ['users', 'vehicles', 'services', 'records'];
 const ADMIN_VIEW_MODES = ['grid', 'list', 'compact'];
 const ADMIN_API_TIMEOUT_MS = 30000;
 const adminViewState = {};
+const ARCHIVED_USERS_PURGE_CONFIRM_PHRASE = 'VYMAZAT ARCHIV';
 const ADMIN_NAVBAR_CLOCK_TZ = 'Europe/Prague';
 let adminNavbarClockTimer = null;
+let trafficReportObjectUrl = null;
 
 function tickAdminNavbarClock() {
   const el = document.getElementById('adminNavbarClock');
@@ -91,19 +95,58 @@ const controlCenterPaymentsFilters = {
 };
 let systemCapabilities = {};
 
-const USER_LICENSE_PLAN_OPTIONS = [
-  { value: 'free', label: 'FREE (uživatel · 1 vozidlo)' },
-  { value: 'basic', label: 'BASIC (uživatel · plná osobní správa)' },
-  { value: 'premium', label: 'PREMIUM (uživatel · rozšířený přehled a servisní propojení)' },
-  { value: 'lifetime', label: 'LIFETIME (uživatel · doživotní Premium, pouze admin)' },
-];
+/** Pořadí v dropdownu — musí odpovědět `get_allowed_license_plans_for_role` na backendu. */
+const USER_LICENSE_PLAN_ORDER = ['free', 'basic', 'premium', 'lifetime'];
+const SERVICE_LICENSE_PLAN_ORDER = ['service_free', 'service_full', 'service_lifetime'];
 
-const SERVICE_LICENSE_PLAN_OPTIONS = [
-  { value: 'service_free', label: 'SERVICE FREE (servis · seznamovací provoz)' },
-  { value: 'service_basic', label: 'SERVICE BASIC (servis · standardní denní provoz)' },
-  { value: 'service_premium', label: 'SERVICE PREMIUM (servis · plný provoz a analytika)' },
-  { value: 'service_lifetime', label: 'SERVICE LIFETIME (servis · doživotní Premium, pouze admin)' },
-];
+const ADMIN_LICENSE_PLAN_LABELS = {
+  free: 'FREE (uživatel · 1 vozidlo)',
+  basic: 'BASIC (uživatel · plná osobní správa)',
+  premium: 'PREMIUM (uživatel · rozšířený přehled a servisní propojení)',
+  lifetime: 'LIFETIME (uživatel · doživotní Premium, pouze admin)',
+  service_free: 'SERVIS FREE · zdarma (limity)',
+  service_full: 'SERVIS FULL · placená licence (všechny funkce)',
+  service_lifetime: 'SERVIS LIFETIME · doživotní FULL (jen přes admin)',
+};
+
+function collapseLegacyStoredPlan(planId) {
+  const x = String(planId || '').trim().toLowerCase();
+  if (x === 'service_basic' || x === 'service_premium') {
+    return 'service_full';
+  }
+  return x;
+}
+
+/**
+ * Nabídka plánů v admin formuláři: u servisu nikdy neseparuje „BASIC/PREMIUM“ —
+ * tyto hodnoty v DB jsou legacy a při výběru se mapují na service_full (viz backend).
+ */
+function resolveLicensePlanChoicesForPopulate(workspaceKind, allowedFromApi = null) {
+  const ws = workspaceKind === 'service' ? 'service' : 'user';
+  const order = ws === 'service' ? SERVICE_LICENSE_PLAN_ORDER : USER_LICENSE_PLAN_ORDER;
+  const allowedSet = new Set(order);
+
+  let picked = [];
+  if (Array.isArray(allowedFromApi) && allowedFromApi.length > 0) {
+    const want = new Set();
+    allowedFromApi.forEach((raw) => {
+      const key = collapseLegacyStoredPlan(raw);
+      if (allowedSet.has(key)) {
+        want.add(key);
+      }
+    });
+    picked = order.filter((k) => want.has(k));
+  } else {
+    picked = order.slice();
+  }
+  if (!picked.length) {
+    picked = order.slice();
+  }
+  return picked.map((value) => ({
+    value,
+    label: ADMIN_LICENSE_PLAN_LABELS[value] || String(value).toUpperCase(),
+  }));
+}
 
 function getLicenseWorkspaceKindForRole(role) {
   return String(role || '').trim().toLowerCase() === 'service' ? 'service' : 'user';
@@ -112,26 +155,63 @@ function getLicenseWorkspaceKindForRole(role) {
 function getLicensePlanBase(plan) {
   const normalized = String(plan || '').trim().toLowerCase();
   const base = normalized.startsWith('service_') ? normalized.slice(8) : normalized;
-  return ['free', 'basic', 'premium', 'lifetime'].includes(base) ? base : 'free';
+  return ['free', 'basic', 'premium', 'lifetime', 'full'].includes(base) ? base : 'free';
 }
 
-function normalizeLicensePlanForRole(plan, role) {
+function normalizeLicensePlanForRole(plan, role, workspaceKind = null) {
+  const ws = workspaceKind || getLicenseWorkspaceKindForRole(role);
+  const n = String(plan || '').trim().toLowerCase();
+  if (!n) return '';
+  const fromServiceFamily = n.startsWith('service_');
+
+  /** Zarovnání s backendem _map_service_license_storage_to_user_plan + normalize_license_plan_key. */
+  const userPlanFromServiceStorage = () => {
+    let eff = n;
+    if (eff === 'service_basic' || eff === 'service_premium') {
+      eff = 'service_full';
+    }
+    const map = { service_free: 'free', service_full: 'premium', service_lifetime: 'lifetime' };
+    return map[eff] || 'free';
+  };
+
+  const servicePlanFromUserStorage = () => {
+    const b = getLicensePlanBase(n);
+    if (b === 'free') return 'service_free';
+    if (b === 'lifetime') return 'service_lifetime';
+    return 'service_full';
+  };
+
+  let canon = n;
+  if (ws === 'service') {
+    if (!fromServiceFamily) {
+      canon = servicePlanFromUserStorage();
+    } else if (n === 'service_basic' || n === 'service_premium') {
+      canon = 'service_full';
+    }
+  } else if (fromServiceFamily) {
+    canon = userPlanFromServiceStorage();
+  }
+
+  const order = ws === 'service' ? SERVICE_LICENSE_PLAN_ORDER : USER_LICENSE_PLAN_ORDER;
+  if (order.includes(canon)) {
+    return canon;
+  }
+  return order[0] || 'free';
+}
+
+function getLicensePlanOptionsForRole(role, workspaceKind = null) {
+  const ws = workspaceKind || getLicenseWorkspaceKindForRole(role);
+  return resolveLicensePlanChoicesForPopulate(ws, null);
+}
+
+function formatAdminLicensePlanLabel(plan, role = null, workspaceKind = null) {
   const normalized = String(plan || '').trim().toLowerCase();
-  const base = getLicensePlanBase(normalized);
-  return getLicenseWorkspaceKindForRole(role) === 'service' ? `service_${base}` : base;
-}
-
-function getLicensePlanOptionsForRole(role) {
-  return getLicenseWorkspaceKindForRole(role) === 'service'
-    ? SERVICE_LICENSE_PLAN_OPTIONS
-    : USER_LICENSE_PLAN_OPTIONS;
-}
-
-function formatAdminLicensePlanLabel(plan, role = null) {
-  const normalized = String(plan || '').trim().toLowerCase();
-  const inferredRole = role || (normalized.startsWith('service_') ? 'service' : 'user');
-  const normalizedForRole = normalizeLicensePlanForRole(normalized, inferredRole);
-  const options = getLicensePlanOptionsForRole(inferredRole);
+  const inferredWs =
+    workspaceKind ||
+    (normalized.startsWith('service_') ? 'service' : getLicenseWorkspaceKindForRole(role || 'user'));
+  const inferredRole = role || (inferredWs === 'service' ? 'service' : 'user');
+  const normalizedForRole = normalizeLicensePlanForRole(normalized, inferredRole, inferredWs);
+  const options = getLicensePlanOptionsForRole(inferredRole, inferredWs);
   const match = options.find((option) => option.value === normalizedForRole);
   return match ? match.label : normalizedForRole.toUpperCase();
 }
@@ -166,12 +246,15 @@ function populateLicensePlanSelect(selectId, role, currentPlan = '', options = {
   if (!select) return;
   const includeBlank = options.includeBlank !== false;
   const blankLabel = options.blankLabel || 'beze změny';
+  const workspaceKind = options.workspaceKind || null;
+  const wsResolved = workspaceKind || getLicenseWorkspaceKindForRole(role);
   const normalizedCurrent = currentPlan
-    ? normalizeLicensePlanForRole(currentPlan, role)
+    ? normalizeLicensePlanForRole(currentPlan, role, workspaceKind)
     : '';
   const previousValue = String(select.value || '').trim().toLowerCase();
-  const desiredValue = normalizedCurrent || normalizeLicensePlanForRole(previousValue, role);
-  const planOptions = getLicensePlanOptionsForRole(role);
+  const desiredValue =
+    normalizedCurrent || normalizeLicensePlanForRole(previousValue, role, workspaceKind);
+  const planOptions = resolveLicensePlanChoicesForPopulate(wsResolved, options.allowedPlansFromApi ?? null);
   const html = [];
   if (includeBlank) {
     html.push(`<option value="">${escapeHtml(blankLabel)}</option>`);
@@ -429,12 +512,22 @@ function withQueryParams(path, params = {}) {
   return serialized ? `${base}?${serialized}` : base;
 }
 
-async function fetchAllList(path, pageSize = LIST_FETCH_PAGE_SIZE, maxPages = 200) {
+async function fetchAllList(
+  path,
+  pageSize = LIST_FETCH_PAGE_SIZE,
+  maxPages = 200,
+  extraParams = null,
+) {
   const allItems = [];
   let offset = 0;
+  const extra = extraParams && typeof extraParams === 'object' ? extraParams : null;
 
   for (let page = 0; page < maxPages; page += 1) {
-    const response = await apiRequest('GET', withQueryParams(path, { limit: pageSize, offset }));
+    const params = { limit: pageSize, offset };
+    if (extra) {
+      Object.assign(params, extra);
+    }
+    const response = await apiRequest('GET', withQueryParams(path, params));
     const items = Array.isArray(response) ? response : (Array.isArray(response?.records) ? response.records : []);
 
     allItems.push(...items);
@@ -740,7 +833,10 @@ function switchSection(section) {
   document.querySelectorAll('.nav-item').forEach(item => {
     item.classList.remove('active');
   });
-  document.querySelector(`.nav-item[data-section="${section}"]`)?.classList.add('active');
+  const activeNavBtn = document.querySelector(`.nav-item[data-section="${section}"]`);
+  if (activeNavBtn) {
+    activeNavBtn.classList.add('active');
+  }
   
   // Skrýt všechny sekce
   document.querySelectorAll('.content-section').forEach(sec => {
@@ -800,6 +896,9 @@ function loadSectionData(section) {
     case 'audit':
       loadAuditLog();
       break;
+    case 'traffic':
+      loadTrafficReportSection();
+      break;
     case 'support':
       loadSupportInbox();
       break;
@@ -815,6 +914,116 @@ function loadSectionData(section) {
     case 'control-center':
       refreshControlCenterOverview();
       break;
+  }
+}
+
+function releaseTrafficReportObjectUrl() {
+  if (trafficReportObjectUrl) {
+    URL.revokeObjectURL(trafficReportObjectUrl);
+    trafficReportObjectUrl = null;
+  }
+}
+
+async function fetchAdminHtmlGet(path) {
+  const token = getAuthToken();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ADMIN_API_TIMEOUT_MS);
+  try {
+    const res = await fetch(API_BASE + path, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'text/html',
+      },
+      credentials: 'include',
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return { ok: res.ok, status: res.status, text };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function loadTrafficReportSection() {
+  const statusEl = document.getElementById('traffic-report-status');
+  const errEl = document.getElementById('traffic-report-error');
+  const iframe = document.getElementById('traffic-report-iframe');
+  if (!statusEl || !iframe) return;
+
+  if (errEl) {
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+  }
+
+  statusEl.innerHTML = '<div class="loading">Načítám stav přehledu…</div>';
+
+  try {
+    const st = await apiRequest('GET', '/admin-api/traffic/report/status', null, {
+      silentGlobalError: true,
+    });
+    const meta = (st && st.meta) || {};
+    const exists = Boolean(st && st.report_exists);
+    const lines = [];
+    lines.push(
+      `<strong>Stav souboru:</strong> ${exists ? 'přehled je k dispozici' : 'přehled zatím nebyl vygenerován'}`,
+    );
+    if (meta.generated_at) {
+      lines.push(`<strong>Naposledy vygenerováno:</strong> ${escapeHtml(String(meta.generated_at))}`);
+    }
+    if (meta.source_log) {
+      lines.push(`<strong>Zdrojový log:</strong> <code>${escapeHtml(String(meta.source_log))}</code>`);
+    }
+    if (meta.ok === false && meta.error) {
+      lines.push(
+        `<span class="error-inline"><strong>Poslední generování:</strong> ${escapeHtml(String(meta.error))}</span>`,
+      );
+    }
+    statusEl.innerHTML = `<div class="global-admin-summary-card">${lines.join('<br/>')}</div>`;
+  } catch (e) {
+    statusEl.innerHTML = `<div class="error">Stav se nepodařilo načíst: ${escapeHtml(e.message || String(e))}</div>`;
+  }
+
+  releaseTrafficReportObjectUrl();
+  iframe.removeAttribute('srcdoc');
+  iframe.setAttribute('src', 'about:blank');
+
+  try {
+    const { ok, status, text } = await fetchAdminHtmlGet('/admin-api/traffic/report');
+    if (!ok) {
+      if (errEl) {
+        errEl.style.display = 'block';
+        errEl.innerHTML =
+          status === 404 ? text : `Nepodařilo se načíst přehled (HTTP ${status}).`;
+      }
+      iframe.srcdoc = text && text.length ? text : '<!DOCTYPE html><html><body><p>Chyba načtení.</p></body></html>';
+      return;
+    }
+    const blob = new Blob([text], { type: 'text/html;charset=utf-8' });
+    trafficReportObjectUrl = URL.createObjectURL(blob);
+    iframe.src = trafficReportObjectUrl;
+  } catch (e) {
+    if (errEl) {
+      errEl.style.display = 'block';
+      errEl.textContent = e.message || String(e);
+    }
+  }
+}
+
+async function regenerateTrafficReport() {
+  const btn = document.getElementById('traffic-report-regenerate-btn');
+  if (btn) {
+    btn.disabled = true;
+  }
+  try {
+    await apiRequest('POST', '/admin-api/traffic/report/regenerate', {});
+    await loadTrafficReportSection();
+  } catch (e) {
+    showGlobalError(e.message || String(e));
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+    }
   }
 }
 
@@ -1858,12 +2067,58 @@ function getActionText(action) {
 // USERS CRUD
 // ============================================
 
+function scheduleUsersSearchRefetch() {
+  clearTimeout(usersSearchDebounceTimer);
+  usersSearchDebounceTimer = setTimeout(() => {
+    void refetchUsersListForSearch(false);
+  }, 320);
+}
+
+async function refetchUsersListForSearch(refreshArchive) {
+  const container = document.getElementById('users-cards-container');
+  const searchInput = document.getElementById('user-search');
+  const q = (searchInput?.value || '').trim();
+  const gen = ++usersListFetchGeneration;
+  if (container) {
+    container.innerHTML = '<div class="loading">Načítám…</div>';
+  }
+  const paginationEl = document.getElementById('users-pagination');
+  if (paginationEl) {
+    paginationEl.classList.add('hidden');
+    paginationEl.innerHTML = '';
+  }
+  try {
+    const rows = await fetchAllList(
+      '/admin-api/users',
+      LIST_FETCH_PAGE_SIZE,
+      200,
+      q ? { search: q } : null,
+    );
+    if (gen !== usersListFetchGeneration) {
+      return;
+    }
+    usersAllCache = rows;
+    usersCurrentPage = 1;
+    renderUsersList();
+    if (refreshArchive) {
+      loadDeletedUsersArchive();
+    }
+  } catch (error) {
+    if (gen !== usersListFetchGeneration) {
+      return;
+    }
+    if (container) {
+      container.innerHTML = `<div class="error">Chyba při načítání: ${escapeHtml(error.message || String(error))}</div>`;
+    }
+  }
+}
+
 async function loadUsers() {
   const container = document.getElementById('users-cards-container');
   if (!container) return;
-  const paginationEl = document.getElementById('users-pagination');
 
   container.innerHTML = '<div class="loading">Načítám uživatele...</div>';
+  const paginationEl = document.getElementById('users-pagination');
   if (paginationEl) {
     paginationEl.classList.add('hidden');
     paginationEl.innerHTML = '';
@@ -1871,19 +2126,22 @@ async function loadUsers() {
 
   try {
     const searchInput = document.getElementById('user-search');
-    usersAllCache = await fetchAllList('/admin-api/users');
-    usersCurrentPage = 1;
-
     if (searchInput && searchInput.dataset.bound !== '1') {
       searchInput.addEventListener('input', () => {
         usersCurrentPage = 1;
-        renderUsersList();
+        scheduleUsersSearchRefetch();
+      });
+      searchInput.addEventListener('keydown', (evt) => {
+        if (evt.key === 'Enter') {
+          evt.preventDefault();
+          clearTimeout(usersSearchDebounceTimer);
+          void refetchUsersListForSearch(false);
+        }
       });
       searchInput.dataset.bound = '1';
     }
 
-    renderUsersList();
-    loadDeletedUsersArchive();
+    await refetchUsersListForSearch(true);
   } catch (error) {
     container.innerHTML = `<div class="error">Chyba při načítání: ${error.message}</div>`;
   }
@@ -1901,11 +2159,23 @@ async function loadDeletedUsersArchive() {
     }
     const esc = escapeHtml;
     body.innerHTML = `
+      <p class="muted archive-purge-hint" style="margin-bottom:0.75rem">
+        <strong>Trvalé smazání z databáze</strong> odstraní řádek z <code>customers</code> (uvolní IČO u smazaných servisů).
+        Vyžaduje opsání přesné fráze <code>${esc(ARCHIVED_USERS_PURGE_CONFIRM_PHRASE)}</code>.
+      </p>
+      <div class="section-toolbar" style="margin-bottom:0.75rem; flex-wrap:wrap; gap:8px;">
+        <button type="button" class="btn-secondary" onclick="purgeDeletedArchiveSelected()">Odstranit vybrané z DB…</button>
+        <button type="button" class="btn-secondary" onclick="purgeDeletedArchiveAll()">Odstranit všechny soft-smazané z DB…</button>
+      </div>
       <table class="data-table deleted-archive-table">
-        <thead><tr><th>Označení</th><th>Původní e-mail</th><th>Smazáno</th><th>Aktuální e-mail v DB</th><th></th></tr></thead>
+        <thead><tr>
+          <th style="width:2rem"><input type="checkbox" title="Vybrat vše" aria-label="Vybrat vše archivu" id="archive-purge-select-all" onchange="toggleArchivePurgeSelectAll(this)" /></th>
+          <th>Označení</th><th>Původní e-mail</th><th>Smazáno</th><th>Aktuální e-mail v DB</th><th></th>
+        </tr></thead>
         <tbody>
           ${rows.map((row) => `
             <tr>
+              <td><input type="checkbox" class="archive-purge-cb" value="${Number(row.customer_id)}" aria-label="Vybrat ${esc(row.deletion_mark || '')}" /></td>
               <td><strong>${esc(row.deletion_mark || '')}</strong></td>
               <td>${esc(row.email_before || '')}</td>
               <td>${esc(formatDateTime(row.deleted_at))}</td>
@@ -1921,32 +2191,78 @@ async function loadDeletedUsersArchive() {
   }
 }
 
+function toggleArchivePurgeSelectAll(master) {
+  const on = Boolean(master && master.checked);
+  document.querySelectorAll('.archive-purge-cb').forEach((cb) => {
+    cb.checked = on;
+  });
+}
+
+function getArchivePurgeSelectedIds() {
+  return Array.from(document.querySelectorAll('.archive-purge-cb:checked'))
+    .map((el) => Number(el.value))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+async function purgeDeletedArchiveSelected() {
+  const ids = getArchivePurgeSelectedIds();
+  if (!ids.length) {
+    showGlobalError('Vyberte v archivu alespoň jeden účet (zaškrtnutí).');
+    return;
+  }
+  const phrase = window.prompt(
+    `Trvale odstranit ${ids.length} účet(ů) z databáze?\n\nOpište přesně:\n${ARCHIVED_USERS_PURGE_CONFIRM_PHRASE}`,
+  );
+  if (phrase !== ARCHIVED_USERS_PURGE_CONFIRM_PHRASE) {
+    if (phrase !== null) showGlobalError('Potvrzovací text neodpovídá — operace zrušena.');
+    return;
+  }
+  try {
+    const res = await apiRequest('POST', '/admin-api/user-archive-purge', {
+      customer_ids: ids,
+      purge_all: false,
+      confirm_phrase: phrase,
+    });
+    showSuccess(res?.message || `Trvale odstraněno: ${res?.purged ?? ids.length}.`);
+    await loadDeletedUsersArchive();
+    if (typeof refetchUsersListForSearch === 'function') {
+      await refetchUsersListForSearch(false);
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function purgeDeletedArchiveAll() {
+  const phrase = window.prompt(
+    `Opravdu trvale odstranit VŠECHNY účty se stavem soft-smazaný z databáze?\n\nOpište přesně:\n${ARCHIVED_USERS_PURGE_CONFIRM_PHRASE}`,
+  );
+  if (phrase !== ARCHIVED_USERS_PURGE_CONFIRM_PHRASE) {
+    if (phrase !== null) showGlobalError('Potvrzovací text neodpovídá — operace zrušena.');
+    return;
+  }
+  try {
+    const res = await apiRequest('POST', '/admin-api/user-archive-purge', {
+      customer_ids: [],
+      purge_all: true,
+      confirm_phrase: phrase,
+    });
+    showSuccess(res?.message || `Trvale odstraněno: ${res?.purged ?? 0}.`);
+    await loadDeletedUsersArchive();
+    if (typeof refetchUsersListForSearch === 'function') {
+      await refetchUsersListForSearch(false);
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 function renderUsersList() {
   const container = document.getElementById('users-cards-container');
   const paginationEl = document.getElementById('users-pagination');
   if (!container) return;
 
-  const query = (document.getElementById('user-search')?.value || '').trim().toLowerCase();
-  usersFilteredCache = !query
-    ? [...usersAllCache]
-    : usersAllCache.filter((user) => {
-        const haystack = [
-          user.id,
-          user.email,
-          user.name,
-          user.role,
-          user.city,
-          user.phone,
-          user.last_ip_address,
-          user.last_location,
-          user.disk_usage_human,
-          user.disk_usage_bytes,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        return haystack.includes(query);
-      });
+  usersFilteredCache = [...usersAllCache];
 
   if (usersFilteredCache.length === 0) {
     container.innerHTML = '<div class="empty">Žádní uživatelé</div>';
@@ -3036,41 +3352,48 @@ async function showUserModal(userId = null) {
         user = users.find(u => u.id === userId) || null;
       }
 
-      if (user) {
-        document.getElementById('user-id').value = user.id;
-        document.getElementById('user-email').value = user.email || '';
-        document.getElementById('user-name').value = user.name || '';
-        document.getElementById('user-role').value = user.role || 'user';
-        document.getElementById('user-phone').value = user.phone || '';
-        document.getElementById('user-ico').value = user.ico || '';
-        document.getElementById('user-dic').value = user.dic || '';
-        document.getElementById('user-street').value = user.street || '';
-        document.getElementById('user-street-number').value = user.street_number || '';
-        document.getElementById('user-city').value = user.city || '';
-        document.getElementById('user-zip').value = user.zip || '';
-        populateLicensePlanSelect('user-license-plan', user.role || 'user', user.license_plan || 'free', {
-          includeBlank: false,
-        });
-        const ent = Array.isArray(user.workspace_entitlements)
-          ? user.workspace_entitlements.map((x) => String(x || '').toLowerCase())
-          : null;
-        const uWs = document.getElementById('user-ws-user');
-        const sWs = document.getElementById('user-ws-service');
-        const dWs = document.getElementById('user-ws-default');
-        if (uWs && sWs) {
-          if (ent && ent.length) {
-            uWs.checked = ent.includes('user');
-            sWs.checked = ent.includes('service');
-          } else {
-            applyDefaultUserWorkspaceCheckboxesFromRole();
-          }
-        }
-        if (dWs) {
-          const ud = String(user.workspace_ui_default || '').toLowerCase();
-          dWs.value = ud === 'service' || ud === 'user' ? ud : '';
-        }
-        passwordInput.value = '';
+      if (!user) {
+        showGlobalError(
+          'Uživatele se nepodařilo načíst (detail ani seznam). Obnovte sekci Uživatelé nebo se přihlaste znovu.',
+        );
+        return false;
       }
+
+      document.getElementById('user-id').value = user.id;
+      document.getElementById('user-email').value = user.email || '';
+      document.getElementById('user-name').value = user.name || '';
+      document.getElementById('user-role').value = user.role || 'user';
+      document.getElementById('user-phone').value = user.phone || '';
+      document.getElementById('user-ico').value = user.ico || '';
+      document.getElementById('user-dic').value = user.dic || '';
+      document.getElementById('user-street').value = user.street || '';
+      document.getElementById('user-street-number').value = user.street_number || '';
+      document.getElementById('user-city').value = user.city || '';
+      document.getElementById('user-zip').value = user.zip || '';
+      populateLicensePlanSelect('user-license-plan', user.role || 'user', user.license_plan || 'free', {
+        includeBlank: false,
+        workspaceKind: user.license_workspace_kind || null,
+        allowedPlansFromApi: user.license_allowed_plans ?? null,
+      });
+      const ent = Array.isArray(user.workspace_entitlements)
+        ? user.workspace_entitlements.map((x) => String(x || '').toLowerCase())
+        : null;
+      const uWs = document.getElementById('user-ws-user');
+      const sWs = document.getElementById('user-ws-service');
+      const dWs = document.getElementById('user-ws-default');
+      if (uWs && sWs) {
+        if (ent && ent.length) {
+          uWs.checked = ent.includes('user');
+          sWs.checked = ent.includes('service');
+        } else {
+          applyDefaultUserWorkspaceCheckboxesFromRole();
+        }
+      }
+      if (dWs) {
+        const ud = String(user.workspace_ui_default || '').toLowerCase();
+        dWs.value = ud === 'service' || ud === 'user' ? ud : '';
+      }
+      passwordInput.value = '';
     } catch (error) {
       showGlobalError('Chyba při načítání uživatele: ' + error.message);
       return false;
@@ -3131,10 +3454,16 @@ async function saveUser(event) {
   try {
     let responseData = null;
     if (userId) {
-      userData.workspace_entitlements = wsp.workspace_entitlements;
-      userData.workspace_ui_default = wsp.workspace_ui_default;
+      if (!wsp.sameAsRoleDefault) {
+        userData.workspace_entitlements = wsp.workspace_entitlements;
+        userData.workspace_ui_default = wsp.workspace_ui_default;
+      }
       responseData = await apiRequest('PATCH', `/admin-api/users/${userId}`, userData);
-      const planLabel = formatAdminLicensePlanLabel(responseData?.license_plan || userData.license_plan || 'free', userData.role);
+      const planLabel = formatAdminLicensePlanLabel(
+        responseData?.license_plan || userData.license_plan || 'free',
+        userData.role,
+        userDetailData?.user?.license_workspace_kind || null,
+      );
       const wEnt = Array.isArray(responseData?.workspace_entitlements) ? responseData.workspace_entitlements.join(' + ') : '';
       const wMsg = wEnt ? ` Režimy v aplikaci: ${wEnt}.` : '';
       showSuccess(`Údaj byl upraven (licence: ${planLabel}).${wMsg} Uživatel uvidí změnu po obnovení stránky v aplikaci nebo při příštím načtení účtu.`);
@@ -3566,6 +3895,15 @@ async function loadServiceRegistrationRequests() {
       const address = [item.street, item.street_number, item.city, item.zip]
         .filter(Boolean)
         .join(', ');
+      const emailVerificationLabel = (() => {
+        if (item.email_verification_state === 'verified' && item.email_verified_at) {
+          return `Ano (${formatDateTime(item.email_verified_at, '-')})`;
+        }
+        if (item.email_verification_state === 'pending') {
+          return 'Ne — žadatel musí kliknout na odkaz v e-mailu';
+        }
+        return 'Starší žádost (bez e-mailového ověřovacího odkazu)';
+      })();
       return `
         <article class="service-request-item">
           <div class="service-request-main">
@@ -3573,6 +3911,7 @@ async function loadServiceRegistrationRequests() {
               <p class="service-request-title">🛠️ ${escapeHtml(item.service_name || '-')}</p>
               <p class="service-request-meta">
                 Email: <strong>${escapeHtml(item.email || '-')}</strong><br>
+                Ověření e-mailu žadatele: <strong>${escapeHtml(emailVerificationLabel)}</strong><br>
                 IČO: <strong>${escapeHtml(item.ico || '-')}</strong> ${item.dic ? `• DIČ: <strong>${escapeHtml(item.dic)}</strong>` : ''}<br>
                 Zodpovědná osoba: <strong>${escapeHtml(item.responsible_person || '-')}</strong><br>
                 Telefon: <strong>${escapeHtml(item.phone || '-')}</strong><br>
@@ -3610,7 +3949,8 @@ async function approveServiceRegistrationRequest(requestId) {
       review_note: reviewNoteRaw || null
     });
     showSuccess('Žádost byla schválena a servisní účet vytvořen.');
-    await Promise.all([loadServices(), loadOverview()]);
+    // Servis je nový záznam v customers — bez loadUsers() by sekce „Uživatelé“ a cache zůstaly zastaralé až do F5.
+    await Promise.all([loadServices(), loadUsers(), loadOverview()]);
   } catch (error) {
     console.error('Error approving service registration request:', error);
   }
@@ -3711,8 +4051,7 @@ async function saveService(event) {
     }
     
     closeServiceModal();
-    loadServices();
-    loadOverview();
+    await Promise.all([loadServices(), loadUsers(), loadOverview()]);
   } catch (error) {
     console.error('Error saving service:', error);
   }
@@ -3730,8 +4069,7 @@ async function deleteService(serviceId, serviceName) {
   try {
     const data = await apiRequest('DELETE', `/admin-api/services/${serviceId}`);
     showSuccess(data?.message || 'Servis byl odstraněn ze seznamu');
-    loadServices();
-    loadOverview();
+    await Promise.all([loadServices(), loadUsers(), loadOverview()]);
   } catch (error) {
     console.error('Error deleting service:', error);
   }
@@ -7914,12 +8252,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const userRoleSelect = document.getElementById('user-role');
   if (userRoleSelect && userRoleSelect.dataset.wsBound !== '1') {
     userRoleSelect.addEventListener('change', () => {
-      populateLicensePlanSelect('user-license-plan', userRoleSelect.value || 'user', document.getElementById('user-license-plan')?.value || '', {
-        includeBlank: false,
-      });
-      if (!document.getElementById('user-id')?.value) {
-        applyDefaultUserWorkspaceCheckboxesFromRole();
-      }
+      applyDefaultUserWorkspaceCheckboxesFromRole();
     });
     userRoleSelect.dataset.wsBound = '1';
   }
@@ -7954,7 +8287,7 @@ function initSupportChat() {
     if (!token) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/v1/support/ws?token=${token}`;
+    const wsUrl = `${protocol}//${window.location.host}/api/v1/support/ws/admin?token=${token}`;
     
     supportWs = new WebSocket(wsUrl);
     
@@ -7996,7 +8329,7 @@ async function loadSupportSessions() {
         });
         if (res.ok) {
             const data = await res.json();
-            supportSessions = data.sessions;
+            supportSessions = data.map(s => ({ ...s, unread: false })); // backend vrací přímo pole, inicializujeme unread flag
             renderSupportChatList();
             if (activeChatUserId) {
                 renderSupportChatMessages(activeChatUserId);
@@ -8018,23 +8351,38 @@ function renderSupportChatList() {
     supportSessions.forEach(session => {
         const item = document.createElement('div');
         item.style.padding = '12px 16px';
-        item.style.borderBottom = '1px solid var(--color-border)';
+        item.style.borderBottom = '1px solid #94a3b8';
         item.style.cursor = 'pointer';
-        item.style.background = activeChatUserId === session.user_id ? 'var(--color-surface)' : 'transparent';
-        item.style.borderLeft = activeChatUserId === session.user_id ? '4px solid var(--color-primary)' : '4px solid transparent';
+        item.style.background = activeChatUserId === session.customer_id ? 'var(--color-surface)' : 'transparent';
+        item.style.borderLeft = activeChatUserId === session.customer_id ? '4px solid var(--color-primary)' : '4px solid transparent';
         
+        const fontWeight = session.unread ? '700' : '500';
         item.innerHTML = `
-            <div style="font-weight: 500; font-size: 14px; color: var(--color-text);">${escapeHtml(session.user_email)}</div>
-            <div style="font-size: 12px; color: var(--color-text-muted); margin-top: 4px;">ID: ${session.user_id}</div>
+            <div style="font-weight: ${fontWeight}; font-size: 14px; color: var(--color-text);">${escapeHtml(session.customer_email)}</div>
+            <div style="font-size: 12px; color: var(--color-text-muted); margin-top: 4px;">ID: ${session.customer_id}</div>
         `;
         
-        item.addEventListener('click', () => {
-            activeChatUserId = session.user_id;
+        item.addEventListener('click', async () => {
+            session.unread = false;
+            updateSupportBadge();
+            activeChatUserId = session.customer_id;
             document.getElementById('support-chat-header').style.display = 'block';
-            document.getElementById('support-chat-user-email').textContent = session.user_email;
+            document.getElementById('support-chat-user-email').textContent = session.customer_email;
             document.getElementById('support-chat-input-area').style.display = 'flex';
+            
+            // Load messages for this session
+            const token = localStorage.getItem('adminAccessToken') || localStorage.getItem('adminToken');
+            try {
+                const res = await fetch(`/api/v1/support/admin/sessions/${session.session_id}/messages`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (res.ok) {
+                    session.messages = await res.json();
+                }
+            } catch (e) {}
+            
             renderSupportChatList(); // re-render to update active state
-            renderSupportChatMessages(session.user_id);
+            renderSupportChatMessages(session.customer_id);
         });
         
         listEl.appendChild(item);
@@ -8042,7 +8390,7 @@ function renderSupportChatList() {
 }
 
 function renderSupportChatMessages(userId) {
-    const session = supportSessions.find(s => s.user_id === userId);
+    const session = supportSessions.find(s => s.customer_id === userId);
     const messagesEl = document.getElementById('support-chat-messages');
     
     if (!session || !session.messages || session.messages.length === 0) {
@@ -8052,7 +8400,7 @@ function renderSupportChatMessages(userId) {
     
     messagesEl.innerHTML = '';
     session.messages.forEach(msg => {
-        appendMessageToUI(msg.message, msg.sender === 'admin');
+        appendMessageToUI(msg.text, msg.sender_type === 'admin');
     });
 }
 
@@ -8077,39 +8425,83 @@ function appendMessageToUI(text, isAdmin) {
     } else {
         msgDiv.style.background = 'var(--color-surface-soft)';
         msgDiv.style.color = 'var(--color-text)';
-        msgDiv.style.border = '1px solid var(--color-border)';
+        msgDiv.style.border = '1px solid #94a3b8';
         msgDiv.style.alignSelf = 'flex-start';
     }
     
-    msgDiv.textContent = text;
+    msgDiv.innerHTML = text.replace(/\n/g, '<br>');
     messagesEl.appendChild(msgDiv);
     messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+function updateSupportBadge() {
+    const unreadCount = supportSessions.filter(s => s.unread).length;
+    const navBtn = document.querySelector('.nav-item[data-section="support-chat"]');
+    if (!navBtn) return;
+    
+    let badge = navBtn.querySelector('.chat-badge');
+    if (unreadCount > 0) {
+        if (!badge) {
+            navBtn.style.position = 'relative';
+            badge = document.createElement('span');
+            badge.className = 'chat-badge';
+            badge.style.position = 'absolute';
+            badge.style.right = '12px';
+            badge.style.top = '50%';
+            badge.style.transform = 'translateY(-50%)';
+            badge.style.background = '#ef4444';
+            badge.style.color = '#000';
+            badge.style.fontSize = '11px';
+            badge.style.fontWeight = 'bold';
+            badge.style.width = '18px';
+            badge.style.height = '18px';
+            badge.style.borderRadius = '50%';
+            badge.style.display = 'flex';
+            badge.style.alignItems = 'center';
+            badge.style.justifyContent = 'center';
+            navBtn.appendChild(badge);
+        }
+        badge.textContent = unreadCount;
+    } else {
+        if (badge) badge.remove();
+    }
+}
+
 function handleIncomingSupportMessage(data) {
-    let session = supportSessions.find(s => s.user_id === data.user_id);
+    let session = supportSessions.find(s => s.customer_id === data.customer_id);
     if (!session) {
         session = {
-            user_id: data.user_id,
-            user_email: data.user_email,
-            messages: []
+            session_id: data.session_id,
+            customer_id: data.customer_id,
+            customer_email: data.customer_email || 'Neznámý',
+            messages: [],
+            unread: false
         };
         supportSessions.push(session);
-        renderSupportChatList();
     }
+    
+    if (!session.messages) session.messages = [];
     
     session.messages.push({
-        sender: 'user',
-        message: data.message,
-        timestamp: data.timestamp
+        sender_type: data.sender_type,
+        text: data.text,
+        created_at: data.created_at
     });
     
-    if (activeChatUserId === data.user_id) {
-        appendMessageToUI(data.message, false);
+    if (activeChatUserId === data.customer_id && currentSection === 'support-chat') {
+        appendMessageToUI(data.text, data.sender_type === 'admin');
+        session.unread = false;
     } else {
-        // Could show a notification badge here
-        renderSupportChatList();
+        if (data.sender_type !== 'admin') {
+            if (!session.unread) {
+                showSuccess(`Nová zpráva na podpoře od: ${session.customer_email}`);
+            }
+            session.unread = true;
+        }
     }
+    
+    renderSupportChatList();
+    updateSupportBadge();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -8121,22 +8513,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const text = input.value.trim();
             if (!text || !activeChatUserId || !supportWs || supportWs.readyState !== WebSocket.OPEN) return;
             
+            const session = supportSessions.find(s => s.customer_id === activeChatUserId);
+            if (!session) return;
+
             supportWs.send(JSON.stringify({
                 type: 'message',
-                target_user_id: activeChatUserId,
-                message: text
+                customer_id: activeChatUserId,
+                session_id: session.session_id,
+                text: text
             }));
             
-            // Optimistically add to UI and local state
-            const session = supportSessions.find(s => s.user_id === activeChatUserId);
-            if (session) {
-                session.messages.push({
-                    sender: 'admin',
-                    message: text,
-                    timestamp: new Date().toISOString()
-                });
-            }
-            appendMessageToUI(text, true);
             input.value = '';
         };
         

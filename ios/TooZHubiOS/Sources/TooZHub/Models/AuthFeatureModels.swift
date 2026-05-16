@@ -25,7 +25,6 @@ struct ServiceRegistrationRequest: Encodable {
     let city: String
     let zip: String
     let dic: String?
-    let registrationPurpose: String
 }
 
 struct ServiceRegistrationResponse: Decodable {

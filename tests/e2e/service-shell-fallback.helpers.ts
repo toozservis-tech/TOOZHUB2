@@ -489,6 +489,56 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
       serviceInvoices.unshift(created);
       return json(route, 201, created);
     }
+    if (/^\/api\/service\/invoices\/from-quote\/\d+$/.test(path) && method === 'POST') {
+      const quoteId = Number(path.split('/').pop());
+      const quote = serviceQuotes.find((entry) => entry.id === quoteId);
+      if (!quote) return json(route, 404, { detail: 'Not Found' });
+      const existing = serviceInvoices.find((entry) => Number((entry as any)?.extra?.source_quote_id || 0) === quoteId);
+      if (existing) return json(route, 201, existing);
+      const lines = (Array.isArray(quote.items) ? quote.items : []).map((item, index) => ({
+        id: index + 1,
+        description: String(item.name || 'Položka'),
+        quantity: Number(item.quantity || 1),
+        unit: 'ks',
+        unit_price: Number(item.unit_price || 0),
+        tax_rate: 21,
+        line_total: Math.round(Number(item.total_price || 0) * 1.21 * 100) / 100,
+        sort_order: index,
+      }));
+      const subtotal = Math.round(lines.reduce((sum, line) => sum + (Number(line.quantity || 0) * Number(line.unit_price || 0)), 0) * 100) / 100;
+      const taxTotal = Math.round(lines.reduce((sum, line) => sum + (Number(line.line_total || 0) - (Number(line.quantity || 0) * Number(line.unit_price || 0))), 0) * 100) / 100;
+      const total = Math.round(lines.reduce((sum, line) => sum + Number(line.line_total || 0), 0) * 100) / 100;
+      const created = {
+        id: nextInvoiceId++,
+        tenant_id: 1,
+        service_id: 9901,
+        customer_id: Number(quote.customer_id || 101),
+        vehicle_id: Number(quote.vehicle_id || 301),
+        invoice_number: null as string | null,
+        status: 'draft',
+        status_label: 'Koncept',
+        subtotal,
+        tax_total: taxTotal,
+        total,
+        currency: 'CZK',
+        issued_at: null as string | null,
+        due_at: null as string | null,
+        cancelled_at: null as string | null,
+        notes: `Vytvořeno z cenové nabídky #${quoteId}.`,
+        customer_label: 'Linked Customer',
+        vehicle_label: 'Octavia',
+        created_at: '2026-04-16T11:15:00Z',
+        updated_at: '2026-04-16T11:15:00Z',
+        extra: {
+          source_quote_id: quoteId,
+          source_work_order_id: Number(quote.work_order_id || 0) || null,
+          source_service_record_id: Number(quote.service_record_id || 0) || null,
+        },
+        lines,
+      };
+      serviceInvoices.unshift(created);
+      return json(route, 201, created);
+    }
     if (/^\/api\/service\/invoices\/\d+$/.test(path) && method === 'GET') {
       const id = Number(path.split('/').pop());
       const invoice = serviceInvoices.find((entry) => entry.id === id);

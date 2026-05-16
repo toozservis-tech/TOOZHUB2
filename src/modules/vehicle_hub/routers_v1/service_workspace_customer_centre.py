@@ -417,6 +417,140 @@ def customer_exact_search(
     }
 
 
+def initiate_pending_service_customer_link(
+    *,
+    db: Session,
+    request: Request,
+    current_user: Customer,
+    target_customer: Customer,
+    consent_basis: str,
+    consent_note: str,
+    internal_service_note: Optional[str] = None,
+    link_source: str = "service_found_existing",
+    audit_lookup_flow: bool = False,
+) -> dict[str, Any]:
+    """Vytvoří nebo obnoví vazbu servis–zákazník ve stavu pending_customer_confirm a odešle ověřovací e-mail."""
+    from ..user_in_app_notifications import notify_owner_service_customer_link_requested
+
+    if int(target_customer.id) == int(current_user.id):
+        raise HTTPException(status_code=400, detail="Nelze propojit účet se sebou samým.")
+
+    basis = (consent_basis or "").strip()
+    note = (consent_note or "").strip()
+    if len(basis) < 3:
+        raise HTTPException(status_code=422, detail="consent_basis musí mít alespoň 3 znaky.")
+    if len(note) < 3:
+        raise HTTPException(status_code=422, detail="consent_note musí mít alespoň 3 znaky.")
+
+    existing = (
+        db.query(ServiceCustomerLink)
+        .filter(
+            ServiceCustomerLink.service_customer_id == int(current_user.id),
+            ServiceCustomerLink.customer_id == int(target_customer.id),
+        )
+        .first()
+    )
+    if existing and existing.status == "active":
+        return {
+            "linked": True,
+            "pending_customer_confirm": False,
+            "customer_link_id": int(existing.id),
+            "link_status": "active",
+            "message": "Vazba už existuje.",
+        }
+
+    service_name = (current_user.name or current_user.email or "Servis").strip()
+    now = datetime.utcnow()
+    if existing:
+        row = existing
+        row.status = "pending_customer_confirm"
+        row.link_source = link_source
+        row.consent_basis = basis
+        row.consent_note = note
+        row.internal_service_note = (internal_service_note or "").strip() or None
+        row.created_by_service_user_id = int(current_user.id)
+        row.updated_at = now
+    else:
+        assert_service_customer_link_quota(db, service_customer_id=int(current_user.id))
+        row = ServiceCustomerLink(
+            service_tenant_id=int(current_user.tenant_id),
+            service_customer_id=int(current_user.id),
+            customer_tenant_id=int(target_customer.tenant_id),
+            customer_id=int(target_customer.id),
+            status="pending_customer_confirm",
+            note=None,
+            link_source=link_source,
+            consent_basis=basis,
+            consent_note=note,
+            internal_service_note=(internal_service_note or "").strip() or None,
+            created_by_service_user_id=int(current_user.id),
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+        db.flush()
+
+    notify_owner_service_customer_link_requested(
+        db,
+        owner_customer_id=int(target_customer.id),
+        service=current_user,
+    )
+
+    confirm_token_real = _mint_jwt(
+        {
+            "typ": _LINK_CONFIRM_JWT_TYP,
+            "lid": int(row.id),
+            "cid": int(target_customer.id),
+            "sid": int(current_user.id),
+        },
+        ttl_minutes=72 * 60,
+    )
+
+    confirm_url = f"{_frontend_base()}/web/index.html?service_link_confirm={confirm_token_real}"
+
+    _send_link_confirm_email(
+        to_email=str(target_customer.email),
+        owner_name=(target_customer.name or "uživateli").strip(),
+        service_name=service_name,
+        confirm_url=confirm_url,
+    )
+
+    write_global_audit_log(
+        db,
+        entity_type="service_customer_security",
+        entity_id=int(row.id),
+        action="SERVICE_CUSTOMER_LINK_CREATED",
+        actor_user_id=int(current_user.id),
+        tenant_id=int(current_user.tenant_id),
+        metadata={
+            "customer_user_id": int(target_customer.id),
+            "status": "pending_customer_confirm",
+            "lookup_flow": audit_lookup_flow,
+            "link_source": link_source,
+        },
+        ip=(request.client.host if request.client else "")[:128],
+        user_agent=(request.headers.get("user-agent") or "")[:2000],
+    )
+    write_global_audit_log(
+        db,
+        entity_type="service_customer_security",
+        entity_id=int(target_customer.id),
+        action="SERVICE_CUSTOMER_INVITE_EMAIL_SENT",
+        actor_user_id=int(current_user.id),
+        tenant_id=int(current_user.tenant_id),
+        metadata={"kind": "link_confirm"},
+    )
+    db.commit()
+
+    return {
+        "linked": False,
+        "pending_customer_confirm": True,
+        "customer_link_id": int(row.id),
+        "link_status": "pending_customer_confirm",
+        "message": "Zákazníkovi byl odeslán e-mail k potvrzení propojení.",
+    }
+
+
 def execute_customer_link_from_lookup(
     *,
     payload: CustomerLinkFromLookupRequestV1,
@@ -439,103 +573,17 @@ def execute_customer_link_from_lookup(
     if not target:
         raise HTTPException(status_code=404, detail="Účet neexistuje.")
 
-    if target.id == current_user.id:
-        raise HTTPException(status_code=400, detail="Nelze propojit účet se sebou samým.")
-
-    existing = (
-        db.query(ServiceCustomerLink)
-        .filter(
-            ServiceCustomerLink.service_customer_id == int(current_user.id),
-            ServiceCustomerLink.customer_id == int(target.id),
-        )
-        .first()
+    return initiate_pending_service_customer_link(
+        db=db,
+        request=request,
+        current_user=current_user,
+        target_customer=target,
+        consent_basis=payload.consent_basis,
+        consent_note=payload.consent_note,
+        internal_service_note=payload.internal_service_note,
+        link_source="service_found_existing",
+        audit_lookup_flow=True,
     )
-    if existing and existing.status == "active":
-        return {"linked": True, "customer_link_id": existing.id, "link_status": "active", "message": "Vazba už existuje."}
-
-    service_name = (current_user.name or current_user.email or "Servis").strip()
-
-    now = datetime.utcnow()
-    if existing:
-        row = existing
-        row.status = "pending_customer_confirm"
-        row.link_source = "service_found_existing"
-        row.consent_basis = payload.consent_basis.strip()
-        row.consent_note = payload.consent_note.strip()
-        row.internal_service_note = (payload.internal_service_note or "").strip() or None
-        row.created_by_service_user_id = int(current_user.id)
-        row.updated_at = now
-    else:
-        assert_service_customer_link_quota(db, service_customer_id=int(current_user.id))
-        row = ServiceCustomerLink(
-            service_tenant_id=int(current_user.tenant_id),
-            service_customer_id=int(current_user.id),
-            customer_tenant_id=int(target.tenant_id),
-            customer_id=int(target.id),
-            status="pending_customer_confirm",
-            note=None,
-            link_source="service_found_existing",
-            consent_basis=payload.consent_basis.strip(),
-            consent_note=payload.consent_note.strip(),
-            internal_service_note=(payload.internal_service_note or "").strip() or None,
-            created_by_service_user_id=int(current_user.id),
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(row)
-        db.flush()
-
-    confirm_token_real = _mint_jwt(
-        {
-            "typ": _LINK_CONFIRM_JWT_TYP,
-            "lid": int(row.id),
-            "cid": int(target.id),
-            "sid": int(current_user.id),
-        },
-        ttl_minutes=72 * 60,
-    )
-
-    confirm_url = f"{_frontend_base()}/web/index.html?service_link_confirm={confirm_token_real}"
-
-    _send_link_confirm_email(
-        to_email=str(target.email),
-        owner_name=(target.name or "uživateli").strip(),
-        service_name=service_name,
-        confirm_url=confirm_url,
-    )
-
-    write_global_audit_log(
-        db,
-        entity_type="service_customer_security",
-        entity_id=int(row.id),
-        action="SERVICE_CUSTOMER_LINK_CREATED",
-        actor_user_id=int(current_user.id),
-        tenant_id=int(current_user.tenant_id),
-        metadata={
-            "customer_user_id": int(target.id),
-            "status": "pending_customer_confirm",
-            "lookup_flow": True,
-        },
-        ip=(request.client.host if request.client else "")[:128],
-        user_agent=(request.headers.get("user-agent") or "")[:2000],
-    )
-    write_global_audit_log(
-        db,
-        entity_type="service_customer_security",
-        entity_id=int(target.id),
-        action="SERVICE_CUSTOMER_INVITE_EMAIL_SENT",
-        actor_user_id=int(current_user.id),
-        tenant_id=int(current_user.tenant_id),
-        metadata={"kind": "link_confirm"},
-    )
-    db.commit()
-
-    return {
-        "linked": False,
-        "pending_customer_confirm": True,
-        "customer_link_id": int(row.id),
-        "message": "Zákazníkovi byl odeslán e-mail k potvrzení propojení.",
-    }
 
 
 @router.post("/customers/link-from-lookup")

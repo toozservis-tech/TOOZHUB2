@@ -54,9 +54,24 @@ _DML_TABLE_RE = re.compile(
 )
 
 
+# Tabulky z Alembic migrací bez (nebo před) ORM modelem na `Base` — DB guard by jinak blokoval raw DELETE/UPDATE.
+_EXTRA_WRITABLE_TABLES: frozenset[str] = frozenset(
+    {
+        "payroll_offices",
+        "payroll_employees",
+        "payroll_employee_offices",
+        "payroll_attendance",
+        "payroll_payslips",
+        "payroll_journals",
+        "payroll_jmhz_submissions",
+    }
+)
+
+
 def _writable_table_names() -> set[str]:
     table_names = set(Base.metadata.tables.keys())
     table_names.add("alembic_version")
+    table_names.update(_EXTRA_WRITABLE_TABLES)
     return table_names
 
 

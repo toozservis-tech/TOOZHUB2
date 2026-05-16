@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Správa vozidel – Admin Dashboard</title>
-  <link rel="stylesheet" href="admin.css?v=20260503notifications" />
+  <link rel="stylesheet" href="admin.css?v=20260513global-error-modal" />
 </head>
 <body>
   <!-- Přihlašovací obrazovka -->
@@ -109,6 +109,10 @@
           <button data-section="audit" class="nav-item">
             <span class="nav-icon">📜</span>
             <span class="nav-text">Audit log</span>
+          </button>
+          <button data-section="traffic" class="nav-item">
+            <span class="nav-icon">📈</span>
+            <span class="nav-text">Návštěvnost</span>
           </button>
           <button data-section="support" class="nav-item">
             <span class="nav-icon">💬</span>
@@ -237,24 +241,24 @@
               <span id="support-admin-status" class="badge" style="background: #ef4444; color: white;">Odpojeno</span>
             </div>
           </div>
-          <div class="card" style="display: flex; height: 600px; padding: 0; overflow: hidden;">
+          <div class="card" style="display: flex; height: 600px; padding: 0; overflow: hidden; border: 2px solid #94a3b8; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
             <!-- Seznam chatů -->
-            <div style="width: 300px; border-right: 1px solid var(--color-border); display: flex; flex-direction: column; background: var(--color-surface-soft);">
-              <div style="padding: 16px; border-bottom: 1px solid var(--color-border); font-weight: 600;">Aktivní chaty</div>
+            <div style="width: 300px; border-right: 2px solid #94a3b8; display: flex; flex-direction: column; background: var(--color-surface-soft);">
+              <div style="padding: 16px; border-bottom: 2px solid #94a3b8; font-weight: 600;">Aktivní chaty</div>
               <div id="support-chat-list" style="flex: 1; overflow-y: auto;">
                 <div style="padding: 16px; color: var(--color-text-muted); text-align: center; font-size: 14px;">Žádné aktivní chaty</div>
               </div>
             </div>
             <!-- Okno chatu -->
             <div style="flex: 1; display: flex; flex-direction: column; background: var(--color-surface);">
-              <div id="support-chat-header" style="padding: 16px; border-bottom: 1px solid var(--color-border); font-weight: 600; display: none;">
+              <div id="support-chat-header" style="padding: 16px; border-bottom: 2px solid #94a3b8; font-weight: 600; display: none;">
                 Chat s uživatelem <span id="support-chat-user-email" style="color: var(--color-primary);"></span>
               </div>
               <div id="support-chat-messages" style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
                 <div style="margin: auto; color: var(--color-text-muted);">Vyberte chat ze seznamu vlevo</div>
               </div>
-              <div id="support-chat-input-area" style="padding: 16px; border-top: 1px solid var(--color-border); display: none; gap: 12px;">
-                <input type="text" id="support-chat-input" placeholder="Napište zprávu..." style="flex: 1; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 6px; font-family: inherit;">
+              <div id="support-chat-input-area" style="padding: 16px; border-top: 2px solid #94a3b8; display: none; gap: 12px;">
+                <input type="text" id="support-chat-input" placeholder="Napište zprávu..." style="flex: 1; padding: 8px 12px; border: 2px solid #94a3b8; border-radius: 6px; font-family: inherit;">
                 <button id="support-chat-send" class="btn-primary">Odeslat</button>
               </div>
             </div>
@@ -268,7 +272,7 @@
             <button class="btn-primary" onclick="showUserModal()">+ Přidat uživatele</button>
           </div>
           <div class="section-toolbar">
-            <input type="text" id="user-search" placeholder="🔍 Hledat uživatele..." class="search-input" />
+            <input type="text" id="user-search" placeholder="🔍 E-mail, jméno, IČO… (číslo ≥6 znaků: i smazané účty)" class="search-input" />
             <div class="view-switch" data-section="users" role="group" aria-label="Zobrazení uživatelů">
               <button type="button" class="view-btn" data-view="grid" onclick="setSectionViewMode('users', 'grid')">Mřížka</button>
               <button type="button" class="view-btn" data-view="list" onclick="setSectionViewMode('users', 'list')">Seznam</button>
@@ -276,7 +280,7 @@
             </div>
           </div>
           <details id="deleted-users-archive" class="deleted-users-archive panel-subtle">
-            <summary>Archiv smazaných účtů (označení # / ## — rozlišení podle e-mailu v detailu)</summary>
+            <summary>Archiv smazaných účtů (# / ##) — obnova nebo trvalé odstranění z DB (uvolnění IČO)</summary>
             <div id="deleted-users-archive-body" class="deleted-users-archive-body"></div>
           </details>
           <div id="users-cards-container" class="cards-grid">
@@ -410,6 +414,32 @@
           </div>
           <div id="audit-log-list" class="audit-log-list">
             <!-- Naplní se JavaScriptem -->
+          </div>
+        </section>
+
+        <section id="section-traffic" class="content-section">
+          <div class="section-header">
+            <div>
+              <h1>Návštěvnost</h1>
+              <p class="section-subtitle">
+                Data vycházejí z <strong>nginx access logů</strong> hub domény (zdroj pravdy není Google Analytics).
+                Jde o <strong>technickou návštěvnost HTTP požadavků</strong>, nikoli přesný počet lidí ani unikátních osob.
+              </p>
+            </div>
+            <button class="btn-primary" type="button" id="traffic-report-regenerate-btn" onclick="regenerateTrafficReport()">
+              Obnovit přehled
+            </button>
+          </div>
+          <div id="traffic-report-status" class="global-admin-summary" style="margin-bottom: 1rem;"></div>
+          <div id="traffic-report-error" class="error" style="display: none; margin-bottom: 0.75rem;"></div>
+          <div class="traffic-report-frame-wrap" style="border: 1px solid var(--border-subtle, #ddd); border-radius: 8px; overflow: hidden; min-height: 480px; background: #fff;">
+            <iframe
+              id="traffic-report-iframe"
+              title="Přehled návštěvnosti (GoAccess)"
+              style="width: 100%; height: 72vh; border: 0; display: block;"
+              sandbox="allow-scripts allow-same-origin"
+              src="about:blank"
+            ></iframe>
           </div>
         </section>
 
@@ -1698,6 +1728,6 @@
     </div>
   </div>
 
-  <script src="admin.js?v=20260506soft-restore-account"></script>
+  <script src="admin.js?v=20260516archive-purge-v2"></script>
 </body>
 </html>

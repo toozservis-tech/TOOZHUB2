@@ -47,7 +47,7 @@ test.describe('Service shell work order flow', () => {
     await expect(page.locator('.service-shell-modal')).toHaveCount(0);
 
     await expect(page.locator('tr', { hasText: 'E2E Zakazka' }).first()).toContainText('Approved');
-    await page.getByRole('button', { name: 'Dashboard' }).click();
+    await page.getByRole('button', { name: 'Přehled' }).click();
     await expect(page.locator('.service-shell-kpi').nth(1)).toContainText('0');
     await expect(page.locator('.service-shell-kpi').nth(0)).toContainText('2');
     await expect(page.locator('.service-shell-queue-tile').nth(0)).toContainText('0');

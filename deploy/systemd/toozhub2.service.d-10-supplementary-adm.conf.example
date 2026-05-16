@@ -1,0 +1,7 @@
+# Přejmenujte do /etc/systemd/system/toozhub2.service.d/10-supplementary-adm.conf
+# a spusťte: systemctl daemon-reload && systemctl restart toozhub2.service
+#
+# Umožní uživateli toozhub2 číst nginx access logy při ručním POST /admin-api/traffic/report/regenerate.
+
+[Service]
+SupplementaryGroups=adm

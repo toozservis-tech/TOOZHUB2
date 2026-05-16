@@ -7,6 +7,7 @@ const retries = Number.isInteger(configuredRetries) && configuredRetries >= 0
   ? configuredRetries
   : (process.env.CI ? 2 : 1);
 const authStatePath = path.join(__dirname, 'playwright', '.auth', 'user.json');
+const tutorialAuthStatePath = path.join(__dirname, 'playwright', '.auth', 'tutorial-user.json');
 const browserLibPath = path.join(__dirname, '.deps', 'sysroot', 'usr', 'lib', 'x86_64-linux-gnu');
 const browserEnv = {
   ...process.env,
@@ -36,6 +37,18 @@ const projects = [
     },
   },
   {
+    name: 'tutorial-setup-auth',
+    testMatch: /tutorial-auth\.setup\.ts/,
+    use: {
+      ...devices['Desktop Chrome'],
+      baseURL,
+      launchOptions: {
+        env: browserEnv,
+        args: ['--disable-dev-shm-usage'],
+      },
+    },
+  },
+  {
     name: 'auth-chromium',
     testMatch: /auth-smoke\.spec\.ts/,
     use: {
@@ -59,12 +72,27 @@ const projects = [
   },
   {
     name: 'workspace-desktop-chromium',
+    testIgnore: /service-shell-tutorial-hub\.spec\.ts/,
     testMatch: /service-shell-.*\.spec\.ts/,
     use: {
       ...devices['Desktop Chrome'],
       baseURL,
       launchOptions: {
         env: browserEnv,
+      },
+    },
+  },
+  {
+    name: 'tutorial-service-hub-desktop-chromium',
+    dependencies: ['tutorial-setup-auth'],
+    testMatch: /service-shell-tutorial-hub\.spec\.ts/,
+    use: {
+      ...devices['Desktop Chrome'],
+      baseURL,
+      storageState: tutorialAuthStatePath,
+      launchOptions: {
+        env: browserEnv,
+        args: ['--disable-dev-shm-usage'],
       },
     },
   },
@@ -109,10 +137,12 @@ const projects = [
   },
   {
     name: 'tutorials-desktop-chromium',
+    dependencies: ['tutorial-setup-auth'],
     testMatch: /tutorials\.spec\.ts/,
     use: {
       ...devices['Desktop Chrome'],
       baseURL,
+      storageState: tutorialAuthStatePath,
       launchOptions: {
         env: browserEnv,
         args: ['--disable-dev-shm-usage'],

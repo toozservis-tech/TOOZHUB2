@@ -30,12 +30,16 @@ test.describe('Service shell quote stability flow', () => {
     await expect(publicPopup.getByText('Nabídka byla schválena.')).toBeVisible();
     await publicPopup.close();
 
-    await quoteModal.getByRole('button', { name: 'Zpět' }).click();
+    await quoteModal.getByRole('button', { name: 'Vytvořit fakturu' }).click();
+    const invoiceModal = page.locator('.service-shell-modal').last();
+    await expect(invoiceModal.locator('.service-shell-modal-title')).toContainText('Servisní faktura');
+    await expect(invoiceModal).toContainText('Diagnostika');
     await page.evaluate(() => (window as any).serviceShell.closeModal());
 
     await page.evaluate(() => (window as any).serviceShell.openVehicleDetailModal(301));
     const refreshedVehicleModal = page.locator('.service-shell-modal').last();
     await expect(refreshedVehicleModal).toContainText('Schváleno');
+    await expect(refreshedVehicleModal).toContainText('Faktury');
     await page.evaluate(() => (window as any).serviceShell.closeModal());
 
     await page.evaluate(() => (window as any).serviceShell.openWorkOrderDetailModal(501));

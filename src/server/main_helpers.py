@@ -11,37 +11,75 @@ import unicodedata
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import HTTPException
 from pydantic import BaseModel, EmailStr, Field, model_validator
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 
 from src.core.branding import APP_DISPLAY_NAME, APP_EXPORT_DISPLAY_NAME
 from src.core.datetime_cz import format_prague_generated_label
 from src.modules.vehicle_hub.models import (
+    AdminCustomerChangeEvent,
     BotCommand,
     Customer,
     CustomerCommand,
+    CustomerDeletionLabel,
     CustomerSecuritySettings,
+    DeveloperActionAuditLog,
     EmailNotificationLog,
     GlobalAuditLog,
     Instance,
     License,
     LicenseAuditLog,
+    LicensePaymentTransaction,
+    LicenseSubscription,
+    PaymentEvent,
     PushSubscription,
     Reminder as ReminderModel,
     Reservation as ReservationModel,
     SecurityAccessLog,
     SecurityBlockedIp,
+    ServiceAccessRequest,
     ServiceCustomerInvite,
     ServiceCustomerLink,
     ServiceDocumentIngestion,
+    ServiceFakturywebAuditLog,
+    ServiceFakturywebInvoice,
+    ServiceFakturywebSettings,
     ServiceIntake,
+    ServiceInvoice,
+    ServiceInvoiceCounter,
+    ServiceInvoiceLine,
+    ServiceLaborSession,
+    ServiceQuote,
+    ServiceQuoteAccessLog,
+    ServiceQuoteAccessToken,
+    ServiceQuoteAuditLog,
     ServiceRecord as ServiceRecordModel,
+    ServiceRecordAuditLog,
     ServiceRegistrationRequest,
+    ServiceVehicleAccess,
+    ServiceVehicleLookupAudit,
+    ServiceWorkOrder,
+    ServiceWorkOrderAuditLog,
+    SupportMessage,
+    SupportSession,
+    SystemNotification,
     Tenant,
+    TutorialAuditLog,
+    UserOnboardingToken,
+    UserTutorialProgress,
+    VehicleMileage,
+    VehicleORVScan,
     VehicleOwnership,
+    VehiclePhotoAsset,
+    VehicleQrToken,
+    VehicleRemovalEvent,
+    VehicleReportDocument,
+    VehicleServiceLink,
+    VehicleStkImportAuditLog,
+    VehicleTransferToken,
     Vehicle as VehicleModel,
 )
 from src.modules.vehicle_hub.ownership import get_owned_vehicle_ids, get_owned_vehicle_rows
@@ -95,13 +133,14 @@ class ServiceRegisterRequest(BaseModel):
     city: str = Field(min_length=2, max_length=120)
     zip: str = Field(min_length=3, max_length=32)
     dic: Optional[str] = Field(default=None, max_length=64)
-    registration_purpose: str = Field(min_length=10, max_length=2000)
+    registration_purpose: str = Field(default="", max_length=2000)
 
 
 class ServiceRegisterResponse(BaseModel):
     request_id: int
     status: str = "pending"
     message: str
+    email_verification_sent: bool = False
 
 
 class UserLogin(BaseModel):
@@ -546,6 +585,342 @@ def bulk_delete(query) -> int:
     return int(query.delete(synchronize_session=False) or 0)
 
 
+def _detach_references_to_service_records(db, record_ids: List[int]) -> None:
+    """S SQLite FK: před DELETE service_records uvolnit vazby z jiných tabulek."""
+    ids = sorted({int(x) for x in record_ids if x is not None and int(x) > 0})
+    if not ids:
+        return
+    bulk_delete(db.query(ServiceRecordAuditLog).filter(ServiceRecordAuditLog.service_record_id.in_(ids)))
+    db.query(VehicleMileage).filter(VehicleMileage.service_record_id.in_(ids)).update(
+        {VehicleMileage.service_record_id: None},
+        synchronize_session=False,
+    )
+    db.query(ServiceDocumentIngestion).filter(ServiceDocumentIngestion.auto_created_service_record_id.in_(ids)).update(
+        {ServiceDocumentIngestion.auto_created_service_record_id: None},
+        synchronize_session=False,
+    )
+    db.query(ServiceInvoice).filter(ServiceInvoice.service_record_id.in_(ids)).update(
+        {ServiceInvoice.service_record_id: None},
+        synchronize_session=False,
+    )
+
+
+def _gather_vehicle_ids_for_account_purge(db, customer: Customer, *, normalized_email: str) -> list[int]:
+    """
+    ID vozidel pod ownership + legacy user_email (včetně e-mailu před smazáním z archivní štítku)
+    a vozidla založená servisem pod tímto zákazníkem.
+    """
+    cid = int(customer.id)
+    tid = getattr(customer, "tenant_id", None)
+    ids: set[int] = set(get_owned_vehicle_ids(db, customer, tenant_id=tid))
+    emails = {normalized_email}
+    for (em,) in db.query(CustomerDeletionLabel.email_before).filter(CustomerDeletionLabel.customer_id == cid).all():
+        if em:
+            emails.add(normalize_email(str(em)))
+    for em in emails:
+        if not em:
+            continue
+        for (vid,) in db.query(VehicleModel.id).filter(func.lower(VehicleModel.user_email) == em).all():
+            if vid is not None:
+                ids.add(int(vid))
+    for (vid,) in db.query(VehicleModel.id).filter(VehicleModel.provisioned_by_service_customer_id == cid).all():
+        if vid is not None:
+            ids.add(int(vid))
+    return sorted(ids)
+
+
+def _purge_payroll_rows_for_service_customer(db, service_customer_id: int) -> None:
+    """Mezdová data v tabulkách payroll_* (FK service_id → customers.id)."""
+    bind = db.bind
+    if bind is None:
+        return
+    try:
+        from sqlalchemy import inspect as sql_inspect
+    except Exception:
+        return
+    try:
+        insp = sql_inspect(bind)
+    except Exception:
+        return
+    if not insp.has_table("payroll_offices"):
+        return
+    cid = int(service_customer_id)
+    params = {"cid": cid}
+    for sql in (
+        "DELETE FROM payroll_jmhz_submissions WHERE service_id = :cid",
+        "DELETE FROM payroll_journals WHERE service_id = :cid",
+        "DELETE FROM payroll_payslips WHERE service_id = :cid",
+        "DELETE FROM payroll_attendance WHERE service_id = :cid",
+        "DELETE FROM payroll_employee_offices WHERE employee_id IN (SELECT id FROM payroll_employees WHERE service_id = :cid)",
+        "DELETE FROM payroll_employees WHERE service_id = :cid",
+        "DELETE FROM payroll_offices WHERE service_id = :cid",
+    ):
+        db.execute(text(sql), params)
+
+
+def _purge_payroll_rows_for_tenant(db, tenant_id: int) -> None:
+    """Mezdová data pro celý tenant (poslední zákazník / rušení tenantu)."""
+    bind = db.bind
+    if bind is None:
+        return
+    try:
+        from sqlalchemy import inspect as sql_inspect
+    except Exception:
+        return
+    try:
+        insp = sql_inspect(bind)
+    except Exception:
+        return
+    if not insp.has_table("payroll_offices"):
+        return
+    tid = int(tenant_id)
+    params = {"tid": tid}
+    for sql in (
+        "DELETE FROM payroll_jmhz_submissions WHERE tenant_id = :tid",
+        "DELETE FROM payroll_journals WHERE tenant_id = :tid",
+        "DELETE FROM payroll_payslips WHERE tenant_id = :tid",
+        "DELETE FROM payroll_attendance WHERE tenant_id = :tid",
+        "DELETE FROM payroll_employee_offices WHERE tenant_id = :tid",
+        "DELETE FROM payroll_employees WHERE tenant_id = :tid",
+        "DELETE FROM payroll_offices WHERE tenant_id = :tid",
+    ):
+        db.execute(text(sql), params)
+
+
+def _purge_customer_workspace_and_access_graph(db, customer_id: int, vehicle_ids: list[int]) -> None:
+    """Odstraní řádky se FK na customers.id, které delete_customer_account dříve neřešil (servisní workspace)."""
+    cid = int(customer_id)
+    _purge_payroll_rows_for_service_customer(db, cid)
+    v_in = vehicle_ids if vehicle_ids else None
+
+    def _v_clause(column):  # sloupec vehicle_id / podobně
+        return column.in_(vehicle_ids) if v_in else (column == -1)
+
+    bulk_delete(
+        db.query(ServiceLaborSession).filter(
+            or_(
+                ServiceLaborSession.service_customer_id == cid,
+                ServiceLaborSession.technician_id == cid,
+                _v_clause(ServiceLaborSession.vehicle_id),
+            )
+        )
+    )
+
+    quote_filter = or_(
+        ServiceQuote.customer_id == cid,
+        ServiceQuote.service_id == cid,
+        _v_clause(ServiceQuote.vehicle_id),
+    )
+    quote_ids = [int(r[0]) for r in db.query(ServiceQuote.id).filter(quote_filter).all() if r[0] is not None]
+    if quote_ids:
+        bulk_delete(db.query(ServiceQuoteAccessLog).filter(ServiceQuoteAccessLog.quote_id.in_(quote_ids)))
+        bulk_delete(db.query(ServiceQuoteAccessToken).filter(ServiceQuoteAccessToken.quote_id.in_(quote_ids)))
+        bulk_delete(db.query(ServiceQuoteAuditLog).filter(ServiceQuoteAuditLog.quote_id.in_(quote_ids)))
+        bulk_delete(db.query(ServiceQuote).filter(ServiceQuote.id.in_(quote_ids)))
+
+    inv_filter = or_(
+        ServiceInvoice.service_id == cid,
+        ServiceInvoice.customer_id == cid,
+        ServiceInvoice.vehicle_id.in_(vehicle_ids) if v_in else (ServiceInvoice.id == -1),
+    )
+    inv_ids = [int(r[0]) for r in db.query(ServiceInvoice.id).filter(inv_filter).all() if r[0] is not None]
+    if inv_ids:
+        bulk_delete(db.query(ServiceInvoiceLine).filter(ServiceInvoiceLine.invoice_id.in_(inv_ids)))
+        bulk_delete(db.query(ServiceInvoice).filter(ServiceInvoice.id.in_(inv_ids)))
+
+    wo_filter = or_(
+        ServiceWorkOrder.service_customer_id == cid,
+        ServiceWorkOrder.owner_customer_id == cid,
+        ServiceWorkOrder.technician_id == cid,
+        _v_clause(ServiceWorkOrder.vehicle_id),
+    )
+    wo_ids = [int(r[0]) for r in db.query(ServiceWorkOrder.id).filter(wo_filter).all() if r[0] is not None]
+    if wo_ids:
+        bulk_delete(db.query(ServiceWorkOrderAuditLog).filter(ServiceWorkOrderAuditLog.work_order_id.in_(wo_ids)))
+        bulk_delete(db.query(ServiceWorkOrder).filter(ServiceWorkOrder.id.in_(wo_ids)))
+
+    bulk_delete(
+        db.query(VehicleServiceLink).filter(
+            or_(
+                VehicleServiceLink.service_customer_id == cid,
+                VehicleServiceLink.owner_customer_id == cid,
+                VehicleServiceLink.approved_by_customer_id == cid,
+                VehicleServiceLink.revoked_by_customer_id == cid,
+                _v_clause(VehicleServiceLink.vehicle_id),
+            )
+        )
+    )
+    bulk_delete(
+        db.query(ServiceVehicleAccess).filter(
+            or_(
+                ServiceVehicleAccess.service_customer_id == cid,
+                ServiceVehicleAccess.customer_id == cid,
+                ServiceVehicleAccess.granted_by_customer_id == cid,
+                _v_clause(ServiceVehicleAccess.vehicle_id),
+            )
+        )
+    )
+    bulk_delete(
+        db.query(ServiceAccessRequest).filter(
+            or_(
+                ServiceAccessRequest.service_customer_id == cid,
+                ServiceAccessRequest.owner_customer_id == cid,
+                ServiceAccessRequest.decided_by_customer_id == cid,
+                _v_clause(ServiceAccessRequest.vehicle_id),
+            )
+        )
+    )
+    bulk_delete(
+        db.query(ServiceVehicleLookupAudit).filter(
+            or_(
+                ServiceVehicleLookupAudit.service_customer_id == cid,
+                ServiceVehicleLookupAudit.matched_owner_customer_id == cid,
+            )
+        )
+    )
+
+    bulk_delete(
+        db.query(UserOnboardingToken).filter(
+            or_(UserOnboardingToken.user_id == cid, UserOnboardingToken.created_by_user_id == cid)
+        )
+    )
+
+    bulk_delete(
+        db.query(VehicleRemovalEvent).filter(
+            or_(
+                VehicleRemovalEvent.initiated_by_user_id == cid,
+                _v_clause(VehicleRemovalEvent.vehicle_id),
+            )
+        )
+    )
+    bulk_delete(
+        db.query(VehicleTransferToken).filter(
+            or_(
+                VehicleTransferToken.issued_by_user_id == cid,
+                VehicleTransferToken.claimed_by_user_id == cid,
+                _v_clause(VehicleTransferToken.vehicle_id),
+            )
+        )
+    )
+
+    db.query(VehiclePhotoAsset).filter(VehiclePhotoAsset.owner_customer_id == cid).update(
+        {VehiclePhotoAsset.owner_customer_id: None},
+        synchronize_session=False,
+    )
+    db.query(VehiclePhotoAsset).filter(VehiclePhotoAsset.uploaded_by_customer_id == cid).update(
+        {VehiclePhotoAsset.uploaded_by_customer_id: None},
+        synchronize_session=False,
+    )
+    db.query(VehicleModel).filter(VehicleModel.provisioned_by_service_customer_id == cid).update(
+        {VehicleModel.provisioned_by_service_customer_id: None},
+        synchronize_session=False,
+    )
+
+    bulk_delete(db.query(TutorialAuditLog).filter(TutorialAuditLog.customer_id == cid))
+    bulk_delete(db.query(UserTutorialProgress).filter(UserTutorialProgress.customer_id == cid))
+
+    bulk_delete(db.query(LicenseAuditLog).filter(LicenseAuditLog.user_id == cid))
+    bulk_delete(db.query(DeveloperActionAuditLog).filter(DeveloperActionAuditLog.developer_id == cid))
+
+    fw_inv_filter = or_(
+        ServiceFakturywebInvoice.service_workspace_id == cid,
+        ServiceFakturywebInvoice.created_by_user_id == cid,
+    )
+    fw_ids = [int(r[0]) for r in db.query(ServiceFakturywebInvoice.id).filter(fw_inv_filter).all() if r[0] is not None]
+    if fw_ids:
+        bulk_delete(
+            db.query(ServiceFakturywebAuditLog).filter(
+                or_(
+                    ServiceFakturywebAuditLog.local_invoice_id.in_(fw_ids),
+                    ServiceFakturywebAuditLog.user_id == cid,
+                )
+            )
+        )
+        bulk_delete(db.query(ServiceFakturywebInvoice).filter(ServiceFakturywebInvoice.id.in_(fw_ids)))
+    else:
+        bulk_delete(db.query(ServiceFakturywebAuditLog).filter(ServiceFakturywebAuditLog.user_id == cid))
+
+    db.query(ServiceFakturywebSettings).filter(ServiceFakturywebSettings.service_workspace_id == cid).update(
+        {ServiceFakturywebSettings.service_workspace_id: None},
+        synchronize_session=False,
+    )
+
+    db.query(SecurityBlockedIp).filter(SecurityBlockedIp.blocked_by_customer_id == cid).update(
+        {SecurityBlockedIp.blocked_by_customer_id: None},
+        synchronize_session=False,
+    )
+    db.query(SecurityBlockedIp).filter(SecurityBlockedIp.unblocked_by_customer_id == cid).update(
+        {SecurityBlockedIp.unblocked_by_customer_id: None},
+        synchronize_session=False,
+    )
+    db.query(SystemNotification).filter(SystemNotification.created_by_customer_id == cid).update(
+        {SystemNotification.created_by_customer_id: None},
+        synchronize_session=False,
+    )
+
+    sess_ids = [int(r[0]) for r in db.query(SupportSession.id).filter(SupportSession.customer_id == cid).all() if r[0]]
+    if sess_ids:
+        bulk_delete(db.query(SupportMessage).filter(SupportMessage.session_id.in_(sess_ids)))
+        bulk_delete(db.query(SupportSession).filter(SupportSession.id.in_(sess_ids)))
+
+    db.query(ServiceCustomerLink).filter(ServiceCustomerLink.created_by_service_user_id == cid).update(
+        {ServiceCustomerLink.created_by_service_user_id: None},
+        synchronize_session=False,
+    )
+
+
+def _null_optional_customer_fk_refs_before_customer_row_delete(db, customer_id: int) -> None:
+    """
+    Nullable sloupce s FK na customers blokují stejně jako NOT NULL — před DELETE zákazníka je odpojit.
+    (Typicky zůstane historie km, QR token, audit po cizím vozidle atd.)
+    """
+    cid = int(customer_id)
+    db.query(VehicleMileage).filter(VehicleMileage.created_by_user_id == cid).update(
+        {VehicleMileage.created_by_user_id: None},
+        synchronize_session=False,
+    )
+    db.query(VehicleORVScan).filter(VehicleORVScan.initiated_by_customer_id == cid).update(
+        {VehicleORVScan.initiated_by_customer_id: None},
+        synchronize_session=False,
+    )
+    db.query(VehicleStkImportAuditLog).filter(VehicleStkImportAuditLog.user_id == cid).update(
+        {VehicleStkImportAuditLog.user_id: None},
+        synchronize_session=False,
+    )
+    db.query(VehicleReportDocument).filter(VehicleReportDocument.generated_by_user_id == cid).update(
+        {VehicleReportDocument.generated_by_user_id: None},
+        synchronize_session=False,
+    )
+    db.query(VehicleQrToken).filter(VehicleQrToken.created_by_user_id == cid).update(
+        {VehicleQrToken.created_by_user_id: None},
+        synchronize_session=False,
+    )
+    db.query(ServiceRecordAuditLog).filter(ServiceRecordAuditLog.changed_by_user_id == cid).update(
+        {ServiceRecordAuditLog.changed_by_user_id: None},
+        synchronize_session=False,
+    )
+    db.query(ServiceWorkOrderAuditLog).filter(ServiceWorkOrderAuditLog.changed_by_user_id == cid).update(
+        {ServiceWorkOrderAuditLog.changed_by_user_id: None},
+        synchronize_session=False,
+    )
+    db.query(ServiceQuoteAuditLog).filter(ServiceQuoteAuditLog.changed_by_user_id == cid).update(
+        {ServiceQuoteAuditLog.changed_by_user_id: None},
+        synchronize_session=False,
+    )
+    db.query(ServiceQuoteAccessToken).filter(ServiceQuoteAccessToken.created_by_user_id == cid).update(
+        {ServiceQuoteAccessToken.created_by_user_id: None},
+        synchronize_session=False,
+    )
+    db.query(ServiceIntake).filter(ServiceIntake.created_by == cid).update(
+        {ServiceIntake.created_by: None},
+        synchronize_session=False,
+    )
+    db.query(ServiceRecordModel).filter(ServiceRecordModel.deleted_by_user_id == cid).update(
+        {ServiceRecordModel.deleted_by_user_id: None},
+        synchronize_session=False,
+    )
+
+
 def parse_email_targets(raw_value: str) -> list[str]:
     if not raw_value:
         return []
@@ -962,7 +1337,8 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
 
 def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
     normalized_email = normalize_email(customer.email or email)
-    vehicle_ids = sorted(get_owned_vehicle_ids(db, customer, tenant_id=customer.tenant_id))
+    vehicle_ids = _gather_vehicle_ids_for_account_purge(db, customer, normalized_email=normalized_email)
+    _purge_customer_workspace_and_access_graph(db, int(customer.id), vehicle_ids)
 
     deleted_counts: dict[str, int] = {}
     tenant_id = customer.tenant_id
@@ -1040,13 +1416,21 @@ def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
             )
         )
     )
+    record_customer_scope = or_(
+        ServiceRecordModel.user_id == customer.id,
+        ServiceRecordModel.customer_id == customer.id,
+        ServiceRecordModel.service_id == customer.id,
+        ServiceRecordModel.created_by_service_customer_id == customer.id,
+        vehicle_record_condition,
+    )
+    target_record_ids = [
+        int(r[0])
+        for r in db.query(ServiceRecordModel.id).filter(record_customer_scope).all()
+        if r[0] is not None
+    ]
+    _detach_references_to_service_records(db, target_record_ids)
     deleted_counts["service_records"] = bulk_delete(
-        db.query(ServiceRecordModel).filter(
-            or_(
-                ServiceRecordModel.user_id == customer.id,
-                vehicle_record_condition,
-            )
-        )
+        db.query(ServiceRecordModel).filter(record_customer_scope)
     )
     deleted_counts["service_links"] = bulk_delete(
         db.query(ServiceCustomerLink).filter(
@@ -1113,9 +1497,16 @@ def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
     deleted_counts["security_settings"] = bulk_delete(
         db.query(CustomerSecuritySettings).filter(CustomerSecuritySettings.customer_id == customer.id)
     )
+    deleted_counts["customer_deletion_labels"] = bulk_delete(
+        db.query(CustomerDeletionLabel).filter(CustomerDeletionLabel.customer_id == customer.id)
+    )
+    deleted_counts["admin_customer_change_events"] = bulk_delete(
+        db.query(AdminCustomerChangeEvent).filter(AdminCustomerChangeEvent.customer_id == customer.id)
+    )
     deleted_counts["vehicles"] = bulk_delete(
         db.query(VehicleModel).filter(vehicle_self_condition)
     )
+    _null_optional_customer_fk_refs_before_customer_row_delete(db, int(customer.id))
     deleted_counts["customers"] = bulk_delete(
         db.query(Customer).filter(Customer.id == customer.id)
     )
@@ -1126,6 +1517,12 @@ def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
             deleted_counts["tenant_service_documents"] = bulk_delete(
                 db.query(ServiceDocumentIngestion).filter(ServiceDocumentIngestion.service_tenant_id == tenant_id)
             )
+            tenant_record_ids = [
+                int(r[0])
+                for r in db.query(ServiceRecordModel.id).filter(ServiceRecordModel.tenant_id == tenant_id).all()
+                if r[0] is not None
+            ]
+            _detach_references_to_service_records(db, tenant_record_ids)
             deleted_counts["tenant_records"] = bulk_delete(
                 db.query(ServiceRecordModel).filter(ServiceRecordModel.tenant_id == tenant_id)
             )
@@ -1162,9 +1559,69 @@ def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
             deleted_counts["tenant_instances"] = bulk_delete(
                 db.query(Instance).filter(Instance.tenant_id == tenant_id)
             )
+
+            _purge_payroll_rows_for_tenant(db, tenant_id)
+
+            tenant_invoice_ids = [
+                int(r[0])
+                for r in db.query(ServiceInvoice.id).filter(ServiceInvoice.tenant_id == tenant_id).all()
+                if r[0] is not None
+            ]
+            if tenant_invoice_ids:
+                deleted_counts["tenant_service_invoice_lines"] = bulk_delete(
+                    db.query(ServiceInvoiceLine).filter(ServiceInvoiceLine.invoice_id.in_(tenant_invoice_ids))
+                )
+                deleted_counts["tenant_service_invoices_extra"] = bulk_delete(
+                    db.query(ServiceInvoice).filter(ServiceInvoice.id.in_(tenant_invoice_ids))
+                )
+
+            deleted_counts["tenant_service_invoice_counter"] = bulk_delete(
+                db.query(ServiceInvoiceCounter).filter(ServiceInvoiceCounter.tenant_id == tenant_id)
+            )
+
+            fw_inv_ids = [
+                int(r[0])
+                for r in db.query(ServiceFakturywebInvoice.id).filter(ServiceFakturywebInvoice.tenant_id == tenant_id).all()
+                if r[0] is not None
+            ]
+            if fw_inv_ids:
+                bulk_delete(
+                    db.query(ServiceFakturywebAuditLog).filter(
+                        ServiceFakturywebAuditLog.local_invoice_id.in_(fw_inv_ids)
+                    )
+                )
+            deleted_counts["tenant_fakturyweb_audit"] = bulk_delete(
+                db.query(ServiceFakturywebAuditLog).filter(ServiceFakturywebAuditLog.tenant_id == tenant_id)
+            )
+            deleted_counts["tenant_fakturyweb_invoices"] = bulk_delete(
+                db.query(ServiceFakturywebInvoice).filter(ServiceFakturywebInvoice.tenant_id == tenant_id)
+            )
+            deleted_counts["tenant_fakturyweb_settings"] = bulk_delete(
+                db.query(ServiceFakturywebSettings).filter(ServiceFakturywebSettings.tenant_id == tenant_id)
+            )
+
+            license_txn_ids = [
+                int(r[0])
+                for r in db.query(LicensePaymentTransaction.id).filter(LicensePaymentTransaction.tenant_id == tenant_id).all()
+                if r[0] is not None
+            ]
+            if license_txn_ids:
+                deleted_counts["tenant_payment_events"] = bulk_delete(
+                    db.query(PaymentEvent).filter(PaymentEvent.payment_id.in_(license_txn_ids))
+                )
+            deleted_counts["tenant_license_audit_logs"] = bulk_delete(
+                db.query(LicenseAuditLog).filter(LicenseAuditLog.tenant_id == tenant_id)
+            )
+            deleted_counts["tenant_license_payment_transactions"] = bulk_delete(
+                db.query(LicensePaymentTransaction).filter(LicensePaymentTransaction.tenant_id == tenant_id)
+            )
+            deleted_counts["tenant_license_subscriptions"] = bulk_delete(
+                db.query(LicenseSubscription).filter(LicenseSubscription.tenant_id == tenant_id)
+            )
             deleted_counts["tenant_license"] = bulk_delete(
                 db.query(License).filter(License.tenant_id == tenant_id)
             )
+
             deleted_counts["tenant_global_audit_log"] = bulk_delete(
                 db.query(GlobalAuditLog).filter(GlobalAuditLog.tenant_id == tenant_id)
             )

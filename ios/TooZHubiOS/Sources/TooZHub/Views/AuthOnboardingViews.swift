@@ -34,6 +34,10 @@ struct UserRegistrationView: View {
                     TextField("PSČ", text: $viewModel.zip)
                     TextField("Telefon", text: $viewModel.phone)
                         .keyboardType(.phonePad)
+                } footer: {
+                    Text("Formát E.164 (např. +420…). Podle něj vás servis snadno najde a může přidávat servisní záznamy k vašemu vozu.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 if let info = viewModel.infoMessage {
@@ -103,8 +107,10 @@ struct ServiceRegistrationView: View {
                     TextField("Město", text: $viewModel.city)
                     TextField("PSČ", text: $viewModel.zip)
                     TextField("DIČ", text: $viewModel.dic)
-                    TextField("Účel registrace", text: $viewModel.registrationPurpose, axis: .vertical)
-                        .lineLimit(3...6)
+                } footer: {
+                    Text("Telefon uveďte v E.164 (např. +420…). Jde o kontaktní číslo servisu pro ověření žádosti o účet.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 if let info = viewModel.infoMessage {

@@ -33,6 +33,7 @@ from ..ownership import get_owned_vehicle, get_primary_vehicle_owner
 from ..quote_public_access import build_public_quote_page_url, ensure_quote_access_token, get_active_quote_access_token
 from ..reports.service_quote_pdf import render_service_quote_pdf
 from ..schema_management import assert_module_ready
+from ..user_in_app_notifications import notify_owner_service_quote_ready
 from .auth import get_current_user
 from .service_workspace import _require_service_workspace_role
 
@@ -629,6 +630,32 @@ def _quote_status_consistency_note(*, quote: ServiceQuote, work_order: Optional[
     if quote_status == "approved" and work_order_status != "approved":
         return "Nabídka je schválená, ale zakázka ještě není přepnuta do stavu schváleno."
     return None
+
+
+def _notify_owner_when_quote_becomes_sent(
+    db: Session,
+    *,
+    quote: ServiceQuote,
+    owner: Optional[Customer],
+    vehicle: Optional[VehicleModel],
+    service_customer: Optional[Customer],
+    access_token,
+    previous_status: Optional[str],
+) -> None:
+    if not owner or not vehicle or not service_customer or not access_token:
+        return
+    new_status = str(getattr(quote, "status", None) or "").lower()
+    old_status = str(previous_status or "").lower()
+    if new_status != "sent" or old_status == "sent":
+        return
+    notify_owner_service_quote_ready(
+        db,
+        owner_customer_id=int(owner.id),
+        service=service_customer,
+        vehicle=vehicle,
+        quote=quote,
+        public_quote_url=build_public_quote_page_url(str(access_token.token)),
+    )
 
 
 def _sync_work_order_on_quote_rejected(
@@ -1283,6 +1310,15 @@ def create_service_quote(
         audit_action="quote_rejected_work_order_sync",
     )
     access_token = ensure_quote_access_token(db, quote=quote, created_by_user_id=getattr(current_user, "id", None))
+    _notify_owner_when_quote_becomes_sent(
+        db,
+        quote=quote,
+        owner=owner,
+        vehicle=vehicle,
+        service_customer=current_user,
+        access_token=access_token,
+        previous_status=None,
+    )
     db.commit()
     db.refresh(quote)
     return _serialize_quote(quote, owner=owner, vehicle=vehicle, service_customer=current_user, public_token=access_token)
@@ -1365,6 +1401,15 @@ def update_service_quote(
         audit_action="quote_rejected_work_order_sync",
     )
     access_token = ensure_quote_access_token(db, quote=quote, created_by_user_id=getattr(current_user, "id", None))
+    _notify_owner_when_quote_becomes_sent(
+        db,
+        quote=quote,
+        owner=owner,
+        vehicle=vehicle,
+        service_customer=current_user,
+        access_token=access_token,
+        previous_status=previous_status,
+    )
     db.commit()
     db.refresh(quote)
 

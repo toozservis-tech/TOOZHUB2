@@ -10,8 +10,12 @@ import requests
 from sqlalchemy import func
 
 from src.modules.vehicle_hub.database import SessionLocal
-from src.modules.vehicle_hub.models import Customer
+from src.modules.vehicle_hub.models import Customer, ServiceCustomerLink
 from src.modules.vehicle_hub.routers_v1 import service_workspace as workspace_router
+from src.modules.vehicle_hub.routers_v1.service_workspace_customer_centre import (
+    _LINK_CONFIRM_JWT_TYP,
+    _mint_jwt,
+)
 from tests.api.integration_accounts import (
     CI_WS_CUSTOMER_DETAIL,
     CI_WS_CUSTOMER_LINK,
@@ -46,6 +50,42 @@ def _promote_user_to_service(email: str) -> None:
         db.close()
 
 
+def _reset_service_customer_link(*, service_id: int, customer_id: int) -> None:
+    """Odstraní vazbu servis–zákazník (integra testy reused účty → bez resetu by zůstalo active)."""
+    db = SessionLocal()
+    try:
+        db.query(ServiceCustomerLink).filter(
+            ServiceCustomerLink.service_customer_id == int(service_id),
+            ServiceCustomerLink.customer_id == int(customer_id),
+        ).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _confirm_pending_service_customer_link(
+    api_url: str,
+    *,
+    customer_token: str,
+    service_id: int,
+    customer_id: int,
+    link_body: dict,
+) -> None:
+    assert link_body.get("pending_customer_confirm") is True, link_body
+    lid = int(link_body["customer_link_id"])
+    confirm_tok = _mint_jwt(
+        {"typ": _LINK_CONFIRM_JWT_TYP, "lid": lid, "cid": int(customer_id), "sid": int(service_id)},
+        ttl_minutes=120,
+    )
+    confirm_resp = requests.post(
+        f"{api_url}/api/v1/services/customer-links/confirm-as-owner",
+        headers={"Authorization": f"Bearer {customer_token}"},
+        json={"confirm_token": confirm_tok},
+        timeout=8,
+    )
+    assert confirm_resp.status_code == 200, confirm_resp.text
+
+
 def _create_vehicle(api_url: str, user_token: str, nickname: str = "Test Vehicle") -> int:
     response = requests.post(
         f"{api_url}/api/v1/vehicles",
@@ -60,8 +100,26 @@ def _create_vehicle(api_url: str, user_token: str, nickname: str = "Test Vehicle
         },
         timeout=8,
     )
-    assert response.status_code == 200, response.text
-    return int(response.json()["id"])
+    if response.status_code == 200:
+        return int(response.json()["id"])
+    if response.status_code == 403:
+        try:
+            body = response.json()
+        except Exception:
+            body = {}
+        err = body.get("error") if isinstance(body, dict) else None
+        code = err.get("code") if isinstance(err, dict) else None
+        if code == "LICENSE_QUOTA_EXCEEDED":
+            listed = requests.get(
+                f"{api_url}/api/v1/vehicles",
+                headers={"Authorization": f"Bearer {user_token}"},
+                timeout=8,
+            )
+            assert listed.status_code == 200, listed.text
+            rows = listed.json()
+            assert isinstance(rows, list) and rows, "Quota překročena a uživatel nemá žádné vozidlo"
+            return int(rows[0]["id"])
+    assert False, response.text
 
 
 def test_service_workspace_link_existing_and_ingest(api_url):
@@ -74,6 +132,8 @@ def test_service_workspace_link_existing_and_ingest(api_url):
     customer_token, customer_id = _register_user(api_url, email=customer_email, name="Koncový zákazník")
     vehicle_id = _create_vehicle(api_url, customer_token, nickname="Fleet test")
 
+    _reset_service_customer_link(service_id=service_id, customer_id=customer_id)
+
     service_headers = {"Authorization": f"Bearer {service_token}"}
     customer_headers = {"Authorization": f"Bearer {customer_token}"}
 
@@ -85,8 +145,15 @@ def test_service_workspace_link_existing_and_ingest(api_url):
     )
     assert link_response.status_code == 200, link_response.text
     link_payload = link_response.json()
-    assert link_payload["linked"] is True
+    assert link_payload.get("pending_customer_confirm") is True, link_payload
 
+    _confirm_pending_service_customer_link(
+        api_url,
+        customer_token=customer_token,
+        service_id=service_id,
+        customer_id=customer_id,
+        link_body=link_payload,
+    )
     grant_response = requests.post(
         f"{api_url}/api/v1/services/vehicle-access",
         headers=customer_headers,
@@ -274,41 +341,40 @@ def test_service_workspace_customer_exact_search_masked_preview(api_url):
 
 
 def test_service_workspace_customer_search_and_link_by_id(api_url):
-    """Propojení přes známé customer_id (servisní účet + přímý POST link)."""
+    """Propojení přes známé customer_id — pending, potvrzení majitelem, pak active ve vyhledávání."""
     service_email = CI_WS_SERVICE_SEARCH
     customer_email = CI_WS_CUSTOMER_SEARCH
 
-    service_token, _ = _register_user(api_url, email=service_email, name="Service Search Link")
+    service_token, service_id = _register_user(api_url, email=service_email, name="Service Search Link")
     _promote_user_to_service(service_email)
-    _, customer_id = _register_user(api_url, email=customer_email, name="Klient Propojeny")
+    customer_token, customer_id = _register_user(api_url, email=customer_email, name="Klient Propojeny")
 
-    db = SessionLocal()
-    try:
-        service_customer = (
-            db.query(Customer)
-            .filter(func.lower(Customer.email) == service_email.lower())
-            .first()
-        )
-        assert service_customer is not None
+    _reset_service_customer_link(service_id=service_id, customer_id=customer_id)
 
-        link_payload = workspace_router.link_existing_customer_by_id(
-            customer_id=int(customer_id),
-            current_user=service_customer,
-            db=db,
-        )
-        assert link_payload.get("linked") is True
+    link_resp = requests.post(
+        f"{api_url}/api/v1/services/workspace/customers/{int(customer_id)}/link",
+        headers={"Authorization": f"Bearer {service_token}"},
+        timeout=8,
+    )
+    assert link_resp.status_code == 200, link_resp.text
+    link_payload = link_resp.json()
+    _confirm_pending_service_customer_link(
+        api_url,
+        customer_token=customer_token,
+        service_id=service_id,
+        customer_id=customer_id,
+        link_body=link_payload,
+    )
 
-        found = requests.post(
-            f"{api_url}/api/v1/services/workspace/customers/search",
-            headers={"Authorization": f"Bearer {service_token}"},
-            json={"email": customer_email},
-            timeout=8,
-        )
-        assert found.status_code == 200, found.text
-        preview = (found.json().get("customer_preview") or {})
-        assert preview.get("link_status") == "active"
-    finally:
-        db.close()
+    found = requests.post(
+        f"{api_url}/api/v1/services/workspace/customers/search",
+        headers={"Authorization": f"Bearer {service_token}"},
+        json={"email": customer_email},
+        timeout=8,
+    )
+    assert found.status_code == 200, found.text
+    preview = (found.json().get("customer_preview") or {})
+    assert preview.get("link_status") == "active"
 
 
 def test_service_workspace_shell_detail_contracts(api_url):
@@ -377,6 +443,21 @@ def test_service_workspace_shell_detail_contracts(api_url):
     assert ingest_response.status_code == 200, ingest_response.text
     document_id = int(ingest_response.json()["id"])
 
+    _reset_service_customer_link(service_id=service_id, customer_id=customer_id)
+    link_resp = requests.post(
+        f"{api_url}/api/v1/services/workspace/customers/{int(customer_id)}/link",
+        headers=service_headers,
+        timeout=8,
+    )
+    assert link_resp.status_code == 200, link_resp.text
+    _confirm_pending_service_customer_link(
+        api_url,
+        customer_token=customer_token,
+        service_id=service_id,
+        customer_id=customer_id,
+        link_body=link_resp.json(),
+    )
+
     db = SessionLocal()
     try:
         service_customer = (
@@ -385,13 +466,6 @@ def test_service_workspace_shell_detail_contracts(api_url):
             .first()
         )
         assert service_customer is not None
-
-        link_payload = workspace_router.link_existing_customer_by_id(
-            customer_id=customer_id,
-            current_user=service_customer,
-            db=db,
-        )
-        assert link_payload["linked"] is True
 
         customer_detail = workspace_router.get_service_customer_detail(
             customer_id=customer_id,

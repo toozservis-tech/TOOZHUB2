@@ -8,7 +8,7 @@ test.describe('Service shell invoice flow', () => {
     await page.goto('/web/index.html');
     await expect(page.locator('[data-service-shell="root"]')).toBeVisible({ timeout: 15000 });
 
-    await page.locator('.service-shell-nav-btn', { hasText: 'Faktury' }).click();
+    await page.getByRole('button', { name: 'Fakturace' }).click();
     await expect(page.locator('[data-service-shell="root"]')).toContainText('Servisní faktury');
 
     await page.getByRole('button', { name: 'Nová draft faktura' }).click();

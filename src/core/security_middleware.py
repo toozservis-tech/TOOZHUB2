@@ -477,6 +477,7 @@ class CloudflareAccessAdminMiddleware(BaseHTTPMiddleware):
             (request.headers.get("cf-access-jwt-assertion") or request.headers.get("CF-Access-Jwt-Assertion") or "").strip()
         )
         if not token:
+            print(f"[SECURITY] CF Access zablokován - chybí token. Hlavičky: {list(request.headers.keys())}")
             return Response(
                 content='{"detail":"Přístup k administraci vyžaduje Cloudflare Access."}',
                 status_code=403,
@@ -489,6 +490,7 @@ class CloudflareAccessAdminMiddleware(BaseHTTPMiddleware):
             allowed_emails=allowed_mail,
         )
         if not ok:
+            print(f"[SECURITY] CF Access zablokován - ověření selhalo: {_reason}")
             return Response(
                 content='{"detail":"Ověření Cloudflare Access selhalo."}',
                 status_code=403,

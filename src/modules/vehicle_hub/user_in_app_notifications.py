@@ -140,6 +140,28 @@ def notify_service_access_decided(
     )
 
 
+def notify_owner_service_customer_link_requested(
+    db: Session,
+    *,
+    owner_customer_id: int,
+    service: Customer,
+) -> None:
+    """Upozorní majitele účtu, že servis žádá o propojení (doplněk k e-mailovému odkazu)."""
+    service_disp = (service.name or service.email or "Servis").strip()
+    create_user_in_app_notification(
+        db,
+        customer_id=int(owner_customer_id),
+        title="Servis žádá o propojení účtu",
+        message=(
+            f"{service_disp} chce propojit váš účet v aplikaci {APP_DISPLAY_NAME}. "
+            "Potvrďte prosím odkaz v e-mailu (nebo po přihlášení otevřete stejný odkaz v prohlížeči). "
+            "Po potvrzení zkontrolujte žádosti o přístup k jednotlivým vozidlům — "
+            "bez schválení nemá servis k vozidlu přístup."
+        ),
+        severity="info",
+    )
+
+
 def notify_owner_service_quote_ready(
     db: Session,
     *,

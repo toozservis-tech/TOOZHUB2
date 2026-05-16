@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Přesměrování…</title>
+    <script>
+        (function () {
+            var q = window.location.search || '';
+            var h = window.location.hash || '';
+            window.location.replace('/web/demo.html' + q + h);
+        })();
+    </script>
+    <meta http-equiv="refresh" content="0;url=/web/demo.html">
+</head>
+<body>
+    <p style="font-family:system-ui,sans-serif;padding:24px;">Přesměrovávám na <a href="/web/demo.html">stránku ukázky</a>…</p>
+</body>
+</html>

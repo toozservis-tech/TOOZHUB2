@@ -144,6 +144,136 @@ def _schedule_verification_email(customer: Customer, raw_token: str, background_
     )
 
 
+def _send_service_registration_verification_email(*, email: str, service_name: str | None, token: str) -> None:
+    try:
+        from src.modules.email_client.service import EmailService
+
+        email_service = EmailService()
+        if not email_service.is_configured():
+            print("[REGISTER] WARNING: SMTP není nakonfigurováno, ověřovací e-mail (servis) nebyl odeslán")
+            return
+
+        display_service = (service_name or "servis").strip()
+        verify_url = f"{build_app_url('/web/verify-email.html')}?token={quote(token, safe='')}"
+        mins = int(_EMAIL_VERIFICATION_TTL.total_seconds() // 60)
+
+        admin_notice_panel = render_panel(
+            title="Co bude následovat",
+            raw_html=(
+                '<div style="margin:4px 0 14px 0;font-size:18px;line-height:1.45;font-weight:700;color:#0f172a;">'
+                "Po ověření e-mailu bude vaše žádost o servisní účet zpracována administrátorem."
+                "</div>"
+                '<p style="margin:0;font-size:14px;line-height:1.6;color:#475569;">'
+                "Schválení provede administrátor. Poté se budete moci přihlásit stejným e-mailem a heslem jako při registraci."
+                "</p>"
+            ),
+            accent="#ea580c",
+            tone="#fff7ed",
+        )
+
+        email_body = f"""Dobrý den,
+
+dokončete registraci servisu v aplikaci {APP_DISPLAY_NAME} kliknutím na odkaz níže (platnost {mins} minut):
+
+{verify_url}
+
+Po ověření e-mailu bude vaše žádost o servisní účet zpracována administrátorem. Přihlášení bude možné až po jeho schválení.
+
+Pokud jste o účet nežádali, tento e-mail ignorujte.
+
+{APP_DISPLAY_NAME}
+"""
+
+        html_body = render_email_layout(
+            title="Ověření e-mailu — žádost o servis",
+            subtitle=f"Žádost o servisní účet ({display_service}).",
+            intro="Dobrý den,",
+            paragraphs=[
+                f"pro pokračování v registraci servisu v aplikaci {APP_DISPLAY_NAME} ověřte prosím tuto e-mailovou adresu.",
+                f"Odkaz je platný {mins} minut.",
+            ],
+            panels=[
+                admin_notice_panel,
+                render_panel(
+                    title="Kontakt v žádosti",
+                    rows=[("E-mail", email), ("Název servisu", display_service)],
+                ),
+            ],
+            cta_label="Ověřit e-mail",
+            cta_url=verify_url,
+            accent="#ea580c",
+        )
+        email_service.send_simple_email(
+            to=email,
+            subject=f"Ověření e-mailu — žádost o servis — {APP_DISPLAY_NAME}",
+            body=email_body,
+            html_body=html_body,
+        )
+    except Exception as exc:
+        print(f"[REGISTER] ERROR: Ověřovací e-mail (servis) se nepodařilo odeslat: {exc}")
+
+
+def _schedule_service_registration_verification_email(
+    *,
+    email: str,
+    service_name: str | None,
+    raw_token: str,
+    background_tasks: BackgroundTasks,
+) -> None:
+    background_tasks.add_task(
+        _send_service_registration_verification_email,
+        email=email,
+        service_name=service_name,
+        token=raw_token,
+    )
+
+
+def _send_service_registration_admin_alert_background(*, request_id: int) -> None:
+    from src.modules.vehicle_hub.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        req = db.query(ServiceRegistrationRequest).filter(ServiceRegistrationRequest.id == request_id).first()
+        if not req or req.status != "pending" or req.email_verified_at is None:
+            return
+        try:
+            phone_e164 = normalize_validate_phone_e164(str(req.phone or ""))
+        except ValueError:
+            phone_e164 = str(req.phone or "")
+
+        developer_alert = send_registration_alert_email(
+            db,
+            registration_type="service",
+            account_email=req.email,
+            account_name=req.service_name,
+            account_ico=req.ico,
+            metadata={
+                "request_id": req.id,
+                "status": req.status,
+                "city": req.city,
+                "responsible_person": req.responsible_person,
+                "phone": req.phone,
+                "phone_e164": phone_e164,
+                "purpose": (req.registration_purpose or "")[:180],
+                "event": "service_request_email_verified",
+                "email_status": "verified",
+                "phone_status": "unverified",
+                "fraud_score": 0,
+                "risk_flags": "[]",
+                "registration_ip": None,
+                "registration_user_agent": None,
+                "role": "service",
+            },
+        )
+        if developer_alert.get("status") not in {"sent", "no_recipients", "smtp_not_configured"}:
+            print(
+                f"[REGISTER] Developer alert (servis ověřená žádost): "
+                f"{developer_alert.get('status')} error={developer_alert.get('error')}"
+            )
+    finally:
+        db.close()
+
+
 def _send_registration_alert_email_background(
     *,
     registration_type: str,
@@ -259,6 +389,10 @@ def register_user(
     reg_ip = (extract_client_ip(request) or "")[:128] or None
     reg_ua = (request.headers.get("user-agent") or "")[:2000] or None
 
+    from src.modules.email_client.service import EmailService
+
+    smtp_ready = EmailService().is_configured()
+
     dedicated_tenant = create_dedicated_tenant(
         db,
         owner_email=normalized_email,
@@ -285,7 +419,7 @@ def register_user(
         account_status="pending_email_verification",
         email_verification_token_hash=token_hash,
         email_verification_expires_at=now + _EMAIL_VERIFICATION_TTL,
-        email_verification_sent_at=now,
+        email_verification_sent_at=now if smtp_ready else None,
         registration_ip=reg_ip,
         registration_user_agent=reg_ua,
         registration_risk_flags=risk_flags or None,
@@ -309,16 +443,28 @@ def register_user(
         details={"account_status": customer.account_status, "risk_flag_count": len(risk_flags)},
     )
 
-    _schedule_verification_email(customer, raw_token, background_tasks)
-    log_security_event(
-        event_type="email_verification_sent",
-        request=request,
-        user_email=customer.email,
-        customer_id=customer.id,
-        tenant_id=customer.tenant_id,
-        endpoint=str(request.url.path),
-        details={"channel": "email"},
-    )
+    if smtp_ready:
+        _schedule_verification_email(customer, raw_token, background_tasks)
+        log_security_event(
+            event_type="email_verification_sent",
+            request=request,
+            user_email=customer.email,
+            customer_id=customer.id,
+            tenant_id=customer.tenant_id,
+            endpoint=str(request.url.path),
+            details={"channel": "email", "queued": True},
+        )
+    else:
+        print("[REGISTER] WARNING: SMTP není nakonfigurováno — ověřovací e-mail se po registraci neodešle")
+        log_security_event(
+            event_type="email_verification_blocked",
+            request=request,
+            user_email=customer.email,
+            customer_id=customer.id,
+            tenant_id=customer.tenant_id,
+            endpoint=str(request.url.path),
+            details={"channel": "email", "reason": "smtp_not_configured"},
+        )
 
     email_status_label = "pending"
     phone_status_label = "unverified"
@@ -343,6 +489,18 @@ def register_user(
         },
     )
 
+    if smtp_ready:
+        reg_msg = "Registrace přijata. Na e-mail vám byl odeslán ověřovací odkaz."
+        reg_email_sent = True
+        reg_mail_status = "queued"
+    else:
+        reg_msg = (
+            "Účet byl vytvořen, ale odesílání e-mailu není na serveru nakonfigurováno "
+            "(SMTP). Kontaktujte podporu nebo zkuste dokončit ověření po opravě konfigurace."
+        )
+        reg_email_sent = False
+        reg_mail_status = "not_configured"
+
     return RegisterTokenResponse(
         access_token=None,
         user={
@@ -354,14 +512,19 @@ def register_user(
             "account_status": customer.account_status,
         },
         verification_required=True,
-        message="Registrace přijata. Na e-mail vám byl odeslán ověřovací odkaz.",
-        email_sent=True,
-        registration_email_status="queued",
+        message=reg_msg,
+        email_sent=reg_email_sent,
+        registration_email_status=reg_mail_status,
     )
 
 
 @router.post("/user/register/service-request", response_model=ServiceRegisterResponse)
-def register_service_request(payload: ServiceRegisterRequest, request: Request, db=Depends(get_db)):
+def register_service_request(
+    payload: ServiceRegisterRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db=Depends(get_db),
+):
     normalized_email = normalize_email(payload.email)
     ico_digits = normalize_ico(payload.ico) or ""
     domain_part = normalized_email.split("@", 1)[-1].strip().lower() if "@" in normalized_email else ""
@@ -382,10 +545,9 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
             status_code=422,
             detail="E-mailová doména neexistuje nebo neumožňuje doručování zpráv. Zkontrolujte překlep.",
         )
-    risk_flags: list[str] = list(domain_flags)
 
     try:
-        phone_e164 = normalize_validate_phone_e164(payload.phone)
+        normalize_validate_phone_e164(payload.phone)
     except ValueError as exc:
         log_security_event(
             event_type="registration_rejected_invalid_phone",
@@ -401,9 +563,6 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    reg_ip = (extract_client_ip(request) or "")[:128] or None
-    reg_ua = (request.headers.get("user-agent") or "")[:2000] or None
-
     if get_customer_by_email(db, normalized_email):
         raise HTTPException(status_code=400, detail="Účet s tímto emailem již existuje")
 
@@ -413,6 +572,7 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
             Customer.role == "service",
             Customer.ico == ico_digits,
             func.lower(Customer.email) != normalized_email,
+            Customer.is_deleted.is_(False),
         )
         .first()
     )
@@ -450,7 +610,7 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
         if existing_request.status == "pending":
             raise HTTPException(
                 status_code=400,
-                detail="Žádost pro tento email už čeká na schválení developerem.",
+                detail="Žádost pro tento e-mail už čeká na dokončení. Zkontrolujte ověřovací e-mail nebo počkejte na schválení administrátorem.",
             )
         if existing_request.status == "approved":
             raise HTTPException(
@@ -469,49 +629,64 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
         existing_request.city = payload.city.strip()
         existing_request.zip = payload.zip.strip()
         existing_request.dic = (payload.dic or "").strip() or None
-        existing_request.registration_purpose = payload.registration_purpose.strip()
+        existing_request.registration_purpose = (payload.registration_purpose or "").strip()
         existing_request.reviewed_by_customer_id = None
         existing_request.reviewed_at = None
         existing_request.review_note = None
         existing_request.approved_customer_id = None
         existing_request.approved_tenant_id = None
         existing_request.updated_at = now
+
+        raw_token = generate_email_verification_secret()
+        existing_request.email_verification_token_hash = hash_email_verification_token(raw_token)
+        existing_request.email_verification_expires_at = now + _EMAIL_VERIFICATION_TTL
+        existing_request.email_verification_sent_at = now
+        existing_request.email_verified_at = None
+
         db.commit()
         db.refresh(existing_request)
 
-        developer_alert = send_registration_alert_email(
-            db,
-            registration_type="service",
-            account_email=existing_request.email,
-            account_name=existing_request.service_name,
-            account_ico=existing_request.ico,
-            metadata={
-                "request_id": existing_request.id,
-                "status": existing_request.status,
-                "city": existing_request.city,
-                "responsible_person": existing_request.responsible_person,
-                "phone": existing_request.phone,
-                "phone_e164": phone_e164,
-                "purpose": existing_request.registration_purpose[:180],
-                "event": "service_request_resubmitted",
-                "email_status": "pending",
-                "phone_status": "unverified",
-                "fraud_score": len(risk_flags),
-                "risk_flags": json.dumps(risk_flags, ensure_ascii=False) if risk_flags else "[]",
-                "registration_ip": reg_ip,
-                "registration_user_agent": reg_ua,
-                "role": "service",
-            },
-        )
-        if developer_alert.get("status") not in {"sent", "no_recipients", "smtp_not_configured"}:
-            print(f"[REGISTER] Developer alert status: {developer_alert.get('status')} error={developer_alert.get('error')}")
+        from src.modules.email_client.service import EmailService
+
+        smtp_ready = EmailService().is_configured()
+        if smtp_ready:
+            _schedule_service_registration_verification_email(
+                email=existing_request.email,
+                service_name=existing_request.service_name,
+                raw_token=raw_token,
+                background_tasks=background_tasks,
+            )
+            log_security_event(
+                event_type="email_verification_sent",
+                request=request,
+                user_email=existing_request.email,
+                endpoint=str(request.url.path),
+                details={
+                    "channel": "email",
+                    "queued": True,
+                    "flow": "service_request_resubmit",
+                    "request_id": existing_request.id,
+                },
+            )
+            msg = (
+                "Žádost byla znovu uložena. Na e-mail vám byl odeslán ověřovací odkaz. "
+                "Po ověření e-mailu ji zpracuje administrátor."
+            )
+        else:
+            print("[REGISTER] WARNING: SMTP není nakonfigurováno — ověřovací e-mail (servis) se neodešle")
+            msg = (
+                "Žádost byla uložena, ale odesílání e-mailu není na serveru nakonfigurováno (SMTP). "
+                "Kontaktujte podporu."
+            )
 
         return ServiceRegisterResponse(
             request_id=existing_request.id,
             status="pending",
-            message="Žádost o servisní registraci byla znovu odeslána ke schválení.",
+            message=msg,
+            email_verification_sent=bool(smtp_ready),
         )
 
+    raw_token = generate_email_verification_secret()
     new_request = ServiceRegistrationRequest(
         status="pending",
         email=normalized_email,
@@ -525,7 +700,11 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
         city=payload.city.strip(),
         zip=payload.zip.strip(),
         dic=(payload.dic or "").strip() or None,
-        registration_purpose=payload.registration_purpose.strip(),
+        registration_purpose=(payload.registration_purpose or "").strip(),
+        email_verification_token_hash=hash_email_verification_token(raw_token),
+        email_verification_expires_at=now + _EMAIL_VERIFICATION_TTL,
+        email_verification_sent_at=now,
+        email_verified_at=None,
         created_at=now,
         updated_at=now,
     )
@@ -534,37 +713,44 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
     db.commit()
     db.refresh(new_request)
 
-    developer_alert = send_registration_alert_email(
-        db,
-        registration_type="service",
-        account_email=new_request.email,
-        account_name=new_request.service_name,
-        account_ico=new_request.ico,
-        metadata={
-            "request_id": new_request.id,
-            "status": new_request.status,
-            "city": new_request.city,
-            "responsible_person": new_request.responsible_person,
-            "phone": new_request.phone,
-            "phone_e164": phone_e164,
-            "purpose": new_request.registration_purpose[:180],
-            "event": "service_request_created",
-            "email_status": "pending",
-            "phone_status": "unverified",
-            "fraud_score": len(risk_flags),
-            "risk_flags": json.dumps(risk_flags, ensure_ascii=False) if risk_flags else "[]",
-            "registration_ip": reg_ip,
-            "registration_user_agent": reg_ua,
-            "role": "service",
-        },
-    )
-    if developer_alert.get("status") not in {"sent", "no_recipients", "smtp_not_configured"}:
-        print(f"[REGISTER] Developer alert status: {developer_alert.get('status')} error={developer_alert.get('error')}")
+    from src.modules.email_client.service import EmailService
+
+    smtp_ready = EmailService().is_configured()
+    if smtp_ready:
+        _schedule_service_registration_verification_email(
+            email=new_request.email,
+            service_name=new_request.service_name,
+            raw_token=raw_token,
+            background_tasks=background_tasks,
+        )
+        log_security_event(
+            event_type="email_verification_sent",
+            request=request,
+            user_email=new_request.email,
+            endpoint=str(request.url.path),
+            details={
+                "channel": "email",
+                "queued": True,
+                "flow": "service_request_created",
+                "request_id": new_request.id,
+            },
+        )
+        msg = (
+            "Žádost byla přijata. Na e-mail vám byl odeslán ověřovací odkaz. "
+            "Po ověření e-mailu žádost zpracuje administrátor; přihlášení bude možné až po schválení."
+        )
+    else:
+        print("[REGISTER] WARNING: SMTP není nakonfigurováno — ověřovací e-mail (servis) se neodešle")
+        msg = (
+            "Žádost byla uložena, ale odesílání e-mailu není na serveru nakonfigurováno (SMTP). "
+            "Kontaktujte podporu."
+        )
 
     return ServiceRegisterResponse(
         request_id=new_request.id,
         status="pending",
-        message="Žádost o servisní účet byla přijata. Aktivace proběhne po ověření developerem.",
+        message=msg,
+        email_verification_sent=bool(smtp_ready),
     )
 
 
@@ -1008,7 +1194,12 @@ S pozdravem,
 
 
 @router.post("/user/verify-email")
-def verify_email_token(payload: VerifyEmailRequest, request: Request, db=Depends(get_db)):
+def verify_email_token(
+    payload: VerifyEmailRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db=Depends(get_db),
+):
     """Jednorázové ověření e-mailu — token jen jako vstup, v DB je hash."""
     th = hash_email_verification_token(payload.token.strip())
     customer = (
@@ -1018,31 +1209,72 @@ def verify_email_token(payload: VerifyEmailRequest, request: Request, db=Depends
         )
         .first()
     )
-    if not customer:
+    if customer:
+        if customer.email_verification_expires_at and datetime.utcnow() > customer.email_verification_expires_at:
+            raise HTTPException(
+                status_code=400,
+                detail="Ověřovací odkaz vypršel. Požádejte o nový pomocí tlačítka pro opětovné odeslání.",
+            )
+        customer.email_verified_at = datetime.utcnow()
+        customer.account_status = "active"
+        customer.email_verification_token_hash = None
+        customer.email_verification_expires_at = None
+        db.commit()
+        log_security_event(
+            event_type="email_verified",
+            request=request,
+            user_email=customer.email,
+            customer_id=customer.id,
+            tenant_id=customer.tenant_id,
+            endpoint="/user/verify-email",
+            details={"account_status": customer.account_status, "flow": "user"},
+        )
+        return {
+            "verified": True,
+            "message": "E-mail byl ověřen. Nyní se můžete přihlásit.",
+            "flow": "user",
+        }
+
+    svc_req = (
+        db.query(ServiceRegistrationRequest)
+        .filter(
+            ServiceRegistrationRequest.email_verification_token_hash == th,
+            ServiceRegistrationRequest.status == "pending",
+        )
+        .first()
+    )
+    if not svc_req:
         raise HTTPException(
             status_code=400,
             detail="Neplatný nebo již použitý ověřovací odkaz.",
         )
-    if customer.email_verification_expires_at and datetime.utcnow() > customer.email_verification_expires_at:
+    if svc_req.email_verification_expires_at and datetime.utcnow() > svc_req.email_verification_expires_at:
         raise HTTPException(
             status_code=400,
             detail="Ověřovací odkaz vypršel. Požádejte o nový pomocí tlačítka pro opětovné odeslání.",
         )
-    customer.email_verified_at = datetime.utcnow()
-    customer.account_status = "active"
-    customer.email_verification_token_hash = None
-    customer.email_verification_expires_at = None
+    now = datetime.utcnow()
+    svc_req.email_verified_at = now
+    svc_req.email_verification_token_hash = None
+    svc_req.email_verification_expires_at = None
+    svc_req.updated_at = now
     db.commit()
     log_security_event(
         event_type="email_verified",
         request=request,
-        user_email=customer.email,
-        customer_id=customer.id,
-        tenant_id=customer.tenant_id,
+        user_email=svc_req.email,
         endpoint="/user/verify-email",
-        details={"account_status": customer.account_status},
+        details={"flow": "service_registration_request", "request_id": svc_req.id},
     )
-    return {"verified": True, "message": "E-mail byl ověřen. Nyní se můžete přihlásit."}
+    background_tasks.add_task(_send_service_registration_admin_alert_background, request_id=svc_req.id)
+    return {
+        "verified": True,
+        "message": (
+            "E-mail byl ověřen. Žádost o servisní účet nyní zpracuje administrátor; "
+            "po schválení se přihlásíte stejným e-mailem a heslem."
+        ),
+        "flow": "service",
+    }
 
 
 @router.post("/user/resend-verification-email")
@@ -1063,31 +1295,77 @@ def resend_verification_email(
     generic = {"message": "Pokud účet existuje a čeká na ověření e-mailu, byl odeslán nový odkaz."}
 
     customer = get_customer_by_email(db, normalized)
-    if not customer or customer.email_verified_at is not None:
+    if customer:
+        if customer.email_verified_at is not None:
+            return generic
+        if customer_is_deleted(customer) or customer_is_disabled(customer):
+            return generic
+
+        from src.modules.email_client.service import EmailService
+
+        if not EmailService().is_configured():
+            print("[VERIFY RESEND] WARNING: SMTP není nakonfigurováno — ověřovací e-mail se neodeslal")
+            return generic
+
+        raw = generate_email_verification_secret()
+        customer.email_verification_token_hash = hash_email_verification_token(raw)
+        customer.email_verification_expires_at = datetime.utcnow() + _EMAIL_VERIFICATION_TTL
+        customer.email_verification_sent_at = datetime.utcnow()
+        db.commit()
+
+        background_tasks.add_task(
+            _send_email_verification_link_email,
+            email=customer.email,
+            name=customer.name,
+            token=raw,
+        )
+        log_security_event(
+            event_type="email_verification_sent",
+            request=request,
+            user_email=customer.email,
+            customer_id=customer.id,
+            tenant_id=customer.tenant_id,
+            endpoint="/user/resend-verification-email",
+            details={"channel": "email", "resend": True},
+        )
         return generic
-    if customer_is_deleted(customer) or customer_is_disabled(customer):
+
+    svc_req = (
+        db.query(ServiceRegistrationRequest)
+        .filter(
+            func.lower(ServiceRegistrationRequest.email) == normalized,
+            ServiceRegistrationRequest.status == "pending",
+        )
+        .first()
+    )
+    if not svc_req or svc_req.email_verified_at is not None:
+        return generic
+
+    from src.modules.email_client.service import EmailService
+
+    if not EmailService().is_configured():
+        print("[VERIFY RESEND] WARNING: SMTP není nakonfigurováno — ověřovací e-mail se neodeslal")
         return generic
 
     raw = generate_email_verification_secret()
-    customer.email_verification_token_hash = hash_email_verification_token(raw)
-    customer.email_verification_expires_at = datetime.utcnow() + _EMAIL_VERIFICATION_TTL
-    customer.email_verification_sent_at = datetime.utcnow()
+    svc_req.email_verification_token_hash = hash_email_verification_token(raw)
+    svc_req.email_verification_expires_at = datetime.utcnow() + _EMAIL_VERIFICATION_TTL
+    svc_req.email_verification_sent_at = datetime.utcnow()
+    svc_req.updated_at = datetime.utcnow()
     db.commit()
 
     background_tasks.add_task(
-        _send_email_verification_link_email,
-        email=customer.email,
-        name=customer.name,
+        _send_service_registration_verification_email,
+        email=svc_req.email,
+        service_name=svc_req.service_name,
         token=raw,
     )
     log_security_event(
         event_type="email_verification_sent",
         request=request,
-        user_email=customer.email,
-        customer_id=customer.id,
-        tenant_id=customer.tenant_id,
+        user_email=svc_req.email,
         endpoint="/user/resend-verification-email",
-        details={"channel": "email", "resend": True},
+        details={"channel": "email", "resend": True, "flow": "service_request", "request_id": svc_req.id},
     )
     return generic
 

@@ -593,6 +593,13 @@ def _include_feature_routers(app: FastAPI) -> None:
             print("[SERVER] Admin vehicle lifecycle router zaregistrován: /admin-api/vehicle-lifecycle a /api/admin/vehicle-lifecycle")
         except ImportError as exc_inner:
             print(f"[SERVER] Warning: Admin vehicle lifecycle router není dostupný: {exc_inner}")
+        try:
+            from src.server.admin_traffic_report import router as admin_traffic_report_router
+
+            app.include_router(admin_traffic_report_router)
+            print("[SERVER] Admin traffic report router zaregistrován: /admin-api/traffic/...")
+        except ImportError as exc_inner:
+            print(f"[SERVER] Warning: Admin traffic report router není dostupný: {exc_inner}")
     except ImportError as exc:
         print(f"[SERVER] Warning: Admin API router není dostupný: {exc}")
         import traceback

@@ -13,6 +13,7 @@ from src.modules.vehicle_hub.quote_public_access import (
     log_public_quote_action,
     serialize_public_quote_payload,
 )
+from src.modules.vehicle_hub.user_in_app_notifications import notify_service_quote_decided
 from src.modules.vehicle_hub.routers_v1.service_dashboard import (
     _quote_snapshot,
     _sync_work_order_on_quote_rejected,
@@ -99,7 +100,7 @@ def approve_public_quote(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    access_token, quote, _vehicle, _service_customer = _load_public_quote(db, token_value=token)
+    access_token, quote, vehicle, service_customer = _load_public_quote(db, token_value=token)
     if str(quote.status or "").lower() == "approved":
         raise HTTPException(status_code=409, detail="Nabídka už byla schválena.")
     if str(quote.status or "").lower() == "rejected":
@@ -139,6 +140,17 @@ def approve_public_quote(
                 new_snapshot=_work_order_snapshot(work_order),
             )
 
+    owner = db.query(Customer).filter(Customer.id == int(quote.customer_id)).first() if quote.customer_id else None
+    if vehicle and service_customer:
+        notify_service_quote_decided(
+            db,
+            service_customer_id=int(service_customer.id),
+            vehicle=vehicle,
+            quote=quote,
+            approved=True,
+            owner=owner,
+        )
+
     db.commit()
     return {
         "status": "approved",
@@ -153,7 +165,7 @@ def reject_public_quote(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    access_token, quote, _vehicle, _service_customer = _load_public_quote(db, token_value=token)
+    access_token, quote, vehicle, service_customer = _load_public_quote(db, token_value=token)
     if str(quote.status or "").lower() == "rejected":
         raise HTTPException(status_code=409, detail="Nabídka už byla odmítnuta.")
     if str(quote.status or "").lower() == "approved":
@@ -182,6 +194,17 @@ def reject_public_quote(
         actor=actor,
         audit_action="public_quote_rejected_work_order_sync",
     )
+
+    owner = db.query(Customer).filter(Customer.id == int(quote.customer_id)).first() if quote.customer_id else None
+    if vehicle and service_customer:
+        notify_service_quote_decided(
+            db,
+            service_customer_id=int(service_customer.id),
+            vehicle=vehicle,
+            quote=quote,
+            approved=False,
+            owner=owner,
+        )
 
     db.commit()
     return {
