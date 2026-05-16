@@ -356,6 +356,16 @@
     overdueReminderRescheduleId: null,
     /** Blokovat tlačítka během ukládání z overlay připomínek po termínu */
     overdueReminderActionSaving: false,
+    /** UX: zvýraznit kartu zákazníka po vytvoření / propojení */
+    highlightCustomerId: null,
+    _highlightCustomerTimer: 0,
+    createCustomerSubmitting: false,
+    linkExistingByEmailSubmitting: false,
+    /** lookup_id JWT během POST link-from-lookup */
+    linkFromLookupBusy: null,
+    accessRequestBusyVehicleId: null,
+    /** vehicle_id → true po odeslané žádosti; vyčištění při refreshi výsledků */
+    pendingAccessVehicleIds: {},
   };
 
   state.modal = createEmptyModalState();
@@ -401,10 +411,75 @@
     return Number(window.innerWidth || 0) <= 900;
   }
 
+  let serviceShellToastSeq = 0;
+
+  function ensureServiceShellToastHost() {
+    let el = document.getElementById('serviceShellToastHost');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'serviceShellToastHost';
+    el.className = 'service-shell-toast-host';
+    el.setAttribute('aria-live', 'polite');
+    document.body.appendChild(el);
+    return el;
+  }
+
+  /**
+   * Viditelná zpětná vazba pro servisní akce (mobil + desktop). Při chybě hostitele použije showAlert.
+   * @param {'success'|'warning'|'error'|'info'} type
+   */
+  function showServiceToast(type, title, message) {
+    const t = ['success', 'warning', 'error', 'info'].includes(String(type)) ? String(type) : 'info';
+    const titleText = String(title || '').trim();
+    const bodyText = String(message || '').trim();
+    const fallbackMsg = [titleText, bodyText].filter(Boolean).join('\n\n') || bodyText || titleText;
+    try {
+      const host = ensureServiceShellToastHost();
+      const node = document.createElement('div');
+      node.className = `service-shell-toast service-shell-toast--${t}`;
+      node.innerHTML = `${titleText ? `<div class="service-shell-toast-title">${escape(titleText)}</div>` : ''}<div class="service-shell-toast-body">${escape(bodyText).replace(/\n/g, '<br>')}</div>`;
+      host.appendChild(node);
+      window.setTimeout(() => {
+        node.classList.add('service-shell-toast--out');
+        window.setTimeout(() => {
+          try {
+            node.remove();
+          } catch (e) {
+            /* ignore */
+          }
+        }, 320);
+      }, 8400);
+      serviceShellToastSeq += 1;
+      return;
+    } catch (e) {
+      console.warn('[SERVICE_SHELL] toast host failed', e);
+    }
+    if (typeof window.showAlert === 'function') {
+      window.showAlert(
+        fallbackMsg,
+        t === 'error' ? 'error' : t === 'warning' ? 'warning' : t === 'success' ? 'success' : 'info',
+      );
+    }
+  }
+
   function showToast(message, type = 'info') {
     if (typeof window.showAlert === 'function') {
       window.showAlert(message, type);
     }
+  }
+
+  function scheduleCustomerHighlightClear() {
+    window.clearTimeout(state._highlightCustomerTimer);
+    state._highlightCustomerTimer = window.setTimeout(() => {
+      state.highlightCustomerId = null;
+      if (state.activeSection === 'clients') render();
+    }, 12000);
+  }
+
+  function refreshAccessRequestDependentUi() {
+    refreshCustomerSearchDependentModals();
+    if (state.modal?.open) renderModal();
+    render();
   }
 
   function escape(value) {
@@ -896,7 +971,7 @@
     if (key === 'linked') return 'Propojeno';
     if (key === 'not_linked') return 'Nepropojeno';
     if (key === 'already_approved') return 'Přístup schválen';
-    if (key === 'pending_request') return 'Žádost čeká';
+    if (key === 'pending_request') return 'Čeká na schválení';
     if (key === 'matched') return 'Vyžaduje přístup';
     if (key === 'owner_missing') return 'Chybí schvalovatel';
     if (key === 'processed') return 'Zpracováno';
@@ -2239,9 +2314,9 @@
               ${item?.already_linked
                 ? (Number(item.customer_id) > 0
                   ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(item.customer_id)})">Otevřít</button>`
-                  : `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.navigate('customers')">Seznam zákazníků</button>`)
+                  : `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.navigate('clients')">Seznam zákazníků</button>`)
                 : (item.lookup_id
-                  ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.linkCustomerFromLookup(${JSON.stringify(String(item.lookup_id))})">Požádat o propojení</button>`
+                  ? `<button type="button" class="btn btn-primary" ${state.linkFromLookupBusy === String(item.lookup_id) ? 'disabled' : ''} onclick="window.serviceShell.linkCustomerFromLookup(${JSON.stringify(String(item.lookup_id))})">${state.linkFromLookupBusy === String(item.lookup_id) ? 'Odesílám…' : 'Požádat o propojení'}</button>`
                   : `<button type="button" class="btn btn-primary" onclick="window.serviceShell.linkCustomerById(${Number(item.customer_id || 0)})">Propojit</button>`)}
             </div>
           </div>
@@ -2331,6 +2406,9 @@
   async function linkCustomerFromLookup(lookupId) {
     const lid = String(lookupId || '').trim();
     if (!lid) return;
+    if (state.linkFromLookupBusy) return;
+    state.linkFromLookupBusy = lid;
+    refreshCustomerSearchDependentModals();
     try {
       const response = await window.apiCall('/api/v1/services/workspace/customers/link-existing', 'POST', {
         lookup_id: lid,
@@ -2339,15 +2417,37 @@
           'Zákazník projevil zájem o evidenci vozidla a komunikaci přes aplikaci Správa vozidel při návštěvě servisu.',
         internal_service_note: null,
       });
-      showToast(response?.message || 'Žádost odeslána.', 'success');
-      await load(true, true);
-      if (isModalOpen('service-tools') || isModalOpen('add-customer')) {
-        await searchCustomers(state.customerSearchQuery);
-      } else if (String(state.modal?.entityType || '') === 'customer') {
-        await reloadModalData();
+      const parts = [];
+      if (response?.linked) {
+        parts.push('Zákazník byl propojen se servisem.');
+      } else if (response?.pending_customer_confirm) {
+        parts.push('Zákazník byl nalezen. Propojení čeká na potvrzení zákazníkem.');
+      } else {
+        parts.push(response?.message || 'Požadavek byl zpracován.');
       }
+      if (response?.pending_customer_confirm && response?.email_sent) {
+        parts.push('E-mail k potvrzení byl zákazníkovi odeslán.');
+      } else if (response?.pending_customer_confirm && !response?.email_sent) {
+        parts.push('E-mail se nepodařilo odeslat. Propojení čeká, ale zákazníka bude potřeba kontaktovat ručně.');
+      }
+      showServiceToast(
+        response?.pending_customer_confirm && !response?.email_sent ? 'warning' : 'success',
+        'Propojení zákazníka',
+        parts.join('\n'),
+      );
+      const cid = Number(response?.customer_user_id || response?.customer_id || 0);
+      if (cid) state.highlightCustomerId = cid;
+      state.addCustomerQuickLinkDraft = { email: '', note: '' };
+      closeModal();
+      await load(true, true);
+      navigate('clients', { forceLoad: true });
+      scheduleCustomerHighlightClear();
+      await searchCustomers(state.customerSearchQuery);
     } catch (error) {
-      showToast(`Propojení se nepodařilo: ${error?.message || 'Neznámá chyba'}`, 'error');
+      showServiceToast('error', 'Propojení se nepodařilo', error?.message || 'Neznámá chyba');
+    } finally {
+      state.linkFromLookupBusy = null;
+      refreshCustomerSearchDependentModals();
     }
   }
 
@@ -2403,7 +2503,7 @@
               <label class="service-shell-field-label" for="serviceShellQuickLinkCustomerNote">Poznámka k vazbě (volitelné)</label>
               <textarea id="serviceShellQuickLinkCustomerNote" class="service-shell-search" style="min-height:72px;width:100%;box-sizing:border-box;" oninput="window.serviceShell.patchAddCustomerQuickLinkDraft('note', this.value)">${escape(draft.note)}</textarea>
               <div class="service-shell-modal-footer service-shell-modal-footer--inline" style="margin-top:0.75rem;padding:0;">
-                <button type="button" class="btn btn-primary" onclick="window.serviceShell.linkExistingCustomerByEmail()">Propojit zákazníka</button>
+                <button type="button" class="btn btn-primary" ${state.linkExistingByEmailSubmitting ? 'disabled' : ''} onclick="window.serviceShell.linkExistingCustomerByEmail()">${state.linkExistingByEmailSubmitting ? 'Odesílám…' : 'Propojit zákazníka'}</button>
               </div>
             </div>
     `;
@@ -2442,7 +2542,7 @@
                 <input id="serviceShellCreateCustModel" class="service-shell-search" style="width:100%;box-sizing:border-box;" value="${escape(cd.vehicle_model || '')}" oninput="window.serviceShell.patchCreateCustomerDraft('vehicle_model', this.value)">
               </div>
               <div class="service-shell-modal-footer service-shell-modal-footer--inline" style="margin-top:0.75rem;padding:0;">
-                <button type="button" class="btn btn-primary" onclick="window.serviceShell.submitCreateCustomer()">Vytvořit zákazníka a pozvat e-mailem</button>
+                <button type="button" class="btn btn-primary" ${state.createCustomerSubmitting ? 'disabled' : ''} onclick="window.serviceShell.submitCreateCustomer()">${state.createCustomerSubmitting ? 'Odesílám…' : 'Vytvořit zákazníka a pozvat e-mailem'}</button>
               </div>
             </div>
     `;
@@ -2502,21 +2602,36 @@
       showToast('Zadejte platný e-mail účtu zákazníka.', 'warning');
       return;
     }
+    if (state.linkExistingByEmailSubmitting) return;
+    state.linkExistingByEmailSubmitting = true;
+    refreshCustomerSearchDependentModals();
     try {
       const response = await window.apiCall('/api/v1/services/workspace/customers/link-existing', 'POST', {
         customer_email: email,
         note: note || null,
       });
+      const parts = [];
       if (response?.pending_customer_confirm) {
-        showToast(response?.message || 'Zákazník musí propojení potvrdit v e-mailu.', 'info');
+        parts.push('Zákazník byl nalezen. Propojení čeká na potvrzení zákazníkem.');
+        if (response?.email_sent) parts.push('E-mail k potvrzení byl zákazníkovi odeslán.');
+        else parts.push('E-mail se nepodařilo odeslat. Propojení čeká, ale zákazníka bude potřeba kontaktovat ručně.');
       } else {
-        showToast(response?.message || 'Zákazník byl propojen.', 'success');
+        parts.push('Zákazník byl propojen se servisem.');
       }
+      showServiceToast(response?.pending_customer_confirm && !response?.email_sent ? 'warning' : 'success', 'Propojení zákazníka', parts.join('\n'));
+      const cid = Number(response?.customer_user_id || response?.customer_id || 0);
+      if (cid) state.highlightCustomerId = cid;
       state.addCustomerQuickLinkDraft = { email: '', note: '' };
+      closeModal();
       await load(true, true);
+      navigate('clients', { forceLoad: true });
+      scheduleCustomerHighlightClear();
       refreshCustomerSearchDependentModals();
     } catch (error) {
-      showToast(error?.message || 'Propojení se nepodařilo — zkuste vyhledání nebo pozvánku.', 'error');
+      showServiceToast('error', 'Propojení se nepodařilo', error?.message || 'Zkuste vyhledání nebo pozvánku.');
+    } finally {
+      state.linkExistingByEmailSubmitting = false;
+      refreshCustomerSearchDependentModals();
     }
   }
 
@@ -2533,6 +2648,7 @@
 
   async function submitCreateCustomer() {
     const d = state.createCustomerDraft || {};
+    if (state.createCustomerSubmitting) return;
     const first = String(d.first_name || '').trim();
     const last = String(d.last_name || '').trim();
     const em = String(d.email || document.getElementById('serviceShellCreateCustEmail')?.value || '').trim();
@@ -2586,12 +2702,14 @@
         model: model || null,
       };
     }
+    state.createCustomerSubmitting = true;
+    refreshCustomerSearchDependentModals();
     try {
       const response = await window.apiCall('/api/v1/services/workspace/customers/create', 'POST', payload);
-      showToast(
-        response?.message || 'Zákazník byl vytvořen a pozván e-mailem. Čeká na dokončení registrace zákazníkem.',
-        'success',
-      );
+      const msg = response?.message || 'Zákazník byl přidán.';
+      showServiceToast(response?.email_sent ? 'success' : 'warning', 'Nový zákazník', msg);
+      const uid = Number(response?.customer_user_id || 0);
+      if (uid) state.highlightCustomerId = uid;
       state.createCustomerDraft = {
         first_name: '',
         last_name: '',
@@ -2607,10 +2725,16 @@
         vehicle_brand: '',
         vehicle_model: '',
       };
+      closeModal();
       await load(true, true);
+      navigate('clients', { forceLoad: true });
+      scheduleCustomerHighlightClear();
       refreshCustomerSearchDependentModals();
     } catch (error) {
-      showToast(error?.message || 'Založení zákazníka se nepodařilo.', 'error');
+      showServiceToast('error', 'Založení zákazníka', error?.message || 'Operace se nepodařila.');
+    } finally {
+      state.createCustomerSubmitting = false;
+      refreshCustomerSearchDependentModals();
     }
   }
 
@@ -2690,6 +2814,14 @@
       state.vehicleLookupMeta = null;
     } finally {
       state.vehicleLookupLoading = false;
+      const rows = Array.isArray(state.vehicleLookupResults) ? state.vehicleLookupResults : [];
+      const nextPending = { ...(state.pendingAccessVehicleIds || {}) };
+      rows.forEach((item) => {
+        const id = Number(item?.vehicle_id || 0);
+        if (!id) return;
+        if (!item?.can_request_access) delete nextPending[id];
+      });
+      state.pendingAccessVehicleIds = nextPending;
       renderServiceToolsModal();
     }
   }
@@ -2706,21 +2838,55 @@
       showToast('Pro žádost o přístup chybí použitelný VIN nebo SPZ identifikátor.', 'error');
       return;
     }
+    const vid = Number(vehicleId || 0);
+    if (!vid) return;
+    if (state.accessRequestBusyVehicleId === vid) return;
+    state.accessRequestBusyVehicleId = vid;
+    refreshAccessRequestDependentUi();
     try {
       const response = await window.apiCall('/api/v1/services/workspace/access-requests', 'POST', {
-        vehicle_id: Number(vehicleId),
+        vehicle_id: vid,
         lookup_query: lookupQuery,
         note: 'Žádost vytvořená z nového servisního shellu.',
       });
-      showToast(response?.message || 'Žádost o přístup byla vytvořena.', 'success');
+      const primary =
+        response?.created
+          ? 'Žádost o přístup k vozidlu byla odeslána. Čeká se na vyjádření uživatele.'
+          : response?.notification?.reason === 'existing_pending'
+            ? 'Žádost už čeká na potvrzení. Nová žádost nebyla odeslána.'
+            : response?.message || 'Žádost byla zpracována.';
+      const parts = [primary];
+      if (response?.created) {
+        if (response?.email_sent) parts.push('Uživatel byl upozorněn e-mailem.');
+        else parts.push('E-mail se nepodařilo odeslat, ale žádost je uložená v aplikaci.');
+      }
+      state.pendingAccessVehicleIds = { ...(state.pendingAccessVehicleIds || {}) };
+      state.pendingAccessVehicleIds[vid] = true;
+      showServiceToast(
+        response?.created ? 'success' : 'warning',
+        'Žádost o přístup',
+        parts.join('\n'),
+      );
       if (isModalOpen('service-tools')) {
         await searchVehicles(lookupQuery);
       } else if (String(state.modal?.entityType || '') === 'vehicle' || String(state.modal?.entityType || '') === 'document' || String(state.modal?.entityType || '') === 'reservation' || String(state.modal?.entityType || '') === 'reminder') {
         await reloadModalData();
       }
+      refreshAccessRequestDependentUi();
     } catch (error) {
-      showToast(`Nepodařilo se vytvořit žádost o přístup: ${error?.message || 'Neznámá chyba'}`, 'error');
+      showServiceToast('error', 'Žádost o přístup', error?.message || 'Operace se nepodařila.');
+    } finally {
+      state.accessRequestBusyVehicleId = null;
+      refreshAccessRequestDependentUi();
     }
+  }
+
+  /** Tlačítko žádosti o přístup — jednotně disabled / „Odesílám…“ při běžícím requestu. */
+  function accessRequestPrimaryButton(vehicleId, lookupQueryStr) {
+    const vid = Number(vehicleId || 0);
+    if (!vid) return '';
+    const busy = state.accessRequestBusyVehicleId === vid;
+    return `<button type="button" class="btn btn-primary" ${busy ? 'disabled' : ''} onclick="window.serviceShell.requestVehicleAccess(${vid}, ${JSON.stringify(String(lookupQueryStr || ''))})">${busy ? 'Odesílám…' : 'Požádat o přístup'}</button>`;
   }
 
   function openVehicleFromLookup(candidate) {
@@ -2824,11 +2990,15 @@
     const vehicleRows = state.vehicleLookupLoading
       ? '<div class="service-shell-empty">Vyhledávám vozidla…</div>'
       : state.vehicleLookupResults.length
-        ? state.vehicleLookupResults.map((item, index) => `
+        ? state.vehicleLookupResults.map((item, index) => {
+          const vid = Number(item?.vehicle_id || 0);
+          const pendingLocal = vid && state.pendingAccessVehicleIds && state.pendingAccessVehicleIds[vid];
+          const statusLine = pendingLocal ? 'Čeká na schválení' : accessStatusLabel(item?.status || '-');
+          return `
           <div class="service-shell-list-row">
             <div>
               <p class="service-shell-list-title">${escape(item?.nickname || [item?.brand, item?.model].filter(Boolean).join(' ') || (item?.status === 'conflict' ? 'Konfliktní identifikace' : 'Vozidlo'))}</p>
-              <p class="service-shell-list-note">${escape(item?.plate_masked || '-')} • ${escape(item?.vin_masked || '-')} • ${escape(accessStatusLabel(item?.status || '-'))}</p>
+              <p class="service-shell-list-note">${escape(item?.plate_masked || '-')} • ${escape(item?.vin_masked || '-')} • ${escape(statusLine)}</p>
               ${item?.blocking_reason ? `<p class="service-shell-list-note">${escape(item.blocking_reason)}</p>` : ''}
               ${Array.isArray(item?.conflicting_candidates) ? `
                 <div class="service-shell-list">
@@ -2849,10 +3019,11 @@
             <div class="service-shell-modal-actions">
               ${item?.can_open_detail ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openVehicleFromLookupByIndex(${index})">Detail</button>` : ''}
               ${item?.can_create_work_order ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCreateWorkOrderFromLookupByIndex(${index})">Nová zakázka</button>` : ''}
-              ${item?.can_request_access ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.requestVehicleAccess(${Number(item.vehicle_id || 0)})">Požádat o přístup</button>` : ''}
+              ${item?.can_request_access ? `<button type="button" class="btn btn-primary" ${state.accessRequestBusyVehicleId === vid ? 'disabled' : ''} onclick="window.serviceShell.requestVehicleAccess(${vid})">${state.accessRequestBusyVehicleId === vid ? 'Odesílám…' : 'Požádat o přístup'}</button>` : ''}
             </div>
           </div>
-        `).join('')
+        `;
+        }).join('')
         : '<div class="service-shell-empty">Zatím žádné výsledky.</div>';
 
     openModal({
@@ -5137,7 +5308,7 @@
       `,
       renderFooter: (detail) => `
         <div class="service-shell-modal-footer">
-          ${detail?.can_request_access ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.requestVehicleAccess(${id}, ${JSON.stringify(String(detail?.plate_masked || ''))})">Požádat o přístup</button>` : ''}
+          ${detail?.can_request_access ? accessRequestPrimaryButton(id, detail?.plate_masked || '') : ''}
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openVehicleQrModal(${id})">Zobrazit QR</button>
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openFirstRecordForQuote()">Vytvořit nabídku</button>
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openServiceRecordModal(${id})">Nový záznam</button>
@@ -5203,7 +5374,7 @@
       },
       renderFooter: (detail) => `
         <div class="service-shell-modal-footer">
-          ${detail?.can_request_access ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.requestVehicleAccess(${Number(detail?.vehicle_id || 0)}, ${JSON.stringify(String(detail?.vehicle_plate_masked || ''))})">Požádat o přístup</button>` : ''}
+          ${detail?.can_request_access ? accessRequestPrimaryButton(detail?.vehicle_id, detail?.vehicle_plate_masked || '') : ''}
           ${detail?.can_create_work_order ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal(); window.serviceShell.openCreateWorkOrderModal({ ownerId: ${Number(detail?.customer_id || 0)}, vehicleId: ${Number(detail?.vehicle_id || 0)} })">Nová zakázka</button>` : ''}
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal()">Zavřít</button>
         </div>
@@ -5283,8 +5454,7 @@
         <div class="service-shell-modal-footer">
           ${Number(detail?.customer_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(detail.customer_id)})">Zákazník</button>` : ''}
           ${Number(detail?.vehicle_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openVehicleDetailModal(${Number(detail.vehicle_id)})">Vozidlo</button>` : ''}
-          ${detail?.can_request_access ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.requestVehicleAccess(${Number(detail?.vehicle_id || 0)}, ${JSON.stringify(String(detail?.vehicle_plate_masked || ''))})">Požádat o přístup</button>` : ''}
-          ${detail?.can_edit && reservationStatusKey(detail?.status) === 'PENDING' ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.updateReservationStatus(${id}, 'CONFIRMED', 'Rezervace byla potvrzena.')">Potvrdit</button>` : ''}
+          ${detail?.can_request_access ? accessRequestPrimaryButton(detail?.vehicle_id, detail?.vehicle_plate_masked || '') : ''}
           ${detail?.can_edit && reservationStatusKey(detail?.status) === 'CONFIRMED' ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.updateReservationStatus(${id}, 'COMPLETED', 'Rezervace byla označena jako dokončená.')">Dokončeno</button>` : ''}
           ${detail?.can_edit && reservationStatusKey(detail?.status) !== 'CANCELLED' && reservationStatusKey(detail?.status) !== 'COMPLETED' ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.updateReservationStatus(${id}, 'CANCELLED', 'Rezervace byla zrušena.')">Zrušit</button>` : ''}
           ${detail?.can_create_work_order ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal(); window.serviceShell.openCreateWorkOrderModal({ ownerId: ${Number(detail?.customer_id || 0)}, vehicleId: ${Number(detail?.vehicle_id || 0)} })">Nová zakázka</button>` : ''}
@@ -5373,9 +5543,7 @@
         <div class="service-shell-modal-footer">
           ${Number(detail?.customer_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openCustomerDetailModal(${Number(detail.customer_id)})">Zákazník</button>` : ''}
           ${Number(detail?.vehicle_id || 0) > 0 ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.openVehicleDetailModal(${Number(detail.vehicle_id)})">Vozidlo</button>` : ''}
-          ${detail?.can_request_access ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.requestVehicleAccess(${Number(detail?.vehicle_id || 0)}, ${JSON.stringify(String(detail?.vehicle_plate_masked || ''))})">Požádat o přístup</button>` : ''}
-          ${detail?.can_create_work_order ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal(); window.serviceShell.openCreateWorkOrderModal({ ownerId: ${Number(detail?.customer_id || 0)}, vehicleId: ${Number(detail?.vehicle_id || 0)} })">Nová zakázka</button>` : ''}
-          ${detail?.is_completed ? `<button type="button" class="btn btn-secondary" onclick="window.serviceShell.deleteReminder(${id})">Smazat</button>` : ''}
+          ${detail?.can_request_access ? accessRequestPrimaryButton(detail?.vehicle_id, detail?.vehicle_plate_masked || '') : ''}
           ${detail?.can_edit ? `<button type="button" class="btn btn-primary" onclick="window.serviceShell.runModalAction('save')">${modal.saving ? 'Ukládám…' : 'Uložit změny'}</button>` : ''}
           <button type="button" class="btn btn-secondary" onclick="window.serviceShell.closeModal()">Zavřít</button>
         </div>
@@ -6170,14 +6338,16 @@
     action = '',
     actionLabel = 'Otevřít',
     moreHtml = '',
+    cardClass = '',
   } = {}) {
     const safeAction = String(action || '').trim().replace(/"/g, '&quot;');
+    const extraCardClass = cardClass === 'service-shell-list-card--highlight' ? ' service-shell-list-card--highlight' : '';
     const clickable = safeAction
       ? `tabindex="0" role="button" onclick="${safeAction}" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); ${safeAction} }"`
       : '';
     const stopPrefix = safeAction ? 'event.stopPropagation(); ' : '';
     return `
-      <article class="service-shell-list-card" ${clickable}>
+      <article class="service-shell-list-card${extraCardClass}" ${clickable}>
         <div class="service-shell-list-card-top">
           <div>
             ${kicker ? `<p class="service-shell-mobile-kicker">${escape(kicker)}</p>` : ''}
@@ -6507,11 +6677,13 @@
     };
     const cards = customers.length ? customers.map((customer) => {
       const cid = Number(customer?.customer_id || 0);
+      const hi = state.highlightCustomerId && cid === Number(state.highlightCustomerId);
       return listCard({
         kicker: 'Zákazník',
         title: customer?.name || maskCardContact(customer?.email),
         badge: `${String(customer?.vehicles_count || customer?.vehicle_count || 0)} aut`,
         badgeClass: 'in_progress',
+        cardClass: hi ? 'service-shell-list-card--highlight' : '',
         rows: [
           ['Kontakt', maskCardContact(customer?.email || customer?.phone)],
           ['Sdíleno', String(customer?.shared_vehicles_count || 0)],
@@ -7193,6 +7365,7 @@
     openModal,
     closeModal,
     handleModalBackdrop,
+    showServiceToast,
     runModalAction,
     reloadModalData,
     logout,

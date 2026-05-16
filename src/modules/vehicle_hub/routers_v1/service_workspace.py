@@ -3359,11 +3359,21 @@ def link_existing_customer(
             },
         )
         db.commit()
+        msg = "Zákazník byl úspěšně propojen." if created else "Zákazník už byl propojen, vazba byla aktualizována."
         return {
             "linked": True,
+            "pending_customer_confirm": False,
             "created": created,
-            "message": "Zákazník byl úspěšně propojen." if created else "Zákazník už byl propojen, vazba byla aktualizována.",
             "customer_id": customer.id,
+            "customer_user_id": int(customer.id),
+            "email_sent": False,
+            "notification": {
+                "channel": "email",
+                "sent": False,
+                "reason": "direct_link_no_email",
+                "message": msg,
+            },
+            "message": msg,
         }
     except HTTPException:
         raise

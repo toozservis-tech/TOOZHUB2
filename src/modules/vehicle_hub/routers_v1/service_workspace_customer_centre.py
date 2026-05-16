@@ -505,7 +505,22 @@ def execute_customer_link_from_lookup(
         .first()
     )
     if existing and existing.status == "active":
-        return {"linked": True, "customer_link_id": existing.id, "link_status": "active", "message": "Vazba už existuje."}
+        msg = "Zákazník byl propojen se servisem."
+        return {
+            "linked": True,
+            "pending_customer_confirm": False,
+            "customer_link_id": int(existing.id),
+            "customer_user_id": int(target.id),
+            "link_status": "active",
+            "email_sent": False,
+            "notification": {
+                "channel": "email",
+                "sent": False,
+                "reason": "already_active",
+                "message": msg,
+            },
+            "message": msg,
+        }
 
     service_name = (current_user.name or current_user.email or "Servis").strip()
 
@@ -604,6 +619,7 @@ def execute_customer_link_from_lookup(
         "linked": False,
         "pending_customer_confirm": True,
         "customer_link_id": int(row.id),
+        "customer_user_id": int(target.id),
         "email_sent": bool(email_result.get("sent")),
         "notification": {
             "channel": "email",
@@ -851,10 +867,18 @@ def customer_create_with_onboarding(
     )
     db.commit()
 
+    reason_code = email_result.get("reason")
+    reason_detail = (
+        str(email_result.get("error") or "").strip()
+        or (f"Důvod: {reason_code}" if reason_code else "")
+        or "SMTP neodesláno"
+    )
     if email_result.get("sent"):
-        acc_msg = "Pozvánka byla odeslána."
+        acc_msg = "Zákazník byl přidán. Pozvánka byla odeslána e-mailem."
+        notif_body = "Pozvánka byla odeslána e-mailem."
     else:
-        acc_msg = "Účet byl založen, ale e-mail se nepodařilo odeslat. Zkontrolujte SMTP nastavení."
+        acc_msg = f"Zákazník byl přidán, ale e-mail se nepodařilo odeslat: {reason_detail}"
+        notif_body = acc_msg
 
     return {
         "customer_user_id": int(customer.id),
@@ -864,8 +888,8 @@ def customer_create_with_onboarding(
         "notification": {
             "channel": "email",
             "sent": bool(email_result.get("sent")),
-            "reason": email_result.get("reason"),
-            "message": acc_msg,
+            "reason": reason_code,
+            "message": notif_body,
         },
         "message": acc_msg,
     }

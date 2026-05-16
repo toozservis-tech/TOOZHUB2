@@ -2706,3 +2706,89 @@ body.service-shell-app.service-shell-theme-light .service-nav-submenu-item.is-ac
   display: inline-flex;
   align-items: center;
 }
+
+/* Toast stack — servisní akce (zákazník / přístup k vozidlu) */
+.service-shell-toast-host {
+  position: fixed;
+  z-index: 120000;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  width: min(92vw, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.service-shell-toast {
+  pointer-events: auto;
+  border-radius: var(--service-radius-sm, 10px);
+  padding: 14px 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(17, 19, 21, 0.96);
+  color: #f5f7fb;
+  animation: serviceShellToastIn 0.22s ease-out;
+}
+
+.service-shell-toast--out {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.service-shell-toast-title {
+  display: block;
+  font-weight: 650;
+  font-size: 0.95rem;
+  margin-bottom: 6px;
+}
+
+.service-shell-toast-body {
+  font-size: 0.9rem;
+  line-height: 1.45;
+  opacity: 0.95;
+}
+
+.service-shell-toast--success {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.service-shell-toast--warning {
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+.service-shell-toast--error {
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+.service-shell-toast--info {
+  border-color: rgba(96, 165, 250, 0.35);
+}
+
+body.service-shell-theme-light .service-shell-toast {
+  background: rgba(255, 255, 255, 0.98);
+  color: #0f172a;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12);
+}
+
+@keyframes serviceShellToastIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.service-shell-list-card--highlight {
+  outline: 2px solid rgba(96, 165, 250, 0.75);
+  outline-offset: 2px;
+}
+
+body.service-shell-theme-light .service-shell-list-card--highlight {
+  outline-color: rgba(37, 99, 235, 0.65);
+}

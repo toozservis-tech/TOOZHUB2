@@ -109,6 +109,8 @@ def test_service_create_customer_email_success(centre_api, monkeypatch: pytest.M
     data = resp.json()
     assert data["email_sent"] is True
     assert data["notification"]["sent"] is True
+    assert "zákazník byl přidán" in data["message"].lower()
+    assert data.get("notification", {}).get("message")
     assert "token" not in resp.text
     uid = int(data["customer_user_id"])
     tok = db.query(UserOnboardingToken).filter(UserOnboardingToken.user_id == uid).first()
@@ -146,6 +148,7 @@ def test_service_create_customer_smtp_not_configured(centre_api, monkeypatch: py
     data = resp.json()
     assert data["email_sent"] is False
     assert data["notification"]["reason"] == "smtp_not_configured"
+    assert "zákazník byl přidán" in data["message"].lower()
     assert "nepodařilo" in data["message"].lower()
     uid = int(data["customer_user_id"])
     assert db.query(UserOnboardingToken).filter(UserOnboardingToken.user_id == uid).count() == 1
@@ -206,6 +209,85 @@ def test_link_from_lookup_confirm_email_failed(centre_api, monkeypatch: pytest.M
         .first()
     )
     assert row is not None
+
+
+def test_customer_link_from_lookup_already_active_has_notification_shape(centre_api, monkeypatch: pytest.MonkeyPatch):
+    client, db, svc = centre_api
+    monkeypatch.setattr(cc_router_mod, "EmailService", _OkEmail)
+
+    tenant_id = svc.tenant_id
+    owner = Customer(
+        tenant_id=tenant_id,
+        email="active.lookup.owner@example.com",
+        password_hash="x",
+        name="Owner Active",
+        role="user",
+    )
+    db.add(owner)
+    db.commit()
+    db.refresh(owner)
+
+    db.add(
+        ServiceCustomerLink(
+            service_tenant_id=tenant_id,
+            service_customer_id=int(svc.id),
+            customer_tenant_id=tenant_id,
+            customer_id=int(owner.id),
+            status="active",
+            link_source="test_seed",
+            consent_basis="test",
+            consent_note="test",
+            created_by_service_user_id=int(svc.id),
+        )
+    )
+    db.commit()
+
+    r_search = client.post(
+        "/api/v1/services/workspace/customers/search",
+        json={"email": owner.email},
+    )
+    assert r_search.status_code == 200, r_search.text
+    lookup_id = r_search.json()["customer_preview"]["lookup_id"]
+
+    r_link = client.post(
+        "/api/v1/services/workspace/customers/link-from-lookup",
+        json={
+            "lookup_id": lookup_id,
+            "consent_basis": "test",
+            "consent_note": "note",
+        },
+    )
+    assert r_link.status_code == 200, r_link.text
+    out = r_link.json()
+    assert out["linked"] is True
+    assert out["pending_customer_confirm"] is False
+    assert out["email_sent"] is False
+    assert out["notification"]["sent"] is False
+    assert out["notification"]["reason"] == "already_active"
+    assert out["customer_user_id"] == int(owner.id)
+
+
+def test_access_request_notifications_keys(access_stack, monkeypatch: pytest.MonkeyPatch):
+    """created + email_sent + notification struktura (regrese pro service shell)."""
+    client, _db, _owner, _service, vehicle = access_stack
+
+    def fake_send(*, to_email: str, subject: str, plain_body: str) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "src.modules.vehicle_hub.service_access_messaging.send_service_access_request_email",
+        fake_send,
+    )
+    r = client.post(
+        "/api/v1/services/workspace/access-requests",
+        json={"vehicle_id": vehicle.id, "lookup_query": vehicle.plate, "note": "x"},
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "created" in data
+    assert "email_sent" in data
+    assert data["notification"]["channel"] == "email"
+    assert "message" in data["notification"]
 
 
 @pytest.fixture()
