@@ -394,17 +394,6 @@ def assert_service_monthly_service_record_quota(db: Session, *, service_customer
         )
 
 
-def assert_service_payroll_or_advanced_forbidden(db: Session, *, service_customer_id: int) -> None:
-    """Mzdový / pokročilý modul pouze pro FULL (ne SERVICE FREE)."""
-    plan = _normalized_service_workspace_plan(db, service_customer_id)
-    if plan != "service_free":
-        return
-    raise LicenseError(
-        code="SERVICE_FREE_MODULE_BLOCKED",
-        message="Mzdový modul a pokročilé funkce nejsou v tarifu Základní (zdarma). Upgradujte na FULL.",
-        details={"plan": plan or "unknown", "service_customer_id": int(service_customer_id)},
-    )
-
 # Mapování plánů na dostupné funkce (ARES necháváme povolený pro všechny)
 PLAN_FEATURES = {
     "free": {

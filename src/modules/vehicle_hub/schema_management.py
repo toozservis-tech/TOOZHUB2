@@ -279,28 +279,6 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
             },
         },
     },
-    "service_payroll": {
-        "tables": {
-            "payroll_offices",
-            "payroll_employees",
-            "payroll_employee_offices",
-            "payroll_attendance",
-            "payroll_payslips",
-            "payroll_journals",
-            "payroll_jmhz_submissions",
-            "audit_log",
-            "customers",
-            "tenants",
-        },
-        "columns": {
-            "payroll_offices": {"name", "vs_cssz", "datovka_id", "is_active", "created_at", "updated_at"},
-            "payroll_employees": {"first_name", "last_name", "birth_date", "is_active", "hourly_gross_rate", "default_ppv"},
-            "payroll_attendance": {"year", "month", "fond_hodin", "odpracovano_hodin"},
-            "payroll_payslips": {"stav", "hruba_mzda", "cista_mzda", "k_vyplate"},
-            "payroll_journals": {"zamestnancu_pocet", "payment_order_generated"},
-            "payroll_jmhz_submissions": {"typ", "stav", "zip_file_path"},
-        },
-    },
     "reservations": {
         "tables": {"reservations", "service_vehicle_access"},
         "columns": {"reservations": {"source_platform"}},
