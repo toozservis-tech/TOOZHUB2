@@ -4,6 +4,7 @@ Podporuje načítání z environment variables a .env souboru
 """
 import os
 from pathlib import Path
+from typing import Optional
 
 from src.core.env_aliases import env_prefer_new
 
@@ -346,3 +347,39 @@ def _ensure_directory(path: Path) -> None:
 
 for directory in [DATA_DIR, UPLOADS_DIR, PDF_DIR, IMAGES_DIR]:
     _ensure_directory(directory)
+
+# =============================================================================
+# TRAFFIC REPORT (GoAccess) — mimo DB vozidel
+# =============================================================================
+
+def _optional_path_env(name: str, default: Path) -> Path:
+    raw = os.getenv(name, "").strip()
+    return Path(raw).expanduser() if raw else default
+
+
+GOACCESS_REPORT_DIR = _optional_path_env(
+    "GOACCESS_REPORT_DIR", WORKSPACE_ROOT / "runtime" / "reports"
+)
+GOACCESS_REPORT_HTML_PATH = _optional_path_env(
+    "GOACCESS_REPORT_HTML_PATH", GOACCESS_REPORT_DIR / "goaccess-admin.html"
+)
+GOACCESS_REPORT_META_PATH = _optional_path_env(
+    "GOACCESS_REPORT_META_PATH", GOACCESS_REPORT_DIR / "goaccess-admin.meta.json"
+)
+GOACCESS_REPORT_SCRIPT_PATH = _optional_path_env(
+    "GOACCESS_REPORT_SCRIPT_PATH", APP_ROOT / "scripts" / "admin_generate_traffic_report.sh"
+)
+
+# Cesta k nginx access logu pro živý admin náhled; prázdné = auto (viz admin_traffic_live.resolve)
+_nginx_log_raw = os.getenv("NGINX_ACCESS_LOG", "").strip()
+NGINX_ACCESS_LOG_PATH: Optional[Path] = (
+    Path(_nginx_log_raw).expanduser() if _nginx_log_raw else None
+)
+
+# MaxMind GeoLite2 City (.mmdb) — env, jinak automaticky data/GeoLite2-City.mmdb ve workspace, pokud existuje
+_geoip_raw = os.getenv("GEOIP_CITY_DATABASE_PATH", "").strip()
+if _geoip_raw:
+    GEOIP_CITY_DATABASE_PATH: Optional[Path] = Path(_geoip_raw).expanduser()
+else:
+    _default_geo_mmdb = WORKSPACE_ROOT / "data" / "GeoLite2-City.mmdb"
+    GEOIP_CITY_DATABASE_PATH = _default_geo_mmdb if _default_geo_mmdb.is_file() else None

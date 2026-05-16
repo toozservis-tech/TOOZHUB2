@@ -422,25 +422,102 @@
             <div>
               <h1>Návštěvnost</h1>
               <p class="section-subtitle">
-                Data vycházejí z <strong>nginx access logů</strong> hub domény (zdroj pravdy není Google Analytics).
-                Jde o <strong>technickou návštěvnost HTTP požadavků</strong>, nikoli přesný počet lidí ani unikátních osob.
+                <strong>Přihlášení uživatelé</strong> — první tabulka stojí na záznamech z aplikace (účet / e-mail, poloha, čas, API).
+                <strong>Veřejný provoz</strong> — druhá tabulka je z nginx (i nepřihlášení; bez jména účtu). Technické grafy GoAccess jsou volitelně dole.
               </p>
             </div>
-            <button class="btn-primary" type="button" id="traffic-report-regenerate-btn" onclick="regenerateTrafficReport()">
-              Obnovit přehled
-            </button>
           </div>
-          <div id="traffic-report-status" class="global-admin-summary" style="margin-bottom: 1rem;"></div>
-          <div id="traffic-report-error" class="error" style="display: none; margin-bottom: 0.75rem;"></div>
-          <div class="traffic-report-frame-wrap" style="border: 1px solid var(--border-subtle, #ddd); border-radius: 8px; overflow: hidden; min-height: 480px; background: #fff;">
-            <iframe
-              id="traffic-report-iframe"
-              title="Přehled návštěvnosti (GoAccess)"
-              style="width: 100%; height: 72vh; border: 0; display: block;"
-              sandbox="allow-scripts allow-same-origin"
-              src="about:blank"
-            ></iframe>
+
+          <div id="traffic-app-visits-panel" class="traffic-app-visits-panel" style="margin-bottom: 1.25rem;">
+            <h2 style="font-size: 1.15rem; margin: 0 0 0.5rem;">Přihlášení — kdo, odkud, kdy</h2>
+            <p class="section-subtitle" style="margin: 0 0 0.6rem; font-size: 0.88rem;">
+              Data z bezpečnostního logu aplikace při <strong>přihlášení</strong> a u endpointů, které používají ověřeného uživatele (<code>get_current_user</code>).
+              U každého uživatele se při přechodu na jiné API/funkci zapisuje nový řádek nejdříve po několika sekundách (aby log nebyl zbytečně obří).
+            </p>
+            <div id="traffic-app-visits-hint" class="global-admin-summary" style="margin-bottom: 0.5rem; font-size: 0.85rem;"></div>
+            <div id="traffic-app-visits-error" class="error" style="display: none; margin-bottom: 0.5rem;"></div>
+            <div class="tool-table-wrap" style="max-height: min(42vh, 520px); overflow: auto;">
+              <table class="tool-table" style="font-size: 0.9rem;">
+                <thead>
+                  <tr>
+                    <th style="min-width: 9rem;">Kdy</th>
+                    <th style="min-width: 12rem;">Kdo</th>
+                    <th style="min-width: 11rem;">Odkud</th>
+                    <th>Co</th>
+                  </tr>
+                </thead>
+                <tbody id="traffic-app-visits-tbody">
+                  <tr><td colspan="4" class="loading">Načítám…</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
+
+          <div id="traffic-live-panel" class="traffic-visitors-panel" style="margin-bottom: 1.25rem;">
+            <h2 style="font-size: 1.15rem; margin: 0 0 0.65rem;">Veřejný provoz (nginx) — poslední požadavky</h2>
+            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center; margin-bottom: 0.65rem; font-size: 0.9rem;">
+              <label style="cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem;">
+                <input type="checkbox" id="traffic-live-show-all" onchange="refreshTrafficLiveSnapshot()" />
+                Zobrazit i statiky, boty a health (plný výřez logu)
+              </label>
+            </div>
+            <div id="traffic-live-meta" class="global-admin-summary" style="margin-bottom: 0.5rem; font-size: 0.88rem;"></div>
+            <div id="traffic-live-error" class="error" style="display: none; margin-bottom: 0.5rem;"></div>
+            <div class="tool-table-wrap" style="max-height: min(55vh, 620px); overflow: auto;">
+              <table class="tool-table" style="font-size: 0.9rem;">
+                <thead>
+                  <tr>
+                    <th style="min-width: 9.5rem;">Kdy</th>
+                    <th style="min-width: 11rem;">Kdo (prohlížeč · zařízení · IP)</th>
+                    <th style="min-width: 12rem;">Odkud (místo · odkaz)</th>
+                    <th>Co (požadavek)</th>
+                  </tr>
+                </thead>
+                <tbody id="traffic-live-tbody">
+                  <tr><td colspan="4" class="loading">Načítám…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <details id="traffic-goaccess-details" class="traffic-tech-details" style="margin-bottom: 1rem; padding: 0.75rem 1rem; background: var(--panel-bg, #f6f7f9); border-radius: 8px; border: 1px solid var(--border-subtle, #ddd);">
+            <summary style="cursor: pointer; font-weight: 600;">Statistiky a grafy (GoAccess) — technický detail</summary>
+            <p class="section-subtitle" style="margin: 0.6rem 0 0.75rem; font-size: 0.88rem;">
+              GoAccess je užitečný pro agregace a grafy; pro „kdo odkud kdy“ je výše přehlednější. IP v tomto HTML reportu jsou anonymizované. Přehled se generuje z téhož logu jako tabulka výše (obnovit může trvat desítky sekund).
+            </p>
+            <div style="margin-bottom: 0.75rem;">
+              <button class="btn-primary" type="button" id="traffic-report-regenerate-btn" onclick="regenerateTrafficReport()">
+                Vygenerovat / obnovit GoAccess přehled
+              </button>
+            </div>
+            <div id="traffic-report-status" class="global-admin-summary" style="margin-bottom: 1rem;"></div>
+            <div id="traffic-report-error" class="error" style="display: none; margin-bottom: 0.75rem;"></div>
+            <details class="traffic-report-legend" style="margin-bottom: 1rem; padding: 0.75rem 1rem; background: #fff; border-radius: 8px; border: 1px solid var(--border-subtle, #ddd);">
+              <summary style="cursor: pointer; font-weight: 600;">Slovníček GoAccess (anglické názvy)</summary>
+              <p style="margin: 0.6rem 0 0.4rem; font-size: 0.95rem; color: #444;">
+                Hlavní nadpisy panelů jsou po úpravě česky; v detailu se může objevit anglický technický text:
+              </p>
+              <ul style="margin: 0.25rem 0 0; padding-left: 1.25rem; font-size: 0.92rem; line-height: 1.55; color: #333;">
+                <li><strong>Total requests</strong> — počet zpracovaných řádků z logu (jeden řádek ≈ jeden HTTP požadavek).</li>
+                <li><strong>Unique visitors</strong> — orientační počet „unikátních klientů“ podle záznamu v logu (po anonymizaci IP, <strong>ne</strong> počet reálných osob).</li>
+                <li><strong>Requested files / static requests</strong> — nejčastější cesty (URL), obrázky, skripty atd.</li>
+                <li><strong>HTTP status codes</strong> — rozpad odpovědí serveru (200 úspěch, 301/302 přesměrování, 4xx chyba klienta, 5xx chyba serveru).</li>
+                <li><strong>Operating Systems / Browsers</strong> — odhad z hlavičky User-Agent (může být zkreslený boty).</li>
+                <li><strong>Time distribution</strong> — v kterých hodinách byl největší provoz (podle času v logu).</li>
+                <li><strong>Bandwidth</strong> — přibliženě přenesená data podle velikosti v odpovědi v logu.</li>
+                <li><strong>Referrers</strong> — odkud požadavek „hlásil“, že přišel (ne vždy spolehlivé).</li>
+              </ul>
+            </details>
+            <div class="traffic-report-frame-wrap" style="border: 1px solid var(--border-subtle, #ddd); border-radius: 8px; overflow: hidden; min-height: 400px; background: #fff;">
+              <iframe
+                id="traffic-report-iframe"
+                title="Technický přehled návštěvnosti (GoAccess)"
+                style="width: 100%; height: 65vh; border: 0; display: block;"
+                sandbox="allow-scripts allow-same-origin"
+                src="about:blank"
+              ></iframe>
+            </div>
+          </details>
         </section>
 
         <section id="section-support" class="content-section">
@@ -1728,6 +1805,6 @@
     </div>
   </div>
 
-  <script src="admin.js?v=20260516archive-purge-v2"></script>
+  <script src="admin.js?v=20260516traffic-geo-fallback"></script>
 </body>
 </html>

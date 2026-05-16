@@ -304,26 +304,60 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             frame_ancestors = "*"
         
         # CSP - kompatibilní se stávajícími skripty a API voláními
+        req_path = (request.url.path or "").split("?", 1)[0]
+        admin_docs_csp = (
+            req_path == "/web_admin"
+            or req_path.startswith("/web_admin/")
+            or req_path.startswith("/admin-static/")
+        )
+        # GoAccess HTML v iframe (blob: same-origin) vyžaduje fonty z data: a šablony s eval —
+        # držíme uvolněnější pravidla jen pro načtení admin shellu, ne pro celé API.
         if ENVIRONMENT == "production":
-            # Produkce: povolit embed jen z toozservis.cz domén, API volání na hub.toozservis.cz
-            csp = (
-                "default-src 'self' https://hub.toozservis.cz; "
-                "img-src 'self' data: https: blob:; "
-                "style-src 'self' 'unsafe-inline'; "
-                "script-src 'self' 'unsafe-inline'; "
-                "connect-src 'self' https://hub.toozservis.cz https://api.dataovozidlech.cz https://ares.gov.cz; "
-                "frame-ancestors 'self' https://www.toozservis.cz https://toozservis.cz;"
-            )
+            if admin_docs_csp:
+                csp = (
+                    "default-src 'self' https://hub.toozservis.cz; "
+                    "img-src 'self' data: https: blob:; "
+                    "font-src 'self' data: https:; "
+                    "style-src 'self' 'unsafe-inline'; "
+                    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+                    "connect-src 'self' https://hub.toozservis.cz https://api.dataovozidlech.cz https://ares.gov.cz; "
+                    "frame-src 'self' blob: https://hub.toozservis.cz; "
+                    "frame-ancestors 'self' https://www.toozservis.cz https://toozservis.cz;"
+                )
+            else:
+                csp = (
+                    "default-src 'self' https://hub.toozservis.cz; "
+                    "img-src 'self' data: https: blob:; "
+                    "font-src 'self' data: https:; "
+                    "style-src 'self' 'unsafe-inline'; "
+                    "script-src 'self' 'unsafe-inline'; "
+                    "connect-src 'self' https://hub.toozservis.cz https://api.dataovozidlech.cz https://ares.gov.cz; "
+                    "frame-src 'self' blob: https://hub.toozservis.cz; "
+                    "frame-ancestors 'self' https://www.toozservis.cz https://toozservis.cz;"
+                )
         else:
-            # Development: povolit všechny (pro testování)
-            csp = (
-                "default-src 'self'; "
-                "img-src 'self' data: https: blob:; "
-                "style-src 'self' 'unsafe-inline'; "
-                "script-src 'self' 'unsafe-inline'; "
-                "connect-src 'self' http://localhost:* https:; "
-                "frame-ancestors *;"
-            )
+            if admin_docs_csp:
+                csp = (
+                    "default-src 'self'; "
+                    "img-src 'self' data: https: blob:; "
+                    "font-src 'self' data: https:; "
+                    "style-src 'self' 'unsafe-inline'; "
+                    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+                    "connect-src 'self' http://localhost:* https:; "
+                    "frame-src 'self' blob:; "
+                    "frame-ancestors *;"
+                )
+            else:
+                csp = (
+                    "default-src 'self'; "
+                    "img-src 'self' data: https: blob:; "
+                    "font-src 'self' data: https:; "
+                    "style-src 'self' 'unsafe-inline'; "
+                    "script-src 'self' 'unsafe-inline'; "
+                    "connect-src 'self' http://localhost:* https:; "
+                    "frame-src 'self' blob:; "
+                    "frame-ancestors *;"
+                )
         
         # Nenahrazuj existující CSP, pokud už existuje
         if "content-security-policy" not in (k.lower() for k in response.headers.keys()):

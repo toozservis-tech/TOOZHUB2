@@ -32,10 +32,17 @@ _REVERSE_GEOLOOKUP_CACHE_TTL_SEC = int(os.getenv("REVERSE_GEOLOOKUP_CACHE_TTL_SE
 _REVERSE_GEOLOOKUP_CACHE_MAX_ITEMS = int(os.getenv("REVERSE_GEOLOOKUP_CACHE_MAX_ITEMS", "1200"))
 _ACTIVITY_LOG_MIN_INTERVAL_SEC = max(15, int(os.getenv("USER_ACTIVITY_LOG_MIN_INTERVAL_SEC", "90")))
 _ACTIVITY_CACHE_MAX_ITEMS = max(200, int(os.getenv("USER_ACTIVITY_CACHE_MAX_ITEMS", "5000")))
+# Pri zmene API endpointu zapiseme drive (viz _remember_activity), aby sel v adminu rozumne sledovat navigaci.
+_ACTIVITY_ENDPOINT_CHANGE_MIN_SEC = max(3, int(os.getenv("USER_ACTIVITY_ENDPOINT_CHANGE_MIN_SEC", "8")))
 
 _geo_cache: Dict[str, Dict[str, Any]] = {}
 _reverse_geo_cache: Dict[str, Dict[str, Any]] = {}
-_activity_cache: Dict[str, float] = {}
+_activity_cache: Dict[str, Dict[str, Any]] = {}
+
+
+def is_http_ip_geolookup_enabled() -> bool:
+    """Zapnutý odhad lokace z veřejné IP přes HTTP (ipwho.is + cache; viz ENABLE_IP_GEOLOOKUP)."""
+    return _GEOLOOKUP_ENABLED
 
 
 def _normalize_ip(candidate: Optional[str]) -> Optional[str]:
@@ -420,35 +427,51 @@ def log_security_event(
         session.close()
 
 
-def _remember_activity(user_email: str) -> bool:
+def _remember_activity(user_email: str, endpoint: Optional[str] = None) -> bool:
     """
-    Vrati True jen pokud se ma aktualni aktivita zapsat (throttle per user).
+    Throttle zapisu aktivity: stejny endpoint max. 1x za USER_ACTIVITY_LOG_MIN_INTERVAL_SEC,
+    pri zmene endpointu za min. USER_ACTIVITY_ENDPOINT_CHANGE_MIN_SEC od posledniho zapisu.
     """
     normalized = (user_email or "").strip().lower()
     if not normalized:
         return False
 
+    ep = (endpoint or "").strip().split("?")[0][:512]
     now = time.time()
-    last_seen = _activity_cache.get(normalized)
-    if last_seen is not None and (now - last_seen) < _ACTIVITY_LOG_MIN_INTERVAL_SEC:
-        return False
+    rec = _activity_cache.get(normalized)
+    if rec is None:
+        _activity_cache[normalized] = {"t": now, "ep": ep}
+        _trim_activity_cache(now)
+        return True
 
-    _activity_cache[normalized] = now
+    last_t = float(rec.get("t", 0))
+    last_ep = str(rec.get("ep") or "")
 
-    # Lehke omezeni velikosti cache bez drahych operaci.
+    if ep != last_ep and (now - last_t) >= _ACTIVITY_ENDPOINT_CHANGE_MIN_SEC:
+        _activity_cache[normalized] = {"t": now, "ep": ep}
+        _trim_activity_cache(now)
+        return True
+
+    if (now - last_t) >= _ACTIVITY_LOG_MIN_INTERVAL_SEC:
+        _activity_cache[normalized] = {"t": now, "ep": ep}
+        _trim_activity_cache(now)
+        return True
+
+    return False
+
+
+def _trim_activity_cache(now: float) -> None:
+    if len(_activity_cache) <= _ACTIVITY_CACHE_MAX_ITEMS:
+        return
+    cutoff = now - (_ACTIVITY_LOG_MIN_INTERVAL_SEC * 4)
+    stale_keys = [key for key, rec in _activity_cache.items() if float(rec.get("t", 0)) < cutoff]
+    for key in stale_keys:
+        _activity_cache.pop(key, None)
     if len(_activity_cache) > _ACTIVITY_CACHE_MAX_ITEMS:
-        cutoff = now - (_ACTIVITY_LOG_MIN_INTERVAL_SEC * 4)
-        stale_keys = [key for key, ts in _activity_cache.items() if ts < cutoff]
-        for key in stale_keys:
+        ordered = sorted(_activity_cache.items(), key=lambda item: float(item[1].get("t", 0)))
+        to_drop = len(_activity_cache) - _ACTIVITY_CACHE_MAX_ITEMS
+        for key, _ in ordered[:to_drop]:
             _activity_cache.pop(key, None)
-        # Pokud stale cleanup nestacil, orezat nejstarsi zaznamy.
-        if len(_activity_cache) > _ACTIVITY_CACHE_MAX_ITEMS:
-            ordered = sorted(_activity_cache.items(), key=lambda item: item[1])
-            to_drop = len(_activity_cache) - _ACTIVITY_CACHE_MAX_ITEMS
-            for key, _ in ordered[:to_drop]:
-                _activity_cache.pop(key, None)
-
-    return True
 
 
 def log_user_activity(
@@ -466,7 +489,7 @@ def log_user_activity(
     normalized = (user_email or "").strip().lower()
     if not normalized:
         return
-    if not _remember_activity(normalized):
+    if not _remember_activity(normalized, endpoint):
         return
 
     payload: Dict[str, Any] = {"kind": "heartbeat"}

@@ -30,6 +30,7 @@ const ARCHIVED_USERS_PURGE_CONFIRM_PHRASE = 'VYMAZAT ARCHIV';
 const ADMIN_NAVBAR_CLOCK_TZ = 'Europe/Prague';
 let adminNavbarClockTimer = null;
 let trafficReportObjectUrl = null;
+let trafficLivePollTimer = null;
 
 function tickAdminNavbarClock() {
   const el = document.getElementById('adminNavbarClock');
@@ -860,7 +861,8 @@ function switchSection(section) {
 
 function loadSectionData(section) {
   hideGlobalError();
-  
+  stopTrafficLivePolling();
+
   switch(section) {
     case 'overview':
       loadOverview();
@@ -924,6 +926,188 @@ function releaseTrafficReportObjectUrl() {
   }
 }
 
+function stopTrafficLivePolling() {
+  if (trafficLivePollTimer != null) {
+    clearInterval(trafficLivePollTimer);
+    trafficLivePollTimer = null;
+  }
+}
+
+function formatTrafficRelativeCz(isoUtc) {
+  if (!isoUtc) return '';
+  const t = Date.parse(isoUtc);
+  if (Number.isNaN(t)) return '';
+  const sec = Math.floor((Date.now() - t) / 1000);
+  if (sec < 0) return 'čas z logu';
+  if (sec < 40) return 'právě teď';
+  if (sec < 120) return 'před chvílí';
+  if (sec < 3600) return `před ${Math.floor(sec / 60)} min`;
+  if (sec < 86400) return `před ${Math.floor(sec / 3600)} h`;
+  return `před ${Math.floor(sec / 86400)} d`;
+}
+
+function renderTrafficAppVisits(data) {
+  const tbody = document.getElementById('traffic-app-visits-tbody');
+  const hintEl = document.getElementById('traffic-app-visits-hint');
+  const errEl = document.getElementById('traffic-app-visits-error');
+  if (!tbody) return;
+  if (errEl) {
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+  }
+  if (hintEl && data && data.hint) {
+    hintEl.innerHTML = `<div class="global-admin-summary-card">${escapeHtml(String(data.hint))}</div>`;
+  } else if (hintEl) {
+    hintEl.innerHTML = '';
+  }
+  const items = (data && data.items) || [];
+  if (!items.length) {
+    tbody.innerHTML =
+      '<tr><td colspan="4">Zatím žádné záznamy přihlášení / API aktivity — uživatelé se musí přihlásit a volat aplikaci (viz také bezpečnostní log).</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items
+    .map((row) => {
+      const whenMain = escapeHtml(String(row.when_prague || ''));
+      const whenRel = formatTrafficRelativeCz(row.when_iso_utc);
+      const whenBlock = whenRel
+        ? `<span>${whenMain}</span><br/><span style="font-size:0.82em;color:#666;">${escapeHtml(whenRel)} · lokální čas CZ</span>`
+        : whenMain;
+      const who = escapeHtml(String(row.who_display || row.who_email || ''));
+      const ev = escapeHtml(String(row.event_label || ''));
+      const whoBlock = `<strong>${who}</strong><br/><span style="font-size:0.85em;color:#555;">${ev}</span>`;
+      const where = escapeHtml(String(row.where || ''));
+      const ip = escapeHtml(String(row.ip || ''));
+      const whereBlock = `${where}<br/><code style="font-size:0.85em;">${ip}</code>`;
+      const ep = escapeHtml(String(row.endpoint || '—'));
+      const ua = row.user_agent_short ? escapeHtml(String(row.user_agent_short)) : '';
+      const whatBlock = ua
+        ? `${ep}<br/><span style="font-size:0.82em;color:#666;">${ua}</span>`
+        : ep;
+      return `<tr><td>${whenBlock}</td><td>${whoBlock}</td><td>${whereBlock}</td><td>${whatBlock}</td></tr>`;
+    })
+    .join('');
+}
+
+async function refreshTrafficAppVisits() {
+  const tbody = document.getElementById('traffic-app-visits-tbody');
+  const errEl = document.getElementById('traffic-app-visits-error');
+  if (!tbody || currentSection !== 'traffic') return;
+  try {
+    const data = await apiRequest('GET', '/admin-api/traffic/app-visits?limit=100', null, {
+      silentGlobalError: true,
+    });
+    renderTrafficAppVisits(data);
+  } catch (e) {
+    if (errEl) {
+      errEl.style.display = 'block';
+      errEl.textContent = e.message || String(e);
+    }
+    tbody.innerHTML =
+      '<tr><td colspan="4" class="error">Nepodařilo se načíst návštěvy přihlášených účtů.</td></tr>';
+  }
+}
+
+async function refreshTrafficSectionLiveData() {
+  await Promise.all([refreshTrafficAppVisits(), refreshTrafficLiveSnapshot()]);
+}
+
+function renderTrafficLiveSnapshot(data) {
+  const tbody = document.getElementById('traffic-live-tbody');
+  const metaEl = document.getElementById('traffic-live-meta');
+  const errEl = document.getElementById('traffic-live-error');
+  if (!tbody) return;
+  if (errEl) {
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+  }
+  if (metaEl && data) {
+    const lines = [];
+    if (data.visit_filter === 'interesting') {
+      lines.push('<strong>Režim:</strong> jen „návštěvní“ řádky (bez většiny statik a běžných botů).');
+    } else {
+      lines.push('<strong>Režim:</strong> plný výřez logu (včetně statik a botů, kde nejsou vyfiltrovány).');
+    }
+    if (data.source_log) {
+      lines.push(`<strong>Zdroj:</strong> <code>${escapeHtml(String(data.source_log))}</code>`);
+    }
+    if (data.geo_maxmind) {
+      lines.push('<strong>Geolokace (nginx náhled):</strong> MaxMind GeoLite2 City (.mmdb).');
+    } else if (data.geo_http_lookup) {
+      lines.push(
+        '<strong>Geolokace (nginx náhled):</strong> odhad z veřejné IP (HTTP + mezipaměť; stejný mechanismus jako u bezpečnostního logu).',
+      );
+    }
+    if (data.geoip_hint) {
+      lines.push(`<span class="error-inline"><strong>Geolokace:</strong> ${escapeHtml(String(data.geoip_hint))}</span>`);
+    }
+    metaEl.innerHTML = lines.length ? `<div class="global-admin-summary-card">${lines.join('<br/>')}</div>` : '';
+  }
+  const items = (data && data.items) || [];
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="4">V tomto výřezu nic nenalezeno — zkuste „plný log“, případně chvíli počkejte na nové záznamy. U nových instalací bývá log téměř prázdný.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map((row) => {
+    const s = row.summary || {};
+    const whenMain = escapeHtml(String(s.when_prague || row.time_local || ''));
+    const whenRel = formatTrafficRelativeCz(s.when_iso_utc);
+    const whenBlock = whenRel
+      ? `<span class="traffic-when-main">${whenMain}</span><br/><span class="traffic-when-rel" style="font-size:0.82em;color:#666;">${escapeHtml(whenRel)} · lokální čas CZ</span>`
+      : `<span class="traffic-when-main">${whenMain}</span>`;
+
+    const who = escapeHtml(String(s.who || ''));
+    const ip = escapeHtml(String(s.ip || row.ip || ''));
+    const whoBlock = `${who}<br/><code style="font-size:0.88em;">${ip}</code>`;
+
+    const whereGeo = escapeHtml(String(s.where || ''));
+    const fromLink = escapeHtml(String(s.from_link || ''));
+    const fromTitle = escapeHtml(String(s.from_link_detail || row.referrer || ''));
+    const whereBlock = `${whereGeo}<br/><span style="font-size:0.9em;color:#444;" title="${fromTitle}">${fromLink}</span>`;
+
+    const st = s.status != null ? s.status : row.status;
+    const whatRaw = String(s.what || `${row.method || ''} ${row.path || ''}`.trim());
+    const whatBlock = `${escapeHtml(whatRaw)}${st != null ? ` <span style="font-size:0.85em;opacity:0.85;">· ${escapeHtml(String(st))}</span>` : ''}`;
+
+    return `
+      <tr>
+        <td>${whenBlock}</td>
+        <td>${whoBlock}</td>
+        <td>${whereBlock}</td>
+        <td>${whatBlock}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function refreshTrafficLiveSnapshot() {
+  const tbody = document.getElementById('traffic-live-tbody');
+  const errEl = document.getElementById('traffic-live-error');
+  if (!tbody || currentSection !== 'traffic') return;
+  const showAll = document.getElementById('traffic-live-show-all');
+  const interesting = !(showAll && showAll.checked);
+  const q = new URLSearchParams({ limit: '80', interesting_only: interesting ? 'true' : 'false' });
+  try {
+    const data = await apiRequest('GET', `/admin-api/traffic/live/snapshot?${q.toString()}`, null, {
+      silentGlobalError: true,
+    });
+    renderTrafficLiveSnapshot(data);
+  } catch (e) {
+    if (errEl) {
+      errEl.style.display = 'block';
+      errEl.textContent = e.message || String(e);
+    }
+    tbody.innerHTML = '<tr><td colspan="4" class="error">Nepodařilo se načíst živá data.</td></tr>';
+  }
+}
+
+function startTrafficLivePolling() {
+  stopTrafficLivePolling();
+  if (currentSection !== 'traffic') return;
+  refreshTrafficSectionLiveData();
+  trafficLivePollTimer = setInterval(refreshTrafficSectionLiveData, 5000);
+}
+
 async function fetchAdminHtmlGet(path) {
   const token = getAuthToken();
   const controller = new AbortController();
@@ -945,6 +1129,56 @@ async function fetchAdminHtmlGet(path) {
   }
 }
 
+function scheduleTrafficReportChartReflow(iframe) {
+  if (!iframe) return;
+  if (iframe._trafficResizeObserver) {
+    try {
+      iframe._trafficResizeObserver.disconnect();
+    } catch (_) {
+      /* ignore */
+    }
+    iframe._trafficResizeObserver = null;
+  }
+  const pingResize = () => {
+    try {
+      const w = iframe.contentWindow;
+      if (w) {
+        w.dispatchEvent(new Event('resize'));
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  };
+  const wrap = iframe.parentElement;
+  if (wrap && typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => pingResize());
+    ro.observe(wrap);
+    iframe._trafficResizeObserver = ro;
+    setTimeout(() => {
+      try {
+        ro.disconnect();
+      } catch (_) {
+        /* ignore */
+      }
+      if (iframe._trafficResizeObserver === ro) {
+        iframe._trafficResizeObserver = null;
+      }
+    }, 10000);
+  }
+  iframe.onload = () => {
+    iframe.onload = null;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        pingResize();
+        setTimeout(pingResize, 150);
+        setTimeout(pingResize, 450);
+        setTimeout(pingResize, 1000);
+        setTimeout(pingResize, 2000);
+      });
+    });
+  };
+}
+
 async function loadTrafficReportSection() {
   const statusEl = document.getElementById('traffic-report-status');
   const errEl = document.getElementById('traffic-report-error');
@@ -959,54 +1193,63 @@ async function loadTrafficReportSection() {
   statusEl.innerHTML = '<div class="loading">Načítám stav přehledu…</div>';
 
   try {
-    const st = await apiRequest('GET', '/admin-api/traffic/report/status', null, {
-      silentGlobalError: true,
-    });
-    const meta = (st && st.meta) || {};
-    const exists = Boolean(st && st.report_exists);
-    const lines = [];
-    lines.push(
-      `<strong>Stav souboru:</strong> ${exists ? 'přehled je k dispozici' : 'přehled zatím nebyl vygenerován'}`,
-    );
-    if (meta.generated_at) {
-      lines.push(`<strong>Naposledy vygenerováno:</strong> ${escapeHtml(String(meta.generated_at))}`);
-    }
-    if (meta.source_log) {
-      lines.push(`<strong>Zdrojový log:</strong> <code>${escapeHtml(String(meta.source_log))}</code>`);
-    }
-    if (meta.ok === false && meta.error) {
+    try {
+      const st = await apiRequest('GET', '/admin-api/traffic/report/status', null, {
+        silentGlobalError: true,
+      });
+      const meta = (st && st.meta) || {};
+      const exists = Boolean(st && st.report_exists);
+      const lines = [];
       lines.push(
-        `<span class="error-inline"><strong>Poslední generování:</strong> ${escapeHtml(String(meta.error))}</span>`,
+        `<strong>Soubor s přehledem:</strong> ${exists ? 'je na serveru k dispozici' : 'ještě nebyl vygenerován — použijte „Obnovit přehled“'}`,
       );
+      if (meta.generated_at) {
+        lines.push(
+          `<strong>Naposledy zpracováno:</strong> ${escapeHtml(String(meta.generated_at))} (čas z generátoru, UTC)`,
+        );
+      }
+      if (meta.source_log) {
+        lines.push(
+          `<strong>Vstupní nginx log:</strong> <code>${escapeHtml(String(meta.source_log))}</code>`,
+        );
+      }
+      if (meta.ok === false && meta.error) {
+        lines.push(
+          `<span class="error-inline"><strong>Poslední běh generátoru:</strong> ${escapeHtml(String(meta.error))}</span>`,
+        );
+      }
+      statusEl.innerHTML = `<div class="global-admin-summary-card">${lines.join('<br/>')}</div>`;
+    } catch (e) {
+      statusEl.innerHTML = `<div class="error">Stav se nepodařilo načíst: ${escapeHtml(e.message || String(e))}</div>`;
     }
-    statusEl.innerHTML = `<div class="global-admin-summary-card">${lines.join('<br/>')}</div>`;
-  } catch (e) {
-    statusEl.innerHTML = `<div class="error">Stav se nepodařilo načíst: ${escapeHtml(e.message || String(e))}</div>`;
-  }
 
-  releaseTrafficReportObjectUrl();
-  iframe.removeAttribute('srcdoc');
-  iframe.setAttribute('src', 'about:blank');
+    releaseTrafficReportObjectUrl();
+    iframe.removeAttribute('srcdoc');
+    iframe.setAttribute('src', 'about:blank');
 
-  try {
-    const { ok, status, text } = await fetchAdminHtmlGet('/admin-api/traffic/report');
-    if (!ok) {
+    try {
+      const { ok, status, text } = await fetchAdminHtmlGet('/admin-api/traffic/report');
+      if (!ok) {
+        if (errEl) {
+          errEl.style.display = 'block';
+          errEl.innerHTML =
+            status === 404 ? text : `Nepodařilo se načíst přehled (HTTP ${status}).`;
+        }
+        iframe.srcdoc = text && text.length ? text : '<!DOCTYPE html><html><body><p>Chyba načtení.</p></body></html>';
+        return;
+      }
+      const blob = new Blob([text], { type: 'text/html;charset=utf-8' });
+      trafficReportObjectUrl = URL.createObjectURL(blob);
+      scheduleTrafficReportChartReflow(iframe);
+      iframe.src = trafficReportObjectUrl;
+    } catch (e) {
       if (errEl) {
         errEl.style.display = 'block';
-        errEl.innerHTML =
-          status === 404 ? text : `Nepodařilo se načíst přehled (HTTP ${status}).`;
+        errEl.textContent = e.message || String(e);
       }
-      iframe.srcdoc = text && text.length ? text : '<!DOCTYPE html><html><body><p>Chyba načtení.</p></body></html>';
-      return;
     }
-    const blob = new Blob([text], { type: 'text/html;charset=utf-8' });
-    trafficReportObjectUrl = URL.createObjectURL(blob);
-    iframe.src = trafficReportObjectUrl;
-  } catch (e) {
-    if (errEl) {
-      errEl.style.display = 'block';
-      errEl.textContent = e.message || String(e);
-    }
+  } finally {
+    startTrafficLivePolling();
   }
 }
 
