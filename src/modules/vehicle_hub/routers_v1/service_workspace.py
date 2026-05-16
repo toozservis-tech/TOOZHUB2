@@ -74,6 +74,7 @@ from ..service_access_messaging import try_email_owner_about_service_access_requ
 from ..user_in_app_notifications import notify_owner_service_access_requested
 from src.modules.vehicle_hub.routers_v1.service_workspace_customer_centre import (
     CustomerLinkFromLookupRequestV1,
+    _send_direct_customer_link_notice_email,
     execute_customer_link_from_lookup,
 )
 from ..vehicle_public_history import (
@@ -854,6 +855,13 @@ def _normalize_service_reminder_notification_method(raw_method: Optional[str]) -
     if value in {"inherit", "default", "none"}:
         return None
     return None
+
+
+def _email_domain_for_audit(addr: Optional[str]) -> str:
+    s = str(addr or "").strip().lower()
+    if "@" not in s:
+        return ""
+    return s.split("@", 1)[1]
 
 
 def _upsert_service_customer_link(
@@ -3337,7 +3345,7 @@ def link_existing_customer(
         raise HTTPException(status_code=400, detail="Nelze propojit servisní účet se sebou samým.")
 
     try:
-        _, created = _upsert_service_customer_link(
+        link_row, created = _upsert_service_customer_link(
             db,
             service_customer_id=current_user.id,
             service_tenant_id=current_user.tenant_id,
@@ -3358,19 +3366,57 @@ def link_existing_customer(
                 "channel": "email",
             },
         )
+
+        service_name = (current_user.name or current_user.email or "Servis").strip()
+        owner_disp = (customer.name or "uživateli").strip()
+        email_result = _send_direct_customer_link_notice_email(
+            to_email=str(customer.email),
+            owner_name=owner_disp,
+            service_name=service_name,
+        )
+        sent_ok = bool(email_result.get("sent"))
+        reason_out = None if sent_ok else email_result.get("reason")
+        msg = (
+            "Zákazník byl propojen a informační e-mail byl odeslán."
+            if sent_ok
+            else "Zákazník byl propojen, ale informační e-mail se nepodařilo odeslat."
+        )
+
+        direct_link_audit_action = (
+            "SERVICE_CUSTOMER_DIRECT_LINK_EMAIL_SENT" if sent_ok else "SERVICE_CUSTOMER_DIRECT_LINK_EMAIL_FAILED"
+        )
+        write_global_audit_log(
+            db,
+            entity_type="service_customer_security",
+            entity_id=int(customer.id),
+            action=direct_link_audit_action,
+            actor_user_id=getattr(current_user, "id", None),
+            actor_role=getattr(current_user, "role", None),
+            tenant_id=getattr(current_user, "tenant_id", None),
+            metadata={
+                "kind": "direct_link_existing_customer",
+                "sent": sent_ok,
+                "reason": reason_out,
+                "customer_id": int(customer.id),
+                "service_customer_link_id": int(link_row.id),
+                "email_domain": _email_domain_for_audit(customer.email),
+                "created": bool(created),
+            },
+            ip=(request.client.host if request.client else "")[:128],
+            user_agent=(request.headers.get("user-agent") or "")[:2000],
+        )
         db.commit()
-        msg = "Zákazník byl úspěšně propojen." if created else "Zákazník už byl propojen, vazba byla aktualizována."
         return {
             "linked": True,
             "pending_customer_confirm": False,
             "created": created,
             "customer_id": customer.id,
             "customer_user_id": int(customer.id),
-            "email_sent": False,
+            "email_sent": sent_ok,
             "notification": {
                 "channel": "email",
-                "sent": False,
-                "reason": "direct_link_no_email",
+                "sent": sent_ok,
+                "reason": reason_out,
                 "message": msg,
             },
             "message": msg,

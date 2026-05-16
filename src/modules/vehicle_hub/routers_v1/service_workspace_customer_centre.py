@@ -354,6 +354,78 @@ def _send_link_confirm_email(
         }
 
 
+def _send_direct_customer_link_notice_email(
+    *,
+    to_email: str,
+    owner_name: str,
+    service_name: str,
+) -> dict[str, Any]:
+    """Informativní e-mail po přímém propojení existujícího zákazníka (bez tokenu v těle zprávy)."""
+    _ = owner_name  # rezerva pro případné rozšíření oslovení; tělo je dle produktové šablony bez jména
+    svc = EmailService()
+    if not svc.is_configured():
+        logger.warning("[SERVICE_CUSTOMER] SMTP není nakonfigurováno — informace o přímém propojení neodeslána.")
+        return {
+            "attempted": True,
+            "sent": False,
+            "reason": "smtp_not_configured",
+            "error": None,
+        }
+    body_plain = (
+        "Dobrý den,\n\n"
+        f"servis {service_name} si vás přidal mezi své zákazníky v aplikaci Správa vozidel.\n\n"
+        "To znamená, že vás servis může evidovat ve svém zákaznickém seznamu a případně vás požádat o přístup "
+        "ke konkrétnímu vozidlu.\n\n"
+        "Bez vašeho schválení servis nezíská přístup k detailu vozidla, pokud k němu ještě nemá schválenou vazbu.\n\n"
+        "Pokud jste tuto akci nečekal/a, zkontrolujte svůj účet v aplikaci Správa vozidel nebo kontaktujte podporu.\n\n"
+        "S pozdravem\n"
+        "Správa vozidel\n"
+    )
+    html_body = render_email_layout(
+        title="Servis vás přidal mezi zákazníky",
+        subtitle="Správa vozidel",
+        intro="Dobrý den,",
+        paragraphs=[
+            f"servis **{service_name}** si vás přidal mezi své zákazníky v aplikaci Správa vozidel.",
+            "To znamená, že vás servis může evidovat ve svém zákaznickém seznamu a případně vás požádat o přístup ke konkrétnímu vozidlu.",
+            "Bez vašeho schválení servis nezíská přístup k detailu vozidla, pokud k němu ještě nemá schválenou vazbu.",
+            "Pokud jste tuto akci nečekali, zkontrolujte svůj účet v aplikaci nebo kontaktujte podporu.",
+        ],
+        panels=[
+            render_panel(
+                title="Servis",
+                rows=[("Název", service_name)],
+                accent="#2563eb",
+                tone="#eff6ff",
+            )
+        ],
+        accent="#2563eb",
+    )
+    try:
+        ok = svc.send_simple_email(
+            to=to_email,
+            subject="Servis si vás přidal mezi zákazníky — Správa vozidel",
+            body=body_plain,
+            html_body=html_body,
+        )
+        if ok is False:
+            return {
+                "attempted": True,
+                "sent": False,
+                "reason": "send_failed",
+                "error": None,
+            }
+        return {"attempted": True, "sent": True, "reason": None, "error": None}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SERVICE_CUSTOMER] Odeslání informace o přímém propojení selhalo: %s", exc)
+        return {
+            "attempted": True,
+            "sent": False,
+            "reason": "send_failed",
+            "error": _sanitize_email_error(exc),
+        }
+
+
 def _frontend_base() -> str:
     base = str(FRONTEND_BASE_URL or "").strip().rstrip("/")
     return base or "http://127.0.0.1:8000"

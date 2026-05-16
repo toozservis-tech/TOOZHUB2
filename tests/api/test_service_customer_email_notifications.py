@@ -473,3 +473,157 @@ def test_access_request_existing_pending_no_duplicate_email(access_stack, monkey
     assert data["notification"]["reason"] == "existing_pending"
     assert calls == [1]
     assert db.query(ServiceAccessRequest).filter(ServiceAccessRequest.vehicle_id == vehicle.id).count() == 1
+
+
+@pytest.fixture()
+def link_existing_direct_api(centre_db, monkeypatch: pytest.MonkeyPatch):
+    """POST /customers/link-existing je na workspace routeru, ne na customer_centre."""
+    db, svc, tenant = centre_db
+    monkeypatch.setattr(workspace_router, "_ensure_service_workspace_schema", lambda _db: None)
+
+    owner = Customer(
+        tenant_id=tenant.id,
+        email="direct.link.owner@example.com",
+        password_hash="x",
+        name="Owner DirectLink",
+        role="user",
+    )
+    db.add(owner)
+    db.commit()
+    db.refresh(owner)
+
+    app = FastAPI()
+    app.include_router(workspace_router.router, prefix="/api/v1")
+
+    def override_db():
+        try:
+            yield db
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: svc
+    client = TestClient(app)
+    try:
+        yield client, db, svc, owner
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_link_existing_by_email_sends_notice_when_smtp_configured(
+    link_existing_direct_api, monkeypatch: pytest.MonkeyPatch
+):
+    client, db, _svc, owner = link_existing_direct_api
+    monkeypatch.setattr(cc_router_mod, "EmailService", _OkEmail)
+
+    resp = client.post(
+        "/api/v1/services/workspace/customers/link-existing",
+        json={"customer_email": owner.email, "note": "n1"},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["linked"] is True
+    assert data["pending_customer_confirm"] is False
+    assert data["email_sent"] is True
+    assert data["notification"]["sent"] is True
+    assert data["notification"]["reason"] is None
+    assert "informační e-mail byl odeslán" in data["message"].lower()
+
+    row_link = (
+        db.query(GlobalAuditLog)
+        .filter(
+            GlobalAuditLog.action == "link_existing_customer_by_email",
+            GlobalAuditLog.entity_id == int(owner.id),
+        )
+        .order_by(GlobalAuditLog.id.desc())
+        .first()
+    )
+    assert row_link is not None
+
+    row_em = (
+        db.query(GlobalAuditLog)
+        .filter(
+            GlobalAuditLog.action == "SERVICE_CUSTOMER_DIRECT_LINK_EMAIL_SENT",
+            GlobalAuditLog.entity_id == int(owner.id),
+        )
+        .order_by(GlobalAuditLog.id.desc())
+        .first()
+    )
+    assert row_em is not None
+    meta = json.loads(row_em.metadata_json or "{}")
+    assert meta.get("kind") == "direct_link_existing_customer"
+    assert meta.get("sent") is True
+    assert meta.get("customer_id") == int(owner.id)
+
+
+def test_link_existing_by_email_keeps_link_when_smtp_unavailable(
+    link_existing_direct_api, monkeypatch: pytest.MonkeyPatch
+):
+    client, db, svc, owner = link_existing_direct_api
+    monkeypatch.setattr(cc_router_mod, "EmailService", _NoSmtpEmail)
+
+    resp = client.post(
+        "/api/v1/services/workspace/customers/link-existing",
+        json={"customer_email": owner.email},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["linked"] is True
+    assert data["email_sent"] is False
+    assert data["notification"]["reason"] == "smtp_not_configured"
+
+    link_row = (
+        db.query(ServiceCustomerLink)
+        .filter(
+            ServiceCustomerLink.service_customer_id == int(svc.id),
+            ServiceCustomerLink.customer_id == int(owner.id),
+        )
+        .first()
+    )
+    assert link_row is not None
+    assert link_row.status == "active"
+
+    row_em = (
+        db.query(GlobalAuditLog)
+        .filter(
+            GlobalAuditLog.action == "SERVICE_CUSTOMER_DIRECT_LINK_EMAIL_FAILED",
+            GlobalAuditLog.entity_id == int(owner.id),
+        )
+        .order_by(GlobalAuditLog.id.desc())
+        .first()
+    )
+    assert row_em is not None
+
+
+def test_link_existing_by_email_send_failure_no_500(link_existing_direct_api, monkeypatch: pytest.MonkeyPatch):
+    client, db, _svc, owner = link_existing_direct_api
+
+    class _BoomEmail:
+        def is_configured(self) -> bool:
+            return True
+
+        def send_simple_email(self, **kwargs):  # noqa: ANN003
+            raise RuntimeError("smtp transport down")
+
+    monkeypatch.setattr(cc_router_mod, "EmailService", _BoomEmail)
+
+    resp = client.post(
+        "/api/v1/services/workspace/customers/link-existing",
+        json={"customer_email": owner.email},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["linked"] is True
+    assert data["email_sent"] is False
+    assert data["notification"]["reason"] == "send_failed"
+
+    row_em = (
+        db.query(GlobalAuditLog)
+        .filter(
+            GlobalAuditLog.action == "SERVICE_CUSTOMER_DIRECT_LINK_EMAIL_FAILED",
+            GlobalAuditLog.entity_id == int(owner.id),
+        )
+        .order_by(GlobalAuditLog.id.desc())
+        .first()
+    )
+    assert row_em is not None

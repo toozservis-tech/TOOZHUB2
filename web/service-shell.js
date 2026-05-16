@@ -2611,14 +2611,31 @@
         note: note || null,
       });
       const parts = [];
+      const notifReason = String(response?.notification?.reason || '');
       if (response?.pending_customer_confirm) {
         parts.push('Zákazník byl nalezen. Propojení čeká na potvrzení zákazníkem.');
         if (response?.email_sent) parts.push('E-mail k potvrzení byl zákazníkovi odeslán.');
         else parts.push('E-mail se nepodařilo odeslat. Propojení čeká, ale zákazníka bude potřeba kontaktovat ručně.');
+      } else if (response?.email_sent) {
+        parts.push('Zákazník byl propojen');
+        parts.push('Informační e-mail byl zákazníkovi odeslán.');
       } else {
-        parts.push('Zákazník byl propojen se servisem.');
+        parts.push('Zákazník byl propojen');
+        if (notifReason === 'direct_link_no_email') {
+          parts.push('E-mailová notifikace nebyla odeslána (starší režim aplikace).');
+        } else {
+          parts.push('Informační e-mail se nepodařilo odeslat. Zákazníka bude potřeba kontaktovat ručně.');
+        }
       }
-      showServiceToast(response?.pending_customer_confirm && !response?.email_sent ? 'warning' : 'success', 'Propojení zákazníka', parts.join('\n'));
+      const toastLevel =
+        response?.pending_customer_confirm && !response?.email_sent
+          ? 'warning'
+          : !response?.pending_customer_confirm &&
+              !response?.email_sent &&
+              notifReason !== 'direct_link_no_email'
+            ? 'warning'
+            : 'success';
+      showServiceToast(toastLevel, 'Propojení zákazníka', parts.join('\n'));
       const cid = Number(response?.customer_user_id || response?.customer_id || 0);
       if (cid) state.highlightCustomerId = cid;
       state.addCustomerQuickLinkDraft = { email: '', note: '' };
