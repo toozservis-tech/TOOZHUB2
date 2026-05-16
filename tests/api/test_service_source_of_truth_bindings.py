@@ -63,7 +63,11 @@ def centre_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db.commit()
     db.refresh(svc)
 
-    monkeypatch.setattr(cc_router_mod, "_send_service_customer_invite_email", lambda **kwargs: None)
+    monkeypatch.setattr(
+        cc_router_mod,
+        "_send_service_customer_invite_email",
+        lambda **kwargs: {"attempted": True, "sent": True, "reason": None, "error": None},
+    )
 
     app = FastAPI()
     app.include_router(cc.router, prefix="/api/v1/services/workspace")

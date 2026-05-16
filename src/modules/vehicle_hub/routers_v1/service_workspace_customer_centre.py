@@ -8,6 +8,7 @@ Centrální API „Zákazníci servisu“ — přesné vyhledávání, vazba, za
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import secrets
 from datetime import datetime, timedelta
@@ -48,6 +49,8 @@ from ..schema_management import assert_module_ready
 from ..service_access import create_or_update_vehicle_service_link
 from ..tenant_provisioning import create_dedicated_tenant
 from .auth import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["service-workspace-customers-centre"])
 
@@ -212,17 +215,29 @@ def _link_preview_status(db: Session, *, service_customer_id: int, customer_id: 
     return "none"
 
 
+def _sanitize_email_error(exc: BaseException, *, max_len: int = 300) -> str:
+    text = str(exc).strip().replace("\n", " ")
+    if len(text) > max_len:
+        return text[: max_len - 1] + "…"
+    return text
+
+
 def _send_service_customer_invite_email(
     *,
     to_email: str,
     owner_name: str,
     service_name: str,
     onboarding_url: str,
-) -> None:
+) -> dict[str, Any]:
     svc = EmailService()
     if not svc.is_configured():
-        print("[SERVICE_CUSTOMER] SMTP není nakonfigováno — pozvánka neodeslána.")
-        return
+        logger.warning("[SERVICE_CUSTOMER] SMTP není nakonfigurováno — pozvánka neodeslána.")
+        return {
+            "attempted": True,
+            "sent": False,
+            "reason": "smtp_not_configured",
+            "error": None,
+        }
     intro = (
         f"servis {service_name} vám založil účet v aplikaci za účelem evidence vozidla, "
         "servisní historie a souvisejících dokumentů."
@@ -249,12 +264,29 @@ def _send_service_customer_invite_email(
         ],
         accent="#2563eb",
     )
-    svc.send_simple_email(
-        to=to_email,
-        subject=f"Váš účet — založení servisem ({service_name})",
-        body=body_plain,
-        html_body=html_body,
-    )
+    try:
+        ok = svc.send_simple_email(
+            to=to_email,
+            subject=f"Váš účet — založení servisem ({service_name})",
+            body=body_plain,
+            html_body=html_body,
+        )
+        if ok is False:
+            return {
+                "attempted": True,
+                "sent": False,
+                "reason": "send_failed",
+                "error": None,
+            }
+        return {"attempted": True, "sent": True, "reason": None, "error": None}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SERVICE_CUSTOMER] Odeslání pozvánky selhalo: %s", exc)
+        return {
+            "attempted": True,
+            "sent": False,
+            "reason": "send_failed",
+            "error": _sanitize_email_error(exc),
+        }
 
 
 def _send_link_confirm_email(
@@ -263,11 +295,16 @@ def _send_link_confirm_email(
     owner_name: str,
     service_name: str,
     confirm_url: str,
-) -> None:
+) -> dict[str, Any]:
     svc = EmailService()
     if not svc.is_configured():
-        print("[SERVICE_CUSTOMER] SMTP není nakonfigováno — potvrzení vazby neodesláno.")
-        return
+        logger.warning("[SERVICE_CUSTOMER] SMTP není nakonfigurováno — potvrzení vazby neodesláno.")
+        return {
+            "attempted": True,
+            "sent": False,
+            "reason": "smtp_not_configured",
+            "error": None,
+        }
     body_plain = (
         f"Dobrý den {owner_name},\n\n"
         f"servis {service_name} žádá o propojení účtu ve Správě vozidel.\n\n"
@@ -292,12 +329,29 @@ def _send_link_confirm_email(
         ],
         accent="#059669",
     )
-    svc.send_simple_email(
-        to=to_email,
-        subject=f"Potvrďte propojení se servisem — {service_name}",
-        body=body_plain,
-        html_body=html_body,
-    )
+    try:
+        ok = svc.send_simple_email(
+            to=to_email,
+            subject=f"Potvrďte propojení se servisem — {service_name}",
+            body=body_plain,
+            html_body=html_body,
+        )
+        if ok is False:
+            return {
+                "attempted": True,
+                "sent": False,
+                "reason": "send_failed",
+                "error": None,
+            }
+        return {"attempted": True, "sent": True, "reason": None, "error": None}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SERVICE_CUSTOMER] Odeslání potvrzení vazby selhalo: %s", exc)
+        return {
+            "attempted": True,
+            "sent": False,
+            "reason": "send_failed",
+            "error": _sanitize_email_error(exc),
+        }
 
 
 def _frontend_base() -> str:
@@ -497,7 +551,7 @@ def execute_customer_link_from_lookup(
 
     confirm_url = f"{_frontend_base()}/web/index.html?service_link_confirm={confirm_token_real}"
 
-    _send_link_confirm_email(
+    email_result = _send_link_confirm_email(
         to_email=str(target.email),
         owner_name=(target.name or "uživateli").strip(),
         service_name=service_name,
@@ -519,22 +573,45 @@ def execute_customer_link_from_lookup(
         ip=(request.client.host if request.client else "")[:128],
         user_agent=(request.headers.get("user-agent") or "")[:2000],
     )
+    link_email_audit_action = (
+        "SERVICE_CUSTOMER_LINK_CONFIRM_EMAIL_SENT" if email_result.get("sent") else "SERVICE_CUSTOMER_LINK_CONFIRM_EMAIL_FAILED"
+    )
     write_global_audit_log(
         db,
         entity_type="service_customer_security",
         entity_id=int(target.id),
-        action="SERVICE_CUSTOMER_INVITE_EMAIL_SENT",
+        action=link_email_audit_action,
         actor_user_id=int(current_user.id),
         tenant_id=int(current_user.tenant_id),
-        metadata={"kind": "link_confirm"},
+        metadata={
+            "kind": "link_confirm",
+            "sent": bool(email_result.get("sent")),
+            "reason": email_result.get("reason"),
+            "customer_user_id": int(target.id),
+            "link_id": int(row.id),
+        },
     )
     db.commit()
+
+    if email_result.get("sent"):
+        out_msg = "Zákazníkovi byl odeslán e-mail k potvrzení propojení."
+        notif_msg = out_msg
+    else:
+        out_msg = "Vazba čeká na potvrzení, ale e-mail se nepodařilo odeslat."
+        notif_msg = out_msg
 
     return {
         "linked": False,
         "pending_customer_confirm": True,
         "customer_link_id": int(row.id),
-        "message": "Zákazníkovi byl odeslán e-mail k potvrzení propojení.",
+        "email_sent": bool(email_result.get("sent")),
+        "notification": {
+            "channel": "email",
+            "sent": bool(email_result.get("sent")),
+            "reason": email_result.get("reason"),
+            "message": notif_msg,
+        },
+        "message": out_msg,
     }
 
 
@@ -626,24 +703,46 @@ def customer_create_with_onboarding(
     db.add(link)
     db.flush()
 
+    now_tok = datetime.utcnow()
+    exp_tok = now_tok + timedelta(hours=72)
     raw_token = secrets.token_urlsafe(48)
-    tok_row = UserOnboardingToken(
-        user_id=int(customer.id),
-        token_hash=_hash_token(raw_token),
-        token_type="service_created_account_invite",
-        expires_at=datetime.utcnow() + timedelta(hours=72),
-        created_by_service_tenant_id=int(current_user.tenant_id),
-        created_by_user_id=int(current_user.id),
-        created_at=datetime.utcnow(),
-        ip_created=str(client_ip)[:128],
-        user_agent_created=(request.headers.get("user-agent") or "")[:2000],
+    tok_hash = _hash_token(raw_token)
+    existing_tok = (
+        db.query(UserOnboardingToken)
+        .filter(
+            UserOnboardingToken.user_id == int(customer.id),
+            UserOnboardingToken.token_type == "service_created_account_invite",
+            UserOnboardingToken.used_at.is_(None),
+            UserOnboardingToken.expires_at > now_tok,
+        )
+        .first()
     )
-    db.add(tok_row)
+    if existing_tok:
+        existing_tok.token_hash = tok_hash
+        existing_tok.expires_at = exp_tok
+        existing_tok.created_by_service_tenant_id = int(current_user.tenant_id)
+        existing_tok.created_by_user_id = int(current_user.id)
+        existing_tok.ip_created = str(client_ip)[:128]
+        existing_tok.user_agent_created = (request.headers.get("user-agent") or "")[:2000]
+    else:
+        tok_row = UserOnboardingToken(
+            user_id=int(customer.id),
+            token_hash=tok_hash,
+            token_type="service_created_account_invite",
+            expires_at=exp_tok,
+            created_by_service_tenant_id=int(current_user.tenant_id),
+            created_by_user_id=int(current_user.id),
+            created_at=now_tok,
+            ip_created=str(client_ip)[:128],
+            user_agent_created=(request.headers.get("user-agent") or "")[:2000],
+        )
+        db.add(tok_row)
 
     onboarding_url = f"{_frontend_base()}/web/index.html?service_onboarding_token={raw_token}"
 
     service_name = (current_user.name or current_user.email or "Servis").strip()
-    _send_service_customer_invite_email(
+    smtp_configured = EmailService().is_configured()
+    email_result = _send_service_customer_invite_email(
         to_email=email_n,
         owner_name=payload.first_name.strip(),
         service_name=service_name,
@@ -732,23 +831,43 @@ def customer_create_with_onboarding(
         tenant_id=int(current_user.tenant_id),
         metadata={"email_domain": email_n.split("@")[-1] if "@" in email_n else ""},
     )
+    invite_audit_action = (
+        "SERVICE_CUSTOMER_INVITE_EMAIL_SENT" if email_result.get("sent") else "SERVICE_CUSTOMER_INVITE_EMAIL_FAILED"
+    )
     write_global_audit_log(
         db,
         entity_type="service_customer_security",
         entity_id=int(customer.id),
-        action="SERVICE_CUSTOMER_INVITE_EMAIL_SENT",
+        action=invite_audit_action,
         actor_user_id=int(current_user.id),
         tenant_id=int(current_user.tenant_id),
-        metadata={"kind": "service_created_account_invite"},
+        metadata={
+            "kind": "service_created_account_invite",
+            "sent": bool(email_result.get("sent")),
+            "reason": email_result.get("reason"),
+            "email_domain": email_n.split("@")[-1] if "@" in email_n else "",
+            "smtp_configured": bool(smtp_configured),
+        },
     )
     db.commit()
+
+    if email_result.get("sent"):
+        acc_msg = "Pozvánka byla odeslána."
+    else:
+        acc_msg = "Účet byl založen, ale e-mail se nepodařilo odeslat. Zkontrolujte SMTP nastavení."
 
     return {
         "customer_user_id": int(customer.id),
         "customer_link_id": int(link.id),
         "vehicle_id": vehicle_id,
-        "email_sent": True,
-        "message": "Účet byl založen a pozvánka odeslána.",
+        "email_sent": bool(email_result.get("sent")),
+        "notification": {
+            "channel": "email",
+            "sent": bool(email_result.get("sent")),
+            "reason": email_result.get("reason"),
+            "message": acc_msg,
+        },
+        "message": acc_msg,
     }
 
 

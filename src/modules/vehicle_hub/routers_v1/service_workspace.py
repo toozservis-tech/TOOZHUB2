@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import re
 import secrets
 from datetime import date, datetime, timedelta
@@ -98,6 +99,7 @@ from .schemas import (
     VehicleQrTokenOutV1,
 )
 
+
 """
 PRODUCTION CRITICAL LOGIC:
 - service access enforcement
@@ -105,6 +107,22 @@ PRODUCTION CRITICAL LOGIC:
 - audit log
 Jakákoliv změna musí projít production auditem.
 """
+
+logger = logging.getLogger(__name__)
+
+
+def _service_access_email_notification_message(email_result: dict[str, Any]) -> str:
+    if email_result.get("sent"):
+        return "E-mail s upozorněním byl odeslán majiteli vozidla."
+    r = email_result.get("reason")
+    if r == "smtp_not_configured":
+        return "Žádost byla uložena, ale e-mail majiteli se nepodařilo odeslat (SMTP není nakonfigurováno)."
+    if r == "owner_email_missing":
+        return "Žádost byla uložena. Majitel nemá v profilu e-mail — e-mail se neodeslal."
+    if r == "send_failed":
+        return "Žádost byla uložena, ale e-mail majiteli se nepodařilo odeslat."
+    return "Žádost byla uložena."
+
 
 router = APIRouter(prefix="/services/workspace", tags=["service-workspace-v1"])
 
@@ -2993,6 +3011,13 @@ def create_service_access_request(
             "request_id": int(existing_pending.id),
             "status": "pending",
             "message": "Pro toto vozidlo už existuje čekající žádost o přístup.",
+            "email_sent": False,
+            "notification": {
+                "channel": "email",
+                "sent": False,
+                "reason": "existing_pending",
+                "message": "Pro toto vozidlo už čekající žádost existuje. Nový e-mail nebyl odeslán.",
+            },
         }
 
     request_row = ServiceAccessRequest(
@@ -3019,9 +3044,9 @@ def create_service_access_request(
             request_message=request_row.request_message,
         )
     except Exception as exc:
-        print(f"[SERVICE_WORKSPACE] In-app oznámení majiteli o žádosti o přístup selhalo: {exc}")
+        logger.warning("[SERVICE_WORKSPACE] In-app oznámení majiteli o žádosti o přístup selhalo: %s", exc)
     try:
-        try_email_owner_about_service_access_request(
+        email_result = try_email_owner_about_service_access_request(
             db,
             owner=owner_customer,
             service=current_user,
@@ -3030,14 +3055,28 @@ def create_service_access_request(
             tenant_id=getattr(request_row, "tenant_id", None),
         )
     except Exception as exc:
-        print(f"[SERVICE_WORKSPACE] E-mail majiteli (žádost o přístup) selhalo neočekávaně: {exc}")
+        logger.warning("[SERVICE_WORKSPACE] E-mail majiteli (žádost o přístup) selhalo neočekávaně: %s", exc)
+        email_result = {
+            "attempted": True,
+            "sent": False,
+            "reason": "send_failed",
+            "error": None,
+        }
     db.commit()
     db.refresh(request_row)
+    notif_msg = _service_access_email_notification_message(email_result)
     return {
         "created": True,
         "request_id": int(request_row.id),
         "status": "pending",
         "message": "Žádost o přístup byla uložena a čeká na schválení uživatelem.",
+        "email_sent": bool(email_result.get("sent")),
+        "notification": {
+            "channel": "email",
+            "sent": bool(email_result.get("sent")),
+            "reason": email_result.get("reason"),
+            "message": notif_msg,
+        },
     }
 
 
