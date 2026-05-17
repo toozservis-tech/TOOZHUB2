@@ -245,6 +245,9 @@
     toastTimer: null,
     cardFlashTimer: null,
     searchQuery: '',
+    vehicleFilter: 'all',
+    vehicleListMode: 'grid',
+    vehicleSort: 'activity',
     dataSource: 'demo',
     runtimeVehicles: null,
     currentMe: null,
@@ -461,23 +464,33 @@
       toneSvc = 'warn';
     }
 
+    var rawArchived =
+      v.archived === true ||
+      v.is_archived === true ||
+      String(v.lifecycle_state || v.vehicle_state || '').toLowerCase() === 'archived';
     var status = 'ok';
     var statusLabel = 'V pořádku';
-    if (toneStk === 'bad' || toneIns === 'bad') {
+    if (rawArchived) {
+      status = 'archived';
+      statusLabel = 'V archivu';
+    } else if (toneStk === 'bad' || toneIns === 'bad') {
       status = 'attention';
       statusLabel = 'Vyžaduje pozornost';
     } else if (String(v.data_trust_state || '').toLowerCase() === 'pending') {
-      status = 'attention';
+      status = 'pending';
       statusLabel = 'Čeká na schválení';
     }
 
     var rawSt = String(v.status || '').toLowerCase();
-    if (rawSt === 'service' || rawSt === 'in_service') {
+    if (!rawArchived && (rawSt === 'service' || rawSt === 'in_service')) {
       status = 'service';
       statusLabel = 'V servisu';
-    } else if (rawSt === 'pending') {
-      status = 'attention';
+    } else if (!rawArchived && rawSt === 'pending') {
+      status = 'pending';
       statusLabel = 'Čeká na schválení';
+    } else if (!rawArchived && rawSt === 'archived') {
+      status = 'archived';
+      statusLabel = 'V archivu';
     }
 
     return {
@@ -497,6 +510,7 @@
       toneSvc: toneSvc,
       lastService: lastService,
       _fromApi: true,
+      _archived: !!rawArchived,
     };
   }
 
@@ -528,6 +542,104 @@
     return state.runtimeVehicles || DEMO_VEHICLES;
   }
 
+  function getVehicleStatus(vehicle) {
+    var v = vehicle || {};
+    var s = String(v.status || 'ok').toLowerCase();
+    if (s === 'attention' || s === 'warning') return 'attention';
+    if (s === 'service' || s === 'in_service') return 'service';
+    if (s === 'pending') return 'pending';
+    if (s === 'archived') return 'archived';
+    if (v._archived === true) return 'archived';
+    return 'ok';
+  }
+
+  function getVehicleStatusLabel(vehicle) {
+    try {
+      if (vehicle && vehicle.statusLabel) return String(vehicle.statusLabel);
+    } catch (e) {}
+    var st = getVehicleStatus(vehicle);
+    if (st === 'ok') return 'V pořádku';
+    if (st === 'attention') return 'Vyžaduje pozornost';
+    if (st === 'service') return 'V servisu';
+    if (st === 'pending') return 'Čeká na schválení';
+    if (st === 'archived') return 'V archivu';
+    return 'V pořádku';
+  }
+
+  function getVehicleStatusTone(vehicle) {
+    var st = getVehicleStatus(vehicle);
+    if (st === 'ok') return 'success';
+    if (st === 'attention' || st === 'pending') return 'warning';
+    if (st === 'service') return 'danger';
+    if (st === 'archived') return 'neutral';
+    return 'success';
+  }
+
+  function matchesSearch(v, q) {
+    if (!q) return true;
+    var hay = ((v.name || '') + ' ' + (v.plate || '') + ' ' + (v.vin || '')).toLowerCase();
+    return hay.indexOf(q) >= 0;
+  }
+
+  function filterVehicles(vehicles, filter, searchQuery) {
+    var q = (searchQuery || '').trim().toLowerCase();
+    var f = filter || 'all';
+    var list = Array.isArray(vehicles) ? vehicles.slice() : [];
+    list = list.filter(function (v) {
+      return matchesSearch(v, q);
+    });
+    if (f === 'all') return list;
+    if (f === 'ok') return list.filter(function (v) {
+      return getVehicleStatus(v) === 'ok';
+    });
+    if (f === 'attention') return list.filter(function (v) {
+      var st = getVehicleStatus(v);
+      return st === 'attention' || st === 'pending';
+    });
+    if (f === 'service') return list.filter(function (v) {
+      return getVehicleStatus(v) === 'service';
+    });
+    if (f === 'archived') return list.filter(function (v) {
+      return getVehicleStatus(v) === 'archived';
+    });
+    return list;
+  }
+
+  function getVehicleFilterCounts(vehicles) {
+    var list = Array.isArray(vehicles) ? vehicles : [];
+    var c = { all: list.length, ok: 0, attention: 0, service: 0, archived: 0 };
+    for (var i = 0; i < list.length; i++) {
+      var st = getVehicleStatus(list[i]);
+      if (st === 'ok') c.ok++;
+      else if (st === 'attention' || st === 'pending') c.attention++;
+      else if (st === 'service') c.service++;
+      else if (st === 'archived') c.archived++;
+    }
+    return c;
+  }
+
+  function getOverviewTopVehicles(vehicles, searchQuery) {
+    var filtered = filterVehicles(vehicles, 'all', searchQuery);
+    return filtered.slice(0, OVERVIEW_VEHICLE_PREVIEW_COUNT);
+  }
+
+  function getOverviewSummary(vehicles) {
+    var list = vehicles || [];
+    var base = computeSummaryFromVehicles(list);
+    var svcAttention = 0;
+    for (var i = 0; i < list.length; i++) {
+      var st = getVehicleStatus(list[i]);
+      if (st === 'attention' || st === 'service' || st === 'pending') svcAttention++;
+    }
+    var serviceNotifications = state.dataSource === 'demo' && !state.runtimeVehicles ? 1 : Math.min(svcAttention, 9);
+    return {
+      vehicles: base.vehicles,
+      stkSoon: base.stkSoon,
+      reminders: base.reminders,
+      serviceTabloid: serviceNotifications,
+    };
+  }
+
   function computeSummaryFromVehicles(list) {
     list = list || [];
     var n = list.length;
@@ -550,16 +662,432 @@
     return (
       'Máte <span class="sv-prototype-stat-pill sv-prototype-stat-pill--navy">' +
       sum.vehicles +
-      '</span> vozidel' +
-      (sum.vehicles === 1 ? '' : '') +
-      ', ' +
+      '</span> vozidel, ' +
       '<span class="sv-prototype-stat-pill sv-prototype-stat-pill--amber">' +
       sum.stkSoon +
-      '</span> blížící se STK a ' +
+      '</span> blížící se STK, ' +
       '<span class="sv-prototype-stat-pill sv-prototype-stat-pill--blue">' +
       sum.reminders +
-      '</span> aktivní připomínky.'
+      '</span> aktivní připomínky a ' +
+      '<span class="sv-prototype-stat-pill sv-prototype-stat-pill--navy">' +
+      sum.serviceTabloid +
+      '</span> nové upozornění od servisu.'
     );
+  }
+
+  function formatTodayTimeHm() {
+    try {
+      return new Date().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' });
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function shortVin(v) {
+    var s = v && v.vin != null ? String(v.vin) : '';
+    if (!s || s === '—') return s || '—';
+    if (s.length <= 11) return s;
+    return s.slice(0, 10) + '…';
+  }
+
+  function fleetRequiresAttention(list) {
+    list = list || [];
+    for (var i = 0; i < list.length; i++) {
+      var st = getVehicleStatus(list[i]);
+      if (st !== 'ok' && st !== 'archived') return true;
+    }
+    return false;
+  }
+
+  function sortVehiclesCatalog(list) {
+    var copy = (list || []).slice();
+    if (state.vehicleSort === 'name') {
+      copy.sort(function (a, b) {
+        return String(a.name || '').localeCompare(String(b.name || ''), 'cs');
+      });
+      return copy;
+    }
+    var order = { service: 0, attention: 1, pending: 2, ok: 3, archived: 4 };
+    copy.sort(function (a, b) {
+      var da = order[getVehicleStatus(a)] != null ? order[getVehicleStatus(a)] : 9;
+      var db = order[getVehicleStatus(b)] != null ? order[getVehicleStatus(b)] : 9;
+      if (da !== db) return da - db;
+      return String(a.name || '').localeCompare(String(b.name || ''), 'cs');
+    });
+    return copy;
+  }
+
+  function legacyIndexHref() {
+    try {
+      var p = window.location.pathname || '';
+      var i = p.lastIndexOf('/');
+      var base = i >= 0 ? p.slice(0, i + 1) : '/web/';
+      return base + 'index.html';
+    } catch (e) {
+      return 'index.html';
+    }
+  }
+
+  function navigateToLegacy(screen) {
+    var msg =
+      screen === 'service-history'
+        ? 'Otevíráme hlavní aplikaci — servisní historie.'
+        : screen === 'documents'
+          ? 'Otevíráme hlavní aplikaci — dokumenty.'
+          : screen === 'services'
+            ? 'Otevíráme hlavní aplikaci — servisy a sdílení.'
+            : screen === 'add-vehicle'
+              ? 'Přejdete do aplikace, kde můžete vozidlo přidat.'
+              : 'Otevíráme hlavní aplikaci.';
+    showToast(msg);
+    window.setTimeout(function () {
+      try {
+        window.location.href = legacyIndexHref();
+      } catch (e2) {}
+    }, 380);
+  }
+
+  function computeQuickCardsData(list) {
+    list = list || [];
+    var stkN = 0;
+    var stkSample = '';
+    var insWarn = 0;
+    var insBad = 0;
+    var svcWarn = 0;
+    var docPending = 0;
+    for (var i = 0; i < list.length; i++) {
+      var v = list[i];
+      if (v.toneStk === 'warn' || v.toneStk === 'bad') {
+        stkN++;
+        if (!stkSample) stkSample = String(v.stk || '');
+      }
+      if (v.toneIns === 'warn') insWarn++;
+      if (v.toneIns === 'bad') insBad++;
+      if (v.toneSvc === 'warn' || v.toneSvc === 'bad') svcWarn++;
+    }
+    if (state.dataSource === 'demo' && !state.runtimeVehicles) docPending = 2;
+    var firstVan = null;
+    for (var j = 0; j < list.length; j++) {
+      if (list[j].kind === 'van' || j === 0) {
+        firstVan = list[j];
+        break;
+      }
+    }
+    var lastSvcLine = 'Poslední servis — zkontrolujte v aplikaci';
+    if (firstVan && firstVan.lastService) {
+      lastSvcLine = String(firstVan.lastService);
+    } else if (list[0] && list[0].lastService) {
+      lastSvcLine = String(list[0].lastService);
+    }
+    return {
+      stk: {
+        tone: stkN > 0 ? 'warning' : 'success',
+        title: stkN === 0 ? 'STK / SME v pořádku' : stkN === 1 ? '1 vozidlo — ' + stkSample : stkN + ' vozidla — zkontrolujte STK',
+        desc: stkN > 0 ? 'Zkontrolujte včas' : 'Žádná blížící se lhůta',
+      },
+      ins: {
+        tone: insWarn + insBad > 0 ? 'warning' : 'success',
+        title: insWarn + insBad > 0 ? 'Zkontrolujte pojistné smlouvy' : 'Všechna vozidla v pořádku',
+        desc: insWarn + insBad > 0 ? 'Zkontrolujte pojištění' : 'Platné smlouvy',
+      },
+      svc: {
+        tone: svcWarn > 0 ? 'warning' : 'info',
+        title: list.length ? lastSvcLine : 'Servis',
+        desc: svcWarn > 0 ? 'Doporučujeme naplánovat servis' : 'Váš vůz je podle údajů v pořádku',
+      },
+      docs: {
+        tone: docPending > 0 ? 'warning' : 'success',
+        title: docPending > 0 ? docPending + ' dokumenty čekají na doplnění' : 'Dokumenty v pořádku',
+        desc: docPending > 0 ? 'Doplňte chybějící' : 'Žádné chybějící podklady',
+      },
+    };
+  }
+
+  function quickToneClass(tone) {
+    if (tone === 'warning') return 'sv-prototype-quick-card--warn';
+    if (tone === 'danger') return 'sv-prototype-quick-card--danger';
+    if (tone === 'info') return 'sv-prototype-quick-card--info';
+    return 'sv-prototype-quick-card--ok';
+  }
+
+  function renderQuickCards(root) {
+    var host = root.querySelector('[data-sv-quick-grid]');
+    if (!host) return;
+    var dash = root.querySelector('[data-sv-dashboard-root]');
+    if (dash && dash.classList.contains('is-sv-dashboard-loading')) {
+      host.innerHTML = '<div class="sv-prototype-quick-row"><div class="sv-prototype-skeleton-card sv-prototype-skeleton-quick"></div></div>';
+      return;
+    }
+    var list = getVehicleList();
+    var q = computeQuickCardsData(list);
+    var rows = [
+      { key: 'stk', data: q.stk, ico: 'stk' },
+      { key: 'ins', data: q.ins, ico: 'shield' },
+      { key: 'svc', data: q.svc, ico: 'svc' },
+      { key: 'docs', data: q.docs, ico: 'doc' },
+    ];
+    var icoMap = { stk: ICO.quickStk, shield: ICO.quickShield, svc: ICO.quickSvc, doc: ICO.doc };
+    host.innerHTML =
+      '<div class="sv-prototype-quick-row">' +
+      rows
+        .map(function (r) {
+          var d = r.data;
+          return (
+            '<button type="button" class="sv-prototype-quick-card ' +
+            quickToneClass(d.tone) +
+            '" data-sv-quick-action="' +
+            r.key +
+            '">' +
+            '<span class="sv-prototype-quick-card-ico">' +
+            (icoMap[r.ico] || ICO.quickStk) +
+            '</span>' +
+            '<span class="sv-prototype-quick-card-body">' +
+            '<span class="sv-prototype-quick-card-cat">' +
+            (r.key === 'stk' ? 'STK / SME' : r.key === 'ins' ? 'Pojištění' : r.key === 'svc' ? 'Servis' : 'Dokumenty') +
+            '</span>' +
+            '<strong class="sv-prototype-quick-card-title">' +
+            escapeHtml(d.title) +
+            '</strong>' +
+            '<span class="sv-prototype-quick-card-desc">' +
+            escapeHtml(d.desc) +
+            '</span></span>' +
+            '<span class="sv-prototype-quick-card-arrow" aria-hidden="true">›</span></button>'
+          );
+        })
+        .join('') +
+      '</div>';
+  }
+
+  function renderOverallStatus(root) {
+    var host = root.querySelector('[data-sv-overall-status]');
+    if (!host) return;
+    var dash = root.querySelector('[data-sv-dashboard-root]');
+    if (dash && dash.classList.contains('is-sv-dashboard-loading')) {
+      host.innerHTML = '<p class="sv-prototype-overall-loading">Načítám…</p>';
+      return;
+    }
+    var list = getVehicleList();
+    var bad = fleetRequiresAttention(list);
+    var ok = !bad;
+    var icon = ok
+      ? '<svg class="sv-prototype-overall-ico sv-prototype-overall-ico--ok" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
+      : '<svg class="sv-prototype-overall-ico sv-prototype-overall-ico--warn" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>';
+    host.innerHTML =
+      '<h3 class="sv-prototype-overall-heading">Celkový stav</h3>' +
+      '<div class="sv-prototype-overall-body">' +
+      icon +
+      '<p class="sv-prototype-overall-main' +
+      (ok ? ' sv-prototype-overall-main--ok' : ' sv-prototype-overall-main--warn') +
+      '">' +
+      (ok ? 'Vozidla pod kontrolou' : 'Vyžaduje pozornost') +
+      '</p></div>' +
+      '<p class="sv-prototype-overall-meta">Poslední aktualizace: dnes v ' +
+      escapeHtml(formatTodayTimeHm()) +
+      '</p>';
+  }
+
+  function pickVehicleForUpcoming(list, pred) {
+    for (var i = 0; i < list.length; i++) {
+      if (pred(list[i])) return list[i];
+    }
+    return null;
+  }
+
+  function renderOverviewAside(root) {
+    var host = root.querySelector('[data-sv-overview-aside]');
+    if (!host) return;
+    var list = getVehicleList();
+    var demo = state.dataSource === 'demo' && !state.runtimeVehicles;
+
+    var upRows = [];
+    if (demo) {
+      upRows = DEMO_UPCOMING.map(function (u) {
+        return { label: u.label, value: u.value, tone: u.tone, sample: true };
+      });
+    } else {
+      var vStk = pickVehicleForUpcoming(list, function (v) {
+        return v.toneStk === 'warn' || v.toneStk === 'bad';
+      });
+      if (vStk)
+        upRows.push({
+          label: 'STK',
+          value: vStk.name ? vStk.stk + ' · ' + vStk.name : vStk.stk,
+          tone: vStk.toneStk === 'bad' ? 'bad' : 'warn',
+          sample: false,
+        });
+      var vOil = list[0];
+      if (vOil && vOil.service)
+        upRows.push({
+          label: 'Servis',
+          value: String(vOil.service) + ' · ' + String(vOil.name || ''),
+          tone: vOil.toneSvc === 'bad' ? 'bad' : vOil.toneSvc === 'warn' ? 'warn' : 'neutral',
+          sample: false,
+        });
+      var vIns = pickVehicleForUpcoming(list, function (v) {
+        return v.toneIns === 'warn' || v.toneIns === 'bad';
+      });
+      if (!vIns) vIns = list[0];
+      if (vIns && vIns.insurance)
+        upRows.push({
+          label: 'Pojištění',
+          value: String(vIns.insurance) + (vIns.name ? ' · ' + vIns.name : ''),
+          tone: vIns.toneIns === 'bad' ? 'bad' : vIns.toneIns === 'warn' ? 'warn' : 'ok',
+          sample: false,
+        });
+      if (!upRows.length && list.length)
+        upRows.push({
+          label: 'Termíny',
+          value: 'Žádný blížící se termín podle dostupných údajů.',
+          tone: 'neutral',
+          sample: false,
+        });
+    }
+
+    var actRows = [];
+    if (demo) {
+      actRows = [
+        { title: 'Servisní záznam přidán', when: '15. 5. 2026', kind: 'svc' },
+        { title: 'Nahrán dokument', when: '12. 5. 2026', kind: 'doc' },
+        { title: 'Žádost o přístup od servisu', when: '8. 5. 2026', kind: 'req' },
+      ];
+    } else {
+      actRows = [];
+    }
+
+    var accessBody = '';
+    if (demo) {
+      accessBody =
+        '<ul class="sv-prototype-aside-access-list">' +
+        DEMO_ACCESS.map(function (a) {
+          return (
+            '<li><span class="sv-prototype-aside-access-name">' +
+            escapeHtml(a.name) +
+            '</span><span class="' +
+            accessBadgeClass(a.badgeKind) +
+            '">' +
+            escapeHtml(a.badge) +
+            '</span><span class="sv-prototype-aside-access-meta">' +
+            escapeHtml(a.accessType) +
+            '</span></li>'
+          );
+        }).join('') +
+        '</ul><p class="sv-prototype-sample-tag">Ukázka</p>';
+    } else {
+      accessBody =
+        '<p class="sv-prototype-aside-placeholder">Přístupy servisů budou dostupné po napojení detailních dat.</p>';
+    }
+
+    function rowCls(tone) {
+      if (tone === 'bad') return 'sv-prototype-aside-upcoming-val--bad';
+      if (tone === 'warn') return 'sv-prototype-aside-upcoming-val--warn';
+      if (tone === 'ok') return 'sv-prototype-aside-upcoming-val--ok';
+      return '';
+    }
+
+    host.innerHTML =
+      '<div class="sv-prototype-aside-card">' +
+      '<h3 class="sv-prototype-aside-title">Blížící se termíny</h3>' +
+      '<ul class="sv-prototype-aside-list">' +
+      upRows
+        .map(function (r) {
+          return (
+            '<li><span>' +
+            escapeHtml(r.label) +
+            (r.sample ? ' <span class="sv-prototype-sample-tag sv-prototype-sample-tag--inline">ukázka</span>' : '') +
+            '</span><strong class="' +
+            rowCls(r.tone) +
+            '">' +
+            escapeHtml(r.value) +
+            '</strong></li>'
+          );
+        })
+        .join('') +
+      '</ul></div>' +
+      '<div class="sv-prototype-aside-card">' +
+      '<h3 class="sv-prototype-aside-title">Poslední aktivita</h3>' +
+      (actRows.length
+        ? '<ul class="sv-prototype-aside-activity">' +
+          actRows
+            .map(function (a) {
+              return (
+                '<li><span class="sv-prototype-act-dot" aria-hidden="true"></span><div><strong>' +
+                escapeHtml(a.title) +
+                '</strong><span>' +
+                escapeHtml(a.when) +
+                '</span></div></li>'
+              );
+            })
+            .join('') +
+          '</ul>'
+        : '<p class="sv-prototype-aside-placeholder">Zatím žádná nedávná aktivita v dostupných datech.</p>') +
+      '</div>' +
+      '<div class="sv-prototype-aside-card">' +
+      '<h3 class="sv-prototype-aside-title">Servisy a přístupy</h3>' +
+      accessBody +
+      '</div>';
+  }
+
+  function renderFilterPills(root) {
+    var host = root.querySelector('[data-sv-filter-pills]');
+    if (!host) return;
+    var list = getVehicleList();
+    var c = getVehicleFilterCounts(list);
+    var cur = state.vehicleFilter || 'all';
+    var defs = [
+      { id: 'all', label: 'Všechna' },
+      { id: 'ok', label: 'V pořádku' },
+      { id: 'attention', label: 'Vyžaduje pozornost' },
+      { id: 'service', label: 'V servisu' },
+      { id: 'archived', label: 'V archivu' },
+    ];
+    host.innerHTML = defs
+      .map(function (d) {
+        var cnt = c[d.id] != null ? c[d.id] : 0;
+        var active = cur === d.id ? ' is-active' : '';
+        return (
+          '<button type="button" class="sv-prototype-filter-pill' +
+          active +
+          '" data-sv-filter-pick="' +
+          d.id +
+          '">' +
+          escapeHtml(d.label) +
+          ' <span class="sv-prototype-filter-count">' +
+          cnt +
+          '</span></button>'
+        );
+      })
+      .join('');
+  }
+
+  function renderCatalogToolbar(root) {
+    var sortEl = root.querySelector('[data-sv-sort-select]');
+    if (sortEl && sortEl.value !== state.vehicleSort) sortEl.value = state.vehicleSort;
+    var gridBtn = root.querySelector('[data-sv-grid-mode="grid"]');
+    var listBtn = root.querySelector('[data-sv-grid-mode="list"]');
+    if (gridBtn) gridBtn.classList.toggle('is-active', state.vehicleListMode === 'grid');
+    if (listBtn) listBtn.classList.toggle('is-active', state.vehicleListMode === 'list');
+  }
+
+  function renderCatalogSummary(root) {
+    var host = root.querySelector('[data-sv-catalog-summary]');
+    if (!host) return;
+    var list = getVehicleList();
+    var c = getVehicleFilterCounts(list);
+    host.innerHTML =
+      '<div class="sv-prototype-catalog-summary-grid">' +
+      '<div><span class="sv-prototype-cs-label">Celkem</span><strong>' +
+      c.all +
+      '</strong></div>' +
+      '<div><span class="sv-prototype-cs-label">V pořádku</span><strong class="sv-prototype-cs-ok">' +
+      c.ok +
+      '</strong></div>' +
+      '<div><span class="sv-prototype-cs-label">Vyžaduje pozornost</span><strong class="sv-prototype-cs-warn">' +
+      c.attention +
+      '</strong></div>' +
+      '<div><span class="sv-prototype-cs-label">V servisu</span><strong class="sv-prototype-cs-danger">' +
+      c.service +
+      '</strong></div></div>' +
+      '<button type="button" class="sv-prototype-btn-section sv-prototype-catalog-back" data-sv-goto-overview>Přehled — zobrazit dashboard</button>';
   }
 
   function renderHero(root) {
@@ -568,13 +1096,13 @@
     var dash = root.querySelector('[data-sv-dashboard-root]');
     var loading = dash && dash.classList.contains('is-sv-dashboard-loading');
     var first = greetingFirstName(state.currentMe);
-    if (h1) h1.textContent = 'Dobrý den, ' + first;
+    if (h1) h1.textContent = 'Dobrý den, ' + first + ' 👋';
     if (sumEl) {
       if (loading) {
         sumEl.textContent = 'Načítám vaše vozidla…';
       } else {
         var list = getVehicleList();
-        var sum = computeSummaryFromVehicles(list);
+        var sum = getOverviewSummary(list);
         sumEl.innerHTML = renderHeroSummaryHtml(sum);
       }
     }
@@ -637,13 +1165,15 @@
   function applyEmptyStateVisibility(root) {
     var empty = root.querySelector('[data-sv-empty-vehicles]');
     var grid = root.querySelector('[data-sv-vehicle-grid]');
-    if (!empty || !grid) return;
+    var ogrid = root.querySelector('[data-sv-overview-vehicle-grid]');
+    if (!empty) return;
     var isEmptyReal =
       state.dataSource === 'real' &&
       Array.isArray(state.runtimeVehicles) &&
       state.runtimeVehicles.length === 0;
     empty.hidden = !isEmptyReal;
-    grid.hidden = isEmptyReal;
+    if (grid) grid.hidden = isEmptyReal && state.view === 'vehicles';
+    if (ogrid) ogrid.hidden = isEmptyReal && state.view === 'overview';
   }
 
   function applyDashboardData(root, opts) {
@@ -655,11 +1185,21 @@
     state.detailTimelineIsSample = true;
     updateProfileUi(root);
     updateMainChrome(root);
-    renderHero(root);
-    renderVehicleCards(root);
+    refreshDashboardBody(root);
     setDataSourceBadge(root, opts);
     renderProtoDebug(root);
     applyEmptyStateVisibility(root);
+  }
+
+  function refreshDashboardBody(root) {
+    renderHero(root);
+    renderOverallStatus(root);
+    renderQuickCards(root);
+    renderOverviewAside(root);
+    renderFilterPills(root);
+    renderCatalogToolbar(root);
+    renderVehicleCards(root);
+    renderCatalogSummary(root);
   }
 
   function logProtoRealDebug() {
@@ -708,8 +1248,7 @@
       return;
     }
     setDashboardLoading(root, true);
-    renderHero(root);
-    renderVehicleCards(root);
+    refreshDashboardBody(root);
     var banner = root.querySelector('[data-sv-data-banner]');
     if (banner) {
       banner.hidden = false;
@@ -798,7 +1337,8 @@
 
   function badgeClass(status) {
     if (status === 'ok') return 'sv-prototype-badge sv-prototype-badge--ok';
-    if (status === 'attention') return 'sv-prototype-badge sv-prototype-badge--warn';
+    if (status === 'attention' || status === 'pending') return 'sv-prototype-badge sv-prototype-badge--warn';
+    if (status === 'archived') return 'sv-prototype-badge sv-prototype-badge--archived';
     return 'sv-prototype-badge sv-prototype-badge--danger';
   }
 
@@ -846,8 +1386,10 @@
   }
 
   function updateMainChrome(root) {
-    var ob = root.querySelector('[data-sv-overview-block]');
-    if (ob) ob.hidden = state.view === 'vehicles';
+    var overviewPage = root.querySelector('[data-sv-overview-page]');
+    var vehiclesPage = root.querySelector('[data-sv-vehicles-page]');
+    if (overviewPage) overviewPage.hidden = state.view !== 'overview';
+    if (vehiclesPage) vehiclesPage.hidden = state.view !== 'vehicles';
 
     var dash = root.querySelector('[data-sv-dashboard-root]');
     if (dash) {
@@ -855,33 +1397,16 @@
       dash.classList.toggle('is-sv-view-overview', state.view === 'overview');
     }
 
-    var title = root.querySelector('[data-sv-vehicle-section-title]');
-    var sub = root.querySelector('[data-sv-vehicle-section-sub]');
-    var btnAll = root.querySelector('[data-sv-show-all-vehicles]');
-    var countEl = root.querySelector('[data-sv-vehicles-count-line]');
-    if (title) title.textContent = 'Moje vozidla';
-    if (sub && countEl && btnAll) {
-      if (state.view === 'vehicles') {
-        sub.textContent = 'Kompletní seznam vozidel ve vašem účtu.';
-        btnAll.hidden = true;
-        countEl.hidden = false;
-        var n = getVehicleList().length;
-        var word = n === 1 ? 'vozidlo' : n > 1 && n < 5 ? 'vozidla' : 'vozidel';
-        countEl.textContent = 'Celkem ' + n + ' ' + word + ' ve vašem účtu.';
-      } else {
-        sub.textContent =
-          'Náhled — zobrazena první ' +
-          OVERVIEW_VEHICLE_PREVIEW_COUNT +
-          ' vozidla. Otevřete „Moje vozidla“ pro celý seznam.';
-        btnAll.hidden = false;
-        countEl.hidden = true;
-      }
+    var catSub = root.querySelector('[data-sv-catalog-sub]');
+    if (catSub) {
+      var n = getVehicleList().length;
+      catSub.textContent =
+        'Máte ' + n + ' ' + (n === 1 ? 'vozidlo' : n > 1 && n < 5 ? 'vozidla' : 'vozidel');
     }
 
     var inp = root.querySelector('[data-sv-search-filter]');
     if (inp) {
-      inp.placeholder =
-        state.view === 'vehicles' ? 'Vyhledat podle SPZ, VIN, názvu…' : 'Hledat SPZ, VIN…';
+      inp.placeholder = 'Hledejte podle SPZ, VIN, názvu vozidla…';
     }
   }
 
@@ -899,8 +1424,7 @@
     renderBottomNav(root);
     syncViews(root);
     updateMainChrome(root);
-    renderHero(root);
-    renderVehicleCards(root);
+    refreshDashboardBody(root);
     applyEmptyStateVisibility(root);
     renderProtoDebug(root);
     scrollDashboardTop(root);
@@ -915,8 +1439,7 @@
     renderBottomNav(root);
     syncViews(root);
     updateMainChrome(root);
-    renderHero(root);
-    renderVehicleCards(root);
+    refreshDashboardBody(root);
     applyEmptyStateVisibility(root);
     renderProtoDebug(root);
     scrollDashboardTop(root);
@@ -983,98 +1506,188 @@
       .join('');
   }
 
+  function buildOverviewVehicleCardHtml(v) {
+    var st = v.status;
+    return (
+      '<article class="sv-prototype-vehicle-card sv-prototype-vehicle-card--preview" data-sv-mode="preview" data-sv-open-vehicle="' +
+      escapeHtml(v.id) +
+      '" tabindex="0" role="button">' +
+      '<div class="' +
+      vehicleVisualClass(v.kind) +
+      '" aria-hidden="true">' +
+      '<div class="sv-prototype-vehicle-visual-sky"></div>' +
+      '<div class="sv-prototype-vehicle-visual-ground"></div>' +
+      '<div class="sv-prototype-vehicle-visual-car">' +
+      vehicleSilhouette(v.kind, v.id) +
+      '</div></div>' +
+      '<div class="sv-prototype-vehicle-body">' +
+      '<div class="sv-prototype-vehicle-head">' +
+      '<h3 class="sv-prototype-vehicle-title">' +
+      escapeHtml(v.name) +
+      '</h3>' +
+      '<span class="' +
+      badgeClass(st) +
+      '">' +
+      escapeHtml(getVehicleStatusLabel(v)) +
+      '</span></div>' +
+      '<div class="sv-prototype-vehicle-subrow">' +
+      '<span class="sv-prototype-plate-badge">' +
+      escapeHtml(v.plate) +
+      '</span></div>' +
+      '<div class="sv-prototype-vehicle-meta">' +
+      '<div class="sv-prototype-meta-row"><span class="sv-prototype-meta-k">VIN</span><span class="sv-prototype-meta-v">' +
+      escapeHtml(shortVin(v)) +
+      '</span></div>' +
+      '<div class="sv-prototype-meta-row"><span class="sv-prototype-meta-k">Nájezd</span><span class="sv-prototype-meta-v"><strong>' +
+      escapeHtml(formatKmDisplay(v)) +
+      '</strong></span></div></div>' +
+      '<div class="sv-prototype-status-lines">' +
+      '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">STK</span><strong class="sv-prototype-status-val ' +
+      statusValClass(v.toneStk || 'ok') +
+      '">' +
+      escapeHtml(v.stk) +
+      '</strong></div>' +
+      '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">Pojištění</span><strong class="sv-prototype-status-val ' +
+      statusValClass(v.toneIns || 'ok') +
+      '">' +
+      escapeHtml(v.insurance) +
+      '</strong></div>' +
+      '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">Servis</span><strong class="sv-prototype-status-val ' +
+      statusValClass(v.toneSvc || 'ok') +
+      '">' +
+      escapeHtml(v.service) +
+      '</strong></div></div>' +
+      '<div class="sv-prototype-vehicle-actions">' +
+      '<button type="button" class="sv-prototype-veh-ico" title="Detail" data-sv-stop="1" data-sv-open-vehicle="' +
+      escapeHtml(v.id) +
+      '">' +
+      ICO.doc +
+      '<span class="sv-prototype-veh-ico-label">Detail</span></button>' +
+      '<button type="button" class="sv-prototype-veh-ico" title="Přidat záznam" data-sv-stop="1" data-sv-legacy-nav="service-history">' +
+      ICO.quickSvc +
+      '<span class="sv-prototype-veh-ico-label">Přidat záznam</span></button>' +
+      '<button type="button" class="sv-prototype-veh-ico" title="Dokumenty" data-sv-stop="1" data-sv-legacy-nav="documents">' +
+      ICO.doc +
+      '<span class="sv-prototype-veh-ico-label">Dokumenty</span></button>' +
+      '<button type="button" class="sv-prototype-veh-ico" title="Sdílet" data-sv-stop="1" data-sv-legacy-nav="services">' +
+      '<svg class="sv-prototype-svg-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>' +
+      '<span class="sv-prototype-veh-ico-label">Sdílet</span></button>' +
+      '</div></div></article>'
+    );
+  }
+
+  function buildGarageVehicleCardHtml(v) {
+    var st = v.status;
+    return (
+      '<article class="sv-prototype-garage-card" data-sv-open-vehicle="' +
+      escapeHtml(v.id) +
+      '" tabindex="0" role="button">' +
+      '<div class="sv-prototype-garage-photo ' +
+      vehicleVisualClass(v.kind) +
+      '">' +
+      '<div class="sv-prototype-vehicle-visual-sky"></div>' +
+      '<div class="sv-prototype-vehicle-visual-ground"></div>' +
+      '<div class="sv-prototype-garage-car">' +
+      vehicleSilhouette(v.kind, v.id) +
+      '</div>' +
+      '<span class="sv-prototype-garage-badge ' +
+      badgeClass(st) +
+      '">' +
+      escapeHtml(getVehicleStatusLabel(v)) +
+      '</span></div>' +
+      '<div class="sv-prototype-garage-body">' +
+      '<h3 class="sv-prototype-garage-title">' +
+      escapeHtml(v.name) +
+      '</h3>' +
+      '<div class="sv-prototype-garage-sub">' +
+      '<span class="sv-prototype-plate-badge">' +
+      escapeHtml(v.plate) +
+      '</span>' +
+      '<span class="sv-prototype-garage-vin">VIN ' +
+      escapeHtml(shortVin(v)) +
+      '</span>' +
+      '<span class="sv-prototype-garage-km"><strong>' +
+      escapeHtml(formatKmDisplay(v)) +
+      '</strong></span></div>' +
+      '<div class="sv-prototype-garage-lines">' +
+      '<div class="sv-prototype-status-line"><span class="sv-prototype-status-ico" aria-hidden="true">' +
+      ICO.quickStk +
+      '</span><span class="sv-prototype-status-label">STK</span><strong class="sv-prototype-status-val ' +
+      statusValClass(v.toneStk || 'ok') +
+      '">' +
+      escapeHtml(v.stk) +
+      '</strong></div>' +
+      '<div class="sv-prototype-status-line"><span class="sv-prototype-status-ico" aria-hidden="true">' +
+      ICO.quickShield +
+      '</span><span class="sv-prototype-status-label">Pojištění</span><strong class="sv-prototype-status-val ' +
+      statusValClass(v.toneIns || 'ok') +
+      '">' +
+      escapeHtml(v.insurance) +
+      '</strong></div>' +
+      '<div class="sv-prototype-status-line"><span class="sv-prototype-status-ico" aria-hidden="true">' +
+      ICO.quickSvc +
+      '</span><span class="sv-prototype-status-label">Poslední servis</span><strong class="sv-prototype-status-val ' +
+      statusValClass(v.toneSvc || 'ok') +
+      '">' +
+      escapeHtml(v.lastService || v.service || '—') +
+      '</strong></div></div>' +
+      '<div class="sv-prototype-garage-actions">' +
+      '<button type="button" class="sv-prototype-garage-btn" data-sv-stop="1" data-sv-open-vehicle="' +
+      escapeHtml(v.id) +
+      '">Detail</button>' +
+      '<button type="button" class="sv-prototype-garage-btn" data-sv-stop="1" data-sv-legacy-nav="service-history">Přidat záznam</button>' +
+      '<button type="button" class="sv-prototype-garage-btn" data-sv-stop="1" data-sv-legacy-nav="documents">Dokumenty</button>' +
+      '<button type="button" class="sv-prototype-garage-btn" data-sv-stop="1" data-sv-legacy-nav="services">Sdílet servisem</button>' +
+      '</div></div></article>'
+    );
+  }
+
+  function buildAddVehicleCardHtml() {
+    return (
+      '<article class="sv-prototype-garage-card sv-prototype-garage-card--add">' +
+      '<div class="sv-prototype-garage-add-inner">' +
+      '<div class="sv-prototype-garage-add-ico" aria-hidden="true">' +
+      ICO.car +
+      '</div>' +
+      '<h3 class="sv-prototype-garage-add-title">Přidat nové vozidlo</h3>' +
+      '<p class="sv-prototype-garage-add-text">Přidejte vozidlo podle SPZ nebo VIN a mějte vše pohromadě.</p>' +
+      '<button type="button" class="sv-prototype-btn-primary sv-prototype-garage-add-btn" data-sv-legacy-nav="add-vehicle">+ Přidat vozidlo</button>' +
+      '</div></article>'
+    );
+  }
+
   function renderVehicleCards(root) {
+    var ogrid = root.querySelector('[data-sv-overview-vehicle-grid]');
     var grid = root.querySelector('[data-sv-vehicle-grid]');
-    if (!grid) return;
     var dash = root.querySelector('[data-sv-dashboard-root]');
-    if (dash && dash.classList.contains('is-sv-dashboard-loading')) {
-      grid.innerHTML =
+    var loading = dash && dash.classList.contains('is-sv-dashboard-loading');
+    if (loading) {
+      var sk =
         '<div class="sv-prototype-skeleton-grid" aria-hidden="true">' +
         '<div class="sv-prototype-skeleton-card"></div>' +
         '<div class="sv-prototype-skeleton-card"></div>' +
         '<div class="sv-prototype-skeleton-card"></div>' +
         '</div>';
+      if (ogrid) ogrid.innerHTML = sk;
+      if (grid) grid.innerHTML = sk;
       return;
     }
-    var q = (state.searchQuery || '').trim().toLowerCase();
-    var list = getVehicleList().filter(function (v) {
-      if (!q) return true;
-      var hay = (v.name + ' ' + v.plate + ' ' + v.vin).toLowerCase();
-      return hay.indexOf(q) >= 0;
-    });
-    if (state.view === 'overview') {
-      list = list.slice(0, OVERVIEW_VEHICLE_PREVIEW_COUNT);
+    var fullList = getVehicleList();
+    var q = state.searchQuery || '';
+    if (ogrid) {
+      var prevList = getOverviewTopVehicles(fullList, q);
+      ogrid.innerHTML = prevList.map(buildOverviewVehicleCardHtml).join('');
     }
-    grid.innerHTML = list
-      .map(function (v) {
-        return (
-          '<article class="sv-prototype-vehicle-card" data-sv-open-vehicle="' +
-          escapeHtml(v.id) +
-          '" tabindex="0" role="button">' +
-          '<div class="' +
-          vehicleVisualClass(v.kind) +
-          '" aria-hidden="true">' +
-          '<div class="sv-prototype-vehicle-visual-sky"></div>' +
-          '<div class="sv-prototype-vehicle-visual-ground"></div>' +
-          '<div class="sv-prototype-vehicle-visual-car">' +
-          vehicleSilhouette(v.kind, v.id) +
-          '</div></div>' +
-          '<div class="sv-prototype-vehicle-body">' +
-          '<div class="sv-prototype-vehicle-head">' +
-          '<h3 class="sv-prototype-vehicle-title">' +
-          escapeHtml(v.name) +
-          '</h3>' +
-          '<span class="' +
-          badgeClass(v.status) +
-          '">' +
-          escapeHtml(v.statusLabel) +
-          '</span></div>' +
-          '<div class="sv-prototype-vehicle-subrow">' +
-          '<span class="sv-prototype-plate-badge">' +
-          escapeHtml(v.plate) +
-          '</span></div>' +
-          '<div class="sv-prototype-vehicle-meta">' +
-          '<div class="sv-prototype-meta-row"><span class="sv-prototype-meta-k">VIN</span><span class="sv-prototype-meta-v">' +
-          escapeHtml(v.vin) +
-          '</span></div>' +
-          '<div class="sv-prototype-meta-row"><span class="sv-prototype-meta-k">Nájezd</span><span class="sv-prototype-meta-v"><strong>' +
-          escapeHtml(formatKmDisplay(v)) +
-          '</strong></span></div></div>' +
-          '<div class="sv-prototype-status-lines">' +
-          '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">STK</span><strong class="sv-prototype-status-val ' +
-          statusValClass(v.toneStk || 'ok') +
-          '">' +
-          escapeHtml(v.stk) +
-          '</strong></div>' +
-          '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">Pojištění</span><strong class="sv-prototype-status-val ' +
-          statusValClass(v.toneIns || 'ok') +
-          '">' +
-          escapeHtml(v.insurance) +
-          '</strong></div>' +
-          '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">Servis</span><strong class="sv-prototype-status-val ' +
-          statusValClass(v.toneSvc || 'ok') +
-          '">' +
-          escapeHtml(v.service) +
-          '</strong></div></div>' +
-          '<div class="sv-prototype-vehicle-actions">' +
-          '<button type="button" class="sv-prototype-veh-ico" title="Detail" data-sv-stop="1" data-sv-open-vehicle="' +
-          escapeHtml(v.id) +
-          '">' +
-          ICO.doc +
-          '<span class="sv-prototype-veh-ico-label">Detail</span></button>' +
-          '<button type="button" class="sv-prototype-veh-ico" title="Přidat záznam" data-sv-stop="1" data-sv-mock-action="1">' +
-          ICO.quickSvc +
-          '<span class="sv-prototype-veh-ico-label">Přidat záznam</span></button>' +
-          '<button type="button" class="sv-prototype-veh-ico" title="Dokumenty" data-sv-stop="1" data-sv-mock-action="1">' +
-          ICO.invoice +
-          '<span class="sv-prototype-veh-ico-label">Dokumenty</span></button>' +
-          '<button type="button" class="sv-prototype-veh-ico" title="Sdílet" data-sv-stop="1" data-sv-mock-action="1">' +
-          '<svg class="sv-prototype-svg-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>' +
-          '<span class="sv-prototype-veh-ico-label">Sdílet</span></button>' +
-          '</div></div></article>'
-        );
-      })
-      .join('');
+    if (grid) {
+      var filtered = filterVehicles(fullList, state.vehicleFilter, q);
+      filtered = sortVehiclesCatalog(filtered);
+      if (!filtered.length) {
+        grid.innerHTML =
+          '<div class="sv-prototype-catalog-empty"><p>Žádné vozidlo neodpovídá filtru nebo vyhledávání.</p></div>';
+      } else {
+        grid.innerHTML = filtered.map(buildGarageVehicleCardHtml).join('') + buildAddVehicleCardHtml();
+      }
+    }
   }
 
   function renderDetail(root) {
@@ -1286,7 +1899,7 @@
   }
 
   function flashCard(root, id) {
-    var cards = root.querySelectorAll('.sv-prototype-vehicle-card');
+    var cards = root.querySelectorAll('.sv-prototype-vehicle-card, .sv-prototype-garage-card');
     for (var i = 0; i < cards.length; i++) {
       cards[i].classList.remove('is-focused');
     }
@@ -1312,10 +1925,82 @@
       var tab = t.closest('[data-sv-tab]');
       var toggle = t.closest('[data-sv-toggle-demo]');
       var fab = t.closest('[data-sv-fab]');
+      var leg = t.closest('[data-sv-legacy-nav]');
+      var quick = t.closest('[data-sv-quick-action]');
+      var filt = t.closest('[data-sv-filter-pick]');
+      var vmode = t.closest('[data-sv-grid-mode]');
+      var goOv = t.closest('[data-sv-goto-overview]');
 
       if (t.closest('[data-sv-show-all-vehicles]')) {
         ev.preventDefault();
         goToVehicles(root);
+        return;
+      }
+
+      if (goOv) {
+        ev.preventDefault();
+        goToOverview(root);
+        return;
+      }
+
+      if (t.closest('[data-sv-show-archived]')) {
+        ev.preventDefault();
+        state.vehicleFilter = 'archived';
+        renderFilterPills(root);
+        renderVehicleCards(root);
+        renderCatalogSummary(root);
+        showToast('Zobrazujete archivovaná vozidla (filtr).');
+        return;
+      }
+
+      if (leg) {
+        ev.preventDefault();
+        navigateToLegacy(leg.getAttribute('data-sv-legacy-nav') || 'service-history');
+        return;
+      }
+
+      if (quick) {
+        ev.preventDefault();
+        var qk = quick.getAttribute('data-sv-quick-action') || '';
+        if (qk === 'stk') {
+          goToVehicles(root);
+          showToast('Projděte STK u jednotlivých vozidel ve filtrech.');
+          return;
+        }
+        if (qk === 'ins') {
+          navigateToLegacy('documents');
+          return;
+        }
+        if (qk === 'svc') {
+          navigateToLegacy('service-history');
+          return;
+        }
+        if (qk === 'docs') {
+          navigateToLegacy('documents');
+          return;
+        }
+        return;
+      }
+
+      if (filt) {
+        ev.preventDefault();
+        state.vehicleFilter = filt.getAttribute('data-sv-filter-pick') || 'all';
+        renderFilterPills(root);
+        renderVehicleCards(root);
+        renderCatalogSummary(root);
+        return;
+      }
+
+      if (vmode) {
+        ev.preventDefault();
+        var mode = vmode.getAttribute('data-sv-grid-mode') || 'grid';
+        if (mode === 'list') {
+          showToast('Seznamové zobrazení připravujeme.');
+          state.vehicleListMode = 'list';
+        } else {
+          state.vehicleListMode = 'grid';
+        }
+        renderCatalogToolbar(root);
         return;
       }
 
@@ -1383,7 +2068,8 @@
         return;
       }
       if (fab) {
-        onProtoAction(ev);
+        ev.preventDefault();
+        navigateToLegacy('add-vehicle');
         return;
       }
     });
@@ -1394,6 +2080,7 @@
         if (ev.key !== 'Enter' && ev.key !== ' ') return;
         var card = ev.target && ev.target.closest ? ev.target.closest('[data-sv-open-vehicle]') : null;
         if (!card || ev.target.closest('.sv-prototype-vehicle-actions')) return;
+        if (ev.target.closest('.sv-prototype-garage-actions')) return;
         ev.preventDefault();
         var vid = card.getAttribute('data-sv-open-vehicle');
         openVehicleDetail(root, vid);
@@ -1406,6 +2093,15 @@
       searchInp._svProtoSearchBound = true;
       searchInp.addEventListener('input', function () {
         state.searchQuery = searchInp.value || '';
+        renderVehicleCards(root);
+      });
+    }
+
+    var sortEl = root.querySelector('[data-sv-sort-select]');
+    if (sortEl && !sortEl._svProtoSortBound) {
+      sortEl._svProtoSortBound = true;
+      sortEl.addEventListener('change', function () {
+        state.vehicleSort = sortEl.value || 'activity';
         renderVehicleCards(root);
       });
     }
@@ -1434,9 +2130,9 @@
       ICO.search +
       '</span>' +
       '<label class="sr-only" for="sv-proto-search">Hledat vozidlo</label>' +
-      '<input id="sv-proto-search" type="search" autocomplete="off" placeholder="Hledat SPZ, VIN…" data-sv-search-filter="1" />' +
+      '<input id="sv-proto-search" type="search" autocomplete="off" placeholder="Hledejte podle SPZ, VIN, názvu vozidla…" data-sv-search-filter="1" />' +
       '</div>' +
-      '<button type="button" class="sv-prototype-btn-primary sv-prototype-btn-add-vehicle" data-sv-mock-action="1">' +
+      '<button type="button" class="sv-prototype-btn-primary sv-prototype-btn-add-vehicle" data-sv-legacy-nav="add-vehicle">' +
       '<span class="sv-prototype-btn-label-full">+ Přidat vozidlo</span>' +
       '<span class="sv-prototype-btn-label-short">+ Přidat</span></button>' +
       '<div class="sv-prototype-top-actions">' +
@@ -1456,8 +2152,10 @@
       '</span></div>' +
       '<pre class="sv-prototype-debug-panel" data-sv-proto-debug hidden></pre>' +
       '<div class="sv-prototype-view" data-sv-view-dashboard data-sv-dashboard-root>' +
-      '<div class="sv-prototype-overview-block" data-sv-overview-block>' +
-      '<div class="sv-prototype-hero-bundle">' +
+      '<div class="sv-prototype-overview-page" data-sv-overview-page>' +
+      '<div class="sv-prototype-dash-layout">' +
+      '<div class="sv-prototype-dash-main">' +
+      '<div class="sv-prototype-hero-status-row">' +
       '<div class="sv-prototype-hero-panel">' +
       '<div class="sv-prototype-hero-copy sv-prototype-hero-content">' +
       '<h1 data-sv-hero-greeting>Dobrý den</h1>' +
@@ -1468,40 +2166,43 @@
       '<div class="sv-prototype-hero-car-wrap">' +
       heroCarSvg() +
       '</div></div></div>' +
-      '<div class="sv-prototype-quick-cards">' +
-      '<button type="button" class="sv-prototype-quick-tile sv-prototype-quick-tile--stk" data-sv-quick-mock="1">' +
-      '<span class="sv-prototype-quick-ico-wrap">' +
-      ICO.quickStk +
-      '</span>' +
-      '<span class="sv-prototype-quick-body"><strong>STK do 42 dnů</strong>' +
-      '<span class="sv-prototype-quick-desc">VW Transporter – zbývá lhůta</span></span>' +
-      '<span class="sv-prototype-quick-arrow" aria-hidden="true">→</span></button>' +
-      '<button type="button" class="sv-prototype-quick-tile sv-prototype-quick-tile--ok" data-sv-quick-mock="1">' +
-      '<span class="sv-prototype-quick-ico-wrap">' +
-      ICO.quickShield +
-      '</span>' +
-      '<span class="sv-prototype-quick-body"><strong>Pojištění v pořádku</strong>' +
-      '<span class="sv-prototype-quick-desc">Všechna vozidla krytá</span></span>' +
-      '<span class="sv-prototype-quick-arrow" aria-hidden="true">→</span></button>' +
-      '<button type="button" class="sv-prototype-quick-tile" data-sv-quick-mock="1">' +
-      '<span class="sv-prototype-quick-ico-wrap">' +
-      ICO.quickSvc +
-      '</span>' +
-      '<span class="sv-prototype-quick-body"><strong>Poslední servis před 3 měsíci</strong>' +
-      '<span class="sv-prototype-quick-desc">VW Transporter T5.1</span></span>' +
-      '<span class="sv-prototype-quick-arrow" aria-hidden="true">→</span></button>' +
-      '</div></div></div>' +
-      '<div class="sv-prototype-section-head">' +
-      '<div class="sv-prototype-section-head-text">' +
-      '<h2 class="sv-prototype-section-title" data-sv-vehicle-section-title>Moje vozidla</h2>' +
-      '<p class="sv-prototype-section-sub" data-sv-vehicle-section-sub>Náhled vozidel.</p>' +
-      '<p class="sv-prototype-section-count" data-sv-vehicles-count-line hidden></p></div>' +
-      '<button type="button" class="sv-prototype-btn-section" data-sv-show-all-vehicles>Zobrazit vše</button></div>' +
-      '<div class="sv-prototype-vehicle-grid" data-sv-vehicle-grid></div>' +
+      '<div class="sv-prototype-overall-status-card" data-sv-overall-status></div>' +
+      '</div>' +
+      '<div data-sv-quick-grid></div>' +
+      '<div class="sv-prototype-preview-head">' +
+      '<div class="sv-prototype-preview-head-text">' +
+      '<h2 class="sv-prototype-preview-title">Moje vozidla</h2>' +
+      '<p class="sv-prototype-preview-sub">Stručný náhled — klikněte na vozidlo nebo přejděte do garáže.</p></div>' +
+      '<button type="button" class="sv-prototype-btn-section" data-sv-show-all-vehicles>Zobrazit všechna vozidla →</button>' +
+      '</div>' +
+      '<div class="sv-prototype-vehicle-grid sv-prototype-vehicle-grid--preview" data-sv-overview-vehicle-grid></div>' +
+      '</div>' +
+      '<aside class="sv-prototype-dash-aside" data-sv-overview-aside aria-label="Souhrn a termíny"></aside>' +
+      '</div></div>' +
+      '<div class="sv-prototype-vehicles-page" data-sv-vehicles-page hidden>' +
+      '<div class="sv-prototype-catalog-head">' +
+      '<div>' +
+      '<h2 class="sv-prototype-catalog-title">Moje vozidla</h2>' +
+      '<p class="sv-prototype-catalog-sub" data-sv-catalog-sub>Máte 0 vozidel</p>' +
+      '<button type="button" class="sv-prototype-link-like" data-sv-show-archived>Zobrazit archivovaná</button></div></div>' +
+      '<div class="sv-prototype-filter-pills-wrap">' +
+      '<div class="sv-prototype-filter-pills" data-sv-filter-pills></div></div>' +
+      '<div class="sv-prototype-catalog-toolbar">' +
+      '<label class="sv-prototype-sort-label"><span>Řadit podle:</span> ' +
+      '<select class="sv-prototype-sort-select" data-sv-sort-select>' +
+      '<option value="activity">Poslední aktivity</option>' +
+      '<option value="name">Název A–Z</option></select></label>' +
+      '<div class="sv-prototype-view-toggle">' +
+      '<button type="button" class="sv-prototype-view-toggle-btn is-active" data-sv-grid-mode="grid" aria-label="Mřížka">' +
+      '<span class="sv-prototype-grid-ico" aria-hidden="true">▦</span></button>' +
+      '<button type="button" class="sv-prototype-view-toggle-btn" data-sv-grid-mode="list" aria-label="Seznam">' +
+      '<span class="sv-prototype-grid-ico" aria-hidden="true">☰</span></button></div></div>' +
+      '<div class="sv-prototype-vehicle-grid sv-prototype-vehicle-grid--catalog" data-sv-vehicle-grid></div>' +
       '<div class="sv-prototype-empty-vehicles" data-sv-empty-vehicles hidden>' +
       '<p class="sv-prototype-empty-vehicles-text">Zatím nemáte přidané žádné vozidlo.</p>' +
-      '<button type="button" class="sv-prototype-btn-primary" data-sv-mock-action="1">+ Přidat vozidlo</button>' +
-      '</div></div>' +
+      '<button type="button" class="sv-prototype-btn-primary" data-sv-legacy-nav="add-vehicle">+ Přidat vozidlo</button>' +
+      '</div>' +
+      '<div class="sv-prototype-catalog-summary" data-sv-catalog-summary></div></div></div>' +
       '<div class="sv-prototype-view" data-sv-view-detail hidden>' +
       '<button type="button" class="sv-prototype-back" data-sv-back>← Zpět na přehled</button>' +
       '<div class="sv-prototype-detail-header-card">' +
