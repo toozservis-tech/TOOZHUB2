@@ -1,6 +1,8 @@
-/* Správa vozidel — izolovaný vizuální prototyp (bez API, bez emoji v hlavních plochách). */
+/* Správa vozidel — vizuální prototyp; volitelně READ-ONLY napojení (?real=1). */
 (function () {
   'use strict';
+
+  var API_PATHS = { ME: '/api/me', VEHICLES: '/api/v1/vehicles' };
 
   var DEMO_USER = { firstName: 'Tomáš', lastName: 'Novák' };
   var DEMO_SUMMARY = {
@@ -239,7 +241,401 @@
     activeTabIdx: 0,
     toastTimer: null,
     cardFlashTimer: null,
+    searchQuery: '',
+    dataSource: 'demo',
+    runtimeVehicles: null,
+    currentMe: null,
+    detailTimelineIsSample: true,
+    loginHref: 'index.html',
   };
+
+  function getQueryFlag(name) {
+    try {
+      var q = new URLSearchParams(window.location.search || '');
+      var v = (q.get(name) || '').trim().toLowerCase();
+      if (v === '1' || v === 'true' || v === 'yes') return true;
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function apiGet(path) {
+    var p = String(path || '');
+    if (p !== API_PATHS.ME && p !== API_PATHS.VEHICLES) {
+      return Promise.reject(new Error('api path not allowed'));
+    }
+    return fetch(p, {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    }).then(function (res) {
+      if (p === API_PATHS.ME && (res.status === 401 || res.status === 403)) {
+        return res
+          .json()
+          .then(function (j) {
+            if (j && typeof j === 'object' && j.authenticated === false) return j;
+            return { authenticated: false };
+          })
+          .catch(function () {
+            return { authenticated: false };
+          });
+      }
+      if (res.status === 401 || res.status === 403) {
+        var err = new Error('HTTP ' + res.status);
+        err.status = res.status;
+        throw err;
+      }
+      if (!res.ok) {
+        var e2 = new Error('HTTP ' + res.status);
+        e2.status = res.status;
+        throw e2;
+      }
+      return res.json();
+    });
+  }
+
+  function loadSession() {
+    return apiGet(API_PATHS.ME).then(function (me) {
+      if (me && me.authenticated === true) return { ok: true, me: me };
+      return { ok: false, me: me || {} };
+    });
+  }
+
+  function loadVehicles() {
+    return apiGet(API_PATHS.VEHICLES);
+  }
+
+  function parseIsoDate(s) {
+    if (s == null || s === '') return null;
+    var str = String(s);
+    var d = new Date(str.length === 10 ? str + 'T12:00:00' : str);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function daysUntil(target) {
+    if (!target) return null;
+    var now = new Date();
+    var a = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var b = new Date(target.getFullYear(), target.getMonth(), target.getDate());
+    return Math.round((b - a) / 86400000);
+  }
+
+  function detectVehicleKind(title, bodyType) {
+    var t = ((title || '') + ' ' + (bodyType || '')).toLowerCase();
+    if (/\b(transporter|van|t5|t6|caddy|multivan)\b/.test(t)) return 'van';
+    if (/\b(kodiaq|suv|q3|q5|q7|xdrive|country|scout)\b/.test(t)) return 'suv';
+    return 'sedan';
+  }
+
+  function mapVehicleFromApi(vehicle) {
+    var v = vehicle || {};
+    var brand = String(v.brand != null ? v.brand : '').trim();
+    var model = String(v.model != null ? v.model : '').trim();
+    var nick = String(v.nickname != null ? v.nickname : '').trim();
+    var disp = v.display_name != null ? String(v.display_name).trim() : '';
+    var legacyName = v.name != null ? String(v.name).trim() : '';
+    var title =
+      disp ||
+      nick ||
+      [brand, model].filter(Boolean).join(' ').trim() ||
+      legacyName ||
+      'Vozidlo bez názvu';
+    var plate =
+      (v.license_plate != null && String(v.license_plate).trim()) ||
+      (v.plate != null && String(v.plate).trim()) ||
+      (v.registration_number != null && String(v.registration_number).trim()) ||
+      '—';
+    var vinStr = v.vin != null && String(v.vin).trim() ? String(v.vin).trim() : '—';
+    var kmRaw = v.current_mileage_km != null ? v.current_mileage_km : v.mileage_km;
+    var km = kmRaw != null && kmRaw !== '' && !isNaN(Number(kmRaw)) ? Number(kmRaw) : null;
+
+    var stkDate = parseIsoDate(v.stk_valid_until);
+    var stkDays = stkDate ? daysUntil(stkDate) : null;
+    var stk;
+    var toneStk;
+    if (stkDays == null) {
+      stk = 'STK neznámá';
+      toneStk = 'ok';
+    } else if (stkDays < 0) {
+      stk = 'po termínu';
+      toneStk = 'bad';
+    } else if (stkDays === 0) {
+      stk = 'dnes';
+      toneStk = 'warn';
+    } else if (stkDays <= 45) {
+      stk = 'za ' + stkDays + ' ' + (stkDays === 1 ? 'den' : stkDays < 5 ? 'dny' : 'dní');
+      toneStk = 'warn';
+    } else {
+      stk = 'platná';
+      toneStk = 'ok';
+    }
+
+    var insDate = parseIsoDate(v.insurance_valid_until);
+    var insDays = insDate ? daysUntil(insDate) : null;
+    var insurance;
+    var toneIns;
+    if (insDays == null) {
+      insurance = 'nezadáno';
+      toneIns = 'ok';
+    } else if (insDays < 0) {
+      insurance = 'po platnosti';
+      toneIns = 'bad';
+    } else if (insDays <= 30) {
+      insurance = 'vyprší brzy';
+      toneIns = 'warn';
+    } else {
+      insurance = 'v pořádku';
+      toneIns = 'ok';
+    }
+
+    var service = 'ověřit servis';
+    var toneSvc = 'ok';
+    var lastService = 'Údaj o servisu zatím nevyplněný.';
+    if (v.notes != null && String(v.notes).trim()) {
+      var note = String(v.notes).trim();
+      lastService = note.length > 120 ? note.slice(0, 117) + '…' : note;
+      service = 'viz poznámku';
+      toneSvc = 'warn';
+    }
+
+    var status = 'ok';
+    var statusLabel = 'V pořádku';
+    if (toneStk === 'bad' || toneIns === 'bad') {
+      status = 'attention';
+      statusLabel = 'Vyžaduje pozornost';
+    } else if (String(v.data_trust_state || '').toLowerCase() === 'pending') {
+      status = 'attention';
+      statusLabel = 'Čeká na schválení';
+    }
+
+    var rawSt = String(v.status || '').toLowerCase();
+    if (rawSt === 'service' || rawSt === 'in_service') {
+      status = 'service';
+      statusLabel = 'V servisu';
+    } else if (rawSt === 'pending') {
+      status = 'attention';
+      statusLabel = 'Čeká na schválení';
+    }
+
+    return {
+      id: v.id != null ? String(v.id) : 'vehicle-unknown',
+      kind: detectVehicleKind(title, v.body_type),
+      name: title,
+      plate: plate,
+      vin: vinStr,
+      km: km,
+      status: status,
+      statusLabel: statusLabel,
+      stk: stk,
+      insurance: insurance,
+      service: service,
+      toneStk: toneStk,
+      toneIns: toneIns,
+      toneSvc: toneSvc,
+      lastService: lastService,
+      _fromApi: true,
+    };
+  }
+
+  function greetingFirstName(me) {
+    if (!me || me.authenticated !== true) return DEMO_USER.firstName;
+    if (me.display_name != null && String(me.display_name).trim()) {
+      var p = String(me.display_name).trim().split(/\s+/);
+      if (p[0]) return p[0];
+    }
+    if (me.email) return String(me.email).split('@')[0];
+    return DEMO_USER.firstName;
+  }
+
+  function profileDisplayName(me) {
+    if (!me || me.authenticated !== true) return DEMO_USER.firstName + ' ' + DEMO_USER.lastName;
+    if (me.display_name != null && String(me.display_name).trim()) return String(me.display_name).trim();
+    return me.email ? String(me.email) : DEMO_USER.firstName + ' ' + DEMO_USER.lastName;
+  }
+
+  function profileInitials(me) {
+    var n = profileDisplayName(me);
+    var parts = n.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    if (n.length >= 2) return n.slice(0, 2).toUpperCase();
+    return 'U';
+  }
+
+  function getVehicleList() {
+    return state.runtimeVehicles || DEMO_VEHICLES;
+  }
+
+  function computeSummaryFromVehicles(list) {
+    list = list || [];
+    var n = list.length;
+    var stkSoon = 0;
+    var insSoon = 0;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].toneStk === 'warn' || list[i].toneStk === 'bad') stkSoon++;
+      if (list[i].toneIns === 'warn' || list[i].toneIns === 'bad') insSoon++;
+    }
+    var reminders = insSoon + stkSoon > 0 ? Math.min(insSoon + stkSoon, 9) : n > 0 ? 0 : 2;
+    if (state.dataSource === 'demo' && !state.runtimeVehicles) reminders = DEMO_SUMMARY.reminders;
+    if (state.dataSource === 'demo' && !state.runtimeVehicles) stkSoon = DEMO_SUMMARY.stkSoon;
+    return { vehicles: n, stkSoon: stkSoon, reminders: reminders };
+  }
+
+  function renderHeroSummaryHtml(sum) {
+    return (
+      'Máte <span class="sv-prototype-stat-pill sv-prototype-stat-pill--navy">' +
+      sum.vehicles +
+      '</span> vozidel' +
+      (sum.vehicles === 1 ? '' : '') +
+      ', ' +
+      '<span class="sv-prototype-stat-pill sv-prototype-stat-pill--amber">' +
+      sum.stkSoon +
+      '</span> blížící se STK a ' +
+      '<span class="sv-prototype-stat-pill sv-prototype-stat-pill--blue">' +
+      sum.reminders +
+      '</span> aktivní připomínky.'
+    );
+  }
+
+  function renderHero(root) {
+    var h1 = root.querySelector('[data-sv-hero-greeting]');
+    var sumEl = root.querySelector('[data-sv-hero-summary]');
+    var dash = root.querySelector('[data-sv-dashboard-root]');
+    var loading = dash && dash.classList.contains('is-sv-dashboard-loading');
+    var first = greetingFirstName(state.currentMe);
+    if (h1) h1.textContent = 'Dobrý den, ' + first;
+    if (sumEl) {
+      if (loading) {
+        sumEl.textContent = 'Načítám vaše vozidla…';
+      } else {
+        var list = getVehicleList();
+        var sum = computeSummaryFromVehicles(list);
+        sumEl.innerHTML = renderHeroSummaryHtml(sum);
+      }
+    }
+  }
+
+  function updateProfileUi(root) {
+    var nameEl = root.querySelector('.sv-prototype-profile-name');
+    var av = root.querySelector('.sv-prototype-avatar');
+    if (nameEl) nameEl.textContent = profileDisplayName(state.currentMe);
+    if (av) av.textContent = profileInitials(state.currentMe);
+  }
+
+  function setDashboardLoading(root, on) {
+    var el = root.querySelector('[data-sv-dashboard-root]');
+    if (!el) return;
+    el.classList.toggle('is-sv-dashboard-loading', !!on);
+  }
+
+  function setDataSourceBadge(root, opts) {
+    opts = opts || {};
+    var banner = root.querySelector('[data-sv-data-banner]');
+    var textEl = root.querySelector('[data-sv-data-banner-text]');
+    var loginL = root.querySelector('[data-sv-login-link]');
+    if (!banner || !textEl) return;
+    var source = opts.source || state.dataSource;
+    var reason = opts.reason;
+    var msg;
+    var kindClass = 'sv-prototype-data-banner--demo';
+    var showLogin = false;
+    if (source === 'real') {
+      msg = 'Reálná data · přihlášený účet';
+      kindClass = 'sv-prototype-data-banner--real';
+    } else if (reason === 'unauthenticated' && getQueryFlag('real')) {
+      msg = 'Zobrazujete ukázková data. Pro reálná data se přihlaste.';
+      kindClass = 'sv-prototype-data-banner--login';
+      showLogin = true;
+    } else if (source === 'fallback') {
+      msg = 'Reálná data se nepodařilo načíst. Zobrazuji ukázku.';
+      kindClass = 'sv-prototype-data-banner--warn';
+    } else {
+      msg = 'Ukázková data';
+      kindClass = 'sv-prototype-data-banner--demo';
+    }
+    banner.hidden = false;
+    banner.className = 'sv-prototype-data-banner ' + kindClass;
+    textEl.textContent = msg;
+    if (loginL) {
+      loginL.hidden = !showLogin;
+      if (state.loginHref) loginL.setAttribute('href', state.loginHref);
+      loginL.setAttribute('rel', 'nofollow');
+    }
+  }
+
+  function applyDashboardData(root, opts) {
+    opts = opts || {};
+    setDashboardLoading(root, false);
+    state.dataSource = opts.source || 'demo';
+    state.runtimeVehicles = opts.vehicles != null ? opts.vehicles : null;
+    if (opts.me !== undefined) state.currentMe = opts.me;
+    state.detailTimelineIsSample = true;
+    updateProfileUi(root);
+    renderHero(root);
+    renderVehicleCards(root);
+    setDataSourceBadge(root, opts);
+    var empty = root.querySelector('[data-sv-empty-vehicles]');
+    var grid = root.querySelector('[data-sv-vehicle-grid]');
+    if (empty && grid) {
+      var list = getVehicleList();
+      var isEmptyReal = state.dataSource === 'real' && Array.isArray(state.runtimeVehicles) && state.runtimeVehicles.length === 0;
+      empty.hidden = !isEmptyReal;
+      grid.hidden = isEmptyReal;
+    }
+  }
+
+  function bootstrapDashboard(root) {
+    if (!getQueryFlag('real')) {
+      state.currentMe = null;
+      applyDashboardData(root, { source: 'demo', vehicles: null, me: null, reason: null });
+      return;
+    }
+    setDashboardLoading(root, true);
+    renderHero(root);
+    renderVehicleCards(root);
+    var banner = root.querySelector('[data-sv-data-banner]');
+    if (banner) {
+      banner.hidden = false;
+      banner.className = 'sv-prototype-data-banner sv-prototype-data-banner--loading';
+      var te = root.querySelector('[data-sv-data-banner-text]');
+      if (te) te.textContent = 'Načítám vaše vozidla…';
+      var ll = root.querySelector('[data-sv-login-link]');
+      if (ll) ll.hidden = true;
+    }
+    loadSession()
+      .then(function (session) {
+        if (!session.ok) {
+          state.currentMe = session.me || null;
+          applyDashboardData(root, {
+            source: 'demo',
+            vehicles: null,
+            me: null,
+            reason: 'unauthenticated',
+          });
+          return Promise.reject(new Error('sv-skip-chain'));
+        }
+        state.currentMe = session.me;
+        return loadVehicles();
+      })
+      .then(function (list) {
+        if (list === undefined) return;
+        var arr = Array.isArray(list) ? list : [];
+        var mapped = arr.map(mapVehicleFromApi);
+        applyDashboardData(root, { source: 'real', vehicles: mapped, me: state.currentMe, reason: null });
+      })
+      .catch(function (err) {
+        if (err && err.message === 'sv-skip-chain') return;
+        state.runtimeVehicles = null;
+        state.currentMe = null;
+        applyDashboardData(root, { source: 'fallback', vehicles: null, me: null, reason: 'error' });
+        showToast('Reálná data se nepodařilo načíst. Zobrazuji ukázku.');
+      });
+  }
+
+  function formatKmDisplay(v) {
+    if (v.km == null || v.km === '') return 'Nezadáno';
+    return Number(v.km).toLocaleString('cs-CZ') + ' km';
+  }
 
   function escapeHtml(s) {
     return String(s == null ? '' : s)
@@ -289,8 +685,10 @@
   }
 
   function getVehicle(id) {
-    for (var i = 0; i < DEMO_VEHICLES.length; i++) {
-      if (DEMO_VEHICLES[i].id === id) return DEMO_VEHICLES[i];
+    var list = getVehicleList();
+    var sid = String(id == null ? '' : id);
+    for (var i = 0; i < list.length; i++) {
+      if (String(list[i].id) === sid) return list[i];
     }
     return null;
   }
@@ -346,74 +744,92 @@
   function renderVehicleCards(root) {
     var grid = root.querySelector('[data-sv-vehicle-grid]');
     if (!grid) return;
-    grid.innerHTML = DEMO_VEHICLES.map(function (v) {
-      return (
-        '<article class="sv-prototype-vehicle-card" data-sv-open-vehicle="' +
-        escapeHtml(v.id) +
-        '" tabindex="0" role="button">' +
-        '<div class="' +
-        vehicleVisualClass(v.kind) +
-        '" aria-hidden="true">' +
-        '<div class="sv-prototype-vehicle-visual-sky"></div>' +
-        '<div class="sv-prototype-vehicle-visual-ground"></div>' +
-        '<div class="sv-prototype-vehicle-visual-car">' +
-        vehicleSilhouette(v.kind, v.id) +
-        '</div></div>' +
-        '<div class="sv-prototype-vehicle-body">' +
-        '<div class="sv-prototype-vehicle-head">' +
-        '<h3 class="sv-prototype-vehicle-title">' +
-        escapeHtml(v.name) +
-        '</h3>' +
-        '<span class="' +
-        badgeClass(v.status) +
-        '">' +
-        escapeHtml(v.statusLabel) +
-        '</span></div>' +
-        '<div class="sv-prototype-vehicle-subrow">' +
-        '<span class="sv-prototype-plate-badge">' +
-        escapeHtml(v.plate) +
-        '</span></div>' +
-        '<div class="sv-prototype-vehicle-meta">' +
-        '<div class="sv-prototype-meta-row"><span class="sv-prototype-meta-k">VIN</span><span class="sv-prototype-meta-v">' +
-        escapeHtml(v.vin) +
-        '</span></div>' +
-        '<div class="sv-prototype-meta-row"><span class="sv-prototype-meta-k">Nájezd</span><span class="sv-prototype-meta-v"><strong>' +
-        v.km.toLocaleString('cs-CZ') +
-        ' km</strong></span></div></div>' +
-        '<div class="sv-prototype-status-lines">' +
-        '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">STK</span><strong class="sv-prototype-status-val ' +
-        statusValClass(v.toneStk || 'ok') +
-        '">' +
-        escapeHtml(v.stk) +
-        '</strong></div>' +
-        '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">Pojištění</span><strong class="sv-prototype-status-val ' +
-        statusValClass(v.toneIns || 'ok') +
-        '">' +
-        escapeHtml(v.insurance) +
-        '</strong></div>' +
-        '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">Servis</span><strong class="sv-prototype-status-val ' +
-        statusValClass(v.toneSvc || 'ok') +
-        '">' +
-        escapeHtml(v.service) +
-        '</strong></div></div>' +
-        '<div class="sv-prototype-vehicle-actions">' +
-        '<button type="button" class="sv-prototype-veh-ico" title="Detail" data-sv-stop="1" data-sv-open-vehicle="' +
-        escapeHtml(v.id) +
-        '">' +
-        ICO.doc +
-        '<span class="sv-prototype-veh-ico-label">Detail</span></button>' +
-        '<button type="button" class="sv-prototype-veh-ico" title="Přidat záznam" data-sv-stop="1" data-sv-mock-action="1">' +
-        ICO.quickSvc +
-        '<span class="sv-prototype-veh-ico-label">Přidat záznam</span></button>' +
-        '<button type="button" class="sv-prototype-veh-ico" title="Dokumenty" data-sv-stop="1" data-sv-mock-action="1">' +
-        ICO.invoice +
-        '<span class="sv-prototype-veh-ico-label">Dokumenty</span></button>' +
-        '<button type="button" class="sv-prototype-veh-ico" title="Sdílet" data-sv-stop="1" data-sv-mock-action="1">' +
-        '<svg class="sv-prototype-svg-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>' +
-        '<span class="sv-prototype-veh-ico-label">Sdílet</span></button>' +
-        '</div></div></article>'
-      );
-    }).join('');
+    var dash = root.querySelector('[data-sv-dashboard-root]');
+    if (dash && dash.classList.contains('is-sv-dashboard-loading')) {
+      grid.innerHTML =
+        '<div class="sv-prototype-skeleton-grid" aria-hidden="true">' +
+        '<div class="sv-prototype-skeleton-card"></div>' +
+        '<div class="sv-prototype-skeleton-card"></div>' +
+        '<div class="sv-prototype-skeleton-card"></div>' +
+        '</div>';
+      return;
+    }
+    var q = (state.searchQuery || '').trim().toLowerCase();
+    var list = getVehicleList().filter(function (v) {
+      if (!q) return true;
+      var hay = (v.name + ' ' + v.plate + ' ' + v.vin).toLowerCase();
+      return hay.indexOf(q) >= 0;
+    });
+    grid.innerHTML = list
+      .map(function (v) {
+        return (
+          '<article class="sv-prototype-vehicle-card" data-sv-open-vehicle="' +
+          escapeHtml(v.id) +
+          '" tabindex="0" role="button">' +
+          '<div class="' +
+          vehicleVisualClass(v.kind) +
+          '" aria-hidden="true">' +
+          '<div class="sv-prototype-vehicle-visual-sky"></div>' +
+          '<div class="sv-prototype-vehicle-visual-ground"></div>' +
+          '<div class="sv-prototype-vehicle-visual-car">' +
+          vehicleSilhouette(v.kind, v.id) +
+          '</div></div>' +
+          '<div class="sv-prototype-vehicle-body">' +
+          '<div class="sv-prototype-vehicle-head">' +
+          '<h3 class="sv-prototype-vehicle-title">' +
+          escapeHtml(v.name) +
+          '</h3>' +
+          '<span class="' +
+          badgeClass(v.status) +
+          '">' +
+          escapeHtml(v.statusLabel) +
+          '</span></div>' +
+          '<div class="sv-prototype-vehicle-subrow">' +
+          '<span class="sv-prototype-plate-badge">' +
+          escapeHtml(v.plate) +
+          '</span></div>' +
+          '<div class="sv-prototype-vehicle-meta">' +
+          '<div class="sv-prototype-meta-row"><span class="sv-prototype-meta-k">VIN</span><span class="sv-prototype-meta-v">' +
+          escapeHtml(v.vin) +
+          '</span></div>' +
+          '<div class="sv-prototype-meta-row"><span class="sv-prototype-meta-k">Nájezd</span><span class="sv-prototype-meta-v"><strong>' +
+          escapeHtml(formatKmDisplay(v)) +
+          '</strong></span></div></div>' +
+          '<div class="sv-prototype-status-lines">' +
+          '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">STK</span><strong class="sv-prototype-status-val ' +
+          statusValClass(v.toneStk || 'ok') +
+          '">' +
+          escapeHtml(v.stk) +
+          '</strong></div>' +
+          '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">Pojištění</span><strong class="sv-prototype-status-val ' +
+          statusValClass(v.toneIns || 'ok') +
+          '">' +
+          escapeHtml(v.insurance) +
+          '</strong></div>' +
+          '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">Servis</span><strong class="sv-prototype-status-val ' +
+          statusValClass(v.toneSvc || 'ok') +
+          '">' +
+          escapeHtml(v.service) +
+          '</strong></div></div>' +
+          '<div class="sv-prototype-vehicle-actions">' +
+          '<button type="button" class="sv-prototype-veh-ico" title="Detail" data-sv-stop="1" data-sv-open-vehicle="' +
+          escapeHtml(v.id) +
+          '">' +
+          ICO.doc +
+          '<span class="sv-prototype-veh-ico-label">Detail</span></button>' +
+          '<button type="button" class="sv-prototype-veh-ico" title="Přidat záznam" data-sv-stop="1" data-sv-mock-action="1">' +
+          ICO.quickSvc +
+          '<span class="sv-prototype-veh-ico-label">Přidat záznam</span></button>' +
+          '<button type="button" class="sv-prototype-veh-ico" title="Dokumenty" data-sv-stop="1" data-sv-mock-action="1">' +
+          ICO.invoice +
+          '<span class="sv-prototype-veh-ico-label">Dokumenty</span></button>' +
+          '<button type="button" class="sv-prototype-veh-ico" title="Sdílet" data-sv-stop="1" data-sv-mock-action="1">' +
+          '<svg class="sv-prototype-svg-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>' +
+          '<span class="sv-prototype-veh-ico-label">Sdílet</span></button>' +
+          '</div></div></article>'
+        );
+      })
+      .join('');
   }
 
   function renderDetail(root) {
@@ -442,8 +858,8 @@
         escapeHtml(v.vin) +
         '</span>' +
         '<span class="sv-prototype-detail-km"><strong>' +
-        v.km.toLocaleString('cs-CZ') +
-        ' km</strong></span>';
+        escapeHtml(formatKmDisplay(v)) +
+        '</strong></span>';
     }
     if (badgeEl) {
       badgeEl.className = badgeClass(v.status);
@@ -470,7 +886,11 @@
     if (overview) {
       overview.innerHTML =
         '<div class="sv-prototype-panel sv-prototype-panel--elevated sv-prototype-panel--timeline">' +
-        '<h3>Časová osa vozidla</h3>' +
+        '<h3>Časová osa vozidla' +
+        (state.detailTimelineIsSample
+          ? ' <span class="sv-prototype-sample-hint" title="Ukázková časová osa">(ukázka)</span>'
+          : '') +
+        '</h3>' +
         '<div class="sv-prototype-timeline">' +
         DEMO_TIMELINE.map(function (t) {
           var dot =
@@ -564,7 +984,9 @@
     if (col3) {
       col3.innerHTML =
         '<div class="sv-prototype-access-panel sv-prototype-panel--elevated">' +
-        '<h3>Kdo má přístup k tomuto vozidlu</h3>' +
+        '<h3>Kdo má přístup k tomuto vozidlu' +
+        (v._fromApi ? ' <span class="sv-prototype-sample-hint">(ukázka)</span>' : '') +
+        '</h3>' +
         DEMO_ACCESS.map(function (a) {
           return (
             '<div class="sv-prototype-access-service">' +
@@ -692,7 +1114,7 @@
         onProtoAction(ev);
         return;
       }
-      if (quick) {
+      if (t.closest('[data-sv-quick-mock]')) {
         onProtoAction(ev);
         return;
       }
@@ -729,6 +1151,15 @@
       },
       true,
     );
+
+    var searchInp = root.querySelector('[data-sv-search-filter]');
+    if (searchInp && !searchInp._svProtoSearchBound) {
+      searchInp._svProtoSearchBound = true;
+      searchInp.addEventListener('input', function () {
+        state.searchQuery = searchInp.value || '';
+        renderVehicleCards(root);
+      });
+    }
   }
 
   function mount(container) {
@@ -754,7 +1185,7 @@
       ICO.search +
       '</span>' +
       '<label class="sr-only" for="sv-proto-search">Hledat vozidlo</label>' +
-      '<input id="sv-proto-search" type="search" autocomplete="off" placeholder="Hledat SPZ, VIN…" data-sv-mock-action="1" />' +
+      '<input id="sv-proto-search" type="search" autocomplete="off" placeholder="Hledat SPZ, VIN…" data-sv-search-filter="1" />' +
       '</div>' +
       '<button type="button" class="sv-prototype-btn-primary sv-prototype-btn-add-vehicle" data-sv-mock-action="1">' +
       '<span class="sv-prototype-btn-label-full">+ Přidat vozidlo</span>' +
@@ -769,22 +1200,17 @@
       escapeHtml(DEMO_USER.firstName + ' ' + DEMO_USER.lastName) +
       '</span><span class="sv-prototype-profile-caret" aria-hidden="true">▾</span></button></div></header>' +
       '<div class="sv-prototype-scroll">' +
-      '<div class="sv-prototype-view" data-sv-view-dashboard>' +
+      '<div class="sv-prototype-data-banner" data-sv-data-banner hidden>' +
+      '<span class="sv-prototype-data-banner-inner">' +
+      '<span data-sv-data-banner-text></span>' +
+      '<a data-sv-login-link hidden class="sv-prototype-data-banner-link" href="/">Přihlásit se</a>' +
+      '</span></div>' +
+      '<div class="sv-prototype-view" data-sv-view-dashboard data-sv-dashboard-root>' +
       '<div class="sv-prototype-hero-bundle">' +
       '<div class="sv-prototype-hero-panel">' +
       '<div class="sv-prototype-hero-copy sv-prototype-hero-content">' +
-      '<h1>Dobrý den, ' +
-      escapeHtml(DEMO_USER.firstName) +
-      'i</h1>' +
-      '<p class="sv-prototype-hero-summary">Máte <span class="sv-prototype-stat-pill sv-prototype-stat-pill--navy">' +
-      DEMO_SUMMARY.vehicles +
-      '</span> vozidla, ' +
-      '<span class="sv-prototype-stat-pill sv-prototype-stat-pill--amber">' +
-      DEMO_SUMMARY.stkSoon +
-      '</span> blížící se STK a ' +
-      '<span class="sv-prototype-stat-pill sv-prototype-stat-pill--blue">' +
-      DEMO_SUMMARY.reminders +
-      '</span> aktivní připomínky.</p>' +
+      '<h1 data-sv-hero-greeting>Dobrý den</h1>' +
+      '<p class="sv-prototype-hero-summary" data-sv-hero-summary></p>' +
       '</div>' +
       '<div class="sv-prototype-hero-art sv-prototype-hero-visual" aria-hidden="true">' +
       '<div class="sv-prototype-hero-landscape"></div>' +
@@ -819,7 +1245,11 @@
       '<h2 class="sv-prototype-section-title">Moje vozidla</h2>' +
       '<p class="sv-prototype-section-sub">Přehled vozidel, stavů a nejbližších termínů.</p></div>' +
       '<button type="button" class="sv-prototype-btn-section" data-sv-section-mock="1">Zobrazit vše</button></div>' +
-      '<div class="sv-prototype-vehicle-grid" data-sv-vehicle-grid></div></div>' +
+      '<div class="sv-prototype-vehicle-grid" data-sv-vehicle-grid></div>' +
+      '<div class="sv-prototype-empty-vehicles" data-sv-empty-vehicles hidden>' +
+      '<p class="sv-prototype-empty-vehicles-text">Zatím nemáte přidané žádné vozidlo.</p>' +
+      '<button type="button" class="sv-prototype-btn-primary" data-sv-mock-action="1">+ Přidat vozidlo</button>' +
+      '</div></div>' +
       '<div class="sv-prototype-view" data-sv-view-detail hidden>' +
       '<button type="button" class="sv-prototype-back" data-sv-back>← Zpět na přehled</button>' +
       '<div class="sv-prototype-detail-header-card">' +
@@ -843,9 +1273,9 @@
     state.view = 'dashboard';
     renderNav(container);
     renderBottomNav(container);
-    renderVehicleCards(container);
     syncViews(container);
     bind(container);
+    bootstrapDashboard(container);
   }
 
   function ready(fn) {

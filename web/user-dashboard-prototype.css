@@ -2083,3 +2083,115 @@
     transform: translateY(0);
   }
 }
+
+/* --- Fáze 2: zdroj dat (demo / reálná / fallback) a načítání --- */
+.sv-prototype .sv-prototype-data-banner {
+  margin: 0 0 0.85rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: var(--sv-radius-md);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  border: 1px solid var(--sv-border);
+  background: var(--sv-card);
+  color: var(--sv-muted);
+}
+
+.sv-prototype .sv-prototype-data-banner-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.sv-prototype .sv-prototype-data-banner--demo {
+  background: rgba(11, 31, 122, 0.04);
+  border-color: rgba(11, 31, 122, 0.1);
+}
+
+.sv-prototype .sv-prototype-data-banner--real {
+  background: var(--sv-success-bg);
+  border-color: rgba(18, 183, 106, 0.25);
+  color: var(--sv-text);
+}
+
+.sv-prototype .sv-prototype-data-banner--warn {
+  background: var(--sv-warning-bg);
+  border-color: rgba(247, 144, 9, 0.35);
+  color: var(--sv-stat-amber);
+}
+
+.sv-prototype .sv-prototype-data-banner--login {
+  background: rgba(11, 31, 122, 0.06);
+  border-color: rgba(11, 31, 122, 0.12);
+}
+
+.sv-prototype .sv-prototype-data-banner--loading {
+  background: rgba(15, 23, 42, 0.04);
+  border-style: dashed;
+}
+
+.sv-prototype .sv-prototype-data-banner-link {
+  font-weight: 600;
+  margin-left: auto;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.sv-prototype .sv-prototype-data-banner-link:hover {
+  text-decoration: underline;
+}
+
+.sv-prototype .sv-prototype-sample-hint {
+  font-weight: 500;
+  font-size: 0.78em;
+  color: var(--sv-muted);
+}
+
+.sv-prototype .sv-prototype-empty-vehicles {
+  text-align: center;
+  padding: 2.5rem 1.25rem;
+  margin: 0 0 1.5rem;
+  border-radius: var(--sv-radius-md);
+  border: 1px dashed var(--sv-border);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.sv-prototype .sv-prototype-empty-vehicles-text {
+  margin: 0 0 1rem;
+  color: var(--sv-muted);
+  font-size: 0.95rem;
+}
+
+.sv-prototype [data-sv-dashboard-root].is-sv-dashboard-loading .sv-prototype-hero-summary {
+  color: var(--sv-muted);
+  font-style: italic;
+}
+
+.sv-prototype [data-sv-dashboard-root].is-sv-dashboard-loading .sv-prototype-quick-cards {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.sv-prototype .sv-prototype-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  gap: 1rem;
+}
+
+.sv-prototype .sv-prototype-skeleton-card {
+  min-height: 220px;
+  border-radius: var(--sv-radius-md);
+  background: linear-gradient(90deg, #e8ecf4 0%, #f4f6fb 48%, #e8ecf4 100%);
+  background-size: 200% 100%;
+  animation: sv-prototype-shimmer 1.15s ease-in-out infinite;
+  border: 1px solid var(--sv-border);
+}
+
+@keyframes sv-prototype-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
