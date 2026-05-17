@@ -589,7 +589,9 @@
             '</span></div>'
           );
         }).join('') +
-        '<button type="button" class="sv-prototype-btn-primary sv-prototype-btn-add-svc" data-sv-mock-action="1">+ Přidat servis</button>' +
+        '<button type="button" class="sv-prototype-btn-primary sv-prototype-btn-compact sv-prototype-btn-add-svc" data-sv-mock-action="1">+ Přidat servis</button>' +
+        '</div>' +
+        '<div class="sv-prototype-panel sv-prototype-panel--elevated sv-prototype-detail-privacy-card">' +
         '<div class="sv-prototype-toggle-row">' +
         '<div class="sv-prototype-toggle-copy"><strong>Povolit detailní historii</strong>' +
         '<span class="sv-prototype-toggle-hint">Servisy uvidí plnou historii vč. faktur</span></div>' +
@@ -599,6 +601,7 @@
   }
 
   function syncViews(root) {
+    root.classList.toggle('is-detail', state.view === 'detail');
     var dash = root.querySelector('[data-sv-view-dashboard]');
     var det = root.querySelector('[data-sv-view-detail]');
     if (dash) {
