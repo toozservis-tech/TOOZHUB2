@@ -20,8 +20,11 @@
       status: 'ok',
       statusLabel: 'V pořádku',
       stk: 'za 42 dní',
-      insurance: 'Platné',
+      insurance: 'v pořádku',
       service: 'v pořádku',
+      toneStk: 'warn',
+      toneIns: 'ok',
+      toneSvc: 'ok',
       lastService: 'Výměna brzdových destiček — před 3 měsíci',
     },
     {
@@ -34,8 +37,11 @@
       status: 'attention',
       statusLabel: 'Vyžaduje pozornost',
       stk: 'za 98 dní',
-      insurance: 'Kontrola smlouvy',
+      insurance: 'kontrola smlouvy',
       service: 'naplánovat rozvody',
+      toneStk: 'warn',
+      toneIns: 'warn',
+      toneSvc: 'warn',
       lastService: 'Brzdy — před 5 měsíci',
     },
     {
@@ -50,6 +56,9 @@
       stk: 'po servisu',
       insurance: 'v pořádku',
       service: 'rozpracováno',
+      toneStk: 'bad',
+      toneIns: 'ok',
+      toneSvc: 'bad',
       lastService: 'Diagnostika — probíhá',
     },
   ];
@@ -138,24 +147,28 @@
     bellRing:
       '<svg class="sv-prototype-svg-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>',
     menu: '<svg class="sv-prototype-svg-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>',
+    key: '<svg class="sv-prototype-access-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.65 10A5.99 5.99 0 007 6a6 6 0 106.65 4H17l4 4v2h-2v3h-3v-3h-3.35zM7.5 9a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>',
   };
 
   function heroCarSvg() {
     return (
-      '<svg class="sv-prototype-hero-car-svg" viewBox="0 0 400 160" aria-hidden="true" focusable="false">' +
+      '<svg class="sv-prototype-hero-car-svg" viewBox="0 0 400 175" aria-hidden="true" focusable="false">' +
       '<defs><linearGradient id="svH1" x1="0%" y1="0%" x2="100%" y2="100%">' +
       '<stop offset="0%" stop-color="#1e3a8a"/><stop offset="100%" stop-color="#2563eb"/></linearGradient>' +
       '<linearGradient id="svH2" x1="0%" y1="0%" x2="0%" y2="100%">' +
-      '<stop offset="0%" stop-color="#93c5fd"/><stop offset="100%" stop-color="#1d4ed8"/></linearGradient></defs>' +
-      '<ellipse cx="200" cy="125" rx="170" ry="12" fill="rgba(11,31,122,0.08)"/>' +
-      '<path d="M55 95 L115 75 L260 72 L335 82 L360 98 L360 112 L45 112 Z" fill="url(#svH1)"/>' +
-      '<path d="M120 78 L240 76 L310 84 L318 98 L105 100 Z" fill="url(#svH2)" opacity="0.85"/>' +
-      '<rect x="135" y="82" width="48" height="22" rx="4" fill="rgba(255,255,255,0.25)"/>' +
-      '<rect x="245" y="84" width="40" height="18" rx="3" fill="rgba(255,255,255,0.2)"/>' +
-      '<circle cx="115" cy="112" r="14" fill="#1e293b"/><circle cx="115" cy="112" r="6" fill="#64748b"/>' +
-      '<circle cx="285" cy="112" r="14" fill="#1e293b"/><circle cx="285" cy="112" r="6" fill="#64748b"/>' +
-      '<circle cx="340" cy="108" r="10" fill="#1e293b"/><circle cx="340" cy="108" r="4" fill="#64748b"/>' +
-      '</svg>'
+      '<stop offset="0%" stop-color="#93c5fd"/><stop offset="100%" stop-color="#1d4ed8"/></linearGradient>' +
+      '<filter id="svHs" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="4"/><feOffset dy="8" result="o"/><feFlood flood-color="rgba(11,31,122,0.25)"/><feComposite in2="o" operator="in"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>' +
+      '<path d="M280 118 L340 88 L380 90 L395 108 L395 128 L275 128 Z" fill="rgba(30,41,59,0.12)"/>' +
+      '<ellipse cx="200" cy="138" rx="175" ry="14" fill="rgba(11,31,122,0.07)"/>' +
+      '<g filter="url(#svHs)">' +
+      '<path d="M48 102 L118 78 L268 74 L338 86 L368 104 L368 122 L38 122 Z" fill="url(#svH1)"/>' +
+      '<path d="M125 80 L248 78 L318 88 L328 108 L98 110 Z" fill="url(#svH2)" opacity="0.88"/>' +
+      '<rect x="142" y="86" width="52" height="24" rx="4" fill="rgba(255,255,255,0.28)"/>' +
+      '<rect x="258" y="88" width="44" height="20" rx="3" fill="rgba(255,255,255,0.22)"/>' +
+      '<circle cx="108" cy="122" r="16" fill="#0f172a"/><circle cx="108" cy="122" r="7" fill="#475569"/>' +
+      '<circle cx="278" cy="122" r="16" fill="#0f172a"/><circle cx="278" cy="122" r="7" fill="#475569"/>' +
+      '<circle cx="348" cy="116" r="12" fill="#0f172a"/><circle cx="348" cy="116" r="5" fill="#64748b"/>' +
+      '</g></svg>'
     );
   }
 
@@ -166,43 +179,52 @@
     var gSed = 'svGd' + u;
     if (kind === 'van') {
       return (
-        '<svg class="sv-prototype-card-car" viewBox="0 0 280 100" aria-hidden="true">' +
+        '<svg class="sv-prototype-card-car" viewBox="0 0 280 108" aria-hidden="true">' +
         '<defs><linearGradient id="' +
         gVan +
         '" x1="0" y1="0" x2="1" y2="1">' +
-        '<stop offset="0%" stop-color="#1e40af"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>' +
+        '<stop offset="0%" stop-color="#1d4ed8"/><stop offset="55%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#64748b"/></linearGradient></defs>' +
+        '<ellipse cx="68" cy="100" rx="15" ry="4.5" fill="rgba(15,23,42,0.22)"/>' +
+        '<ellipse cx="212" cy="100" rx="15" ry="4.5" fill="rgba(15,23,42,0.22)"/>' +
         '<path fill="url(#' +
         gVan +
-        ')" d="M20 58 L70 40 L210 38 L248 48 L262 62 L262 72 L18 72 Z"/>' +
-        '<rect x="95" y="44" width="36" height="18" rx="2" fill="rgba(255,255,255,0.35)"/>' +
-        '<circle cx="65" cy="72" r="11" fill="#1e293b"/><circle cx="210" cy="72" r="11" fill="#1e293b"/></svg>'
+        ')" d="M18 56 L68 38 L212 36 L252 46 L266 60 L266 70 L14 70 Z"/>' +
+        '<rect x="92" y="42" width="40" height="19" rx="2" fill="rgba(255,255,255,0.32)"/>' +
+        '<circle cx="62" cy="70" r="12" fill="#0f172a"/><circle cx="62" cy="70" r="5" fill="#64748b"/>' +
+        '<circle cx="208" cy="70" r="12" fill="#0f172a"/><circle cx="208" cy="70" r="5" fill="#64748b"/></svg>'
       );
     }
     if (kind === 'suv') {
       return (
-        '<svg class="sv-prototype-card-car" viewBox="0 0 280 100" aria-hidden="true">' +
+        '<svg class="sv-prototype-card-car" viewBox="0 0 280 108" aria-hidden="true">' +
         '<defs><linearGradient id="' +
         gSuv +
         '" x1="0" y1="0" x2="1" y2="1">' +
-        '<stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#475569"/></linearGradient></defs>' +
+        '<stop offset="0%" stop-color="#020617"/><stop offset="45%" stop-color="#1e293b"/><stop offset="100%" stop-color="#475569"/></linearGradient></defs>' +
+        '<ellipse cx="84" cy="100" rx="13" ry="4" fill="rgba(0,0,0,0.35)"/>' +
+        '<ellipse cx="218" cy="100" rx="13" ry="4" fill="rgba(0,0,0,0.35)"/>' +
         '<path fill="url(#' +
         gSuv +
-        ')" d="M28 62 L95 45 L188 42 L245 52 L258 64 L258 74 L22 74 Z"/>' +
-        '<path fill="rgba(255,255,255,0.2)" d="M105 48 L175 46 L220 54 L225 64 L100 66 Z"/>' +
-        '<circle cx="85" cy="74" r="10" fill="#1e293b"/><circle cx="215" cy="74" r="10" fill="#1e293b"/></svg>'
+        ')" d="M24 60 L98 42 L192 40 L248 50 L262 62 L262 72 L18 72 Z"/>' +
+        '<path fill="rgba(255,255,255,0.16)" d="M108 46 L182 44 L228 52 L232 64 L102 66 Z"/>' +
+        '<circle cx="82" cy="72" r="11" fill="#020617"/><circle cx="82" cy="72" r="4.5" fill="#64748b"/>' +
+        '<circle cx="218" cy="72" r="11" fill="#020617"/><circle cx="218" cy="72" r="4.5" fill="#64748b"/></svg>'
       );
     }
     return (
-      '<svg class="sv-prototype-card-car" viewBox="0 0 280 100" aria-hidden="true">' +
+      '<svg class="sv-prototype-card-car" viewBox="0 0 280 108" aria-hidden="true">' +
       '<defs><linearGradient id="' +
       gSed +
       '" x1="0" y1="0" x2="1" y2="1">' +
-      '<stop offset="0%" stop-color="#111827"/><stop offset="100%" stop-color="#6b7280"/></linearGradient></defs>' +
+      '<stop offset="0%" stop-color="#e5e7eb"/><stop offset="45%" stop-color="#cbd5e1"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs>' +
+      '<ellipse cx="72" cy="102" rx="12" ry="3.8" fill="rgba(15,23,42,0.14)"/>' +
+      '<ellipse cx="214" cy="102" rx="12" ry="3.8" fill="rgba(15,23,42,0.14)"/>' +
       '<path fill="url(#' +
       gSed +
-      ')" d="M22 60 L88 48 L200 46 L252 56 L262 68 L262 76 L20 76 Z"/>' +
-      '<path fill="rgba(255,255,255,0.22)" d="M110 50 L195 48 L235 58 L238 68 L108 70 Z"/>' +
-      '<circle cx="75" cy="76" r="9" fill="#1e293b"/><circle cx="210" cy="76" r="9" fill="#1e293b"/></svg>'
+      ')" d="M20 58 L90 46 L202 44 L254 54 L264 66 L264 74 L16 74 Z"/>' +
+      '<path fill="rgba(255,255,255,0.55)" d="M112 50 L198 48 L238 58 L240 68 L110 70 Z"/>' +
+      '<circle cx="72" cy="74" r="10" fill="#374151"/><circle cx="72" cy="74" r="4" fill="#d1d5db"/>' +
+      '<circle cx="210" cy="74" r="10" fill="#374151"/><circle cx="210" cy="74" r="4" fill="#d1d5db"/></svg>'
     );
   }
 
@@ -253,6 +275,12 @@
   function vehicleVisualClass(kind) {
     var k = kind === 'van' || kind === 'suv' || kind === 'sedan' ? kind : 'sedan';
     return 'sv-prototype-vehicle-visual sv-vehicle-visual sv-vehicle-' + k;
+  }
+
+  function statusValClass(tone) {
+    if (tone === 'ok') return 'sv-prototype-val--ok';
+    if (tone === 'warn') return 'sv-prototype-val--warn';
+    return 'sv-prototype-val--bad';
   }
 
   function onProtoAction(ev) {
@@ -353,13 +381,19 @@
         v.km.toLocaleString('cs-CZ') +
         ' km</strong></span></div></div>' +
         '<div class="sv-prototype-status-lines">' +
-        '<div class="sv-prototype-status-line"><span>STK</span><strong>' +
+        '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">STK</span><strong class="sv-prototype-status-val ' +
+        statusValClass(v.toneStk || 'ok') +
+        '">' +
         escapeHtml(v.stk) +
         '</strong></div>' +
-        '<div class="sv-prototype-status-line"><span>Pojištění</span><strong>' +
+        '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">Pojištění</span><strong class="sv-prototype-status-val ' +
+        statusValClass(v.toneIns || 'ok') +
+        '">' +
         escapeHtml(v.insurance) +
         '</strong></div>' +
-        '<div class="sv-prototype-status-line"><span>Servis</span><strong>' +
+        '<div class="sv-prototype-status-line"><span class="sv-prototype-status-label">Servis</span><strong class="sv-prototype-status-val ' +
+        statusValClass(v.toneSvc || 'ok') +
+        '">' +
         escapeHtml(v.service) +
         '</strong></div></div>' +
         '<div class="sv-prototype-vehicle-actions">' +
@@ -540,7 +574,11 @@
             '</h4>' +
             '<button type="button" class="sv-prototype-access-menu" aria-label="Menu" data-sv-mock-action="1">' +
             '<span></span><span></span><span></span></button></div>' +
-            '<div class="sv-prototype-access-row">' +
+            '<div class="sv-prototype-access-icons" aria-hidden="true">' +
+            ICO.key +
+            ICO.doc +
+            ICO.wrench +
+            '</div>' +
             '<span class="sv-prototype-access-type">' +
             escapeHtml(a.accessType) +
             '</span>' +
@@ -548,7 +586,7 @@
             accessBadgeClass(a.badgeKind) +
             '">' +
             escapeHtml(a.badge) +
-            '</span></div></div>'
+            '</span></div>'
           );
         }).join('') +
         '<button type="button" class="sv-prototype-btn-primary sv-prototype-btn-add-svc" data-sv-mock-action="1">+ Přidat servis</button>' +
@@ -604,7 +642,7 @@
       var tab = t.closest('[data-sv-tab]');
       var toggle = t.closest('[data-sv-toggle-demo]');
       var fab = t.closest('[data-sv-fab]');
-      var quick = t.closest('[data-sv-quick-mock]');
+      var sect = t.closest('[data-sv-section-mock]');
 
       if (navItem) {
         state.activeNav = navItem.getAttribute('data-sv-nav-key') || 'overview';
@@ -645,6 +683,10 @@
         state.activeTabIdx = parseInt(tab.getAttribute('data-sv-tab'), 10) || 0;
         renderDetail(root);
         if (state.activeTabIdx > 0) showToast('Záložka „' + TAB_LABELS[state.activeTabIdx] + '“ — pouze vizuální prototyp.');
+        return;
+      }
+      if (sect) {
+        onProtoAction(ev);
         return;
       }
       if (quick) {
@@ -702,6 +744,7 @@
       '<button type="button" class="sv-prototype-btn-ghost" data-sv-mock-action="1">Sbalit</button>' +
       '</div></aside>' +
       '<div class="sv-prototype-main">' +
+      '<div class="sv-prototype-main-frame">' +
       '<header class="sv-prototype-topbar">' +
       '<div class="sv-prototype-search">' +
       '<span class="sv-prototype-search-icon" aria-hidden="true">' +
@@ -729,14 +772,14 @@
       '<div class="sv-prototype-hero-copy">' +
       '<h1>Dobrý den, ' +
       escapeHtml(DEMO_USER.firstName) +
-      'i 👋</h1>' +
-      '<p class="sv-prototype-hero-summary">Máte <span class="sv-prototype-stat sv-prototype-stat--navy">' +
+      'i</h1>' +
+      '<p class="sv-prototype-hero-summary">Máte <span class="sv-prototype-stat-pill sv-prototype-stat-pill--navy">' +
       DEMO_SUMMARY.vehicles +
       '</span> vozidla, ' +
-      '<span class="sv-prototype-stat sv-prototype-stat--amber">' +
+      '<span class="sv-prototype-stat-pill sv-prototype-stat-pill--amber">' +
       DEMO_SUMMARY.stkSoon +
       '</span> blížící se STK a ' +
-      '<span class="sv-prototype-stat sv-prototype-stat--blue">' +
+      '<span class="sv-prototype-stat-pill sv-prototype-stat-pill--blue">' +
       DEMO_SUMMARY.reminders +
       '</span> aktivní připomínky.</p>' +
       '</div>' +
@@ -751,7 +794,7 @@
       ICO.quickStk +
       '</span>' +
       '<span class="sv-prototype-quick-body"><strong>STK do 42 dnů</strong>' +
-      '<span class="sv-prototype-quick-desc">VW Transporter · zbývá lhůta</span></span>' +
+      '<span class="sv-prototype-quick-desc">VW Transporter – zbývá lhůta</span></span>' +
       '<span class="sv-prototype-quick-arrow" aria-hidden="true">→</span></button>' +
       '<button type="button" class="sv-prototype-quick-tile sv-prototype-quick-tile--ok" data-sv-quick-mock="1">' +
       '<span class="sv-prototype-quick-ico-wrap">' +
@@ -768,22 +811,27 @@
       '<span class="sv-prototype-quick-desc">VW Transporter T5.1</span></span>' +
       '<span class="sv-prototype-quick-arrow" aria-hidden="true">→</span></button>' +
       '</div></div>' +
+      '<div class="sv-prototype-section-head">' +
+      '<div class="sv-prototype-section-head-text">' +
       '<h2 class="sv-prototype-section-title">Moje vozidla</h2>' +
+      '<p class="sv-prototype-section-sub">Přehled vozidel, stavů a nejbližších termínů.</p></div>' +
+      '<button type="button" class="sv-prototype-btn-section" data-sv-section-mock="1">Zobrazit vše</button></div>' +
       '<div class="sv-prototype-vehicle-grid" data-sv-vehicle-grid></div></div>' +
       '<div class="sv-prototype-view" data-sv-view-detail hidden>' +
       '<button type="button" class="sv-prototype-back" data-sv-back>← Zpět na přehled</button>' +
-      '<div class="sv-prototype-detail-header">' +
+      '<div class="sv-prototype-detail-header-card">' +
       '<div class="sv-prototype-detail-photo" data-sv-detail-photo></div>' +
-      '<div class="sv-prototype-detail-head-copy">' +
-      '<div class="sv-prototype-detail-title-row">' +
+      '<div class="sv-prototype-detail-head-main">' +
       '<h2 data-sv-detail-title></h2>' +
-      '<span data-sv-detail-badge class="sv-prototype-badge"></span></div>' +
-      '<div class="sv-prototype-detail-meta" data-sv-detail-meta></div>' +
-      '<div class="sv-prototype-tabs" data-sv-detail-tabs></div></div></div>' +
+      '<div class="sv-prototype-detail-meta" data-sv-detail-meta></div></div>' +
+      '<div class="sv-prototype-detail-head-aside">' +
+      '<span data-sv-detail-badge class="sv-prototype-badge"></span></div></div>' +
+      '<div class="sv-prototype-tabs-shell">' +
+      '<div class="sv-prototype-tabs" data-sv-detail-tabs></div></div>' +
       '<div class="sv-prototype-detail-grid">' +
       '<div class="sv-prototype-detail-col sv-prototype-detail-col--timeline" data-sv-detail-overview></div>' +
       '<div class="sv-prototype-detail-col sv-prototype-detail-col--main" data-sv-detail-col2></div>' +
-      '<div class="sv-prototype-detail-col sv-prototype-detail-col--aside" data-sv-detail-col3></div></div></div></div></div>' +
+      '<div class="sv-prototype-detail-col sv-prototype-detail-col--aside" data-sv-detail-col3></div></div></div></div></div></div>' +
       '<nav class="sv-prototype-bottom-nav" data-sv-bottom-nav aria-label="Mobilní navigace"></nav>' +
       '<button type="button" class="sv-prototype-fab" data-sv-fab aria-label="Přidat">+</button>' +
       '<div class="sv-prototype-toast-host" role="status" aria-live="polite"></div></div>';
