@@ -2209,3 +2209,19 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* --- Přehled vs. Moje vozidla (navigace prototypu) --- */
+.sv-prototype .sv-prototype-overview-block[hidden] {
+  display: none !important;
+}
+
+.sv-prototype .sv-prototype-section-count {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--sv-primary);
+}
+
+.sv-prototype [data-sv-dashboard-root].is-sv-view-vehicles .sv-prototype-section-head {
+  margin-top: 0.25rem;
+}

@@ -110,6 +110,9 @@
     { name: 'AutoPoint Praha', detail: 'Žádost o rozšíření' },
   ];
 
+  /** Počet karet vozidel na Přehledu (zbytek přes „Moje vozidla“). */
+  var OVERVIEW_VEHICLE_PREVIEW_COUNT = 3;
+
   var NAV_ITEMS = [
     { key: 'overview', label: 'Přehled', ico: 'home' },
     { key: 'vehicles', label: 'Moje vozidla', ico: 'car' },
@@ -236,8 +239,8 @@
 
   var state = {
     activeNav: 'overview',
-    view: 'dashboard',
-    vehicleId: null,
+    view: 'overview',
+    activeVehicleId: null,
     activeTabIdx: 0,
     toastTimer: null,
     cardFlashTimer: null,
@@ -631,6 +634,18 @@
     }
   }
 
+  function applyEmptyStateVisibility(root) {
+    var empty = root.querySelector('[data-sv-empty-vehicles]');
+    var grid = root.querySelector('[data-sv-vehicle-grid]');
+    if (!empty || !grid) return;
+    var isEmptyReal =
+      state.dataSource === 'real' &&
+      Array.isArray(state.runtimeVehicles) &&
+      state.runtimeVehicles.length === 0;
+    empty.hidden = !isEmptyReal;
+    grid.hidden = isEmptyReal;
+  }
+
   function applyDashboardData(root, opts) {
     opts = opts || {};
     setDashboardLoading(root, false);
@@ -639,18 +654,12 @@
     if (opts.me !== undefined) state.currentMe = opts.me;
     state.detailTimelineIsSample = true;
     updateProfileUi(root);
+    updateMainChrome(root);
     renderHero(root);
     renderVehicleCards(root);
     setDataSourceBadge(root, opts);
     renderProtoDebug(root);
-    var empty = root.querySelector('[data-sv-empty-vehicles]');
-    var grid = root.querySelector('[data-sv-vehicle-grid]');
-    if (empty && grid) {
-      var list = getVehicleList();
-      var isEmptyReal = state.dataSource === 'real' && Array.isArray(state.runtimeVehicles) && state.runtimeVehicles.length === 0;
-      empty.hidden = !isEmptyReal;
-      grid.hidden = isEmptyReal;
-    }
+    applyEmptyStateVisibility(root);
   }
 
   function logProtoRealDebug() {
@@ -824,11 +833,113 @@
     return null;
   }
 
+  function sidebarNavItemActive(key) {
+    if (state.view === 'overview') return key === 'overview';
+    if (state.view === 'vehicles' || state.view === 'detail') return key === 'vehicles';
+    return state.activeNav === key;
+  }
+
+  function bottomNavItemActive(key) {
+    if (key === 'overview') return state.view === 'overview';
+    if (key === 'vehicles') return state.view === 'vehicles' || state.view === 'detail';
+    return state.view !== 'detail' && state.activeNav === key;
+  }
+
+  function updateMainChrome(root) {
+    var ob = root.querySelector('[data-sv-overview-block]');
+    if (ob) ob.hidden = state.view === 'vehicles';
+
+    var dash = root.querySelector('[data-sv-dashboard-root]');
+    if (dash) {
+      dash.classList.toggle('is-sv-view-vehicles', state.view === 'vehicles');
+      dash.classList.toggle('is-sv-view-overview', state.view === 'overview');
+    }
+
+    var title = root.querySelector('[data-sv-vehicle-section-title]');
+    var sub = root.querySelector('[data-sv-vehicle-section-sub]');
+    var btnAll = root.querySelector('[data-sv-show-all-vehicles]');
+    var countEl = root.querySelector('[data-sv-vehicles-count-line]');
+    if (title) title.textContent = 'Moje vozidla';
+    if (sub && countEl && btnAll) {
+      if (state.view === 'vehicles') {
+        sub.textContent = 'Kompletní seznam vozidel ve vašem účtu.';
+        btnAll.hidden = true;
+        countEl.hidden = false;
+        var n = getVehicleList().length;
+        var word = n === 1 ? 'vozidlo' : n > 1 && n < 5 ? 'vozidla' : 'vozidel';
+        countEl.textContent = 'Celkem ' + n + ' ' + word + ' ve vašem účtu.';
+      } else {
+        sub.textContent =
+          'Náhled — zobrazena první ' +
+          OVERVIEW_VEHICLE_PREVIEW_COUNT +
+          ' vozidla. Otevřete „Moje vozidla“ pro celý seznam.';
+        btnAll.hidden = false;
+        countEl.hidden = true;
+      }
+    }
+
+    var inp = root.querySelector('[data-sv-search-filter]');
+    if (inp) {
+      inp.placeholder =
+        state.view === 'vehicles' ? 'Vyhledat podle SPZ, VIN, názvu…' : 'Hledat SPZ, VIN…';
+    }
+  }
+
+  function scrollDashboardTop(root) {
+    var sc = root.querySelector('.sv-prototype-scroll');
+    if (sc) sc.scrollTop = 0;
+  }
+
+  function goToOverview(root) {
+    state.view = 'overview';
+    state.activeVehicleId = null;
+    state.activeNav = 'overview';
+    state.activeTabIdx = 0;
+    renderNav(root);
+    renderBottomNav(root);
+    syncViews(root);
+    updateMainChrome(root);
+    renderHero(root);
+    renderVehicleCards(root);
+    applyEmptyStateVisibility(root);
+    renderProtoDebug(root);
+    scrollDashboardTop(root);
+  }
+
+  function goToVehicles(root) {
+    state.view = 'vehicles';
+    state.activeVehicleId = null;
+    state.activeNav = 'vehicles';
+    state.activeTabIdx = 0;
+    renderNav(root);
+    renderBottomNav(root);
+    syncViews(root);
+    updateMainChrome(root);
+    renderHero(root);
+    renderVehicleCards(root);
+    applyEmptyStateVisibility(root);
+    renderProtoDebug(root);
+    scrollDashboardTop(root);
+  }
+
+  function openVehicleDetail(root, vid) {
+    state.activeVehicleId = vid;
+    state.view = 'detail';
+    state.activeNav = 'vehicles';
+    state.activeTabIdx = 0;
+    renderNav(root);
+    renderBottomNav(root);
+    syncViews(root);
+    flashCard(root, vid);
+    renderDetail(root);
+    scrollDashboardTop(root);
+  }
+
   function renderNav(root) {
     var nav = root.querySelector('[data-sv-nav]');
     if (!nav) return;
     nav.innerHTML = NAV_ITEMS.map(function (item) {
-      var active = state.activeNav === item.key ? ' is-active' : '';
+      var active = sidebarNavItemActive(item.key) ? ' is-active' : '';
       var svg = ICO[item.ico] || ICO.home;
       return (
         '<button type="button" class="sv-prototype-nav-item' +
@@ -854,7 +965,7 @@
     var labels = ['Přehled', 'Vozidla', 'Připomínky', 'Dokumenty', 'Menu'];
     bot.innerHTML = keys
       .map(function (key, idx) {
-        var active = state.view === 'dashboard' && state.activeNav === key ? ' is-active' : '';
+        var active = bottomNavItemActive(key) ? ' is-active' : '';
         var svg = ICO[mapIco[key]] || ICO.home;
         return (
           '<button type="button" class="sv-prototype-bottom-item' +
@@ -891,6 +1002,9 @@
       var hay = (v.name + ' ' + v.plate + ' ' + v.vin).toLowerCase();
       return hay.indexOf(q) >= 0;
     });
+    if (state.view === 'overview') {
+      list = list.slice(0, OVERVIEW_VEHICLE_PREVIEW_COUNT);
+    }
     grid.innerHTML = list
       .map(function (v) {
         return (
@@ -964,7 +1078,7 @@
   }
 
   function renderDetail(root) {
-    var v = getVehicle(state.vehicleId);
+    var v = getVehicle(state.activeVehicleId);
     if (!v) return;
     var imgEl = root.querySelector('[data-sv-detail-photo]');
     var titleEl = root.querySelector('[data-sv-detail-title]');
@@ -1158,8 +1272,8 @@
     var dash = root.querySelector('[data-sv-view-dashboard]');
     var det = root.querySelector('[data-sv-view-detail]');
     if (dash) {
-      dash.hidden = state.view !== 'dashboard';
-      dash.classList.toggle('sv-prototype-view--entering', state.view === 'dashboard');
+      dash.hidden = state.view === 'detail';
+      dash.classList.toggle('sv-prototype-view--entering', state.view !== 'detail');
     }
     if (det) {
       det.hidden = state.view !== 'detail';
@@ -1198,51 +1312,60 @@
       var tab = t.closest('[data-sv-tab]');
       var toggle = t.closest('[data-sv-toggle-demo]');
       var fab = t.closest('[data-sv-fab]');
-      var sect = t.closest('[data-sv-section-mock]');
+
+      if (t.closest('[data-sv-show-all-vehicles]')) {
+        ev.preventDefault();
+        goToVehicles(root);
+        return;
+      }
 
       if (navItem) {
-        state.activeNav = navItem.getAttribute('data-sv-nav-key') || 'overview';
+        var nkey = navItem.getAttribute('data-sv-nav-key') || 'overview';
+        if (nkey === 'overview') {
+          goToOverview(root);
+          return;
+        }
+        if (nkey === 'vehicles') {
+          goToVehicles(root);
+          return;
+        }
+        state.activeNav = nkey;
         renderNav(root);
         renderBottomNav(root);
-        if (state.activeNav !== 'overview' && state.activeNav !== 'vehicles') onProtoAction();
+        onProtoAction();
         return;
       }
       if (bottom) {
-        state.activeNav = bottom.getAttribute('data-sv-bottom-key') || 'overview';
-        state.view = 'dashboard';
+        var bkey = bottom.getAttribute('data-sv-bottom-key') || 'overview';
+        if (bkey === 'overview') {
+          goToOverview(root);
+          return;
+        }
+        if (bkey === 'vehicles') {
+          goToVehicles(root);
+          return;
+        }
+        state.activeNav = bkey;
         renderNav(root);
         renderBottomNav(root);
         syncViews(root);
-        if (state.activeNav !== 'overview' && state.activeNav !== 'vehicles') onProtoAction();
+        onProtoAction();
         return;
       }
       if (openV) {
         if (stopBtn) ev.stopPropagation();
         var vid = openV.getAttribute('data-sv-open-vehicle');
-        state.vehicleId = vid;
-        state.view = 'detail';
-        state.activeTabIdx = 0;
-        flashCard(root, vid);
-        syncViews(root);
-        renderDetail(root);
-        var sc = root.querySelector('.sv-prototype-scroll');
-        if (sc) sc.scrollTop = 0;
+        openVehicleDetail(root, vid);
         return;
       }
       if (back) {
-        state.view = 'dashboard';
-        state.vehicleId = null;
-        syncViews(root);
+        goToOverview(root);
         return;
       }
       if (tab) {
         state.activeTabIdx = parseInt(tab.getAttribute('data-sv-tab'), 10) || 0;
         renderDetail(root);
         if (state.activeTabIdx > 0) showToast('Záložka „' + TAB_LABELS[state.activeTabIdx] + '“ — pouze vizuální prototyp.');
-        return;
-      }
-      if (sect) {
-        onProtoAction(ev);
         return;
       }
       if (t.closest('[data-sv-quick-mock]')) {
@@ -1273,12 +1396,7 @@
         if (!card || ev.target.closest('.sv-prototype-vehicle-actions')) return;
         ev.preventDefault();
         var vid = card.getAttribute('data-sv-open-vehicle');
-        state.vehicleId = vid;
-        state.view = 'detail';
-        state.activeTabIdx = 0;
-        flashCard(root, vid);
-        syncViews(root);
-        renderDetail(root);
+        openVehicleDetail(root, vid);
       },
       true,
     );
@@ -1338,6 +1456,7 @@
       '</span></div>' +
       '<pre class="sv-prototype-debug-panel" data-sv-proto-debug hidden></pre>' +
       '<div class="sv-prototype-view" data-sv-view-dashboard data-sv-dashboard-root>' +
+      '<div class="sv-prototype-overview-block" data-sv-overview-block>' +
       '<div class="sv-prototype-hero-bundle">' +
       '<div class="sv-prototype-hero-panel">' +
       '<div class="sv-prototype-hero-copy sv-prototype-hero-content">' +
@@ -1371,12 +1490,13 @@
       '<span class="sv-prototype-quick-body"><strong>Poslední servis před 3 měsíci</strong>' +
       '<span class="sv-prototype-quick-desc">VW Transporter T5.1</span></span>' +
       '<span class="sv-prototype-quick-arrow" aria-hidden="true">→</span></button>' +
-      '</div></div>' +
+      '</div></div></div>' +
       '<div class="sv-prototype-section-head">' +
       '<div class="sv-prototype-section-head-text">' +
-      '<h2 class="sv-prototype-section-title">Moje vozidla</h2>' +
-      '<p class="sv-prototype-section-sub">Přehled vozidel, stavů a nejbližších termínů.</p></div>' +
-      '<button type="button" class="sv-prototype-btn-section" data-sv-section-mock="1">Zobrazit vše</button></div>' +
+      '<h2 class="sv-prototype-section-title" data-sv-vehicle-section-title>Moje vozidla</h2>' +
+      '<p class="sv-prototype-section-sub" data-sv-vehicle-section-sub>Náhled vozidel.</p>' +
+      '<p class="sv-prototype-section-count" data-sv-vehicles-count-line hidden></p></div>' +
+      '<button type="button" class="sv-prototype-btn-section" data-sv-show-all-vehicles>Zobrazit vše</button></div>' +
       '<div class="sv-prototype-vehicle-grid" data-sv-vehicle-grid></div>' +
       '<div class="sv-prototype-empty-vehicles" data-sv-empty-vehicles hidden>' +
       '<p class="sv-prototype-empty-vehicles-text">Zatím nemáte přidané žádné vozidlo.</p>' +
@@ -1402,10 +1522,11 @@
       '<div class="sv-prototype-toast-host" role="status" aria-live="polite"></div></div>';
 
     state.activeNav = 'overview';
-    state.view = 'dashboard';
+    state.view = 'overview';
     renderNav(container);
     renderBottomNav(container);
     syncViews(container);
+    updateMainChrome(container);
     bind(container);
     bootstrapDashboard(container);
   }
