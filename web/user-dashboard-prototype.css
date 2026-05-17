@@ -927,6 +927,12 @@
 .sv-prototype-status-val {
   font-weight: 700;
   text-align: right;
+  max-width: 58%;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
 }
 
 .sv-prototype-status-val.sv-prototype-val--ok {
@@ -1347,6 +1353,22 @@
   font-size: 0.86rem;
   color: var(--sv-muted);
   line-height: 1.45;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.sv-prototype-last-svc-hint {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--sv-muted);
 }
 
 .sv-prototype-upcoming-val--warn {
@@ -2592,7 +2614,11 @@
 }
 
 .sv-prototype-quick-card-title {
-  display: block;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  word-break: break-word;
+  overflow: hidden;
   font-size: 0.88rem;
   font-weight: 700;
   color: var(--sv-text);
@@ -2600,7 +2626,11 @@
 }
 
 .sv-prototype-quick-card-desc {
-  display: block;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  word-break: break-word;
+  overflow: hidden;
   font-size: 0.78rem;
   color: var(--sv-muted);
   margin-top: 0.2rem;

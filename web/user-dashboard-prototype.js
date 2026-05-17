@@ -393,6 +393,138 @@
     return 'sedan';
   }
 
+  /**
+   * Detect MDČR / VIN decoder / technical specification blobs that must never
+   * be shown as “servisní” stav (quick card, Poslední servis, apod.).
+   */
+  function isTechnicalDecodeText(value) {
+    if (value == null) return false;
+    var t = String(value).toLowerCase();
+    var p = [
+      'dekódováno z',
+      'decodováno z',
+      'mdcr',
+      'local_vin',
+      'pneumatik',
+      'kola a ',
+      'emisní norma',
+      'emisni norma',
+      'euro ',
+      'euro5',
+      'euro6',
+      'typ motoru',
+      'objem motoru',
+      'zdvihový objem',
+      'zdvihovy objem',
+      'výkon',
+      'vykon',
+      'karoserie',
+      'karosérie',
+      'druh vozidla',
+      'hmotnosti vozidla',
+      'technický průkaz',
+      'technicky prukaz',
+      'mdv/',
+      'vin dekod',
+    ];
+    for (var i = 0; i < p.length; i++) {
+      if (t.indexOf(p[i]) >= 0) return true;
+    }
+    return false;
+  }
+
+  /** Vrací bezpečný servisní text nebo null (max ~70 znaků). */
+  function normalizeServiceText(value) {
+    if (value == null || typeof value !== 'string') return null;
+    var s = value.replace(/\s+/g, ' ').trim();
+    if (!s) return null;
+    if (isTechnicalDecodeText(s)) return null;
+    var maxLen = 70;
+    if (s.length > maxLen) return s.slice(0, maxLen - 1) + '…';
+    return s;
+  }
+
+  function tryPushServiceCandidate(buf, val) {
+    var n = normalizeServiceText(val);
+    if (n) buf.push(n);
+  }
+
+  /** Servisní pole z API — výhradně povolené zdroje; nikdy technical_* / mdcr / vin summary. */
+  function mapServiceFieldsFromApi(v, statusLower) {
+    var st = String(statusLower || '').toLowerCase();
+    if (st === 'service' || st === 'in_service') {
+      return {
+        service: 'v servisu',
+        lastService: 'V servisu',
+        serviceLabel: 'Probíhá servisní zakázka',
+        toneSvc: 'bad',
+      };
+    }
+
+    var cand = [];
+
+    var rec = v.latest_service_record;
+    if (rec && typeof rec === 'object' && !Array.isArray(rec)) {
+      tryPushServiceCandidate(cand, rec.title);
+      tryPushServiceCandidate(cand, rec.summary);
+      tryPushServiceCandidate(cand, rec.description);
+      tryPushServiceCandidate(cand, rec.label);
+    }
+    var wo = v.open_work_order || v.active_service_order;
+    if (wo && typeof wo === 'object' && !Array.isArray(wo)) {
+      tryPushServiceCandidate(cand, wo.title || wo.name);
+      tryPushServiceCandidate(cand, wo.status_label);
+      tryPushServiceCandidate(cand, wo.summary);
+    }
+
+    var strKeys = ['last_service', 'last_service_label', 'service_summary', 'service_records_summary'];
+    for (var i = 0; i < strKeys.length; i++) {
+      tryPushServiceCandidate(cand, v[strKeys[i]]);
+    }
+
+    tryPushServiceCandidate(cand, v.service_status);
+
+    tryPushServiceCandidate(cand, v.notes);
+    tryPushServiceCandidate(cand, v.description);
+
+    var picked = cand.length ? cand[0] : null;
+
+    if (!picked) {
+      var rawDt = v.last_service_at != null ? v.last_service_at : v.last_service_date;
+      if (rawDt != null && String(rawDt).trim()) {
+        var d = parseIsoDate(rawDt);
+        if (d) {
+          try {
+            var line = 'Poslední servis — ' + d.toLocaleDateString('cs-CZ');
+            return {
+              service: 'evidováno',
+              lastService: line,
+              serviceLabel: 'Datum posledního servisu',
+              toneSvc: 'ok',
+            };
+          } catch (e2) {}
+        }
+      }
+    }
+
+    if (picked) {
+      var short = picked.length > 35 ? picked.slice(0, 32) + '…' : picked;
+      return {
+        service: short,
+        lastService: picked,
+        serviceLabel: 'Poslední servis',
+        toneSvc: 'ok',
+      };
+    }
+
+    return {
+      service: 'bez záznamu',
+      lastService: 'Bez servisního záznamu',
+      serviceLabel: 'Doplňte servisní historii',
+      toneSvc: 'warn',
+    };
+  }
+
   function mapVehicleFromApi(vehicle) {
     var v = vehicle || {};
     var brand = String(v.brand != null ? v.brand : '').trim();
@@ -454,15 +586,12 @@
       toneIns = 'ok';
     }
 
-    var service = 'ověřit servis';
-    var toneSvc = 'ok';
-    var lastService = 'Údaj o servisu zatím nevyplněný.';
-    if (v.notes != null && String(v.notes).trim()) {
-      var note = String(v.notes).trim();
-      lastService = note.length > 120 ? note.slice(0, 117) + '…' : note;
-      service = 'viz poznámku';
-      toneSvc = 'warn';
-    }
+    var rawStEarly = String(v.status || '').toLowerCase();
+    var svcMap = mapServiceFieldsFromApi(v, rawStEarly);
+    var service = svcMap.service;
+    var lastService = svcMap.lastService;
+    var serviceLabel = svcMap.serviceLabel;
+    var toneSvc = svcMap.toneSvc;
 
     var rawArchived =
       v.archived === true ||
@@ -481,7 +610,7 @@
       statusLabel = 'Čeká na schválení';
     }
 
-    var rawSt = String(v.status || '').toLowerCase();
+    var rawSt = rawStEarly;
     if (!rawArchived && (rawSt === 'service' || rawSt === 'in_service')) {
       status = 'service';
       statusLabel = 'V servisu';
@@ -509,6 +638,7 @@
       toneIns: toneIns,
       toneSvc: toneSvc,
       lastService: lastService,
+      serviceLabel: serviceLabel,
       _fromApi: true,
       _archived: !!rawArchived,
     };
@@ -773,11 +903,64 @@
         break;
       }
     }
-    var lastSvcLine = 'Poslední servis — zkontrolujte v aplikaci';
-    if (firstVan && firstVan.lastService) {
-      lastSvcLine = String(firstVan.lastService);
-    } else if (list[0] && list[0].lastService) {
-      lastSvcLine = String(list[0].lastService);
+    var svcBlock;
+    if (state.dataSource === 'demo' && !state.runtimeVehicles) {
+      var lastSvcLine = 'Poslední servis — zkontrolujte v aplikaci';
+      if (firstVan && firstVan.lastService) {
+        var nd = normalizeServiceText(String(firstVan.lastService));
+        lastSvcLine = nd || lastSvcLine;
+      } else if (list[0] && list[0].lastService) {
+        var nd0 = normalizeServiceText(String(list[0].lastService));
+        lastSvcLine = nd0 || lastSvcLine;
+      }
+      svcBlock = {
+        tone: svcWarn > 0 ? 'warning' : 'info',
+        title: list.length ? lastSvcLine : 'Servis',
+        desc: svcWarn > 0 ? 'Doporučujeme naplánovat servis' : 'Váš vůz je podle údajů v pořádku',
+      };
+    } else {
+      var inSvcFleet = false;
+      for (var k = 0; k < list.length; k++) {
+        if (getVehicleStatus(list[k]) === 'service') {
+          inSvcFleet = true;
+          break;
+        }
+      }
+      if (inSvcFleet) {
+        svcBlock = {
+          tone: 'warning',
+          title: 'Vozidlo v servisu',
+          desc: 'Zkontrolujte stav servisní zakázky',
+        };
+      } else {
+        var hasRealSvc = false;
+        var sampleSvc = '';
+        for (var m = 0; m < list.length; m++) {
+          var nt = normalizeServiceText(list[m].lastService);
+          if (nt && nt !== 'Bez servisního záznamu' && nt !== 'V servisu') {
+            hasRealSvc = true;
+            sampleSvc = nt;
+            break;
+          }
+        }
+        if (!list.length) {
+          svcBlock = { tone: 'info', title: 'Servis', desc: 'Žádné vozidlo' };
+        } else if (hasRealSvc && sampleSvc) {
+          var lim = 52;
+          var tail = sampleSvc.length > lim ? sampleSvc.slice(0, lim - 1) + '…' : sampleSvc;
+          svcBlock = {
+            tone: 'info',
+            title: 'Poslední servis — ' + tail,
+            desc: 'Zkontrolujte servisní historii v aplikaci',
+          };
+        } else {
+          svcBlock = {
+            tone: 'warning',
+            title: 'Bez servisního záznamu',
+            desc: 'Doplňte první servisní záznam',
+          };
+        }
+      }
     }
     return {
       stk: {
@@ -790,11 +973,7 @@
         title: insWarn + insBad > 0 ? 'Zkontrolujte pojistné smlouvy' : 'Všechna vozidla v pořádku',
         desc: insWarn + insBad > 0 ? 'Zkontrolujte pojištění' : 'Platné smlouvy',
       },
-      svc: {
-        tone: svcWarn > 0 ? 'warning' : 'info',
-        title: list.length ? lastSvcLine : 'Servis',
-        desc: svcWarn > 0 ? 'Doporučujeme naplánovat servis' : 'Váš vůz je podle údajů v pořádku',
-      },
+      svc: svcBlock,
       docs: {
         tone: docPending > 0 ? 'warning' : 'success',
         title: docPending > 0 ? docPending + ' dokumenty čekají na doplnění' : 'Dokumenty v pořádku',
@@ -1791,6 +1970,9 @@
         '<div class="sv-prototype-last-svc-body">' +
         '<p class="sv-prototype-last-svc-text">' +
         escapeHtml(v.lastService) +
+        (v.serviceLabel && v.lastService === 'Bez servisního záznamu'
+          ? '<br><span class="sv-prototype-last-svc-hint">' + escapeHtml(v.serviceLabel) + '</span>'
+          : '') +
         '</p>' +
         '<button type="button" class="sv-prototype-btn-primary sv-prototype-btn-compact" data-sv-mock-action="1">Zobrazit detail</button>' +
         '</div></div></div>' +
@@ -2248,4 +2430,10 @@
     var el = document.getElementById('sv-prototype-root');
     if (el) mount(el);
   });
+
+  /*
+   * Servis vs MDČR: interní kontrola mapování (v konzoli, bez spamu v produkci):
+   *   normalizeServiceText('Dekódováno z: mdcr … pneumatiky …') === null
+   *   normalizeServiceText('Výměna oleje před 3 měsíci') !== null
+   */
 })();
