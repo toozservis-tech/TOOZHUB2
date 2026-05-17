@@ -7,7 +7,14 @@
   <title>Správa vozidel — vizuální prototyp (Fáze 1)</title>
   <link rel="stylesheet" href="user-dashboard-prototype.css" />
   <!-- Samostatná stránka: margin jen pro tuto HTML; produkční shell se netýká. -->
-  <style>body { margin: 0; }</style>
+  <style>
+    html,
+    body {
+      margin: 0;
+      max-width: 100%;
+      overflow-x: clip;
+    }
+  </style>
 </head>
 <body>
   <!-- Izolovaný prototyp: nesahá na produkční shell ani index.html. Demo data v user-dashboard-prototype.js -->

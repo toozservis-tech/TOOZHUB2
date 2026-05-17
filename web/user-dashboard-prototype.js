@@ -751,7 +751,7 @@
       ICO.search +
       '</span>' +
       '<label class="sr-only" for="sv-proto-search">Hledat vozidlo</label>' +
-      '<input id="sv-proto-search" type="search" autocomplete="off" placeholder="Hledat podle SPZ, VIN…" data-sv-mock-action="1" />' +
+      '<input id="sv-proto-search" type="search" autocomplete="off" placeholder="Hledat SPZ, VIN…" data-sv-mock-action="1" />' +
       '</div>' +
       '<button type="button" class="sv-prototype-btn-primary sv-prototype-btn-add-vehicle" data-sv-mock-action="1">' +
       '<span class="sv-prototype-btn-label-full">+ Přidat vozidlo</span>' +
@@ -769,7 +769,7 @@
       '<div class="sv-prototype-view" data-sv-view-dashboard>' +
       '<div class="sv-prototype-hero-bundle">' +
       '<div class="sv-prototype-hero-panel">' +
-      '<div class="sv-prototype-hero-copy">' +
+      '<div class="sv-prototype-hero-copy sv-prototype-hero-content">' +
       '<h1>Dobrý den, ' +
       escapeHtml(DEMO_USER.firstName) +
       'i</h1>' +
@@ -783,7 +783,7 @@
       DEMO_SUMMARY.reminders +
       '</span> aktivní připomínky.</p>' +
       '</div>' +
-      '<div class="sv-prototype-hero-art" aria-hidden="true">' +
+      '<div class="sv-prototype-hero-art sv-prototype-hero-visual" aria-hidden="true">' +
       '<div class="sv-prototype-hero-landscape"></div>' +
       '<div class="sv-prototype-hero-car-wrap">' +
       heroCarSvg() +
