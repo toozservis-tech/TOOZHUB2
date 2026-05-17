@@ -247,6 +247,12 @@
     currentMe: null,
     detailTimelineIsSample: true,
     loginHref: 'index.html',
+    protoDiag: {
+      meStatus: null,
+      authenticated: false,
+      vehiclesStatus: null,
+      vehiclesCount: null,
+    },
   };
 
   function getQueryFlag(name) {
@@ -260,50 +266,103 @@
     }
   }
 
-  function apiGet(path) {
+  /** Stejný zdroj tokenu jako service-shell.js (Bearer pro /api/*). */
+  function getStoredAccessToken() {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        var a = localStorage.getItem('accessToken');
+        if (a && String(a).trim()) return String(a).trim();
+        var t = localStorage.getItem('token');
+        if (t && String(t).trim()) return String(t).trim();
+      }
+      if (typeof sessionStorage !== 'undefined') {
+        var s = sessionStorage.getItem('accessToken');
+        if (s && String(s).trim()) return String(s).trim();
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function authHeadersJson() {
+    var h = { Accept: 'application/json' };
+    var tok = getStoredAccessToken();
+    if (tok) h['Authorization'] = 'Bearer ' + tok;
+    return h;
+  }
+
+  function isSessionAuthenticated(me) {
+    if (!me || typeof me !== 'object') return false;
+    if (me.authenticated === true) return true;
+    if (me.is_authenticated === true) return true;
+    if (me.user != null && typeof me.user === 'object') return true;
+    var em = me.email != null ? me.email : me.user_email;
+    if (em != null && String(em).trim() !== '') return true;
+    if (me.tenant_id != null && me.tenant_id !== '') return true;
+    if (me.account_id != null && me.account_id !== '') return true;
+    if (me.authenticated === false) return false;
+    return false;
+  }
+
+  function extractVehicles(payload) {
+    if (payload == null) return [];
+    if (Array.isArray(payload)) return payload;
+    if (typeof payload !== 'object') return null;
+    if (Array.isArray(payload.vehicles)) return payload.vehicles;
+    if (Array.isArray(payload.items)) return payload.items;
+    if (Array.isArray(payload.data)) return payload.data;
+    return null;
+  }
+
+  function fetchAllowedApi(path) {
     var p = String(path || '');
     if (p !== API_PATHS.ME && p !== API_PATHS.VEHICLES) {
       return Promise.reject(new Error('api path not allowed'));
     }
     return fetch(p, {
       method: 'GET',
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' },
+      credentials: 'include',
+      headers: authHeadersJson(),
     }).then(function (res) {
-      if (p === API_PATHS.ME && (res.status === 401 || res.status === 403)) {
+      var status = res.status;
+      if (p === API_PATHS.ME && (status === 401 || status === 403)) {
         return res
           .json()
-          .then(function (j) {
-            if (j && typeof j === 'object' && j.authenticated === false) return j;
-            return { authenticated: false };
-          })
           .catch(function () {
             return { authenticated: false };
+          })
+          .then(function (j) {
+            var me = j && typeof j === 'object' ? j : { authenticated: false };
+            return { status: status, data: me };
           });
       }
-      if (res.status === 401 || res.status === 403) {
-        var err = new Error('HTTP ' + res.status);
-        err.status = res.status;
+      if (status === 401 || status === 403) {
+        var err = new Error('HTTP ' + status);
+        err.status = status;
         throw err;
       }
       if (!res.ok) {
-        var e2 = new Error('HTTP ' + res.status);
-        e2.status = res.status;
+        var e2 = new Error('HTTP ' + status);
+        e2.status = status;
         throw e2;
       }
-      return res.json();
+      return res.json().catch(function () {
+        return null;
+      }).then(function (json) {
+        return { status: status, data: json };
+      });
     });
   }
 
   function loadSession() {
-    return apiGet(API_PATHS.ME).then(function (me) {
-      if (me && me.authenticated === true) return { ok: true, me: me };
-      return { ok: false, me: me || {} };
+    return fetchAllowedApi(API_PATHS.ME).then(function (r) {
+      var me = r.data || {};
+      var ok = isSessionAuthenticated(me);
+      return { ok: ok, me: me, status: r.status };
     });
   }
 
   function loadVehicles() {
-    return apiGet(API_PATHS.VEHICLES);
+    return fetchAllowedApi(API_PATHS.VEHICLES);
   }
 
   function parseIsoDate(s) {
@@ -439,7 +498,7 @@
   }
 
   function greetingFirstName(me) {
-    if (!me || me.authenticated !== true) return DEMO_USER.firstName;
+    if (!isSessionAuthenticated(me)) return DEMO_USER.firstName;
     if (me.display_name != null && String(me.display_name).trim()) {
       var p = String(me.display_name).trim().split(/\s+/);
       if (p[0]) return p[0];
@@ -449,7 +508,7 @@
   }
 
   function profileDisplayName(me) {
-    if (!me || me.authenticated !== true) return DEMO_USER.firstName + ' ' + DEMO_USER.lastName;
+    if (!isSessionAuthenticated(me)) return DEMO_USER.firstName + ' ' + DEMO_USER.lastName;
     if (me.display_name != null && String(me.display_name).trim()) return String(me.display_name).trim();
     return me.email ? String(me.email) : DEMO_USER.firstName + ' ' + DEMO_USER.lastName;
   }
@@ -469,6 +528,9 @@
   function computeSummaryFromVehicles(list) {
     list = list || [];
     var n = list.length;
+    if (state.dataSource === 'real' && n === 0) {
+      return { vehicles: 0, stkSoon: 0, reminders: 0 };
+    }
     var stkSoon = 0;
     var insSoon = 0;
     for (var i = 0; i < list.length; i++) {
@@ -539,9 +601,15 @@
     var msg;
     var kindClass = 'sv-prototype-data-banner--demo';
     var showLogin = false;
+    var realEmpty = !!opts.realEmpty;
     if (source === 'real') {
-      msg = 'Reálná data · přihlášený účet';
-      kindClass = 'sv-prototype-data-banner--real';
+      if (realEmpty) {
+        msg = 'Reálná data — zatím žádné vozidlo';
+        kindClass = 'sv-prototype-data-banner--real';
+      } else {
+        msg = 'Reálná data';
+        kindClass = 'sv-prototype-data-banner--real';
+      }
     } else if (reason === 'unauthenticated' && getQueryFlag('real')) {
       msg = 'Zobrazujete ukázková data. Pro reálná data se přihlaste.';
       kindClass = 'sv-prototype-data-banner--login';
@@ -574,6 +642,7 @@
     renderHero(root);
     renderVehicleCards(root);
     setDataSourceBadge(root, opts);
+    renderProtoDebug(root);
     var empty = root.querySelector('[data-sv-empty-vehicles]');
     var grid = root.querySelector('[data-sv-vehicle-grid]');
     if (empty && grid) {
@@ -582,6 +651,45 @@
       empty.hidden = !isEmptyReal;
       grid.hidden = isEmptyReal;
     }
+  }
+
+  function logProtoRealDebug() {
+    if (!getQueryFlag('real')) return;
+    console.info('[SV PROTOTYPE] real mode', {
+      realMode: true,
+      meStatus: state.protoDiag.meStatus,
+      authenticated: !!state.protoDiag.authenticated,
+      vehiclesStatus: state.protoDiag.vehiclesStatus,
+      vehiclesCount: state.protoDiag.vehiclesCount,
+      source: state.dataSource,
+    });
+  }
+
+  function renderProtoDebug(root) {
+    var wrap = root.querySelector('[data-sv-proto-debug]');
+    if (!wrap) return;
+    if (!getQueryFlag('debug') || !getQueryFlag('real')) {
+      wrap.hidden = true;
+      return;
+    }
+    wrap.hidden = false;
+    wrap.textContent =
+      'realMode: true\n' +
+      'debug: true\n' +
+      'meStatus: ' +
+      (state.protoDiag.meStatus != null ? String(state.protoDiag.meStatus) : '—') +
+      '\n' +
+      'authenticated: ' +
+      !!state.protoDiag.authenticated +
+      '\n' +
+      'vehiclesStatus: ' +
+      (state.protoDiag.vehiclesStatus != null ? String(state.protoDiag.vehiclesStatus) : '—') +
+      '\n' +
+      'vehiclesCount: ' +
+      (state.protoDiag.vehiclesCount != null ? String(state.protoDiag.vehiclesCount) : '—') +
+      '\n' +
+      'source: ' +
+      String(state.dataSource || '—');
   }
 
   function bootstrapDashboard(root) {
@@ -604,31 +712,54 @@
     }
     loadSession()
       .then(function (session) {
+        state.protoDiag.meStatus = session.status;
+        state.protoDiag.authenticated = !!session.ok;
         if (!session.ok) {
           state.currentMe = session.me || null;
+          state.protoDiag.vehiclesStatus = null;
+          state.protoDiag.vehiclesCount = null;
           applyDashboardData(root, {
             source: 'demo',
             vehicles: null,
             me: null,
             reason: 'unauthenticated',
+            realEmpty: false,
           });
+          logProtoRealDebug();
           return Promise.reject(new Error('sv-skip-chain'));
         }
         state.currentMe = session.me;
         return loadVehicles();
       })
-      .then(function (list) {
-        if (list === undefined) return;
-        var arr = Array.isArray(list) ? list : [];
+      .then(function (vr) {
+        if (vr === undefined) return;
+        state.protoDiag.vehiclesStatus = vr.status;
+        var arr = extractVehicles(vr.data);
+        if (arr === null) {
+          throw new Error('sv-invalid-vehicles');
+        }
+        state.protoDiag.vehiclesCount = arr.length;
         var mapped = arr.map(mapVehicleFromApi);
-        applyDashboardData(root, { source: 'real', vehicles: mapped, me: state.currentMe, reason: null });
+        applyDashboardData(root, {
+          source: 'real',
+          vehicles: mapped,
+          me: state.currentMe,
+          reason: null,
+          realEmpty: mapped.length === 0,
+        });
+        logProtoRealDebug();
       })
       .catch(function (err) {
         if (err && err.message === 'sv-skip-chain') return;
         state.runtimeVehicles = null;
         state.currentMe = null;
-        applyDashboardData(root, { source: 'fallback', vehicles: null, me: null, reason: 'error' });
+        state.protoDiag.vehiclesStatus =
+          err && err.status != null ? err.status : state.protoDiag.vehiclesStatus;
+        state.protoDiag.vehiclesCount = null;
+        state.protoDiag.authenticated = false;
+        applyDashboardData(root, { source: 'fallback', vehicles: null, me: null, reason: 'error', realEmpty: false });
         showToast('Reálná data se nepodařilo načíst. Zobrazuji ukázku.');
+        logProtoRealDebug();
       });
   }
 
@@ -1205,6 +1336,7 @@
       '<span data-sv-data-banner-text></span>' +
       '<a data-sv-login-link hidden class="sv-prototype-data-banner-link" href="/">Přihlásit se</a>' +
       '</span></div>' +
+      '<pre class="sv-prototype-debug-panel" data-sv-proto-debug hidden></pre>' +
       '<div class="sv-prototype-view" data-sv-view-dashboard data-sv-dashboard-root>' +
       '<div class="sv-prototype-hero-bundle">' +
       '<div class="sv-prototype-hero-panel">' +

@@ -2195,3 +2195,17 @@
     background-position: -100% 0;
   }
 }
+
+.sv-prototype .sv-prototype-debug-panel {
+  margin: 0 0 1rem;
+  padding: 0.65rem 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--sv-muted);
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px dashed var(--sv-border);
+  border-radius: var(--sv-radius-md);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
