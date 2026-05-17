@@ -815,7 +815,13 @@
     if (!host) return;
     var dash = root.querySelector('[data-sv-dashboard-root]');
     if (dash && dash.classList.contains('is-sv-dashboard-loading')) {
-      host.innerHTML = '<div class="sv-prototype-quick-row"><div class="sv-prototype-skeleton-card sv-prototype-skeleton-quick"></div></div>';
+      host.innerHTML =
+        '<div class="sv-prototype-quick-grid sv-prototype-quick-grid--loading" aria-hidden="true">' +
+        '<div class="sv-prototype-skeleton-card sv-prototype-skeleton-quick"></div>' +
+        '<div class="sv-prototype-skeleton-card sv-prototype-skeleton-quick"></div>' +
+        '<div class="sv-prototype-skeleton-card sv-prototype-skeleton-quick"></div>' +
+        '<div class="sv-prototype-skeleton-card sv-prototype-skeleton-quick"></div>' +
+        '</div>';
       return;
     }
     var list = getVehicleList();
@@ -827,35 +833,32 @@
       { key: 'docs', data: q.docs, ico: 'doc' },
     ];
     var icoMap = { stk: ICO.quickStk, shield: ICO.quickShield, svc: ICO.quickSvc, doc: ICO.doc };
-    host.innerHTML =
-      '<div class="sv-prototype-quick-row">' +
-      rows
-        .map(function (r) {
-          var d = r.data;
-          return (
-            '<button type="button" class="sv-prototype-quick-card ' +
-            quickToneClass(d.tone) +
-            '" data-sv-quick-action="' +
-            r.key +
-            '">' +
-            '<span class="sv-prototype-quick-card-ico">' +
-            (icoMap[r.ico] || ICO.quickStk) +
-            '</span>' +
-            '<span class="sv-prototype-quick-card-body">' +
-            '<span class="sv-prototype-quick-card-cat">' +
-            (r.key === 'stk' ? 'STK / SME' : r.key === 'ins' ? 'Pojištění' : r.key === 'svc' ? 'Servis' : 'Dokumenty') +
-            '</span>' +
-            '<strong class="sv-prototype-quick-card-title">' +
-            escapeHtml(d.title) +
-            '</strong>' +
-            '<span class="sv-prototype-quick-card-desc">' +
-            escapeHtml(d.desc) +
-            '</span></span>' +
-            '<span class="sv-prototype-quick-card-arrow" aria-hidden="true">›</span></button>'
-          );
-        })
-        .join('') +
-      '</div>';
+    host.innerHTML = rows
+      .map(function (r) {
+        var d = r.data;
+        return (
+          '<button type="button" class="sv-prototype-quick-card ' +
+          quickToneClass(d.tone) +
+          '" data-sv-quick-action="' +
+          r.key +
+          '">' +
+          '<span class="sv-prototype-quick-card-ico">' +
+          (icoMap[r.ico] || ICO.quickStk) +
+          '</span>' +
+          '<span class="sv-prototype-quick-card-body">' +
+          '<span class="sv-prototype-quick-card-cat">' +
+          (r.key === 'stk' ? 'STK / SME' : r.key === 'ins' ? 'Pojištění' : r.key === 'svc' ? 'Servis' : 'Dokumenty') +
+          '</span>' +
+          '<strong class="sv-prototype-quick-card-title">' +
+          escapeHtml(d.title) +
+          '</strong>' +
+          '<span class="sv-prototype-quick-card-desc">' +
+          escapeHtml(d.desc) +
+          '</span></span>' +
+          '<span class="sv-prototype-quick-card-arrow" aria-hidden="true">›</span></button>'
+        );
+      })
+      .join('');
   }
 
   function renderOverallStatus(root) {
@@ -873,17 +876,20 @@
       ? '<svg class="sv-prototype-overall-ico sv-prototype-overall-ico--ok" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
       : '<svg class="sv-prototype-overall-ico sv-prototype-overall-ico--warn" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>';
     host.innerHTML =
+      '<div class="sv-prototype-overall-inner">' +
+      '<div class="sv-prototype-overall-text">' +
       '<h3 class="sv-prototype-overall-heading">Celkový stav</h3>' +
-      '<div class="sv-prototype-overall-body">' +
-      icon +
       '<p class="sv-prototype-overall-main' +
       (ok ? ' sv-prototype-overall-main--ok' : ' sv-prototype-overall-main--warn') +
       '">' +
       (ok ? 'Vozidla pod kontrolou' : 'Vyžaduje pozornost') +
-      '</p></div>' +
+      '</p>' +
       '<p class="sv-prototype-overall-meta">Poslední aktualizace: dnes v ' +
       escapeHtml(formatTodayTimeHm()) +
-      '</p>';
+      '</p></div>' +
+      '<div class="sv-prototype-overall-ico-wrap" aria-hidden="true">' +
+      icon +
+      '</div></div>';
   }
 
   function pickVehicleForUpcoming(list, pred) {
@@ -2153,22 +2159,23 @@
       '<pre class="sv-prototype-debug-panel" data-sv-proto-debug hidden></pre>' +
       '<div class="sv-prototype-view" data-sv-view-dashboard data-sv-dashboard-root>' +
       '<div class="sv-prototype-overview-page" data-sv-overview-page>' +
-      '<div class="sv-prototype-dash-layout">' +
-      '<div class="sv-prototype-dash-main">' +
-      '<div class="sv-prototype-hero-status-row">' +
-      '<div class="sv-prototype-hero-panel">' +
-      '<div class="sv-prototype-hero-copy sv-prototype-hero-content">' +
+      '<div class="sv-prototype-overview-shell">' +
+      '<div class="sv-prototype-overview-top">' +
+      '<div class="sv-prototype-hero">' +
+      '<div class="sv-prototype-hero-copy">' +
       '<h1 data-sv-hero-greeting>Dobrý den</h1>' +
       '<p class="sv-prototype-hero-summary" data-sv-hero-summary></p>' +
       '</div>' +
-      '<div class="sv-prototype-hero-art sv-prototype-hero-visual" aria-hidden="true">' +
+      '<div class="sv-prototype-hero-visual" aria-hidden="true">' +
       '<div class="sv-prototype-hero-landscape"></div>' +
       '<div class="sv-prototype-hero-car-wrap">' +
       heroCarSvg() +
       '</div></div></div>' +
-      '<div class="sv-prototype-overall-status-card" data-sv-overall-status></div>' +
+      '<div class="sv-prototype-overall-status-card sv-prototype-overall-status" data-sv-overall-status></div>' +
       '</div>' +
-      '<div data-sv-quick-grid></div>' +
+      '<div class="sv-prototype-quick-grid" data-sv-quick-grid></div>' +
+      '<div class="sv-prototype-overview-body">' +
+      '<div class="sv-prototype-overview-main">' +
       '<div class="sv-prototype-preview-head">' +
       '<div class="sv-prototype-preview-head-text">' +
       '<h2 class="sv-prototype-preview-title">Moje vozidla</h2>' +
@@ -2177,8 +2184,8 @@
       '</div>' +
       '<div class="sv-prototype-vehicle-grid sv-prototype-vehicle-grid--preview" data-sv-overview-vehicle-grid></div>' +
       '</div>' +
-      '<aside class="sv-prototype-dash-aside" data-sv-overview-aside aria-label="Souhrn a termíny"></aside>' +
-      '</div></div>' +
+      '<aside class="sv-prototype-overview-aside" data-sv-overview-aside aria-label="Souhrn a termíny"></aside>' +
+      '</div></div></div>' +
       '<div class="sv-prototype-vehicles-page" data-sv-vehicles-page hidden>' +
       '<div class="sv-prototype-catalog-head">' +
       '<div>' +

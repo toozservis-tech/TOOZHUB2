@@ -1773,7 +1773,6 @@
     max-width: none;
   }
 
-  .sv-prototype-hero-visual,
   .sv-prototype-hero-art {
     order: 2;
     position: relative;
@@ -1786,7 +1785,7 @@
     overflow: hidden;
   }
 
-  .sv-prototype-hero-car-wrap {
+  .sv-prototype-hero-panel .sv-prototype-hero-car-wrap {
     position: absolute;
     inset: 0;
     z-index: 1;
@@ -1797,7 +1796,7 @@
     pointer-events: none;
   }
 
-  .sv-prototype-hero-car-svg {
+  .sv-prototype-hero-panel .sv-prototype-hero-car-svg {
     width: 74%;
     max-width: 198px;
     transform: translate(6px, 10px);
@@ -2027,14 +2026,13 @@
     font-size: 0.8rem;
   }
 
-  .sv-prototype-hero-visual,
   .sv-prototype-hero-art {
     min-height: 92px;
     height: 96px;
     max-height: 104px;
   }
 
-  .sv-prototype-hero-car-svg {
+  .sv-prototype-hero-panel .sv-prototype-hero-car-svg {
     max-width: 168px;
     transform: translate(4px, 8px);
   }
@@ -2210,16 +2208,18 @@
 
 .sv-prototype .sv-prototype-debug-panel {
   margin: 0 0 1rem;
-  padding: 0.65rem 0.85rem;
+  padding: 0.5rem 0.65rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.72rem;
-  line-height: 1.45;
+  font-size: 0.62rem;
+  line-height: 1.35;
   color: var(--sv-muted);
   background: rgba(15, 23, 42, 0.04);
   border: 1px dashed var(--sv-border);
   border-radius: var(--sv-radius-md);
   white-space: pre-wrap;
   word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
 }
 
 /* --- Přehled vs. Moje vozidla (navigace prototypu) --- */
@@ -2238,39 +2238,162 @@
   margin-top: 0.25rem;
 }
 
-/* --- Dashboard Přehled: hero + celkový stav, rychlé karty, layout 2/3 + 1/3 --- */
+/* --- Přehled Screen 1: overview-shell, top row, quick grid, body + aside --- */
 
-.sv-prototype-hero-status-row {
+.sv-prototype-overview-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  gap: 1.15rem;
+}
+
+.sv-prototype-overview-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(360px, 0.85fr);
   gap: 1rem;
-  margin-bottom: 1.25rem;
   align-items: stretch;
 }
 
-.sv-prototype-hero-status-row .sv-prototype-hero-panel {
-  min-height: 188px;
-  max-height: none;
-}
-
-.sv-prototype-overall-status-card {
+/* Hero jako široká karta: text | vizuál, bez překryvu přes text */
+.sv-prototype-overview-shell .sv-prototype-hero {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(320px, 0.9fr);
+  gap: 0;
+  align-items: stretch;
   background: var(--sv-card);
   border: 1px solid var(--sv-border);
   border-radius: var(--sv-radius-lg);
   box-shadow: var(--sv-shadow);
-  padding: 1.1rem 1.15rem;
+  overflow: hidden;
+  min-height: 200px;
+  max-height: 220px;
+}
+
+.sv-prototype-overview-shell .sv-prototype-hero-copy {
+  padding: 1.25rem 1.35rem;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 0.35rem;
-  min-height: 0;
+  min-width: 320px;
+  position: relative;
+  z-index: 2;
 }
 
-.sv-prototype-overall-heading {
+.sv-prototype-overview-shell .sv-prototype-hero-copy h1 {
+  margin: 0 0 0.55rem;
+  font-size: clamp(1.35rem, 2.1vw, 1.75rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--sv-navy-deep);
+  line-height: 1.2;
+}
+
+.sv-prototype-overview-shell .sv-prototype-hero-summary {
   margin: 0;
+  color: var(--sv-muted);
+  font-size: 1.02rem;
+  line-height: 1.5;
+  max-width: none;
+}
+
+.sv-prototype-overview-shell .sv-prototype-hero-visual {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 0.85rem;
+  background: linear-gradient(165deg, #dbeafe 0%, #e0e7ff 40%, #f8fafc 100%);
+  overflow: hidden;
+}
+
+.sv-prototype-overview-shell .sv-prototype-hero-landscape {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sv-prototype-overview-shell .sv-prototype-hero-car-wrap {
+  position: relative;
+  z-index: 1;
+  inset: auto;
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  align-self: center;
+  flex-shrink: 0;
+  padding: 0.15rem 0 0.5rem;
+}
+
+.sv-prototype-overview-shell .sv-prototype-hero-car-svg {
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+  transform: translateY(2px);
+  filter: drop-shadow(0 12px 24px rgba(11, 31, 122, 0.22));
+}
+
+/* Celkový stav vpravo — stejná výška jako hero, kompaktní obsah */
+.sv-prototype-overview-top > .sv-prototype-overall-status-card {
+  background: var(--sv-card);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-lg);
+  box-shadow: var(--sv-shadow);
+  padding: 1.1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-self: stretch;
+  min-height: 200px;
+  max-height: 220px;
+  min-width: 0;
+}
+
+.sv-prototype-overall-inner {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+}
+
+.sv-prototype-overall-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.sv-prototype-overview-top .sv-prototype-overall-heading {
+  margin: 0 0 0.5rem;
   font-size: 0.95rem;
   font-weight: 700;
   color: var(--sv-navy-deep);
+}
+
+.sv-prototype-overview-top .sv-prototype-overall-main {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.sv-prototype-overview-top .sv-prototype-overall-meta {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--sv-muted);
+}
+
+.sv-prototype-overall-ico-wrap {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.sv-prototype-overview-top .sv-prototype-overall-ico {
+  width: 48px;
+  height: 48px;
+  display: block;
 }
 
 .sv-prototype-overall-body {
@@ -2308,23 +2431,31 @@
   color: #b54708;
 }
 
-.sv-prototype-overall-meta {
-  margin: 0.25rem 0 0;
-  font-size: 0.8rem;
-  color: var(--sv-muted);
-}
-
 .sv-prototype-overall-loading {
   margin: 0;
   color: var(--sv-muted);
   font-style: italic;
 }
 
-.sv-prototype-quick-row {
+/* Rychlé karty — přímo v .sv-prototype-quick-grid */
+.sv-prototype-quick-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1.65rem;
+  gap: 1rem;
+  margin: 0 0 1.15rem;
+}
+
+.sv-prototype-quick-grid--loading {
+  opacity: 0.85;
+}
+
+.sv-prototype-quick-grid .sv-prototype-quick-card {
+  min-height: 118px;
+  max-height: 140px;
+}
+
+.sv-prototype-skeleton-quick {
+  min-height: 118px;
 }
 
 .sv-prototype-quick-card {
@@ -2343,6 +2474,33 @@
   position: relative;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
   overflow: hidden;
+}
+
+/* Spodní část: vozidla vlevo, aside vpravo */
+.sv-prototype-overview-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(340px, 0.85fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.sv-prototype-overview-main {
+  min-width: 0;
+}
+
+.sv-prototype-overview-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+/* Legacy quick-row (už se nepoužívá v Přehledu) */
+.sv-prototype-quick-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.65rem;
 }
 
 .sv-prototype-quick-card::after {
@@ -3063,7 +3221,38 @@
   margin-top: 0.25rem;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1180px) {
+  .sv-prototype-overview-shell .sv-prototype-hero {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 0.75fr);
+  }
+}
+
+@media (max-width: 980px) {
+  .sv-prototype-overview-top {
+    grid-template-columns: 1fr;
+  }
+
+  .sv-prototype-overview-top > .sv-prototype-overall-status-card {
+    max-height: none;
+    min-height: auto;
+  }
+
+  .sv-prototype-overview-shell .sv-prototype-hero {
+    max-height: none;
+  }
+
+  .sv-prototype-quick-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sv-prototype-quick-grid--loading {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sv-prototype-overview-body {
+    grid-template-columns: 1fr;
+  }
+
   .sv-prototype-dash-layout {
     grid-template-columns: 1fr;
   }
@@ -3073,25 +3262,31 @@
   }
 }
 
-@media (max-width: 960px) {
-  .sv-prototype-hero-status-row {
+@media (max-width: 640px) {
+  .sv-prototype-overview-shell .sv-prototype-hero {
+    grid-template-columns: 1fr;
+    min-height: auto;
+    max-height: none;
+  }
+
+  .sv-prototype-overview-shell .sv-prototype-hero-copy {
+    min-width: 0;
+    order: 1;
+  }
+
+  .sv-prototype-overview-shell .sv-prototype-hero-visual {
+    order: 2;
+    min-height: 160px;
+  }
+
+  .sv-prototype-quick-grid {
     grid-template-columns: 1fr;
   }
 
-  .sv-prototype-quick-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .sv-prototype-quick-grid--loading {
+    grid-template-columns: 1fr;
   }
 
-  .sv-prototype-hero-copy {
-    max-width: none;
-  }
-
-  .sv-prototype-hero-summary {
-    max-width: none;
-  }
-}
-
-@media (max-width: 560px) {
   .sv-prototype-quick-row {
     grid-template-columns: 1fr;
   }
