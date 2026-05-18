@@ -120,7 +120,47 @@
     function disableRestyleChromeForService() {
         const chrome = document.getElementById('userRestyleChrome');
         if (chrome) chrome.remove();
+        const style = document.getElementById('userRestyleRuntimeLayout');
+        if (style) style.remove();
         document.body.classList.remove('user-dashboard-restyle', 'user-dashboard-restyle-compact');
+    }
+
+    function injectRuntimeLayoutStyles() {
+        if (document.getElementById('userRestyleRuntimeLayout')) return;
+        const style = document.createElement('style');
+        style.id = 'userRestyleRuntimeLayout';
+        style.textContent = `
+body.user-dashboard-restyle.route-app-view #dashboard.dashboard {
+    margin: 0 0 0 var(--ud-sidebar-w) !important;
+    width: calc(100vw - var(--ud-sidebar-w)) !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    padding: calc(var(--ud-topbar-h) + 18px) 28px 36px !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+}
+body.user-dashboard-restyle.route-app-view .user-restyle-topbar {
+    left: var(--ud-sidebar-w) !important;
+    width: calc(100vw - var(--ud-sidebar-w)) !important;
+    box-sizing: border-box !important;
+}
+body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
+    width: var(--ud-sidebar-w) !important;
+    box-sizing: border-box !important;
+}
+@media (max-width: 820px) {
+    body.user-dashboard-restyle.route-app-view #dashboard.dashboard {
+        margin-left: 0 !important;
+        width: 100vw !important;
+        padding: calc(var(--ud-topbar-h) + 14px) 14px 88px !important;
+    }
+    body.user-dashboard-restyle.route-app-view .user-restyle-topbar {
+        left: 0 !important;
+        width: 100vw !important;
+    }
+}
+        `;
+        document.head.appendChild(style);
     }
 
     function injectChrome() {
@@ -129,6 +169,7 @@
             return;
         }
         document.body.classList.add('user-dashboard-restyle');
+        injectRuntimeLayoutStyles();
         const appShell = document.getElementById('app-shell');
         if (!appShell || document.getElementById('userRestyleChrome')) return;
         const chrome = document.createElement('div');
