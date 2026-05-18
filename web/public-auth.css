@@ -3577,3 +3577,282 @@ body.route-public-view .sv-public-footer nav {
     justify-content: flex-start;
   }
 }
+
+/* Final public/auth visual polish: asset sharpness, service crop and balanced auth surfaces. */
+body.route-public-view .sv-public-car-img,
+body.route-public-view .sv-public-owner-visual img,
+body.route-public-view .sv-public-service-visual img {
+  image-rendering: auto;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+body.route-public-view .sv-public-car-img {
+  object-fit: contain;
+  object-position: center;
+  background: #fff;
+}
+
+body.route-public-view .sv-public-service-visual {
+  min-height: 138px;
+  align-items: center;
+}
+
+body.route-public-view .sv-public-service-visual img {
+  width: min(100%, 430px);
+  height: 138px;
+  object-fit: contain;
+  object-position: center;
+  border-radius: 12px;
+}
+
+body.route-public-view .sv-public-owner-visual img {
+  width: min(100%, 390px);
+  height: 138px;
+  object-fit: contain;
+  object-position: center;
+  border-radius: 12px;
+}
+
+body.route-auth-view #authSection {
+  max-width: 1440px !important;
+}
+
+body.route-auth-view .sv-auth-header {
+  min-height: 58px;
+  padding: 0 18px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+body.route-auth-view .sv-auth-brand {
+  font-size: 1.05rem;
+}
+
+body.route-auth-view #login-view.auth-layout {
+  gap: 26px;
+}
+
+body.route-login-view #login-view.auth-layout {
+  grid-template-columns: minmax(390px, 0.74fr) minmax(560px, 1.08fr);
+}
+
+body.route-register-view #login-view.auth-layout {
+  grid-template-columns: minmax(620px, 1.05fr) minmax(500px, 0.88fr);
+}
+
+body.route-auth-view .auth-section,
+body.route-auth-view .auth-promo {
+  border-color: rgba(218, 227, 240, 0.96);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 20px 58px rgba(15, 23, 42, 0.10);
+}
+
+body.route-login-view .auth-section {
+  padding: 38px 42px;
+}
+
+body.route-register-view .auth-section {
+  padding: 28px 34px;
+}
+
+body.route-auth-view .auth-promo {
+  padding: 34px 40px;
+  background:
+    radial-gradient(circle at 88% 14%, rgba(37, 99, 235, 0.09), transparent 30%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(243, 248, 255, 0.92));
+}
+
+body.route-register-view .auth-promo {
+  background:
+    radial-gradient(circle at 85% 18%, rgba(22, 163, 74, 0.09), transparent 31%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(240, 253, 244, 0.9));
+}
+
+body.route-auth-view .auth-form-head h2 {
+  font-size: clamp(2.08rem, 2.45vw, 2.62rem);
+}
+
+body.route-login-view .auth-form-head {
+  margin-bottom: 18px;
+}
+
+body.route-auth-view .auth-form-subtitle {
+  color: #3b4c74;
+  font-size: 0.98rem;
+  line-height: 1.5;
+}
+
+body.route-login-view #loginForm {
+  max-width: 430px;
+}
+
+body.route-auth-view input,
+body.route-auth-view textarea {
+  min-height: 50px;
+  border-radius: 11px !important;
+}
+
+body.route-login-view .auth-login-primary {
+  gap: 12px;
+}
+
+body.route-login-view .auth-login-mode {
+  padding: 7px;
+  border-radius: 14px;
+}
+
+body.route-login-view .auth-login-mode-btn {
+  min-height: 38px;
+  border-radius: 10px;
+}
+
+body.route-auth-view .auth-primary-btn {
+  min-height: 54px;
+  border-radius: 11px !important;
+}
+
+body.route-register-view .auth-login-mode-switch {
+  gap: 14px;
+}
+
+body.route-register-view .auth-login-mode-btn {
+  min-height: 112px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fff, #f8fbff);
+}
+
+body.route-register-view .auth-login-mode-btn.active {
+  border-color: #0b4bf2;
+  background: linear-gradient(180deg, #f7fbff, #eef5ff);
+}
+
+body.route-register-view .auth-login-mode-btn.active::after {
+  top: 11px;
+  right: 11px;
+  width: 30px;
+  height: 30px;
+}
+
+body.route-register-view .auth-form-grid {
+  gap: 9px 22px;
+}
+
+body.route-register-view .auth-register-section {
+  margin-top: 8px;
+}
+
+body.route-register-view .auth-register-actions {
+  margin-top: 10px;
+}
+
+body.route-auth-view .auth-promo-feature-list {
+  gap: 13px;
+}
+
+body.route-auth-view .auth-promo-feature-list li {
+  min-height: 46px;
+}
+
+body.route-auth-view .auth-promo-preview {
+  margin-top: auto;
+  padding: 14px;
+  border-radius: 18px;
+}
+
+body.route-auth-view .auth-preview-card--primary::after {
+  height: 74px;
+  margin-top: 12px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0.08)),
+    url("/web/assets/landing/vehicle-sedan.webp") center 64% / contain no-repeat;
+}
+
+body.route-auth-view .sv-auth-security-card {
+  margin-top: 16px;
+  padding: 13px 15px;
+  border: 1px solid rgba(219, 228, 240, 0.8);
+  background: linear-gradient(135deg, #eef4ff, #fff);
+}
+
+body.route-register-view .sv-auth-security-card {
+  background: linear-gradient(135deg, #ecfdf5, #fff);
+}
+
+body.route-auth-view .sv-auth-security-icon {
+  width: 46px;
+  height: 46px;
+}
+
+@media (min-width: 1061px) {
+  body.route-public-view .sv-public-owner-visual img,
+  body.route-public-view .sv-public-service-visual img {
+    height: 132px;
+  }
+}
+
+@media (max-width: 1320px) {
+  body.route-public-view .sv-public-owner-visual img,
+  body.route-public-view .sv-public-service-visual img {
+    height: 150px;
+  }
+}
+
+@media (max-width: 980px) {
+  body.route-login-view #login-view.auth-layout,
+  body.route-register-view #login-view.auth-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  body.route-public-view .sv-public-owner-visual img,
+  body.route-public-view .sv-public-service-visual img {
+    width: 100%;
+    height: auto;
+    max-height: 230px;
+  }
+
+  body.route-auth-view .sv-auth-header {
+    padding: 14px 16px;
+  }
+
+  body.route-login-view .auth-section,
+  body.route-register-view .auth-section,
+  body.route-auth-view .auth-promo {
+    padding: 24px 18px;
+  }
+
+  body.route-auth-view #authSection,
+  body.route-auth-view #login-view.auth-layout {
+    min-height: 0 !important;
+  }
+
+  body.route-auth-view #login-view.auth-layout {
+    align-items: start;
+  }
+
+  body.route-auth-view .auth-section {
+    align-items: flex-start;
+  }
+
+  body.route-auth-view .auth-card-shell {
+    padding-top: 22px;
+  }
+
+  body.route-auth-view .sv-auth-header {
+    align-items: flex-start;
+  }
+
+  body.route-auth-view .sv-auth-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  body.route-register-view .sv-auth-login-prompt {
+    display: none;
+  }
+}
