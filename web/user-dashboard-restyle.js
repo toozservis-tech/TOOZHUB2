@@ -43,6 +43,7 @@
             grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="4" width="6" height="6"></rect><rect x="14" y="4" width="6" height="6"></rect><rect x="4" y="14" width="6" height="6"></rect><rect x="14" y="14" width="6" height="6"></rect></svg>',
             list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13"></path><path d="M3 6h.01M3 12h.01M3 18h.01"></path></svg>',
             share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.6 6.8-4.2M8.6 13.4l6.8 4.2"></path></svg>',
+            history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path><path d="M12 7v5l3 2"></path></svg>',
         };
         return icons[name] || icons.car;
     }
@@ -673,6 +674,14 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
         window._lastVehiclesById = byId;
         const filtered = filterVehicles(list);
         const viewClass = RESTYLE_SEARCH_STATE.vehicleView === 'list' ? 'is-list' : '';
+        const statusCounts = list.reduce((acc, vehicle) => {
+            const status = getVehicleStatus(vehicle);
+            if (status.key === 'ok') acc.ok += 1;
+            else if (status.key === 'warning' || status.key === 'danger' || status.key === 'unknown') acc.attention += 1;
+            if (String(vehicle?.service_status || vehicle?.status || '').toLowerCase().includes('servis')) acc.service += 1;
+            if (vehicle?.archived || vehicle?.is_archived) acc.archive += 1;
+            return acc;
+        }, { ok: 0, attention: 0, service: 0, archive: 0 });
         container.classList.remove('loading');
         container.innerHTML = `
             <section class="user-restyle-garage">
@@ -680,25 +689,24 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
                     <div class="user-restyle-garage-titlebar">
                         <div>
                             <h2>Moje vozidla</h2>
-                            <p>Máte ${list.length} ${list.length === 1 ? 'vozidlo' : 'vozidel'}</p>
+                            <p>Máte <strong>${list.length}</strong> ${list.length === 1 ? 'vozidlo' : 'vozidel'} <button type="button" onclick="window.setUserRestyleVehicleFilter('archive')">${icon('history')} Zobrazit archivovaná</button></p>
                         </div>
-                        <button type="button" class="user-restyle-panel-link" onclick="window.setUserRestyleVehicleFilter('archive')">Zobrazit archivovaná</button>
                     </div>
                     <div class="user-restyle-garage-tools">
                         <div class="user-restyle-filter-pills">
                             ${[
-                                ['all', 'Všechna'],
-                                ['ok', 'V pořádku'],
-                                ['attention', 'Vyžaduje pozornost'],
-                                ['service', 'V servisu'],
-                                ['archive', 'V archivu'],
-                            ].map(([key, label]) => `<button type="button" class="${RESTYLE_SEARCH_STATE.vehicleFilter === key ? 'is-active' : ''}" onclick="window.setUserRestyleVehicleFilter('${key}')">${escape(label)}</button>`).join('')}
+                                ['all', 'Všechna', list.length, ''],
+                                ['ok', 'V pořádku', statusCounts.ok, 'is-ok-dot'],
+                                ['attention', 'Vyžaduje pozornost', statusCounts.attention, 'is-attention-dot'],
+                                ['service', 'V servisu', statusCounts.service, 'is-service-dot'],
+                                ['archive', 'V archivu', statusCounts.archive, 'is-archive-dot'],
+                            ].map(([key, label, count, dot]) => `<button type="button" class="${RESTYLE_SEARCH_STATE.vehicleFilter === key ? 'is-active' : ''}" onclick="window.setUserRestyleVehicleFilter('${key}')">${dot ? `<span class="user-restyle-filter-dot ${dot}"></span>` : ''}${escape(label)}<em>${Number(count || 0)}</em></button>`).join('')}
                         </div>
                         <div>
                             <select class="user-restyle-sort-select" onchange="window.setUserRestyleVehicleSort(this.value)" aria-label="Řazení vozidel">
-                                <option value="name" ${RESTYLE_SEARCH_STATE.vehicleSort === 'name' ? 'selected' : ''}>Název A-Z</option>
-                                <option value="stk" ${RESTYLE_SEARCH_STATE.vehicleSort === 'stk' ? 'selected' : ''}>Nejbližší STK</option>
-                                <option value="mileage" ${RESTYLE_SEARCH_STATE.vehicleSort === 'mileage' ? 'selected' : ''}>Nejvyšší nájezd</option>
+                                <option value="name" ${RESTYLE_SEARCH_STATE.vehicleSort === 'name' ? 'selected' : ''}>Řadit podle: Název A-Z</option>
+                                <option value="stk" ${RESTYLE_SEARCH_STATE.vehicleSort === 'stk' ? 'selected' : ''}>Řadit podle: Nejbližší STK</option>
+                                <option value="mileage" ${RESTYLE_SEARCH_STATE.vehicleSort === 'mileage' ? 'selected' : ''}>Řadit podle: Nejvyšší nájezd</option>
                             </select>
                             <span class="user-restyle-view-toggle">
                                 <button type="button" class="${RESTYLE_SEARCH_STATE.vehicleView === 'grid' ? 'is-active' : ''}" onclick="window.setUserRestyleVehicleView('grid')" aria-label="Grid">${icon('grid')}</button>
@@ -709,8 +717,20 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
                 </header>
                 <div class="user-restyle-vehicle-grid ${viewClass}">
                     ${filtered.map((vehicle) => renderVehicleCard(vehicle)).join('') || '<div class="user-restyle-empty">Žádná vozidla neodpovídají filtru.</div>'}
+                    <button type="button" class="user-restyle-add-vehicle-card user-restyle-add-vehicle-card--garage" onclick="openAddVehicleModal()">
+                        <span class="user-restyle-add-vehicle-icon">${icon('car')}<i>${icon('plus')}</i></span>
+                        <strong>Přidat nové vozidlo</strong>
+                        <small>Přidejte vozidlo podle SPZ nebo VIN a mějte vše pohromadě.</small>
+                        <em>${icon('plus')} Přidat vozidlo</em>
+                    </button>
                 </div>
-                <button type="button" class="user-restyle-add-vehicle-card" onclick="openAddVehicleModal()">${icon('plus')} Přidat nové vozidlo<span>Otevře původní produkční formulář přidání vozidla</span></button>
+                <div class="user-restyle-garage-summary">
+                    <span>${icon('car')}<strong>${list.length}</strong><em>Celkem vozidel</em></span>
+                    <span>${icon('calendar')}<strong>${statusCounts.attention}</strong><em>Vyžaduje pozornost</em></span>
+                    <span>${icon('wrench')}<strong>${statusCounts.service}</strong><em>V servisu</em></span>
+                    <span>${icon('check')}<strong>${statusCounts.ok}</strong><em>V pořádku</em></span>
+                    <button type="button" onclick="switchTab('home')">Zobrazit všechna vozidla v přehledu ${icon('arrow')}</button>
+                </div>
             </section>
         `;
         if (typeof window.hydrateVehicleCardPhotos === 'function') {
