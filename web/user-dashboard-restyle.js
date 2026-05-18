@@ -8,6 +8,7 @@
         vehicleSort: 'name',
         vehicleView: 'grid',
     };
+    const SIDEBAR_COMPACT_KEY = 'userDashboardRestyleCompactSectionsV2';
 
     function isRestyleEnabled() {
         try {
@@ -229,7 +230,7 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
         const compact = !document.body.classList.contains('user-dashboard-restyle-compact');
         document.body.classList.toggle('user-dashboard-restyle-compact', compact);
         try {
-            window.localStorage?.setItem('userDashboardRestyleCompact', compact ? '1' : '0');
+            window.localStorage?.setItem(SIDEBAR_COMPACT_KEY, compact ? '1' : '0');
         } catch (error) {}
     };
 
@@ -237,7 +238,7 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
         try {
             document.body.classList.toggle(
                 'user-dashboard-restyle-compact',
-                window.localStorage?.getItem('userDashboardRestyleCompact') === '1'
+                window.localStorage?.getItem(SIDEBAR_COMPACT_KEY) === '1'
             );
         } catch (error) {}
     }
@@ -993,6 +994,16 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
         const latest = records.slice().sort((a, b) => (getRecordDate(b)?.getTime() || 0) - (getRecordDate(a)?.getTime() || 0))[0] || null;
         const stk = getVehicleStkDate(vehicle);
         const status = getVehicleStatus(vehicle);
+        const timelineRows = records.slice(0, 5).map((record) => {
+            const d = getRecordDate(record);
+            return `
+                <button type="button" class="user-restyle-detail-timeline-row" onclick="showServiceRecordDetail(${Number(record?.id || 0)}, ${Number(vehicleId)})">
+                    <span></span>
+                    <strong>${escape(d ? formatDate(d) : '—')}</strong>
+                    <em>${escape(formatRecordTitle(record))}</em>
+                </button>
+            `;
+        }).join('');
         body.insertAdjacentHTML('afterbegin', `
             <section class="user-restyle-detail-overview">
                 <div class="user-restyle-detail-hero-card">
@@ -1025,6 +1036,48 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
                         ['Dokumenty', 'Dokumenty vozidla', 'Zobrazit', 'folder'],
                         ['Přístupy servisů', 'Spravovat sdílení', 'Přístupy', 'building'],
                     ].map(([title, value, hint, glyph]) => `<button type="button" class="user-restyle-detail-stat" onclick="${title === 'Dokumenty' ? `openVehicleDetailFloatingSection('documents', ${Number(vehicleId)})` : title === 'Přístupy servisů' ? `openVehicleDetailFloatingSection('access', ${Number(vehicleId)})` : `openVehicleDetailFloatingSection('basic', ${Number(vehicleId)})`}">${icon(glyph)}<span>${escape(title)}</span><strong>${escape(value)}</strong><em>${escape(hint)}</em></button>`).join('')}
+                </div>
+                <div class="user-restyle-detail-tabs">
+                    ${[
+                        ['Technické údaje', 'basic', 'car'],
+                        ['Servisní historie', 'service', 'wrench'],
+                        ['Dokumenty', 'documents', 'file'],
+                        ['Fotogalerie', 'gallery', 'folder'],
+                        ['Připomínky', 'ops', 'bell'],
+                        ['Přístupy a sdílení', 'access', 'building'],
+                    ].map(([label, section, glyph], index) => `<button type="button" class="${index === 0 ? 'is-active' : ''}" onclick="openVehicleDetailFloatingSection('${section}', ${Number(vehicleId)})">${icon(glyph)} ${escape(label)}</button>`).join('')}
+                </div>
+                <div class="user-restyle-detail-lower-grid">
+                    <section class="user-restyle-card user-restyle-panel">
+                        <header class="user-restyle-panel-head"><h2>Základní informace</h2><button type="button" class="user-restyle-panel-link" onclick="openVehicleDetailFloatingSection('basic', ${Number(vehicleId)})">Upravit</button></header>
+                        <div class="user-restyle-detail-info-grid">
+                            ${[
+                                ['Značka / model', [vehicle?.brand, vehicle?.model].filter(Boolean).join(' ') || getVehicleName(vehicle)],
+                                ['Typ', vehicle?.type || vehicle?.body_type || '—'],
+                                ['VIN', vehicle?.vin || '—'],
+                                ['SPZ', vehicle?.plate || '—'],
+                                ['Datum první registrace', vehicle?.first_registration_date ? formatDate(vehicle.first_registration_date) : '—'],
+                                ['Palivo', vehicle?.fuel_type || vehicle?.fuel || '—'],
+                                ['Objem motoru', vehicle?.engine_volume_cc ? `${vehicle.engine_volume_cc} ccm` : '—'],
+                                ['Výkon', vehicle?.power_kw ? `${vehicle.power_kw} kW` : '—'],
+                                ['Nájezd', formatKm(vehicle?.current_mileage_km)],
+                                ['STK', stk ? formatDate(stk) : '—'],
+                            ].map(([label, value]) => `<span>${escape(label)}<strong>${escape(value)}</strong></span>`).join('')}
+                        </div>
+                    </section>
+                    <aside class="user-restyle-side-stack">
+                        <section class="user-restyle-card user-restyle-panel">
+                            <header class="user-restyle-panel-head"><h3>Časová osa vozidla</h3><button type="button" class="user-restyle-panel-link" onclick="openVehicleDetailFloatingSection('service', ${Number(vehicleId)})">Zobrazit vše</button></header>
+                            <div class="user-restyle-detail-timeline">${timelineRows || '<div class="user-restyle-empty">Bez servisní aktivity.</div>'}</div>
+                        </section>
+                        <section class="user-restyle-card user-restyle-panel">
+                            <header class="user-restyle-panel-head"><h3>Rychlé akce</h3></header>
+                            <button type="button" class="user-restyle-action-line" onclick="openAddServiceRecordModal(${Number(vehicleId)})">${icon('plus')} Přidat servisní úkon</button>
+                            <button type="button" class="user-restyle-action-line" onclick="openVehicleDetailFloatingSection('ops', ${Number(vehicleId)})">${icon('grid')} Přidat záznam tachometru</button>
+                            <button type="button" class="user-restyle-action-line" onclick="openVehicleDetailFloatingSection('documents', ${Number(vehicleId)})">${icon('file')} Nahrát dokument</button>
+                            <button type="button" class="user-restyle-action-line" onclick="generateServiceRecordsPDF(${Number(vehicleId)})">${icon('file')} Exportovat PDF report</button>
+                        </section>
+                    </aside>
                 </div>
             </section>
         `);

@@ -11,7 +11,7 @@ body.user-dashboard-restyle {
     --ud-red: #ef3b2d;
     --ud-orange: #ff6b1a;
     --ud-shadow: 0 18px 45px rgba(36, 54, 89, 0.10);
-    --ud-sidebar-w: 216px;
+    --ud-sidebar-w: 224px;
     --ud-topbar-h: 84px;
     background: var(--ud-bg) !important;
     color: var(--ud-text);
@@ -1371,6 +1371,8 @@ body.user-dashboard-restyle-compact .user-restyle-collapse-btn {
 
 .user-restyle-detail-modal .vehicle-modal-content {
     background: var(--ud-bg) !important;
+    padding-left: 18px !important;
+    padding-right: 18px !important;
 }
 
 .user-restyle-detail-modal .vehicle-modal-header {
@@ -1382,6 +1384,10 @@ body.user-dashboard-restyle-compact .user-restyle-collapse-btn {
     display: grid;
     gap: 18px;
     margin-bottom: 18px;
+}
+
+.user-restyle-detail-modal .vehicle-detail-modal-stack > .vehicle-detail-shell {
+    display: none !important;
 }
 
 .user-restyle-detail-hero-card {
@@ -1523,6 +1529,117 @@ body.user-dashboard-restyle-compact .user-restyle-collapse-btn {
     line-height: 1.2;
 }
 
+.user-restyle-detail-tabs {
+    border: 1px solid var(--ud-line);
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 10px 28px rgba(36, 54, 89, 0.08);
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+}
+
+.user-restyle-detail-tabs button {
+    min-height: 58px;
+    padding: 0 22px;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    background: transparent;
+    color: #0b2a66;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.user-restyle-detail-tabs button.is-active {
+    border-bottom-color: var(--ud-blue);
+    color: var(--ud-blue);
+}
+
+.user-restyle-detail-lower-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.8fr) minmax(320px, 0.8fr);
+    gap: 18px;
+    align-items: start;
+}
+
+.user-restyle-detail-info-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 24px;
+}
+
+.user-restyle-detail-info-grid span {
+    min-height: 42px;
+    border-bottom: 1px solid #edf2f8;
+    display: grid;
+    grid-template-columns: minmax(120px, 0.9fr) minmax(0, 1fr);
+    gap: 14px;
+    align-items: center;
+    color: var(--ud-muted);
+    font-weight: 800;
+}
+
+.user-restyle-detail-info-grid strong {
+    color: var(--ud-text);
+    word-break: break-word;
+}
+
+.user-restyle-detail-timeline {
+    position: relative;
+    display: grid;
+    gap: 0;
+}
+
+.user-restyle-detail-timeline::before {
+    content: "";
+    position: absolute;
+    left: 9px;
+    top: 10px;
+    bottom: 10px;
+    width: 2px;
+    background: #dbe5f2;
+}
+
+.user-restyle-detail-timeline-row {
+    min-height: 58px;
+    border: 0;
+    border-bottom: 1px solid var(--ud-line);
+    background: transparent;
+    display: grid;
+    grid-template-columns: 22px 88px 1fr;
+    gap: 12px;
+    align-items: center;
+    text-align: left;
+    color: var(--ud-text);
+    cursor: pointer;
+    position: relative;
+}
+
+.user-restyle-detail-timeline-row span {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--ud-blue);
+    border: 3px solid #e9f0ff;
+    position: relative;
+    z-index: 1;
+}
+
+.user-restyle-detail-timeline-row strong {
+    color: #385071;
+    font-size: 12px;
+}
+
+.user-restyle-detail-timeline-row em {
+    color: var(--ud-text);
+    font-style: normal;
+    font-weight: 900;
+}
+
 .user-restyle-lightbox {
     position: fixed;
     inset: 0;
@@ -1603,7 +1720,8 @@ body.user-dashboard-restyle-compact .user-restyle-collapse-btn {
 
     .user-restyle-history-layout,
     .user-restyle-reminder-layout,
-    .user-restyle-detail-hero-card {
+    .user-restyle-detail-hero-card,
+    .user-restyle-detail-lower-grid {
         grid-template-columns: 1fr;
     }
 
@@ -1617,7 +1735,8 @@ body.user-dashboard-restyle-compact .user-restyle-collapse-btn {
         grid-column: 3;
     }
 
-    .user-restyle-detail-meta {
+    .user-restyle-detail-meta,
+    .user-restyle-detail-info-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
@@ -1731,8 +1850,15 @@ body.user-dashboard-restyle-compact .user-restyle-collapse-btn {
     .user-restyle-reminder-board,
     .user-restyle-detail-stat-grid,
     .user-restyle-detail-meta,
-    .user-restyle-detail-fields {
+    .user-restyle-detail-fields,
+    .user-restyle-detail-info-grid {
         grid-template-columns: 1fr;
+    }
+
+    .user-restyle-detail-info-grid span {
+        grid-template-columns: 1fr;
+        gap: 4px;
+        padding: 9px 0;
     }
 
     .user-restyle-history-row {
