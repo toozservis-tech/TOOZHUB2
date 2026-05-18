@@ -13,9 +13,9 @@
 
   var DEMO_VEHICLES = [
     {
-      id: 'demo-vw',
+      id: 'prototype-vehicle-a',
       kind: 'van',
-      name: 'Volkswagen Transporter T5.1',
+      name: 'Ukázkové vozidlo A',
       plate: '5M2 1234',
       vin: 'WV2ZZZ7HZ9H123456',
       km: 245680,
@@ -30,9 +30,9 @@
       lastService: 'Výměna brzdových destiček — před 3 měsíci',
     },
     {
-      id: 'demo-sk',
+      id: 'prototype-vehicle-b',
       kind: 'suv',
-      name: 'Škoda Kodiaq 2.0 TDI 4x4',
+      name: 'Ukázkové vozidlo B',
       plate: '9A2 5518',
       vin: 'TMBLE9NSXKH789012',
       km: 128400,
@@ -47,9 +47,9 @@
       lastService: 'Brzdy — před 5 měsíci',
     },
     {
-      id: 'demo-bmw',
+      id: 'prototype-vehicle-c',
       kind: 'sedan',
-      name: 'BMW 320d xDrive',
+      name: 'Ukázkové vozidlo C',
       plate: '2P4 3391',
       vin: 'WBA3B5C50EK345678',
       km: 198200,
