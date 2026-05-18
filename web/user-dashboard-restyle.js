@@ -185,7 +185,7 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
                     ${[
                         ['home', 'Přehled', 'home', 'home'],
                         ['vehicles', 'Moje vozidla', 'car', 'vehicles'],
-                        ['serviceHistory', 'Servisní historie', 'wrench', 'vehicles'],
+                        ['serviceHistory', 'Servisní historie', 'wrench', 'serviceHistory'],
                         ['reminders', 'Připomínky', 'bell', 'reminders'],
                         ['documents', 'Dokumenty', 'folder', 'documents'],
                         ['servicesDirectory', 'Servisy', 'building', 'servicesDirectory'],
@@ -688,6 +688,352 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
         }, 180);
     };
 
+    function formatMoney(value) {
+        const n = Number(value);
+        return Number.isFinite(n) && n > 0 ? `${Math.round(n).toLocaleString('cs-CZ')} Kč` : '—';
+    }
+
+    function formatRecordTitle(record) {
+        return String(record?.description || record?.summary || record?.category || 'Servisní záznam').trim();
+    }
+
+    function getRecordDate(record) {
+        const value = record?.performed_at || record?.created_at || record?.date;
+        const d = value ? new Date(value) : null;
+        return d && Number.isFinite(d.getTime()) ? d : null;
+    }
+
+    async function fetchVehiclesWithRecords(limitVehicles = 24) {
+        if (typeof window.apiCall !== 'function') return { vehicles: [], records: [] };
+        const vehiclesRaw = await window.apiCall('/api/v1/vehicles', 'GET');
+        const vehicles = Array.isArray(vehiclesRaw) ? vehiclesRaw : [];
+        const batches = await Promise.allSettled(vehicles.slice(0, limitVehicles).map(async (vehicle) => {
+            const id = Number(vehicle?.id || 0);
+            if (!id) return [];
+            const recordsRaw = await window.apiCall(`/api/v1/vehicles/${id}/records`, 'GET');
+            const records = Array.isArray(recordsRaw) ? recordsRaw : [];
+            return records.map((record) => ({ ...record, __vehicle: vehicle }));
+        }));
+        const records = [];
+        batches.forEach((result) => {
+            if (result.status === 'fulfilled' && Array.isArray(result.value)) records.push(...result.value);
+        });
+        records.sort((a, b) => (getRecordDate(b)?.getTime() || 0) - (getRecordDate(a)?.getTime() || 0));
+        return { vehicles, records };
+    }
+
+    function activateSyntheticTab(tabKey, contentId) {
+        document.querySelectorAll('.tab').forEach((item) => item.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach((item) => item.classList.remove('active'));
+        const target = document.getElementById(contentId);
+        if (target) target.classList.add('active');
+        updateActiveChromeNav(tabKey);
+        updateChromeIdentity();
+    }
+
+    async function renderServiceHistoryRestyle() {
+        injectChrome();
+        activateSyntheticTab('serviceHistory', 'vehiclesTab');
+        const vehiclesTab = document.getElementById('vehiclesTab');
+        if (!vehiclesTab) return;
+        vehiclesTab.innerHTML = '<section class="user-restyle-service-history"><div class="user-restyle-empty">Načítám servisní historii...</div></section>';
+        try {
+            const { vehicles, records } = await fetchVehiclesWithRecords();
+            const total = records.length;
+            const totalCost = records.reduce((sum, record) => {
+                const price = Number(record?.price || record?.total_price || 0);
+                return Number.isFinite(price) ? sum + price : sum;
+            }, 0);
+            const serviceMap = new Map();
+            records.forEach((record) => {
+                const service = String(record?.service_name || record?.supplier_name || record?.created_by_service_name || 'Vlastní záznam').trim();
+                const prev = serviceMap.get(service) || { count: 0, cost: 0 };
+                prev.count += 1;
+                const price = Number(record?.price || record?.total_price || 0);
+                if (Number.isFinite(price)) prev.cost += price;
+                serviceMap.set(service, prev);
+            });
+            const serviceRows = Array.from(serviceMap.entries()).slice(0, 5);
+            const rowsHtml = records.map((record, index) => {
+                const vehicle = record.__vehicle || {};
+                const id = Number(record?.id || 0);
+                const vehicleId = Number(vehicle?.id || record?.vehicle_id || 0);
+                const date = getRecordDate(record);
+                const title = formatRecordTitle(record);
+                const category = String(record?.category || '').replace(/_/g, ' ') || 'Servis';
+                const service = String(record?.service_name || record?.supplier_name || record?.created_by_service_name || 'Servisní záznam');
+                return `
+                    <article class="user-restyle-history-row">
+                        <div class="user-restyle-history-date"><strong>${escape(date ? formatDate(date) : '—')}</strong><span>${escape(formatKm(record?.mileage || vehicle?.current_mileage_km))}</span></div>
+                        <div class="user-restyle-history-icon">${icon(index % 3 === 0 ? 'wrench' : index % 3 === 1 ? 'file' : 'settings')}</div>
+                        <div class="user-restyle-history-main">
+                            <h3>${escape(title)}</h3>
+                            <p>${escape(getVehicleName(vehicle))} <span>${escape(vehicle?.plate || '')}</span></p>
+                            <strong>${escape(service)}</strong>
+                        </div>
+                        <div class="user-restyle-history-price">${escape(formatMoney(record?.price || record?.total_price))}</div>
+                        <div class="user-restyle-history-state">${escape(record?.verified_at || record?.is_verified ? 'Ověřeno' : category)}</div>
+                        <div class="user-restyle-history-actions">
+                            <button type="button" onclick="showServiceRecordDetail(${id}, ${vehicleId})">${icon('search')} Detail</button>
+                            <button type="button" onclick="showServiceRecordDetail(${id}, ${vehicleId})">${icon('file')} Dokumenty</button>
+                            <button type="button" onclick="openAddServiceRecordModal(${vehicleId})">${icon('plus')} Upravit</button>
+                        </div>
+                    </article>
+                `;
+            }).join('');
+            vehiclesTab.innerHTML = `
+                <section class="user-restyle-service-history">
+                    <header class="user-restyle-section-head">
+                        <div>
+                            <h1>Servisní historie</h1>
+                            <p>Kompletní přehled servisních zásahů napříč vašimi vozidly</p>
+                        </div>
+                        <button type="button" class="user-restyle-add-btn" onclick="openAddServiceRecordModal()">${icon('plus')}<span>Přidat servisní záznam</span></button>
+                    </header>
+                    <div class="user-restyle-filter-row">
+                        <button type="button">${icon('car')}<span>Vozidlo<strong>${vehicles.length ? 'Všechna vozidla' : 'Bez vozidel'}</strong></span></button>
+                        <button type="button">${icon('calendar')}<span>Období<strong>Poslední 2 roky</strong></span></button>
+                        <button type="button">${icon('wrench')}<span>Typ úkonu<strong>Všechny typy</strong></span></button>
+                        <button type="button">${icon('building')}<span>Servis<strong>Všechny servisy</strong></span></button>
+                        <button type="button" onclick="window.loadUserRestyleServiceHistory()">${icon('settings')} Vymazat filtry</button>
+                    </div>
+                    <div class="user-restyle-history-layout">
+                        <section class="user-restyle-card user-restyle-history-list">
+                            <header class="user-restyle-panel-head"><h2>Servisní záznamy</h2><span>${total} záznamů</span></header>
+                            ${rowsHtml || '<div class="user-restyle-empty">Zatím nemáte žádné servisní záznamy.</div>'}
+                        </section>
+                        <aside class="user-restyle-side-stack">
+                            <section class="user-restyle-card user-restyle-panel">
+                                <header class="user-restyle-panel-head"><h3>Souhrn nákladů</h3><button type="button" class="user-restyle-panel-link">Poslední 2 roky</button></header>
+                                <div class="user-restyle-big-number">${escape(formatMoney(totalCost))}</div>
+                                <p class="user-restyle-muted">Celkové náklady za servis</p>
+                                <div class="user-restyle-mini-chart" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                            </section>
+                            <section class="user-restyle-card user-restyle-panel">
+                                <header class="user-restyle-panel-head"><h3>Servisy, které vozidla obsluhovaly</h3></header>
+                                ${serviceRows.map(([name, item]) => `<div class="user-restyle-side-line"><strong>${escape(name)}</strong><span>${item.count} zásahů</span><em>${escape(formatMoney(item.cost))}</em></div>`).join('') || '<div class="user-restyle-empty">Bez servisních partnerů.</div>'}
+                            </section>
+                            <section class="user-restyle-card user-restyle-panel">
+                                <header class="user-restyle-panel-head"><h3>Doporučené další kroky</h3></header>
+                                <button type="button" class="user-restyle-action-line" onclick="openAddServiceRecordModal()">${icon('plus')} Přidat další servisní úkon</button>
+                                <button type="button" class="user-restyle-action-line" onclick="switchTab('reminders')">${icon('bell')} Zkontrolovat připomínky</button>
+                            </section>
+                        </aside>
+                    </div>
+                </section>
+            `;
+        } catch (error) {
+            vehiclesTab.innerHTML = `<section class="user-restyle-service-history"><div class="user-restyle-empty">Servisní historii se nepodařilo načíst: ${escape(error?.message || error)}</div></section>`;
+        }
+    }
+
+    window.loadUserRestyleServiceHistory = renderServiceHistoryRestyle;
+
+    function reminderDate(reminder) {
+        return reminder?.due_date || reminder?.notify_at || reminder?.created_at || '';
+    }
+
+    function reminderStatus(reminder) {
+        if (reminder?.is_completed) return 'done';
+        const d = reminderDate(reminder) ? new Date(reminderDate(reminder)) : null;
+        if (d && Number.isFinite(d.getTime())) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            d.setHours(0, 0, 0, 0);
+            if (d < today) return 'late';
+            const days = Math.round((d.getTime() - today.getTime()) / 86400000);
+            if (days <= 14) return 'soon';
+        }
+        return 'planned';
+    }
+
+    function renderReminderCard(reminder) {
+        const id = Number(reminder?.id || 0);
+        const status = reminderStatus(reminder);
+        const labels = { late: 'Vysoká', soon: 'Střední', planned: 'Nízká', done: 'Dokončeno' };
+        const vehicleName = reminder?.vehicle_name || reminder?.vehicle_plate || 'Obecná připomínka';
+        return `
+            <article class="user-restyle-reminder-card is-${status}">
+                <header><span>${icon(status === 'done' ? 'check' : status === 'late' ? 'bell' : 'calendar')}</span><strong>${escape(reminder?.type || 'Připomínka')}</strong><em>${escape(labels[status])}</em></header>
+                <h3>${escape(vehicleName)}</h3>
+                <p>${escape(reminder?.vehicle_plate || '')}</p>
+                <div class="user-restyle-reminder-date">${escape(status === 'late' ? 'Termín byl' : status === 'soon' ? 'do' : '')} ${escape(formatDate(reminderDate(reminder)))}</div>
+                <small>${escape(reminder?.text || 'Bez popisu')}</small>
+                <footer>
+                    ${id && status !== 'done' ? `<button type="button" onclick="window.completeUserRestyleReminder(${id})">${icon('check')} Splnit</button>` : ''}
+                    ${id && status !== 'done' ? `<button type="button" onclick="window.editReminder ? editReminder(${id}) : window.openUserRestyleReminderDetail(${id})">${icon('settings')} Odložit</button>` : ''}
+                    <button type="button" onclick="window.openUserRestyleReminderDetail(${id})">${icon('file')} Detail</button>
+                </footer>
+            </article>
+        `;
+    }
+
+    async function renderRemindersRestyle(remindersOverride = null) {
+        injectChrome();
+        updateActiveChromeNav('reminders');
+        const container = document.getElementById('remindersContainer');
+        if (!container || typeof window.apiCall !== 'function') return;
+        const reminders = Array.isArray(remindersOverride)
+            ? remindersOverride
+            : await window.apiCall('/api/v1/reminders?include_completed=true', 'GET');
+        const list = Array.isArray(reminders) ? reminders : [];
+        window.__userRestyleReminders = list;
+        const buckets = {
+            late: list.filter((item) => reminderStatus(item) === 'late'),
+            soon: list.filter((item) => reminderStatus(item) === 'soon'),
+            planned: list.filter((item) => reminderStatus(item) === 'planned'),
+            done: list.filter((item) => reminderStatus(item) === 'done'),
+        };
+        const stats = [
+            ['Dnes', buckets.soon.filter((item) => {
+                const d = new Date(reminderDate(item));
+                const t = new Date();
+                return Number.isFinite(d.getTime()) && d.toDateString() === t.toDateString();
+            }).length, 'calendar'],
+            ['Tento týden', buckets.soon.length, 'calendar'],
+            ['Po termínu', buckets.late.length, 'bell'],
+            ['Dokončeno', buckets.done.length, 'check'],
+        ];
+        container.innerHTML = `
+            <section class="user-restyle-reminders">
+                <header class="user-restyle-section-head">
+                    <div><h1>Připomínky</h1><p>Hlídejte STK, pojištění, servis i vlastní úkoly</p></div>
+                    <button type="button" class="user-restyle-add-btn" onclick="showCreateReminderForm()">${icon('plus')}<span>Nová připomínka</span></button>
+                </header>
+                <div class="user-restyle-reminder-stats">
+                    ${stats.map(([label, count, glyph]) => `<button type="button" class="user-restyle-card">${icon(glyph)}<strong>${count}</strong><span>${escape(label)}</span><em>${count === 1 ? '1 úkol' : `${count} úkolů`}</em></button>`).join('')}
+                </div>
+                <div class="user-restyle-reminder-layout">
+                    <div class="user-restyle-reminder-board">
+                        ${[
+                            ['late', 'Po termínu', '#ef3b2d'],
+                            ['soon', 'Blíží se', '#ff7a1a'],
+                            ['planned', 'Naplánováno', '#0f49c9'],
+                            ['done', 'Dokončeno', '#18a54a'],
+                        ].map(([key, title, color]) => `
+                            <section class="user-restyle-reminder-column" style="--tone:${color}">
+                                <header><h2>${escape(title)}</h2><span>${buckets[key].length}</span></header>
+                                <div>${buckets[key].map(renderReminderCard).join('') || '<div class="user-restyle-empty">Žádné položky.</div>'}</div>
+                                <button type="button" onclick="showCreateReminderForm()">${icon('plus')} Nová připomínka</button>
+                            </section>
+                        `).join('')}
+                    </div>
+                    <aside class="user-restyle-side-stack">
+                        <section class="user-restyle-card user-restyle-panel">
+                            <header class="user-restyle-panel-head"><h3>Kalendář</h3><button type="button" class="user-restyle-panel-link" onclick="showCreateReminderForm()">+</button></header>
+                            <div class="user-restyle-calendar-mini">${Array.from({ length: 35 }, (_, i) => `<span class="${i === 18 ? 'is-hot' : i === 20 ? 'is-plan' : ''}">${(i % 31) + 1}</span>`).join('')}</div>
+                        </section>
+                        <section class="user-restyle-card user-restyle-panel">
+                            <header class="user-restyle-panel-head"><h3>Automatické připomínky</h3><button type="button" class="user-restyle-panel-link" onclick="showCreateReminderForm()">Nastavit</button></header>
+                            ${['STK / SME', 'Pojištění', 'Servisní intervaly', 'Olej / kapaliny', 'Pneumatiky'].map((item) => `<div class="user-restyle-toggle-line"><span>${escape(item)}</span><strong>Zapnuto</strong></div>`).join('')}
+                        </section>
+                        <section class="user-restyle-card user-restyle-panel">
+                            <header class="user-restyle-panel-head"><h3>Doporučení podle vozidel</h3><button type="button" class="user-restyle-panel-link" onclick="switchTab('vehicles')">Zobrazit vše</button></header>
+                            ${list.slice(0, 2).map((item) => `<button type="button" class="user-restyle-action-line" onclick="${item?.vehicle_id ? `showVehicleDetail(${Number(item.vehicle_id)})` : "switchTab('vehicles')"}">${icon('car')} ${escape(item?.vehicle_name || item?.text || 'Vozidlo')}</button>`).join('') || '<div class="user-restyle-empty">Bez doporučení.</div>'}
+                        </section>
+                    </aside>
+                </div>
+            </section>
+        `;
+    }
+
+    window.openUserRestyleReminderDetail = function (id) {
+        const reminder = (window.__userRestyleReminders || []).find((item) => Number(item?.id) === Number(id));
+        if (!reminder) {
+            if (typeof window.showAlert === 'function') window.showAlert('Detail připomínky není dostupný.', 'error');
+            return;
+        }
+        const modal = document.createElement('div');
+        modal.className = 'user-restyle-lightbox';
+        modal.innerHTML = `
+            <div class="user-restyle-lightbox-card">
+                <button type="button" class="user-restyle-lightbox-close" onclick="this.closest('.user-restyle-lightbox').remove()">×</button>
+                <p class="user-restyle-kicker">Připomínka</p>
+                <h2>${escape(reminder?.type || 'Připomínka')}</h2>
+                <div class="user-restyle-detail-fields">
+                    <span>Vozidlo<strong>${escape(reminder?.vehicle_name || 'Obecná připomínka')}</strong></span>
+                    <span>Termín<strong>${escape(formatDate(reminderDate(reminder)))}</strong></span>
+                    <span>Stav<strong>${escape(reminderStatus(reminder))}</strong></span>
+                    <span>Popis<strong>${escape(reminder?.text || '—')}</strong></span>
+                </div>
+                <div class="user-restyle-lightbox-actions">
+                    ${reminder?.vehicle_id ? `<button type="button" onclick="this.closest('.user-restyle-lightbox').remove(); showVehicleDetail(${Number(reminder.vehicle_id)})">Otevřít vozidlo</button>` : ''}
+                    ${reminder?.id ? `<button type="button" onclick="this.closest('.user-restyle-lightbox').remove(); editReminder(${Number(reminder.id)})">Upravit</button>` : ''}
+                    <button type="button" onclick="this.closest('.user-restyle-lightbox').remove()">Zavřít</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    };
+
+    window.completeUserRestyleReminder = async function (id) {
+        const reminder = (window.__userRestyleReminders || []).find((item) => Number(item?.id) === Number(id));
+        if (!reminder || typeof window.apiCall !== 'function') return;
+        try {
+            await window.apiCall(`/api/v1/reminders/${Number(id)}`, 'PUT', { ...reminder, is_completed: true });
+            if (typeof window.showAlert === 'function') window.showAlert('Připomínka označena jako splněná.', 'success');
+            await renderRemindersRestyle();
+        } catch (error) {
+            if (typeof window.showAlert === 'function') window.showAlert(`Připomínku se nepodařilo splnit: ${error?.message || error}`, 'error');
+        }
+    };
+
+    async function enhanceVehicleDetailRestyle(vehicleId) {
+        const modal = document.getElementById('vehicleDetailModal');
+        const body = document.getElementById('vehicleModalBody');
+        const vehicle = window.currentVehicle;
+        if (!modal || !body || !vehicle) return;
+        modal.classList.add('user-restyle-detail-modal');
+        body.querySelector('.user-restyle-detail-overview')?.remove();
+        let records = [];
+        try {
+            const raw = await window.apiCall(`/api/v1/vehicles/${Number(vehicleId)}/records`, 'GET');
+            records = Array.isArray(raw) ? raw : [];
+        } catch (error) {}
+        const latest = records.slice().sort((a, b) => (getRecordDate(b)?.getTime() || 0) - (getRecordDate(a)?.getTime() || 0))[0] || null;
+        const stk = getVehicleStkDate(vehicle);
+        const status = getVehicleStatus(vehicle);
+        body.insertAdjacentHTML('afterbegin', `
+            <section class="user-restyle-detail-overview">
+                <div class="user-restyle-detail-hero-card">
+                    <div class="user-restyle-detail-photo" id="user-restyle-detail-photo-${Number(vehicleId)}">
+                        ${typeof window.vehiclePrimaryPhotoAvailable === 'function' && window.vehiclePrimaryPhotoAvailable(vehicle) ? `<img id="user-restyle-detail-img-${Number(vehicleId)}" alt="${escape(getVehicleName(vehicle))}">` : renderHeroVehicleMedia(null)}
+                    </div>
+                    <div class="user-restyle-detail-copy">
+                        <h1>${escape(getVehicleName(vehicle))}</h1>
+                        <div class="user-restyle-detail-badges"><span>${escape(vehicle?.plate || 'SPZ —')}</span><span class="${status.className}">${escape(status.label)}</span></div>
+                        <div class="user-restyle-detail-meta">
+                            <span>VIN<strong>${escape(vehicle?.vin || '—')}</strong></span>
+                            <span>Rok výroby<strong>${escape(vehicle?.year || '—')}</strong></span>
+                            <span>Palivo<strong>${escape(vehicle?.fuel_type || vehicle?.fuel || '—')}</strong></span>
+                            <span>Výkon<strong>${escape(vehicle?.power_kw ? `${vehicle.power_kw} kW` : '—')}</strong></span>
+                        </div>
+                        <div class="user-restyle-detail-actions">
+                            <button type="button" onclick="openVehicleDetailFloatingSection('basic', ${Number(vehicleId)})">${icon('settings')} Upravit</button>
+                            <button type="button" onclick="openAddServiceRecordModal(${Number(vehicleId)})">${icon('plus')} Přidat záznam</button>
+                            <button type="button" onclick="openVehicleDetailFloatingSection('documents', ${Number(vehicleId)})">${icon('file')} Nahrát dokument</button>
+                            <button type="button" onclick="openVehicleDetailFloatingSection('access', ${Number(vehicleId)})">${icon('share')} Sdílet se servisem</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="user-restyle-detail-stat-grid">
+                    ${[
+                        ['STK / SME', stk ? formatDate(stk) : '—', status.label, 'calendar'],
+                        ['Pojištění', vehicle?.insurance_valid_until ? formatDate(vehicle.insurance_valid_until) : '—', 'V pořádku', 'shield'],
+                        ['Nájezd', formatKm(vehicle?.current_mileage_km), latest?.performed_at ? `Poslední záznam ${formatDate(latest.performed_at)}` : 'Bez záznamu', 'grid'],
+                        ['Poslední servis', latest ? formatRecordTitle(latest) : 'Bez servisního záznamu', latest?.performed_at ? formatDate(latest.performed_at) : 'Doplňte historii', 'wrench'],
+                        ['Dokumenty', 'Dokumenty vozidla', 'Zobrazit', 'folder'],
+                        ['Přístupy servisů', 'Spravovat sdílení', 'Přístupy', 'building'],
+                    ].map(([title, value, hint, glyph]) => `<button type="button" class="user-restyle-detail-stat" onclick="${title === 'Dokumenty' ? `openVehicleDetailFloatingSection('documents', ${Number(vehicleId)})` : title === 'Přístupy servisů' ? `openVehicleDetailFloatingSection('access', ${Number(vehicleId)})` : `openVehicleDetailFloatingSection('basic', ${Number(vehicleId)})`}">${icon(glyph)}<span>${escape(title)}</span><strong>${escape(value)}</strong><em>${escape(hint)}</em></button>`).join('')}
+                </div>
+            </section>
+        `);
+        const img = document.getElementById(`user-restyle-detail-img-${Number(vehicleId)}`);
+        if (img && typeof window.hydrateVehiclePhotoPreview === 'function') {
+            try { await window.hydrateVehiclePhotoPreview(Number(vehicleId), img, 'user-restyle-detail'); } catch (error) {}
+        }
+    }
+
     function patchRuntime() {
         if (isServiceAccount()) {
             disableRestyleChromeForService();
@@ -701,6 +1047,10 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
                 if (isServiceAccount()) {
                     disableRestyleChromeForService();
                     return originalSwitchTab.call(this, tab, options || {});
+                }
+                if (String(tab || '') === 'serviceHistory') {
+                    void renderServiceHistoryRestyle();
+                    return undefined;
                 }
                 const result = originalSwitchTab.call(this, tab, options || {});
                 updateActiveChromeNav(tab);
@@ -749,6 +1099,38 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
             };
             wrappedLoadVehicles.__userRestyleWrapped = true;
             window.loadVehicles = wrappedLoadVehicles;
+        }
+
+        const originalLoadReminders = window.loadReminders;
+        if (typeof originalLoadReminders === 'function' && !originalLoadReminders.__userRestyleWrapped) {
+            const wrappedLoadReminders = async function (force) {
+                if (window.isServiceWorkspaceRole && window.isServiceWorkspaceRole()) {
+                    return originalLoadReminders.call(this, force);
+                }
+                try {
+                    const result = await originalLoadReminders.call(this, force);
+                    if (window.__licenseFlags && window.__licenseFlags.remindersEnabled === false) return result;
+                    await renderRemindersRestyle();
+                    return result;
+                } catch (error) {
+                    return originalLoadReminders.call(this, force);
+                }
+            };
+            wrappedLoadReminders.__userRestyleWrapped = true;
+            window.loadReminders = wrappedLoadReminders;
+        }
+
+        const originalShowVehicleDetail = window.showVehicleDetail;
+        if (typeof originalShowVehicleDetail === 'function' && !originalShowVehicleDetail.__userRestyleWrapped) {
+            const wrappedShowVehicleDetail = async function (vehicleId) {
+                const result = await originalShowVehicleDetail.call(this, vehicleId);
+                if (!(window.isServiceWorkspaceRole && window.isServiceWorkspaceRole())) {
+                    await enhanceVehicleDetailRestyle(vehicleId);
+                }
+                return result;
+            };
+            wrappedShowVehicleDetail.__userRestyleWrapped = true;
+            window.showVehicleDetail = wrappedShowVehicleDetail;
         }
     }
 
