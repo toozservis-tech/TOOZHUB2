@@ -118,14 +118,6 @@
         return role.includes('service');
     }
 
-    function disableRestyleChromeForService() {
-        const chrome = document.getElementById('userRestyleChrome');
-        if (chrome) chrome.remove();
-        const style = document.getElementById('userRestyleRuntimeLayout');
-        if (style) style.remove();
-        document.body.classList.remove('user-dashboard-restyle', 'user-dashboard-restyle-compact');
-    }
-
     function injectRuntimeLayoutStyles() {
         if (document.getElementById('userRestyleRuntimeLayout')) return;
         const style = document.createElement('style');
@@ -133,16 +125,16 @@
         style.textContent = `
 body.user-dashboard-restyle.route-app-view #dashboard.dashboard {
     margin: 0 0 0 var(--ud-sidebar-w) !important;
-    width: calc(100vw - var(--ud-sidebar-w)) !important;
+    width: calc(100% - var(--ud-sidebar-w)) !important;
     max-width: none !important;
     min-width: 0 !important;
     padding: calc(var(--ud-topbar-h) + 18px) 28px 36px !important;
     box-sizing: border-box !important;
-    overflow-x: hidden !important;
 }
 body.user-dashboard-restyle.route-app-view .user-restyle-topbar {
     left: var(--ud-sidebar-w) !important;
-    width: calc(100vw - var(--ud-sidebar-w)) !important;
+    right: 0 !important;
+    width: auto !important;
     box-sizing: border-box !important;
 }
 body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
@@ -152,17 +144,91 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
 @media (max-width: 820px) {
     body.user-dashboard-restyle.route-app-view #dashboard.dashboard {
         margin-left: 0 !important;
-        width: 100vw !important;
+        width: 100% !important;
         padding: calc(var(--ud-topbar-h) + 14px) 14px 88px !important;
     }
     body.user-dashboard-restyle.route-app-view .user-restyle-topbar {
         left: 0 !important;
-        width: 100vw !important;
+        right: 0 !important;
+        width: auto !important;
     }
 }
         `;
         document.head.appendChild(style);
     }
+
+    function restoreOriginalTopbarOverlays() {
+        const navbar = document.getElementById('mainNavbar');
+        if (!navbar) return;
+        ['appNotificationsPanel', 'mobileProfileMenu'].forEach((id) => {
+            const element = document.getElementById(id);
+            if (element && element.parentElement?.id === 'userRestyleChrome') {
+                navbar.appendChild(element);
+            }
+        });
+    }
+
+    function disableRestyleChromeForService() {
+        restoreOriginalTopbarOverlays();
+        const chrome = document.getElementById('userRestyleChrome');
+        if (chrome) chrome.remove();
+        const style = document.getElementById('userRestyleRuntimeLayout');
+        if (style) style.remove();
+        document.body.classList.remove('user-dashboard-restyle', 'user-dashboard-restyle-compact');
+    }
+
+    function syncRestyleNotificationsBadge() {
+        const target = document.getElementById('userRestyleNotificationsBadge');
+        if (!target) return;
+        const source = document.getElementById('desktopNotificationsBadge') || document.getElementById('mobileNotificationsBadge');
+        const count = source?.dataset?.count || source?.textContent || '0';
+        const label = source?.textContent || (count === '0' ? '' : count);
+        target.dataset.count = String(count || '0');
+        target.textContent = label;
+    }
+
+    function bindRestyleNotificationsBadgeMirror() {
+        if (window.__userRestyleNotificationsBadgeMirrorBound) return;
+        window.__userRestyleNotificationsBadgeMirrorBound = true;
+        const observe = (id) => {
+            const source = document.getElementById(id);
+            if (!source || typeof MutationObserver === 'undefined') return;
+            const observer = new MutationObserver(syncRestyleNotificationsBadge);
+            observer.observe(source, { childList: true, attributes: true, attributeFilter: ['data-count'] });
+        };
+        observe('desktopNotificationsBadge');
+        observe('mobileNotificationsBadge');
+        syncRestyleNotificationsBadge();
+    }
+
+    function mountOriginalTopbarOverlays() {
+        const chrome = document.getElementById('userRestyleChrome');
+        if (!chrome) return;
+        ['appNotificationsPanel', 'mobileProfileMenu'].forEach((id) => {
+            const element = document.getElementById(id);
+            if (element && element.parentElement !== chrome) {
+                chrome.appendChild(element);
+            }
+        });
+        bindRestyleNotificationsBadgeMirror();
+    }
+
+    window.openUserRestyleNotifications = function (event) {
+        if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+        mountOriginalTopbarOverlays();
+        if (typeof window.toggleAppNotificationsPanel === 'function') {
+            window.toggleAppNotificationsPanel(event || { currentTarget: document.querySelector('.user-restyle-notifications-btn') });
+            syncRestyleNotificationsBadge();
+        }
+    };
+
+    window.openUserRestyleProfileMenu = function (event) {
+        if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+        mountOriginalTopbarOverlays();
+        if (typeof window.toggleMobileProfileMenu === 'function') {
+            window.toggleMobileProfileMenu();
+        }
+    };
 
     function injectChrome() {
         if (isServiceAccount()) {
@@ -211,10 +277,10 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
                     <span class="user-restyle-kbd">⌘ K</span>
                 </label>
                 <button type="button" class="user-restyle-add-btn" onclick="openAddVehicleModal()">${icon('plus')}<span>Přidat vozidlo</span></button>
-                <button type="button" class="user-restyle-icon-btn app-notifications-button" onclick="toggleAppNotificationsPanel(event)" aria-label="Oznámení" aria-expanded="false" aria-controls="appNotificationsPanel">
+                <button type="button" class="user-restyle-icon-btn user-restyle-notifications-btn app-notifications-button" onclick="window.openUserRestyleNotifications(event)" aria-label="Oznámení" aria-expanded="false" aria-controls="appNotificationsPanel">
                     ${icon('bell')}<span class="app-notifications-badge" id="userRestyleNotificationsBadge" data-count="0" aria-hidden="true"></span>
                 </button>
-                <button type="button" class="user-restyle-profile" onclick="switchTab('account')" aria-label="Profil">
+                <button type="button" class="user-restyle-profile" onclick="window.openUserRestyleProfileMenu(event)" aria-label="Profil" aria-expanded="false" aria-controls="mobileProfileMenu">
                     <span class="user-restyle-avatar" id="userRestyleAvatar">U</span>
                     <span id="userRestyleProfileName">Uživatel</span>
                     <span>⌄</span>
@@ -222,6 +288,7 @@ body.user-dashboard-restyle.route-app-view .user-restyle-sidebar {
             </header>
         `;
         appShell.prepend(chrome);
+        mountOriginalTopbarOverlays();
         updateChromeIdentity();
         updateActiveChromeNav('home');
     }
