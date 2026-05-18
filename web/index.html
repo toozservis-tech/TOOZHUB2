@@ -33082,6 +33082,7 @@
         }
 
     </style>
+    <link rel="stylesheet" href="/web/public-auth.css?v=2026051801" />
     
     <!-- Security Protection - Anti-debugging a ochrana kódu -->
     <!-- DOČASNĚ ÚPLNĚ ZAKÁZÁNO - způsobovalo zmizení aplikace -->
@@ -33572,6 +33573,18 @@
 
             <!-- Přihlašovací sekce -->
             <div id="authSection" class="auth-shell auth-shell-root" data-view-context="auth" hidden aria-hidden="true" inert>
+                <header class="sv-auth-header" aria-label="Navigace přihlášení">
+                    <a href="/" class="sv-auth-brand" onclick="goToPublicRoute('home'); return false;">
+                        <span class="sv-logo-mark" aria-hidden="true">▱</span>
+                        <span>Správa vozidel</span>
+                    </a>
+                    <nav class="sv-auth-header-actions" aria-label="Auth akce">
+                        <button type="button" class="sv-auth-back" onclick="goToPublicRoute('home'); return false;">Zpět na úvod</button>
+                        <button type="button" class="sv-auth-register-link" onclick="showRegister()">Vytvořit účet</button>
+                        <span class="sv-auth-login-prompt">Už máte účet?</span>
+                        <button type="button" class="sv-auth-login-link" onclick="showLogin()">Přihlásit se</button>
+                    </nav>
+                </header>
                 <div id="login-view" class="auth-layout">
                     <div class="auth-mobile-home-bar" aria-label="Navigace mimo přihlášení">
                         <a href="/" class="auth-mobile-home-link" data-testid="auth-back-to-home" onclick="goToPublicRoute('home'); return false;">
@@ -33588,18 +33601,15 @@
                         </div>
                         <div class="auth-promo-copy">
                             <p class="auth-promo-kicker">Přehled vozidel bez zbytečného hledání</p>
-                            <h1 class="auth-promo-title">
-                                <span class="public-site-sr-only">Mějte historii vozidla pod kontrolou.</span>
-                                <span class="auth-promo-title-line line-1" aria-hidden="true" style="--type-steps: 14;">Mějte historii</span>
-                                <span class="auth-promo-title-line line-2" aria-hidden="true" style="--type-steps: 12;"><span class="auth-promo-title-accent">vozidla</span> pod</span>
-                                <span class="auth-promo-title-line line-3" aria-hidden="true" style="--type-steps: 10;"><span class="auth-promo-title-accent">kontrolou.</span></span>
-                            </h1>
-                            <p class="auth-promo-lead">Servis, připomínky, náklady a důležité údaje na jednom místě. Přihlásíte se během chvíle a pokračujete tam, kde jste skončili.</p>
+                            <h1 class="auth-promo-title auth-promo-title-login">Vaše vozidla pod kontrolou</h1>
+                            <h1 class="auth-promo-title auth-promo-title-register">Začněte budovat digitální historii vozidel</h1>
+                            <p class="auth-promo-lead auth-promo-lead-login">Přihlaste se a pokračujte ve správě vozidel, dokumentů, termínů a servisní historie.</p>
+                            <p class="auth-promo-lead auth-promo-lead-register">Správa vozidel propojuje majitele, vozidla, dokumenty a servisy do jednoho přehledného systému.</p>
                         </div>
                         <ul class="auth-promo-feature-list">
-                            <li>Přehled vozidel a termínů</li>
-                            <li>Servisní historie na jednom místě</li>
-                            <li>Rychlý přístup z mobilu i počítače</li>
+                            <li><strong>Servisní historie</strong><span>Přehled oprav, nájezdů a servisních záznamů.</span></li>
+                            <li><strong>Dokumenty a faktury</strong><span>Technické průkazy, faktury, pojistky a PDF výpisy.</span></li>
+                            <li><strong>STK a připomínky</strong><span>Upozornění na STK, pojištění a další termíny.</span></li>
                         </ul>
                         <div class="auth-promo-strip" aria-hidden="true">
                             <div class="auth-promo-metric">
@@ -33647,6 +33657,15 @@
                                 </article>
                             </div>
                         </div>
+                        <div class="sv-auth-security-card">
+                            <span class="sv-auth-security-icon" aria-hidden="true">✓</span>
+                            <div>
+                                <strong>Bezpečný přístup k vašim datům</strong>
+                                <p>Používáme moderní šifrování a bezpečnostní standardy k ochraně vašich informací a historie vozidel.</p>
+                            </div>
+                            <span class="sv-auth-security-badge">256bit šifrování</span>
+                            <span class="sv-auth-security-badge">GDPR Ready</span>
+                        </div>
                     </aside>
 
                     <section class="auth-section" aria-label="Přihlášení a registrace">
@@ -33659,9 +33678,9 @@
 
                             <form id="loginForm" class="auth-form-panel" data-testid="login-form" onsubmit="handleLogin(); return false;">
                                 <div class="auth-form-head">
-                                    <p class="auth-form-kicker">Vstup do aplikace</p>
+                                    <p class="auth-form-kicker sv-auth-lock" aria-hidden="true">▣</p>
                                     <h2 id="loginTitle">Přihlášení</h2>
-                                    <p id="loginSubtitle" class="auth-form-subtitle">Přihlaste se ke svému účtu a pokračujte do přehledu vozidel, servisu a termínů.</p>
+                                    <p id="loginSubtitle" class="auth-form-subtitle">Pokračujte do své digitální garáže.</p>
                                 </div>
 
                                 <div class="auth-login-primary">
@@ -33675,30 +33694,28 @@
                                     </div>
 
                                     <div class="form-group">
-                                        <label for="loginEmail">Email</label>
-                                        <input type="email" id="loginEmail" data-testid="input-email" placeholder="email@example.com" autocomplete="email username" required>
+                                        <label for="loginEmail">E-mail</label>
+                                        <input type="email" id="loginEmail" data-testid="input-email" placeholder="vas@email.cz" autocomplete="email username" required>
                                     </div>
                                     <div class="form-group">
                                         <label for="loginPassword">Heslo</label>
                                         <input type="password" id="loginPassword" data-testid="input-password" placeholder="Zadejte heslo" autocomplete="current-password" required>
                                     </div>
                                     <div class="auth-login-options">
-                                        <label class="auth-login-option" for="rememberLoginEmailCheckbox">
-                                            <input type="checkbox" id="rememberLoginEmailCheckbox">
-                                            <span>Zapamatovat email</span>
-                                        </label>
                                         <label class="auth-login-option" for="staySignedInCheckbox">
                                             <input type="checkbox" id="staySignedInCheckbox">
-                                            <span>Zůstat přihlášen</span>
+                                            <span>Zapamatovat přihlášení</span>
                                         </label>
+                                        <input type="checkbox" id="rememberLoginEmailCheckbox" hidden>
+                                        <a href="#" class="auth-inline-link" onclick="showForgotPasswordForm(); return false;">Zapomenuté heslo?</a>
                                     </div>
                                     <button type="submit" class="btn auth-primary-btn" id="loginSubmitBtn" data-testid="btn-login">Přihlásit se</button>
                                     <div class="auth-inline-actions">
-                                        <a href="#" class="auth-inline-link" onclick="showForgotPasswordForm(); return false;">Zapomenuté heslo?</a>
-                                        <button type="button" class="auth-inline-link auth-inline-link--button" id="loginShowRegisterBtn" onclick="showRegister()" data-testid="btn-show-register">Vytvořit účet</button>
+                                        <span>Nemáte účet?</span>
+                                        <button type="button" class="auth-inline-link auth-inline-link--button" id="loginShowRegisterBtn" onclick="showRegister()" data-testid="btn-show-register">Zaregistrovat se</button>
                                     </div>
                                 </div>
-                                <p class="auth-card-footnote">Po přihlášení se otevře pracovní přehled podle typu vašeho účtu.</p>
+                                <p class="auth-card-footnote">Vaše data a historie vozidel jsou chráněné.</p>
 
                                 <div id="loginTwoFactorPanel" class="auth-2fa-panel hidden">
                                     <div class="auth-step-badge">Druhý krok</div>
@@ -33719,16 +33736,16 @@
 
                             <div id="registerForm" class="hidden auth-form-panel" data-testid="register-form">
                                 <div class="auth-form-head">
-                                    <p class="auth-form-kicker">Založení účtu</p>
-                                    <h2>Registrace</h2>
-                                    <p id="registerSubtitle" class="auth-form-subtitle">Vytvořte si účet a začněte spravovat vozidla v jednom přehledu.</p>
+                                    <p class="auth-form-kicker">Registrace</p>
+                                    <h2>Vytvořit účet</h2>
+                                    <p id="registerSubtitle" class="auth-form-subtitle">Vyberte typ účtu a začněte spravovat vozidla přehledně.</p>
                                 </div>
 
                                 <div class="auth-login-mode" aria-label="Volba typu registrace">
-                                    <span class="auth-login-mode-label">Registrujete účet jako</span>
+                                    <span class="auth-login-mode-label">Typ účtu</span>
                                     <div class="auth-login-mode-switch" role="group" aria-label="Typ registrace">
-                                        <button type="button" id="registerModeUserBtn" class="auth-login-mode-btn active" onclick="setRegistrationMode('user')">Uživatel</button>
-                                        <button type="button" id="registerModeServiceBtn" class="auth-login-mode-btn" onclick="setRegistrationMode('service')">Servis</button>
+                                        <button type="button" id="registerModeUserBtn" class="auth-login-mode-btn active" onclick="setRegistrationMode('user')"><strong>Majitel vozidla</strong><span>Správa vlastních vozidel, dokumentů, STK a servisní historie.</span></button>
+                                        <button type="button" id="registerModeServiceBtn" class="auth-login-mode-btn" onclick="setRegistrationMode('service')"><strong>Autoservis</strong><span>Správa zákazníků, vozidel, zakázek a servisních záznamů.</span></button>
                                     </div>
                                     <p id="registerModeHint" class="auth-login-mode-hint">Standardní registrace uživatele s okamžitou aktivací.</p>
                                 </div>
@@ -33736,7 +33753,7 @@
                                 <div class="auth-register-section">
                                     <div class="auth-register-section-head">
                                         <strong>Základní údaje</strong>
-                                        <span>IČO doplní údaje z ARES automaticky</span>
+                                        <span>Údaje o účtu</span>
                                     </div>
                                     <div class="auth-form-grid auth-form-grid--compact">
                                         <div class="form-group">
@@ -33746,7 +33763,7 @@
                                         </div>
                                         <div class="form-group">
                                             <label for="regEmail">Email *</label>
-                                            <input type="email" id="regEmail" data-testid="input-reg-email" placeholder="email@example.com" autocomplete="email" required>
+                                            <input type="email" id="regEmail" data-testid="input-reg-email" placeholder="vas@email.cz" autocomplete="email" required>
                                             <small class="ares-info-text">Na tento e-mail přijde ověřovací odkaz (platnost 30 minut).</small>
                                         </div>
                                     </div>
@@ -33793,11 +33810,11 @@
                                     <div class="auth-form-grid auth-form-grid--compact">
                                         <div class="form-group">
                                             <label for="regPhone">Telefon *</label>
-                                            <input type="text" id="regPhone" data-testid="input-reg-phone" placeholder="+420731552299" autocomplete="tel" required>
+                                            <input type="text" id="regPhone" data-testid="input-reg-phone" placeholder="+420 123 456 789" autocomplete="tel" required>
                                         </div>
                                         <div class="form-group">
                                             <label for="regPassword">Heslo *</label>
-                                            <input type="password" id="regPassword" data-testid="input-reg-password" placeholder="Alespoň 6 znaků" autocomplete="new-password" required>
+                                            <input type="password" id="regPassword" data-testid="input-reg-password" placeholder="Min. 8 znaků" autocomplete="new-password" required>
                                         </div>
                                         <div class="form-group form-group-full">
                                             <label for="regPasswordConfirm">Potvrzení hesla *</label>
@@ -33824,10 +33841,14 @@
                                 </div>
 
                                 <div class="auth-register-actions">
-                                    <button class="btn auth-primary-btn" id="registerSubmitBtn" onclick="handleRegister()" data-testid="btn-register">Registrovat</button>
+                                    <label class="sv-auth-consent">
+                                        <input type="checkbox" checked>
+                                        <span>Souhlasím s <a href="obchodni-podminky.html" target="_blank" rel="noopener noreferrer">obchodními podmínkami</a> a <a href="ochrana-osobnich-udaju.html" target="_blank" rel="noopener noreferrer">ochranou osobních údajů</a>.</span>
+                                    </label>
+                                    <button class="btn auth-primary-btn" id="registerSubmitBtn" onclick="handleRegister()" data-testid="btn-register">Vytvořit účet</button>
                                     <button type="button" class="auth-inline-link auth-inline-link--button" onclick="showLogin()" data-testid="btn-back-to-login">Už máte účet? Přihlásit se</button>
                                 </div>
-                                <p class="auth-card-footnote">Registrace zachovává stávající pravidla účtu, ARES doplnění i servisní schvalovací tok.</p>
+                                <p class="auth-card-footnote">Vaše data a historie vozidel jsou chráněné.</p>
                                 <div id="registerErrorContainer" class="auth-error-slot" aria-live="polite"></div>
                             </div>
 
@@ -33888,15 +33909,16 @@
                             <span data-app-display-name></span>
                         </a>
                         <nav class="public-site-nav" aria-label="Sekce veřejného webu">
-                            <a href="/" data-public-nav="home" onclick="goToPublicRoute('home'); return false;">Domů</a>
-                            <a href="/funkce" data-public-nav="features" onclick="goToPublicRoute('features'); return false;">Funkce</a>
-                            <a href="/pro-koho" data-public-nav="audiences" onclick="goToPublicRoute('audiences'); return false;">Pro koho</a>
-                            <a href="/kontakt" data-public-nav="contact" onclick="goToPublicRoute('contact'); return false;">Kontakt</a>
+                            <a href="#sv-public-features" data-public-nav="features" onclick="document.getElementById('sv-public-features')?.scrollIntoView({behavior:'smooth'}); return false;">Funkce</a>
+                            <a href="#sv-public-owners" data-public-nav="audiences" onclick="document.getElementById('sv-public-owners')?.scrollIntoView({behavior:'smooth'}); return false;">Pro majitele</a>
+                            <a href="#sv-public-services" data-public-nav="audiences" onclick="document.getElementById('sv-public-services')?.scrollIntoView({behavior:'smooth'}); return false;">Pro servisy</a>
+                            <a href="#sv-public-pricing" data-public-nav="contact" onclick="document.getElementById('sv-public-pricing')?.scrollIntoView({behavior:'smooth'}); return false;">Ceník</a>
+                            <a href="#sv-public-how" data-public-nav="features" onclick="document.getElementById('sv-public-how')?.scrollIntoView({behavior:'smooth'}); return false;">Jak to funguje</a>
                         </nav>
                         <div class="public-site-actions">
                             <button type="button" class="btn btn-secondary public-site-btn hidden" data-public-demo-visible="1" onclick="openPublicDemoEntry(); return false;">Vyzkoušet ukázku</button>
-                            <button type="button" class="btn btn-secondary public-site-btn" onclick="showLogin()">Přihlásit</button>
-                            <button type="button" class="btn public-site-btn" onclick="showRegister()">Registrovat se</button>
+                            <button type="button" class="btn btn-secondary public-site-btn" onclick="showLogin()">Přihlásit se</button>
+                            <button type="button" class="btn public-site-btn" onclick="showRegister()">Vyzkoušet zdarma</button>
                         </div>
                         <button type="button" class="public-site-menu-toggle" id="publicSiteMenuToggle" aria-expanded="false" aria-controls="publicSiteDrawerPanel" onclick="togglePublicSiteMobileMenu(); return false;">
                             <span class="public-site-menu-toggle-box" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -33913,24 +33935,136 @@
                             <button type="button" class="public-site-drawer-close" onclick="closePublicSiteMobileMenu(); return false;" aria-label="Zavřít menu">×</button>
                         </div>
                         <nav class="public-site-drawer-nav" aria-label="Sekce webu">
-                            <a href="/" data-public-nav="home" onclick="goToPublicRoute('home'); return false;">Domů</a>
-                            <a href="/funkce" data-public-nav="features" onclick="goToPublicRoute('features'); return false;">Funkce</a>
-                            <a href="/pro-koho" data-public-nav="audiences" onclick="goToPublicRoute('audiences'); return false;">Pro koho</a>
-                            <a href="/kontakt" data-public-nav="contact" onclick="goToPublicRoute('contact'); return false;">Kontakt</a>
+                            <a href="#sv-public-features" onclick="closePublicSiteMobileMenu(); document.getElementById('sv-public-features')?.scrollIntoView({behavior:'smooth'}); return false;">Funkce</a>
+                            <a href="#sv-public-owners" onclick="closePublicSiteMobileMenu(); document.getElementById('sv-public-owners')?.scrollIntoView({behavior:'smooth'}); return false;">Pro majitele</a>
+                            <a href="#sv-public-services" onclick="closePublicSiteMobileMenu(); document.getElementById('sv-public-services')?.scrollIntoView({behavior:'smooth'}); return false;">Pro servisy</a>
+                            <a href="#sv-public-pricing" onclick="closePublicSiteMobileMenu(); document.getElementById('sv-public-pricing')?.scrollIntoView({behavior:'smooth'}); return false;">Ceník</a>
+                            <a href="#sv-public-how" onclick="closePublicSiteMobileMenu(); document.getElementById('sv-public-how')?.scrollIntoView({behavior:'smooth'}); return false;">Jak to funguje</a>
                         </nav>
                         <div class="public-site-drawer-footer">
                             <button type="button" class="btn btn-secondary public-site-btn public-site-drawer-btn hidden" data-public-demo-visible="1" onclick="openPublicDemoEntry(); return false;">Vyzkoušet ukázku</button>
-                            <button type="button" class="btn btn-secondary public-site-btn public-site-drawer-btn" onclick="showLogin(); return false;">Přihlásit</button>
-                            <button type="button" class="btn public-site-btn public-site-drawer-btn" onclick="showRegister(); return false;">Registrovat se</button>
+                            <button type="button" class="btn btn-secondary public-site-btn public-site-drawer-btn" onclick="showLogin(); return false;">Přihlásit se</button>
+                            <button type="button" class="btn public-site-btn public-site-drawer-btn" onclick="showRegister(); return false;">Vyzkoušet zdarma</button>
                         </div>
                     </div>
                 </div>
 
-                <section class="public-hero" id="home" aria-labelledby="publicHeroTitle">
+                <main class="sv-public-main" aria-label="Veřejná úvodní stránka">
+                    <section class="sv-public-hero" aria-labelledby="publicHeroTitle">
+                        <div class="sv-public-copy">
+                            <p class="sv-public-badge">Digitální garáž pro vaše vozidla</p>
+                            <h1 id="publicHeroTitle" class="sv-public-title">Mějte všechna vozidla, servis a dokumenty <span>pod kontrolou</span></h1>
+                            <p class="sv-public-lead">Správa vozidel spojuje servisní historii, STK, připomínky, faktury, dokumenty a propojení se servisy na jednom bezpečném místě.</p>
+                            <div class="sv-public-actions">
+                                <button type="button" class="sv-btn sv-btn-primary" onclick="showRegister()">Začít zdarma</button>
+                                <button type="button" class="sv-btn sv-btn-secondary" onclick="document.getElementById('sv-public-features')?.scrollIntoView({behavior:'smooth'}); return false;">Zobrazit ukázku</button>
+                            </div>
+                            <ul class="sv-public-trust" aria-label="Výhody">
+                                <li>Bez papírování</li>
+                                <li>Pro osobní i firemní vozidla</li>
+                                <li>Připraveno pro autoservisy</li>
+                            </ul>
+                        </div>
+                        <div class="sv-public-visual" aria-hidden="true">
+                            <div class="sv-public-dashboard">
+                                <aside class="sv-public-dashboard-sidebar">
+                                    <strong>Správa vozidel</strong>
+                                    <span>Přehled</span><span>Moje vozidla</span><span>Servisní historie</span><span>Dokumenty</span><span>Připomínky</span>
+                                </aside>
+                                <div class="sv-public-dashboard-body">
+                                    <div class="sv-public-dashboard-top">
+                                        <span>Hledat podle SPZ, VIN, značky...</span>
+                                        <b>+ Přidat vozidlo</b>
+                                    </div>
+                                    <div class="sv-public-dashboard-hero">
+                                        <div><strong>Dobrý den, Tomáši</strong><small>Máte 3 vozidla, 1 blížící se STK a 2 aktivní připomínky</small></div>
+                                        <div class="sv-public-car sv-public-car-light"></div>
+                                    </div>
+                                    <div class="sv-public-dashboard-stats">
+                                        <span>STK / SME<br><b>za 18 dní</b></span>
+                                        <span>Pojištění<br><b>v pořádku</b></span>
+                                        <span>Servis<br><b>před 2 měsíci</b></span>
+                                        <span>Dokumenty<br><b>2 čekají</b></span>
+                                    </div>
+                                    <div class="sv-public-vehicle-row">
+                                        <span><i class="sv-public-car"></i><b>Volkswagen Transporter T5.1</b><small>5M2 1234</small></span>
+                                        <span><i class="sv-public-car sv-public-car-dark"></i><b>Škoda Kodiaq</b><small>4AB 5678</small></span>
+                                        <span><i class="sv-public-car sv-public-car-light"></i><b>BMW 320d xDrive</b><small>7AZ 9876</small></span>
+                                        <span class="sv-public-add-card">+<small>Přidat vozidlo</small></span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="sv-public-float sv-public-float-1"><b>STK za 18 dní</b><span>Škoda Kodiaq</span></div>
+                            <div class="sv-public-float sv-public-float-2"><b>Nový servisní záznam</b><span>Volkswagen T5.1</span></div>
+                            <div class="sv-public-float sv-public-float-3"><b>Dokument ověřen</b><span>STK protokol</span></div>
+                            <div class="sv-public-float sv-public-float-4"><b>Sdíleno se servisem</b><span>AutoPoint Praha</span></div>
+                        </div>
+                    </section>
+
+                    <section id="sv-public-features" class="sv-public-benefits" aria-label="Funkce">
+                        <article><span>▤</span><h2>Digitální garáž</h2><p>Evidence všech vozidel podle VIN, SPZ, fotek a technických údajů.</p></article>
+                        <article><span>◷</span><h2>Servisní historie</h2><p>Opravy, nájezdy, doklady a záznamy v jedné časové ose.</p></article>
+                        <article><span>▣</span><h2>Dokumenty a faktury</h2><p>Technické průkazy, pojistky, faktury, STK a PDF výpisy na jednom místě.</p></article>
+                        <article><span>♢</span><h2>Propojení se servisem</h2><p>Bezpečně sdílejte vybraná vozidla se servisem a mějte přehled o práci.</p></article>
+                    </section>
+
+                    <section class="sv-public-audience">
+                        <article id="sv-public-owners" class="sv-public-audience-card">
+                            <div>
+                                <h2>Pro majitele vozidel</h2>
+                                <ul><li>Správa osobních i firemních aut</li><li>STK, pojištění a připomínky pod kontrolou</li><li>Dokumenty a náklady na jednom místě</li><li>Kompletní historie vozidla při prodeji</li></ul>
+                                <button type="button" class="sv-btn sv-btn-light" onclick="document.getElementById('sv-public-how')?.scrollIntoView({behavior:'smooth'}); return false;">Zjistit více</button>
+                            </div>
+                            <div class="sv-public-phone-mock"></div>
+                        </article>
+                        <article id="sv-public-services" class="sv-public-audience-card sv-public-audience-card-service">
+                            <div>
+                                <h2>Pro autoservisy</h2>
+                                <ul><li>Přístup k povoleným vozidlům</li><li>Servisní záznamy a dokumentace oprav</li><li>Zakázky, faktury a komunikace s klienty</li><li>Profesní nástroj, který šetří čas</li></ul>
+                                <button type="button" class="sv-btn sv-btn-light" onclick="showRegister(); setRegistrationMode('service');">Zjistit více</button>
+                            </div>
+                            <div class="sv-public-laptop-mock"></div>
+                        </article>
+                    </section>
+
+                    <section id="sv-public-how" class="sv-public-how" aria-labelledby="svPublicHowTitle">
+                        <h2 id="svPublicHowTitle">Jak to funguje</h2>
+                        <div class="sv-public-steps">
+                            <article><span>1</span><h3>Přidejte vozidlo</h3><p>Zadejte VIN nebo SPZ a vytvořte digitální kartu vozidla během pár vteřin.</p></article>
+                            <article><span>2</span><h3>Doplňte historii</h3><p>Přidejte servisní záznamy, dokumenty, fotky a připomínky.</p></article>
+                            <article><span>3</span><h3>Sdílejte bezpečně</h3><p>Umožněte servisu přístup jen k vybraným vozidlům a údajům.</p></article>
+                        </div>
+                    </section>
+
+                    <section class="sv-public-security" aria-label="Důvěra a bezpečnost">
+                        <article><span>✓</span><h3>Data máte pod kontrolou</h3><p>Vaše data jsou bezpečně uložená a nikdo k nim nemá přístup bez vašeho svolení.</p></article>
+                        <article><span>▣</span><h3>Servis vidí jen to, co mu povolíte</h3><p>Přidělte přístup ke konkrétním vozidlům a vybraným informacím.</p></article>
+                        <article><span>⌗</span><h3>Veřejný výpis vozidla přes QR</h3><p>Sdílejte ověřenou historii vozidla jednoduše a bezpečně.</p></article>
+                        <article><span>✦</span><h3>Připraveno pro transparentní historii</h3><p>Kompletní a důvěryhodná historie zvyšuje hodnotu vozidla.</p></article>
+                    </section>
+
+                    <section id="sv-public-pricing" class="sv-public-final-cta" aria-labelledby="publicFinalCtaTitle">
+                        <div>
+                            <h2 id="publicFinalCtaTitle">Začněte si budovat digitální historii vozidla ještě dnes</h2>
+                            <p>Přidejte první vozidlo zdarma a mějte servis, dokumenty i termíny konečně na jednom místě.</p>
+                        </div>
+                        <button type="button" class="sv-btn sv-btn-white" onclick="showRegister()">Vytvořit účet zdarma</button>
+                        <button type="button" class="sv-btn sv-btn-outline" onclick="showLogin()">Přihlásit se</button>
+                    </section>
+
+                    <footer class="sv-public-footer">
+                        <strong><span class="sv-logo-mark" aria-hidden="true">▱</span> Správa vozidel</strong>
+                        <span>Digitální správa vozidel pro majitele, firmy a autoservisy.</span>
+                        <nav aria-label="Footer odkazy"><a href="#sv-public-features">Funkce</a><a href="#sv-public-pricing">Ceník</a><a href="#sv-public-how">Jak to funguje</a><a href="#sv-public-owners">Pro majitele</a><a href="#sv-public-services">Pro servisy</a><a href="https://www.toozservis.cz/#kontakt" target="_blank" rel="noopener noreferrer">Kontakt</a></nav>
+                        <small>© 2026 Správa vozidel. Všechna práva vyhrazena.</small>
+                    </footer>
+                </main>
+
+                <section class="public-hero" id="home" aria-labelledby="publicHeroTitleLegacy">
                     <div class="public-site-shell public-hero-shell">
                         <div class="public-hero-copy">
                             <p class="public-hero-kicker">Správa vozidel pro řidiče, servisy i firmy</p>
-                            <h1 id="publicHeroTitle" class="public-hero-title">
+                            <h1 id="publicHeroTitleLegacy" class="public-hero-title">
                                 <span class="public-site-sr-only">Mějte vozidla, servis i důležité termíny pod kontrolou.</span>
                                 <span class="public-hero-title-line line-1" aria-hidden="true" style="--type-steps: 21;">Mějte vozidla, <span class="public-hero-title-accent">servis</span></span>
                                 <span class="public-hero-title-line line-2" aria-hidden="true" style="--type-steps: 19;">i důležité <span class="public-hero-title-accent">termíny</span></span>
@@ -35485,12 +35619,12 @@
                     </section>
                 </div>
 
-                <section class="public-cta-section" aria-labelledby="publicFinalCtaTitle">
+                <section class="public-cta-section" aria-labelledby="publicFinalCtaTitleLegacy">
                     <div class="public-site-shell">
                         <div class="public-cta-card">
                             <div>
                                 <p class="public-section-kicker">Připraveno k použití</p>
-                                <h2 id="publicFinalCtaTitle">Veřejný web vysvětlí produkt. Přihlášení a registrace mají vlastní čistý prostor.</h2>
+                                <h2 id="publicFinalCtaTitleLegacy">Veřejný web vysvětlí produkt. Přihlášení a registrace mají vlastní čistý prostor.</h2>
                                 <p>Na vstupu vidíte jen to, co potřebujete pochopit. Do aplikace pak vstupujete přes samostatný login nebo registraci bez míchání s produktovou prezentací.</p>
                             </div>
                             <div class="public-cta-actions">
@@ -40964,8 +41098,8 @@
             const subtitleEl = document.getElementById('loginSubtitle');
             if (subtitleEl) {
                 subtitleEl.textContent = normalizedMode === 'service'
-                    ? 'Přihlaste se k servisnímu účtu a pokračujte do workspace s klienty, vozidly a termíny.'
-                    : 'Přihlaste se ke svému účtu a pokračujte do přehledu vozidel, servisu a termínů.';
+                    ? 'Pokračujte do servisního workspace s klienty, vozidly a termíny.'
+                    : 'Pokračujte do své digitální garáže.';
             }
 
             const submitBtn = document.getElementById('loginSubmitBtn');
@@ -41038,7 +41172,7 @@
             if (registerBtn) {
                 registerBtn.textContent = normalizedMode === 'service'
                     ? 'Odeslat žádost o servisní účet'
-                    : 'Registrovat';
+                    : 'Vytvořit účet';
             }
         }
 

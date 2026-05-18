@@ -7,6 +7,46 @@ test.use({
   },
 });
 
+test.describe('Public/Auth redesign smoke', () => {
+  test('public landing is visible when logged out', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#product-sections')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('#publicHeroTitle')).toContainText('Mějte všechna vozidla');
+    await expect(page.locator('#authSection')).not.toBeVisible();
+    await expect(page.locator('#app-shell')).not.toBeVisible();
+  });
+
+  test('login CTA opens existing login view', async ({ page }) => {
+    await page.goto('/');
+    await page.locator('.public-site-actions button', { hasText: 'Přihlásit se' }).click();
+    await expect(page.locator('#loginForm')).toBeVisible({ timeout: 10_000 });
+    await expect(page).toHaveURL(/\/(web\/)?login/);
+  });
+
+  test('register CTA opens existing register view and account type switch works', async ({ page }) => {
+    await page.goto('/');
+    await page.locator('.public-site-actions button', { hasText: 'Vyzkoušet zdarma' }).click();
+    await expect(page.locator('#registerForm')).toBeVisible({ timeout: 10_000 });
+    await expect(page).toHaveURL(/\/(web\/)?register/);
+    await page.locator('#registerModeServiceBtn').click();
+    await expect(page.locator('#serviceRegistrationExtraFields')).toBeVisible();
+    await expect(page.locator('#registerModeServiceBtn')).toHaveClass(/active/);
+  });
+
+  test('mobile public landing has no horizontal overflow', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await expect(page.locator('#publicHeroTitle')).toBeVisible({ timeout: 15_000 });
+    const overflow = await page.evaluate(() => ({
+      html: document.documentElement.scrollWidth,
+      body: document.body.scrollWidth,
+      inner: window.innerWidth,
+    }));
+    expect(overflow.html).toBeLessThanOrEqual(overflow.inner + 2);
+    expect(overflow.body).toBeLessThanOrEqual(overflow.inner + 2);
+  });
+});
+
 test.describe('Auth Smoke', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/web/login');
