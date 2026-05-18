@@ -2747,7 +2747,7 @@ body.route-public-view .sv-public-visual::before {
   border-radius: 55% 45% 45% 55%;
   background:
     linear-gradient(135deg, rgba(37, 99, 235, 0.10), rgba(219, 234, 254, 0.45)),
-    url("/web/assets/landing/vehicle-sedan.svg") center 68% / 96% auto no-repeat;
+    url("/web/assets/landing/vehicle-sedan.webp") center 68% / 96% auto no-repeat;
   opacity: 0.78;
   z-index: -1;
 }
