@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 190" role="img" aria-label="Volkswagen Transporter">
+  <defs>
+    <linearGradient id="sky" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#e8f2ff"/>
+      <stop offset=".55" stop-color="#fff8ed"/>
+      <stop offset="1" stop-color="#d9e8f8"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" x2="1">
+      <stop offset="0" stop-color="#f7f2df"/>
+      <stop offset=".48" stop-color="#d9d0b8"/>
+      <stop offset="1" stop-color="#fbfaf4"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" x2="1">
+      <stop offset="0" stop-color="#26364d"/>
+      <stop offset="1" stop-color="#6c849a"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="12" flood-color="#172554" flood-opacity=".22"/>
+    </filter>
+  </defs>
+  <rect width="420" height="190" rx="18" fill="url(#sky)"/>
+  <path d="M0 126c44-22 79-26 116-14 52 16 84 18 135 1 56-19 108-18 169 8v69H0z" fill="#d8c4a1" opacity=".45"/>
+  <path d="M0 141h420v49H0z" fill="#9aa47b" opacity=".26"/>
+  <g fill="none" stroke="#6b7280" stroke-width="2" opacity=".28">
+    <path d="M30 119h58M330 112h62M265 103h42"/>
+    <path d="M46 105v28M364 96v30"/>
+  </g>
+  <ellipse cx="214" cy="158" rx="160" ry="14" fill="#1e293b" opacity=".16"/>
+  <g filter="url(#shadow)">
+    <path d="M54 108c6-24 22-41 48-45h119c22 0 51 18 66 44l49 9c14 3 24 15 24 30v12H40v-19c0-14 4-24 14-31z" fill="url(#body)"/>
+    <path d="M81 75h129c25 0 44 17 55 36H60c5-18 11-30 21-36z" fill="#eee7d3"/>
+    <path d="M92 80h57v33H70c5-16 11-27 22-33zM158 80h53c19 0 35 13 45 33h-98z" fill="url(#glass)"/>
+    <path d="M276 111l39 8c13 3 21 13 21 26v4h-62z" fill="#e9e2ce"/>
+    <path d="M45 139h313v21H45z" fill="#d1c7ad"/>
+    <path d="M44 147h46c6-19 22-31 42-31s37 12 43 31h90c6-19 22-31 42-31s36 12 42 31h12v13H44z" fill="#f5f0df"/>
+    <path d="M45 143h44c7-20 23-32 43-32s38 13 44 32h90c7-20 23-32 43-32s37 13 44 32h8" fill="none" stroke="#c6bda6" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="132" cy="151" r="25" fill="#111827"/>
+    <circle cx="132" cy="151" r="14" fill="#e5e7eb"/>
+    <circle cx="132" cy="151" r="6" fill="#64748b"/>
+    <circle cx="309" cy="151" r="25" fill="#111827"/>
+    <circle cx="309" cy="151" r="14" fill="#e5e7eb"/>
+    <circle cx="309" cy="151" r="6" fill="#64748b"/>
+    <path d="M248 125h25M105 125h24" stroke="#8b7d65" stroke-width="4" stroke-linecap="round"/>
+    <path d="M344 133h13" stroke="#ef4444" stroke-width="5" stroke-linecap="round"/>
+    <path d="M50 132h16" stroke="#facc15" stroke-width="5" stroke-linecap="round"/>
+  </g>
+</svg>

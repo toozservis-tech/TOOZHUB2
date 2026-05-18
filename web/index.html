@@ -33082,7 +33082,7 @@
         }
 
     </style>
-    <link rel="stylesheet" href="/web/public-auth.css?v=2026051801" />
+    <link rel="stylesheet" href="/web/public-auth.css?v=2026051802" />
     
     <!-- Security Protection - Anti-debugging a ochrana kódu -->
     <!-- DOČASNĚ ÚPLNĚ ZAKÁZÁNO - způsobovalo zmizení aplikace -->
@@ -33944,12 +33944,12 @@
                 <main class="sv-public-main" aria-label="Veřejná úvodní stránka">
                     <section class="sv-public-hero" aria-labelledby="publicHeroTitle">
                         <div class="sv-public-copy">
-                            <p class="sv-public-badge">Digitální garáž pro vaše vozidla</p>
+                            <p class="sv-public-badge"><span aria-hidden="true">⌂</span> Digitální garáž pro vaše vozidla</p>
                             <h1 id="publicHeroTitle" class="sv-public-title"><span class="sv-title-line">Mějte všechna vozidla,</span><span class="sv-title-line">servis a dokumenty</span><span class="sv-title-line sv-title-accent">pod kontrolou</span></h1>
                             <p class="sv-public-lead">Správa vozidel spojuje servisní historii, STK, připomínky, faktury, dokumenty a propojení se servisy na jednom bezpečném místě.</p>
                             <div class="sv-public-actions">
-                                <button type="button" class="sv-btn sv-btn-primary" onclick="showRegister()">Začít zdarma</button>
-                                <button type="button" class="sv-btn sv-btn-secondary" onclick="document.getElementById('sv-public-features')?.scrollIntoView({behavior:'smooth'}); return false;">Zobrazit ukázku</button>
+                                <button type="button" class="sv-btn sv-btn-primary" onclick="showRegister()">Začít zdarma <span aria-hidden="true">›</span></button>
+                                <button type="button" class="sv-btn sv-btn-secondary" onclick="document.getElementById('sv-public-features')?.scrollIntoView({behavior:'smooth'}); return false;"><span class="sv-btn-play" aria-hidden="true"></span>Zobrazit ukázku</button>
                             </div>
                             <ul class="sv-public-trust" aria-label="Výhody">
                                 <li>Bez papírování</li>
@@ -33970,7 +33970,7 @@
                                     </div>
                                     <div class="sv-public-dashboard-hero">
                                         <div><strong>Dobrý den, Tomáši</strong><small>Máte 3 vozidla, 1 blížící se STK a 2 aktivní připomínky</small></div>
-                                        <div class="sv-public-car sv-public-car-light"></div>
+                                        <img class="sv-public-car-img sv-public-hero-car-img" src="/web/assets/landing/vehicle-sedan.svg" alt="" loading="eager" />
                                     </div>
                                     <div class="sv-public-dashboard-stats">
                                         <span>STK / SME<br><b>za 18 dní</b></span>
@@ -33979,25 +33979,25 @@
                                         <span>Dokumenty<br><b>2 čekají</b></span>
                                     </div>
                                     <div class="sv-public-vehicle-row">
-                                        <span><i class="sv-public-car"></i><b>Volkswagen Transporter T5.1</b><small>5M2 1234</small></span>
-                                        <span><i class="sv-public-car sv-public-car-dark"></i><b>Škoda Kodiaq</b><small>4AB 5678</small></span>
-                                        <span><i class="sv-public-car sv-public-car-light"></i><b>BMW 320d xDrive</b><small>7AZ 9876</small></span>
+                                        <span><img class="sv-public-car-img" src="/web/assets/landing/vehicle-van.svg" alt="" loading="eager" /><b>Volkswagen Transporter T5.1</b><small>5M2 1234</small><em>V pořádku</em></span>
+                                        <span><img class="sv-public-car-img" src="/web/assets/landing/vehicle-suv.svg" alt="" loading="eager" /><b>Škoda Kodiaq</b><small>4AB 5678</small><em class="is-warn">Blíží se STK</em></span>
+                                        <span><img class="sv-public-car-img" src="/web/assets/landing/vehicle-sedan.svg" alt="" loading="eager" /><b>BMW 320d xDrive</b><small>7AZ 9876</small><em>V pořádku</em></span>
                                         <span class="sv-public-add-card">+<small>Přidat vozidlo</small></span>
                                     </div>
                                 </div>
                             </div>
-                            <div class="sv-public-float sv-public-float-1"><b>STK za 18 dní</b><span>Škoda Kodiaq</span></div>
-                            <div class="sv-public-float sv-public-float-2"><b>Nový servisní záznam</b><span>Volkswagen T5.1</span></div>
-                            <div class="sv-public-float sv-public-float-3"><b>Dokument ověřen</b><span>STK protokol</span></div>
-                            <div class="sv-public-float sv-public-float-4"><b>Sdíleno se servisem</b><span>AutoPoint Praha</span></div>
+                            <div class="sv-public-float sv-public-float-1 sv-float-orange"><i aria-hidden="true">□</i><b>STK za 18 dní</b><span>Škoda Kodiaq</span></div>
+                            <div class="sv-public-float sv-public-float-2 sv-float-blue"><i aria-hidden="true">⌁</i><b>Nový servisní záznam</b><span>Volkswagen T5.1</span></div>
+                            <div class="sv-public-float sv-public-float-3 sv-float-green"><i aria-hidden="true">◇</i><b>Dokument ověřen</b><span>STK protokol</span></div>
+                            <div class="sv-public-float sv-public-float-4 sv-float-purple"><i aria-hidden="true">♧</i><b>Sdíleno se servisem</b><span>AutoPoint Praha</span></div>
                         </div>
                     </section>
 
                     <section id="sv-public-features" class="sv-public-benefits" aria-label="Funkce">
-                        <article><span>▤</span><h2>Digitální garáž</h2><p>Evidence všech vozidel podle VIN, SPZ, fotek a technických údajů.</p></article>
-                        <article><span>◷</span><h2>Servisní historie</h2><p>Opravy, nájezdy, doklady a záznamy v jedné časové ose.</p></article>
-                        <article><span>▣</span><h2>Dokumenty a faktury</h2><p>Technické průkazy, pojistky, faktury, STK a PDF výpisy na jednom místě.</p></article>
-                        <article><span>♢</span><h2>Propojení se servisem</h2><p>Bezpečně sdílejte vybraná vozidla se servisem a mějte přehled o práci.</p></article>
+                        <article class="sv-benefit-blue"><span>▤</span><h2>Digitální garáž</h2><p>Evidence všech vozidel podle VIN, SPZ, fotek a technických údajů.</p></article>
+                        <article class="sv-benefit-purple"><span>◷</span><h2>Servisní historie</h2><p>Přehled oprav, nájezdů, dokladů a záznamů v jedné časové ose.</p></article>
+                        <article class="sv-benefit-green"><span>▣</span><h2>Dokumenty a faktury</h2><p>Technické průkazy, pojistky, faktury, STK a PDF výpisy na jednom místě.</p></article>
+                        <article class="sv-benefit-orange"><span>♧</span><h2>Propojení se servisem</h2><p>Bezpečně sdílejte vybraná vozidla se servisem a mějte přehled o práci.</p></article>
                     </section>
 
                     <section class="sv-public-audience">
@@ -34005,17 +34005,17 @@
                             <div>
                                 <h2>Pro majitele vozidel</h2>
                                 <ul><li>Správa osobních i firemních aut</li><li>STK, pojištění a připomínky pod kontrolou</li><li>Dokumenty a náklady na jednom místě</li><li>Kompletní historie vozidla při prodeji</li></ul>
-                                <button type="button" class="sv-btn sv-btn-light" onclick="document.getElementById('sv-public-how')?.scrollIntoView({behavior:'smooth'}); return false;">Zjistit více</button>
+                                <button type="button" class="sv-btn sv-btn-light" onclick="document.getElementById('sv-public-how')?.scrollIntoView({behavior:'smooth'}); return false;">Zjistit více <span aria-hidden="true">›</span></button>
                             </div>
-                            <div class="sv-public-phone-mock"></div>
+                            <div class="sv-public-owner-visual"><img src="/web/assets/landing/owners-scene.svg" alt="" loading="lazy" /></div>
                         </article>
                         <article id="sv-public-services" class="sv-public-audience-card sv-public-audience-card-service">
                             <div>
                                 <h2>Pro autoservisy</h2>
                                 <ul><li>Přístup k povoleným vozidlům</li><li>Servisní záznamy a dokumentace oprav</li><li>Zakázky, faktury a komunikace s klienty</li><li>Profesní nástroj, který šetří čas</li></ul>
-                                <button type="button" class="sv-btn sv-btn-light" onclick="showRegister(); setRegistrationMode('service');">Zjistit více</button>
+                                <button type="button" class="sv-btn sv-btn-light" onclick="showRegister(); setRegistrationMode('service');">Zjistit více <span aria-hidden="true">›</span></button>
                             </div>
-                            <div class="sv-public-laptop-mock"></div>
+                            <div class="sv-public-service-visual"><img src="/web/assets/landing/service-scene.svg" alt="" loading="lazy" /></div>
                         </article>
                     </section>
 

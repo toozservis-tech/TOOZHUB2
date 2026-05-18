@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 230" role="img" aria-label="Notebook se servisním dashboardem">
+  <defs>
+    <linearGradient id="room" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f5fbff"/>
+      <stop offset=".62" stop-color="#e8f7ef"/>
+      <stop offset="1" stop-color="#dbeafe"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" x2="1">
+      <stop offset="0" stop-color="#f8fbff"/>
+      <stop offset="1" stop-color="#ffffff"/>
+    </linearGradient>
+    <filter id="drop" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="16" stdDeviation="13" flood-color="#0f172a" flood-opacity=".18"/>
+    </filter>
+  </defs>
+  <rect width="560" height="230" rx="22" fill="url(#room)"/>
+  <g opacity=".45">
+    <path d="M388 32h122v135H388z" fill="#ffffff"/>
+    <path d="M401 44h41v111h-41zM453 44h41v111h-41z" fill="#dbeafe"/>
+    <path d="M398 170h112" stroke="#94a3b8" stroke-width="3"/>
+    <rect x="433" y="128" width="92" height="50" rx="5" fill="#1f2937"/>
+    <rect x="443" y="119" width="58" height="16" rx="4" fill="#2563eb"/>
+    <rect x="453" y="95" width="56" height="28" rx="5" fill="#64748b"/>
+  </g>
+  <ellipse cx="249" cy="199" rx="192" ry="13" fill="#172554" opacity=".13"/>
+  <g filter="url(#drop)">
+    <path d="M92 44h302c13 0 24 11 24 24v117H68V68c0-13 11-24 24-24z" fill="#111827"/>
+    <rect x="82" y="59" width="322" height="113" rx="8" fill="url(#screen)"/>
+    <path d="M40 185h408l-34 24H73z" fill="#cbd5e1"/>
+    <path d="M40 185h408l-16 12H55z" fill="#eef2f7"/>
+    <rect x="215" y="190" width="62" height="7" rx="4" fill="#94a3b8"/>
+    <rect x="99" y="76" width="52" height="78" rx="9" fill="#eff6ff"/>
+    <rect x="164" y="76" width="215" height="18" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+    <circle cx="179" cy="85" r="4" fill="#2563eb"/>
+    <rect x="100" y="104" width="278" height="13" rx="6" fill="#eff6ff"/>
+    <rect x="100" y="126" width="278" height="13" rx="6" fill="#ffffff" stroke="#e2e8f0"/>
+    <rect x="100" y="148" width="278" height="13" rx="6" fill="#ffffff" stroke="#e2e8f0"/>
+    <g font-family="Inter, Arial, sans-serif" font-size="7" font-weight="800">
+      <text x="167" y="111" fill="#172554">Volkswagen Transporter</text>
+      <text x="167" y="133" fill="#172554">Škoda Kodiaq</text>
+      <text x="167" y="155" fill="#172554">BMW 320d</text>
+      <text x="321" y="111" fill="#16a34a">Servis OK</text>
+      <text x="321" y="133" fill="#f97316">STK brzy</text>
+      <text x="321" y="155" fill="#2563eb">Doklady</text>
+    </g>
+    <circle cx="116" cy="88" r="5" fill="#2563eb"/>
+    <rect x="126" y="84" width="16" height="4" rx="2" fill="#bfdbfe"/>
+    <rect x="112" y="108" width="35" height="5" rx="3" fill="#bfdbfe"/>
+    <rect x="112" y="123" width="25" height="5" rx="3" fill="#bfdbfe"/>
+    <rect x="112" y="138" width="31" height="5" rx="3" fill="#bfdbfe"/>
+  </g>
+</svg>

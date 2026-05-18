@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 190" role="img" aria-label="BMW sedan">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f6fbff"/>
+      <stop offset=".48" stop-color="#e1edf7"/>
+      <stop offset="1" stop-color="#cbb99c"/>
+    </linearGradient>
+    <linearGradient id="paint" x1="0" x2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset=".43" stop-color="#cbd5e1"/>
+      <stop offset=".7" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#aeb9c8"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" x2="1">
+      <stop offset="0" stop-color="#27364b"/>
+      <stop offset=".65" stop-color="#7290a9"/>
+      <stop offset="1" stop-color="#d9edf8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="12" flood-color="#172554" flood-opacity=".2"/>
+    </filter>
+  </defs>
+  <rect width="420" height="190" rx="18" fill="url(#bg)"/>
+  <path d="M0 132c48-21 105-19 160-7 63 14 115 8 162-7 35-11 66-9 98 4v68H0z" fill="#b89d72" opacity=".34"/>
+  <path d="M0 145h420v45H0z" fill="#64748b" opacity=".15"/>
+  <g opacity=".25" stroke="#64748b" stroke-width="2">
+    <path d="M24 111h80M316 104h64M276 115h32"/>
+    <path d="M66 96v33M356 91v35"/>
+  </g>
+  <ellipse cx="218" cy="157" rx="150" ry="13" fill="#020617" opacity=".15"/>
+  <g filter="url(#shadow)">
+    <path d="M57 121c19-29 52-45 102-48h67c38 3 66 17 93 43l43 8c12 2 21 12 21 24v12H43v-14c0-13 5-21 14-25z" fill="url(#paint)"/>
+    <path d="M119 82h107c27 3 48 15 67 34H83c11-18 23-29 36-34z" fill="#e2e8f0"/>
+    <path d="M130 84h45v32H100c10-16 19-26 30-32zM184 84h42c22 2 39 13 54 32h-96z" fill="url(#glass)"/>
+    <path d="M51 133h316c8 0 14 6 14 14v6H44v-9c0-6 3-10 7-11z" fill="#e5e7eb"/>
+    <path d="M61 137h54c7-19 23-31 43-31 21 0 38 12 45 31h99c7-19 23-31 43-31 21 0 37 12 44 31" fill="none" stroke="#cbd5e1" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="158" cy="151" r="25" fill="#111827"/>
+    <circle cx="158" cy="151" r="14" fill="#f1f5f9"/>
+    <circle cx="158" cy="151" r="6" fill="#64748b"/>
+    <circle cx="345" cy="151" r="25" fill="#111827"/>
+    <circle cx="345" cy="151" r="14" fill="#f1f5f9"/>
+    <circle cx="345" cy="151" r="6" fill="#64748b"/>
+    <path d="M72 128h24M282 126h24" stroke="#94a3b8" stroke-width="4" stroke-linecap="round"/>
+    <path d="M371 137h12" stroke="#ef4444" stroke-width="5" stroke-linecap="round"/>
+    <path d="M47 134h18" stroke="#facc15" stroke-width="5" stroke-linecap="round"/>
+    <path d="M217 132c8-5 20-5 29 0" stroke="#111827" stroke-width="2" opacity=".45"/>
+  </g>
+</svg>
