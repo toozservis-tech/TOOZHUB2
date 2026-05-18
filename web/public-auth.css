@@ -174,7 +174,13 @@ body.route-public-view .public-site-header .public-site-bar {
   font-weight: 900;
 }
 
-.sv-public-title span {
+.sv-public-title .sv-title-line {
+  display: block;
+  color: var(--sv-public-text);
+  white-space: nowrap;
+}
+
+.sv-public-title .sv-title-accent {
   color: var(--sv-public-blue);
 }
 
@@ -790,6 +796,11 @@ body.route-auth-view .auth-card-shell {
   box-shadow: none !important;
 }
 
+body.route-auth-view .auth-card-shell::before,
+body.route-auth-view .auth-card-shell::after {
+  display: none !important;
+}
+
 body.route-auth-view #loginForm,
 body.route-auth-view #registerForm,
 body.route-auth-view #registerPendingState {
@@ -808,6 +819,7 @@ body.route-auth-view #registerForm {
 }
 
 .sv-auth-lock {
+  position: relative;
   width: 88px;
   height: 88px;
   margin: 0 auto 28px !important;
@@ -820,8 +832,29 @@ body.route-auth-view #registerForm {
 }
 
 .sv-auth-lock::before {
-  content: "▣";
-  font-size: 2rem;
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 38px;
+  width: 30px;
+  height: 24px;
+  border: 4px solid currentColor;
+  border-radius: 8px;
+  transform: translateX(-50%);
+  background: transparent;
+}
+
+.sv-auth-lock::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 25px;
+  width: 26px;
+  height: 24px;
+  border: 4px solid currentColor;
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  transform: translateX(-50%);
 }
 
 body.route-auth-view .auth-form-head {
@@ -1404,5 +1437,1127 @@ body.route-auth-view #forgotPasswordForm .auth-modal-dialog {
 
   body.route-auth-view .auth-login-options {
     flex-direction: column;
+  }
+}
+
+/* Visual QA parity pass: keep public/auth layouts inside the viewport and closer to the approved GPT references. */
+body.route-public-view #product-sections,
+body.route-auth-view #authSection {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+body.route-public-view #product-sections *,
+body.route-public-view #product-sections *::before,
+body.route-public-view #product-sections *::after,
+body.route-auth-view #authSection *,
+body.route-auth-view #authSection *::before,
+body.route-auth-view #authSection *::after {
+  box-sizing: border-box;
+}
+
+body.route-public-view #product-sections > .public-site-header,
+body.route-public-view .sv-public-main,
+body.route-auth-view #authSection {
+  max-width: 1440px !important;
+}
+
+body.route-public-view #product-sections [data-public-demo-visible="1"],
+body.route-public-view #product-sections .hidden[data-public-demo-visible="1"] {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+body.route-public-view .payment-legal-footer,
+body.route-home-view.public-route-home .payment-legal-footer {
+  display: none !important;
+}
+
+body.route-public-view #product-sections {
+  overflow-x: clip;
+  gap: 0 !important;
+}
+
+body.route-public-view .public-site-header {
+  width: min(100%, 1440px) !important;
+  padding: 10px clamp(16px, 3vw, 32px) 0 !important;
+  margin: 0 auto 16px !important;
+}
+
+body.route-public-view .public-site-header .public-site-bar {
+  width: 100% !important;
+  min-height: 58px;
+  padding: 0 16px 0 18px;
+  gap: 20px;
+  border-radius: 14px;
+}
+
+body.route-public-view .public-site-brand,
+.sv-auth-brand {
+  min-width: 0;
+}
+
+.sv-logo-mark {
+  position: relative;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  border: 2px solid var(--sv-public-blue);
+  border-radius: 12px;
+  color: var(--sv-public-blue);
+  background: linear-gradient(180deg, #ffffff, #eef5ff);
+  box-shadow: inset 0 0 0 4px rgba(37, 99, 235, 0.06);
+}
+
+.sv-logo-mark::before {
+  content: "";
+  width: 18px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  border-bottom-left-radius: 3px;
+  border-bottom-right-radius: 3px;
+}
+
+.sv-logo-mark::after {
+  content: "";
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  width: 18px;
+  height: 5px;
+  transform: translateX(-50%);
+  border-left: 3px solid currentColor;
+  border-right: 3px solid currentColor;
+}
+
+body.route-public-view .public-site-logo {
+  display: none !important;
+}
+
+body.route-public-view .public-site-nav {
+  gap: clamp(18px, 3vw, 38px) !important;
+}
+
+body.route-public-view .public-site-nav a {
+  white-space: nowrap;
+}
+
+body.route-public-view .public-site-actions {
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 12px !important;
+}
+
+body.route-public-view .public-site-actions .public-site-btn {
+  min-height: 40px;
+  padding: 0 20px !important;
+  white-space: nowrap;
+}
+
+body.route-public-view .sv-public-main {
+  width: min(100%, 1440px) !important;
+  padding: 4px clamp(16px, 3vw, 32px) 18px;
+  margin: 0 auto;
+  overflow-x: clip;
+}
+
+body.route-public-view .sv-public-hero {
+  min-height: 398px;
+  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+  gap: clamp(20px, 2.4vw, 30px);
+}
+
+body.route-public-view .sv-public-copy {
+  min-width: 0;
+}
+
+body.route-public-view .sv-public-badge {
+  margin-bottom: 16px;
+  padding: 8px 14px;
+}
+
+body.route-public-view .sv-public-title {
+  max-width: 660px;
+  font-size: clamp(2.55rem, 3vw, 3.25rem);
+  line-height: 1.02;
+}
+
+body.route-public-view .sv-public-lead {
+  max-width: 580px;
+  margin: 18px 0 24px;
+  font-size: 1.05rem;
+}
+
+body.route-public-view .sv-public-actions .sv-btn {
+  min-width: 166px;
+  height: 52px;
+}
+
+body.route-public-view .sv-public-trust {
+  margin-top: 26px;
+  gap: 14px 22px;
+  font-size: 0.88rem;
+}
+
+body.route-public-view .sv-public-visual {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 162px 18px 0;
+}
+
+body.route-public-view .sv-public-dashboard {
+  width: 100%;
+  min-height: 368px;
+  grid-template-columns: 128px minmax(0, 1fr);
+  border-radius: 18px;
+}
+
+body.route-public-view .sv-public-dashboard-sidebar {
+  padding: 18px 14px;
+  gap: 10px;
+  font-size: 0.7rem;
+}
+
+body.route-public-view .sv-public-dashboard-body {
+  padding: 16px;
+  gap: 12px;
+}
+
+body.route-public-view .sv-public-dashboard-top {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+body.route-public-view .sv-public-dashboard-top span,
+body.route-public-view .sv-public-dashboard-top b {
+  min-width: 0;
+  padding: 10px 14px;
+  font-size: 0.78rem;
+}
+
+body.route-public-view .sv-public-dashboard-hero {
+  min-height: 84px;
+  grid-template-columns: minmax(0, 1fr) 142px;
+  padding: 14px 16px;
+}
+
+body.route-public-view .sv-public-dashboard-stats,
+body.route-public-view .sv-public-vehicle-row {
+  gap: 10px;
+}
+
+body.route-public-view .sv-public-dashboard-stats span,
+body.route-public-view .sv-public-vehicle-row span,
+body.route-public-view .sv-public-add-card {
+  padding: 11px;
+  font-size: 0.72rem;
+}
+
+body.route-public-view .sv-public-car {
+  height: 70px;
+  background:
+    radial-gradient(circle at 24% 72%, #0f172a 0 7px, transparent 8px),
+    radial-gradient(circle at 72% 72%, #0f172a 0 7px, transparent 8px),
+    linear-gradient(12deg, transparent 0 24%, rgba(15, 23, 42, 0.12) 25% 33%, transparent 34%),
+    linear-gradient(160deg, #f8fafc 0 26%, #9fb1c9 27% 45%, #ffffff 46% 100%);
+}
+
+body.route-public-view .sv-public-vehicle-row .sv-public-car {
+  height: 62px;
+}
+
+body.route-public-view .sv-public-float {
+  right: 0;
+  width: 168px;
+  padding: 13px 14px;
+  border-radius: 16px;
+  font-size: 0.86rem;
+}
+
+body.route-public-view .sv-public-float span {
+  font-size: 0.76rem;
+}
+
+body.route-public-view .sv-public-float-1 { top: 76px; }
+body.route-public-view .sv-public-float-2 { top: 152px; }
+body.route-public-view .sv-public-float-3 { top: 228px; }
+body.route-public-view .sv-public-float-4 { top: 304px; }
+
+body.route-public-view .sv-public-benefits {
+  margin-top: 10px;
+  gap: 10px;
+}
+
+body.route-public-view .sv-public-benefits article {
+  min-height: 94px;
+  padding: 18px 20px;
+  grid-template-columns: 64px minmax(0, 1fr) 26px;
+  grid-template-areas: "icon title arrow" "icon text arrow";
+}
+
+body.route-public-view .sv-public-benefits article::after {
+  content: ">";
+  grid-area: arrow;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  border-radius: 50%;
+  color: var(--sv-public-blue);
+  background: #eef4ff;
+  font-weight: 900;
+}
+
+body.route-public-view .sv-public-benefits span {
+  width: 52px;
+  height: 52px;
+  border-radius: 17px;
+  font-size: 1.55rem;
+}
+
+body.route-public-view .sv-public-benefits h2 {
+  font-size: 1.08rem;
+}
+
+body.route-public-view .sv-public-benefits p {
+  font-size: 0.86rem;
+}
+
+body.route-public-view .sv-public-audience {
+  margin-top: 12px;
+  gap: 12px;
+}
+
+body.route-public-view .sv-public-audience-card {
+  min-height: 170px;
+  padding: 24px 28px;
+}
+
+body.route-public-view .sv-public-phone-mock,
+body.route-public-view .sv-public-laptop-mock {
+  min-height: 138px;
+  position: relative;
+}
+
+body.route-public-view .sv-public-phone-mock::before,
+body.route-public-view .sv-public-laptop-mock::before {
+  content: "";
+  position: absolute;
+  inset: 20px;
+  border-radius: 16px;
+  background:
+    linear-gradient(#fff, #fff) padding-box,
+    linear-gradient(135deg, #dbeafe, #bfdbfe) border-box;
+  border: 1px solid transparent;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.10);
+}
+
+body.route-public-view .sv-public-phone-mock::after {
+  content: "";
+  position: absolute;
+  right: 26px;
+  bottom: 12px;
+  width: 132px;
+  height: 52px;
+  border-radius: 28px 28px 10px 10px;
+  background:
+    radial-gradient(circle at 24% 78%, #0f172a 0 6px, transparent 7px),
+    radial-gradient(circle at 72% 78%, #0f172a 0 6px, transparent 7px),
+    linear-gradient(155deg, #1d4ed8, #bfdbfe 48%, #ffffff 49%);
+}
+
+body.route-public-view .sv-public-laptop-mock::after {
+  content: "";
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  width: 190px;
+  height: 94px;
+  border-radius: 10px 10px 4px 4px;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 13px, rgba(37, 99, 235, 0.10) 14px 15px),
+    linear-gradient(90deg, #eff6ff 0 16%, #fff 17% 100%);
+  border: 8px solid #0f172a;
+}
+
+body.route-public-view .sv-public-how {
+  margin-top: 12px;
+}
+
+body.route-public-view .sv-public-how h2 {
+  margin-bottom: 8px;
+}
+
+body.route-public-view .sv-public-steps,
+body.route-public-view .sv-public-security {
+  gap: 10px;
+}
+
+body.route-public-view .sv-public-steps article,
+body.route-public-view .sv-public-security article {
+  padding: 17px 20px;
+}
+
+body.route-public-view .sv-public-final-cta {
+  margin-top: 12px;
+  min-height: 66px;
+  padding: 16px 28px;
+  border-radius: 16px;
+}
+
+body.route-public-view .sv-public-final-cta h2 {
+  font-size: 1.5rem;
+}
+
+body.route-public-view .sv-public-footer {
+  padding: 10px 0 0;
+  min-height: 50px;
+  grid-template-columns: auto 1fr auto auto;
+}
+
+body.route-auth-view #authSection {
+  width: min(100%, 1440px) !important;
+  padding: 14px clamp(16px, 3vw, 34px) 24px;
+  overflow-x: clip;
+  gap: 20px !important;
+}
+
+body.route-auth-view .sv-auth-header {
+  min-height: 60px;
+  margin-bottom: 0 !important;
+  border-radius: 14px;
+}
+
+body.route-auth-view #login-view.auth-layout {
+  padding: 0 4px;
+  gap: 30px;
+  align-items: start;
+  grid-template-columns: minmax(420px, 0.76fr) minmax(560px, 1.08fr);
+}
+
+body.route-register-view #login-view.auth-layout {
+  grid-template-columns: minmax(640px, 1.06fr) minmax(500px, 0.9fr);
+  gap: 28px;
+}
+
+body.route-auth-view .auth-section,
+body.route-auth-view .auth-promo {
+  min-width: 0;
+  border-radius: 24px;
+}
+
+body.route-auth-view .auth-section {
+  padding: 42px 42px;
+  align-items: center;
+}
+
+body.route-register-view .auth-section {
+  padding: 30px 34px;
+}
+
+body.route-login-view .auth-section,
+body.route-login-view .auth-promo {
+  min-height: 0;
+}
+
+body.route-register-view .auth-section,
+body.route-register-view .auth-promo {
+  min-height: 0;
+}
+
+body.route-auth-view .auth-promo {
+  padding: 38px 44px;
+  display: flex;
+  flex-direction: column;
+}
+
+body.route-auth-view #loginForm {
+  max-width: 440px;
+}
+
+body.route-auth-view #registerForm {
+  max-width: 690px;
+}
+
+body.route-auth-view .auth-form-head h2 {
+  font-size: clamp(2.35rem, 3vw, 3rem);
+}
+
+body.route-auth-view .auth-form-subtitle {
+  margin-bottom: 24px;
+}
+
+body.route-login-view .sv-auth-lock {
+  width: 66px;
+  height: 66px;
+  margin-bottom: 18px !important;
+}
+
+body.route-login-view #loginForm {
+  display: flex !important;
+  flex-direction: column;
+}
+
+body.route-login-view .auth-form-head,
+body.route-login-view .auth-login-primary {
+  display: flex !important;
+  flex-direction: column;
+}
+
+body.route-login-view .auth-form-head {
+  margin-bottom: 22px;
+}
+
+body.route-login-view .auth-form-head h2 {
+  margin-bottom: 8px;
+}
+
+body.route-login-view .auth-form-subtitle {
+  margin-bottom: 0;
+}
+
+body.route-login-view .auth-login-primary {
+  gap: 13px;
+}
+
+body.route-login-view .auth-login-mode {
+  margin-bottom: 0;
+  padding: 8px;
+}
+
+body.route-login-view .auth-login-mode-label,
+body.route-login-view .auth-login-mode-hint {
+  display: none !important;
+}
+
+body.route-auth-view .form-group {
+  margin-bottom: 14px;
+}
+
+body.route-login-view .form-group {
+  margin-bottom: 0;
+}
+
+body.route-auth-view input,
+body.route-auth-view textarea {
+  min-height: 52px;
+}
+
+body.route-auth-view .auth-login-options {
+  margin: 4px 0 22px;
+}
+
+body.route-login-view .auth-login-options {
+  margin: 2px 0 6px;
+}
+
+body.route-auth-view .auth-primary-btn {
+  min-height: 56px;
+}
+
+body.route-auth-view .auth-inline-actions {
+  margin-top: 24px;
+  padding-top: 22px;
+}
+
+body.route-login-view .auth-inline-actions {
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+body.route-auth-view .auth-card-footnote {
+  margin-top: 22px;
+}
+
+body.route-login-view .auth-card-footnote {
+  margin-top: 18px;
+}
+
+body.route-register-view .auth-form-head h2 {
+  font-size: clamp(2.1rem, 2.45vw, 2.55rem);
+}
+
+body.route-register-view .auth-form-subtitle {
+  margin-bottom: 12px;
+}
+
+body.route-register-view .auth-login-mode {
+  margin-bottom: 10px;
+}
+
+body.route-register-view #registerForm {
+  display: block !important;
+}
+
+body.route-register-view #registerForm.hidden {
+  display: none !important;
+}
+
+body.route-register-view #registerForm .auth-form-head {
+  display: block !important;
+}
+
+body.route-register-view #registerForm .auth-form-kicker {
+  display: none !important;
+}
+
+body.route-register-view .auth-login-mode-label,
+body.route-register-view .auth-login-mode-hint {
+  display: none !important;
+}
+
+body.route-register-view .auth-login-mode-switch {
+  gap: 16px;
+}
+
+body.route-register-view .auth-login-mode-btn {
+  min-height: 118px;
+  padding: 13px 14px;
+  border-radius: 18px;
+}
+
+body.route-register-view .auth-login-mode-btn::before {
+  width: 48px;
+  height: 48px;
+  font-size: 1.2rem;
+}
+
+body.route-register-view .auth-login-mode-btn span {
+  font-size: 0.88rem;
+}
+
+body.route-register-view .auth-register-section {
+  margin-top: 10px;
+}
+
+body.route-register-view .auth-register-section-head {
+  margin-bottom: 8px;
+}
+
+body.route-register-view #registerForm .sv-register-service-details {
+  display: none !important;
+}
+
+body.route-register-view #registerForm:has(#serviceRegistrationExtraFields:not(.hidden)) .sv-register-service-details {
+  display: block !important;
+}
+
+body.route-register-view #serviceRegistrationExtraFields.hidden {
+  display: none !important;
+}
+
+body.route-auth-view .auth-form-grid {
+  gap: 14px 26px;
+}
+
+body.route-register-view .auth-form-grid {
+  gap: 8px 24px;
+}
+
+body.route-register-view .form-group {
+  margin-bottom: 0;
+}
+
+body.route-register-view input,
+body.route-register-view textarea {
+  min-height: 44px;
+}
+
+body.route-register-view .ares-info-text {
+  display: none;
+}
+
+body.route-auth-view .auth-register-actions {
+  margin-top: 18px;
+  gap: 13px;
+}
+
+body.route-register-view .auth-register-actions {
+  margin-top: 10px;
+  gap: 8px;
+}
+
+body.route-register-view .auth-primary-btn {
+  min-height: 50px;
+}
+
+@media (min-width: 901px) {
+  body.route-register-view .auth-register-actions .auth-inline-link--button {
+    display: none !important;
+  }
+}
+
+@media (max-width: 640px) {
+  body.route-public-view .sv-public-title .sv-title-line {
+    white-space: normal;
+  }
+}
+
+body.route-auth-view .auth-promo-title {
+  font-size: clamp(2.15rem, 3vw, 2.85rem);
+}
+
+body.route-auth-view .auth-promo-copy {
+  display: block !important;
+  height: auto !important;
+  max-width: none !important;
+}
+
+body.route-auth-view .auth-promo-title {
+  display: block !important;
+  max-width: none !important;
+}
+
+body.route-login-view .auth-promo-title-login {
+  max-width: 560px !important;
+}
+
+body.route-register-view .auth-promo-title-register {
+  max-width: 460px !important;
+}
+
+body.route-login-view .auth-promo-title-register,
+body.route-login-view .auth-promo-lead-register,
+body.route-register-view .auth-promo-title-login,
+body.route-register-view .auth-promo-lead-login {
+  display: none !important;
+}
+
+body.route-auth-view .auth-promo-lead {
+  margin-bottom: 22px;
+  font-size: 1.05rem;
+}
+
+body.route-auth-view .auth-promo-feature-list {
+  gap: 16px;
+  margin-bottom: 20px;
+  opacity: 1 !important;
+}
+
+body.route-login-view .auth-promo-feature-list li:nth-child(4) {
+  display: none;
+}
+
+body.route-auth-view .auth-promo-feature-list li {
+  padding-left: 64px;
+  opacity: 1 !important;
+}
+
+body.route-auth-view .auth-promo-feature-list li::before {
+  width: 48px;
+  height: 48px;
+}
+
+body.route-auth-view .auth-promo-feature-list li:nth-child(4)::before {
+  content: "#";
+  color: #7c3aed;
+  background: #f5f3ff;
+}
+
+body.route-auth-view .auth-promo-preview {
+  margin-top: auto;
+  padding: 16px;
+  opacity: 1 !important;
+}
+
+body.route-auth-view .auth-preview-grid {
+  gap: 10px;
+}
+
+body.route-auth-view .auth-preview-card {
+  padding: 14px;
+}
+
+body.route-auth-view .auth-preview-card--primary {
+  min-height: 178px;
+}
+
+body.route-auth-view .auth-preview-card--primary::after {
+  height: 72px;
+  margin-top: 14px;
+}
+
+body.route-register-view .auth-preview-grid {
+  grid-template-columns: 1fr;
+}
+
+body.route-register-view .auth-preview-card:not(.auth-preview-card--primary) {
+  display: none;
+}
+
+body.route-register-view .auth-preview-card--primary {
+  min-height: 168px;
+}
+
+body.route-auth-view .sv-auth-security-card {
+  margin-top: 18px;
+  padding: 14px 16px;
+  grid-template-columns: 50px minmax(0, 1fr) auto auto;
+  border-radius: 18px;
+}
+
+body.route-register-view .sv-auth-security-card {
+  grid-template-columns: 54px 1fr 130px;
+}
+
+body.route-register-view .sv-auth-security-badge:last-child {
+  display: none;
+}
+
+body.route-auth-view .sv-auth-security-icon {
+  width: 48px;
+  height: 48px;
+}
+
+body.route-auth-view .sv-auth-security-badge {
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+body.route-auth-view .sv-auth-security-card strong {
+  display: block;
+  line-height: 1.2;
+}
+
+body.route-auth-view .sv-auth-security-card p {
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+body.route-register-view .auth-promo-feature-list {
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+body.route-register-view .auth-promo-feature-list li {
+  min-height: 46px;
+  padding-left: 58px;
+}
+
+body.route-register-view .auth-promo-feature-list li::before {
+  width: 44px;
+  height: 44px;
+}
+
+body.route-register-view .auth-promo-preview {
+  margin-top: 12px;
+  padding: 14px;
+}
+
+body.route-register-view .auth-preview-card--primary {
+  min-height: 148px;
+}
+
+body.route-register-view .auth-preview-card--primary::after {
+  height: 58px;
+  margin-top: 10px;
+}
+
+body.route-register-view .sv-auth-security-card {
+  margin-top: 14px;
+}
+
+@media (max-width: 1280px) {
+  body.route-public-view .sv-public-hero {
+    grid-template-columns: minmax(0, 0.68fr) minmax(0, 1.1fr);
+  }
+
+  body.route-public-view .sv-public-title {
+    font-size: clamp(2.85rem, 4vw, 4rem);
+  }
+
+  body.route-public-view .sv-public-visual {
+    padding-right: 146px;
+  }
+
+  body.route-public-view .sv-public-float {
+    width: 148px;
+  }
+
+  body.route-auth-view #login-view.auth-layout,
+  body.route-register-view #login-view.auth-layout {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 980px) {
+  body.route-public-view .sv-public-hero,
+  body.route-auth-view #login-view.auth-layout,
+  body.route-register-view #login-view.auth-layout {
+    grid-template-columns: 1fr;
+  }
+
+  body.route-public-view .sv-public-visual {
+    padding: 0;
+  }
+
+  body.route-public-view .sv-public-float {
+    position: static;
+    width: auto;
+    margin-top: 10px;
+  }
+
+  body.route-auth-view .auth-section,
+  body.route-auth-view .auth-promo {
+    min-height: 0;
+  }
+}
+
+@media (min-width: 981px) {
+  body.route-public-view .sv-public-hero {
+    min-height: 360px;
+    align-items: start;
+  }
+
+  body.route-public-view .sv-public-badge {
+    margin-bottom: 12px;
+  }
+
+  body.route-public-view .sv-public-title {
+    font-size: clamp(2.65rem, 3.35vw, 3.45rem);
+  }
+
+  body.route-public-view .sv-public-lead {
+    margin: 14px 0 18px;
+    font-size: 0.98rem;
+    line-height: 1.48;
+  }
+
+  body.route-public-view .sv-public-actions {
+    gap: 14px;
+  }
+
+  body.route-public-view .sv-public-actions .sv-btn {
+    min-width: 158px;
+    height: 48px;
+  }
+
+  body.route-public-view .sv-public-trust {
+    display: grid;
+    grid-template-columns: repeat(3, max-content);
+    gap: 10px 16px;
+    margin-top: 18px;
+    font-size: 0.78rem;
+  }
+
+  body.route-public-view .sv-public-trust li::before {
+    width: 22px;
+    height: 22px;
+  }
+
+  body.route-public-view .sv-public-dashboard {
+    min-height: 330px;
+  }
+
+  body.route-public-view .sv-public-dashboard-sidebar {
+    padding: 16px 13px;
+    gap: 8px;
+  }
+
+  body.route-public-view .sv-public-dashboard-sidebar span {
+    padding: 7px 8px;
+  }
+
+  body.route-public-view .sv-public-dashboard-body {
+    padding: 14px;
+    gap: 10px;
+  }
+
+  body.route-public-view .sv-public-dashboard-hero {
+    min-height: 74px;
+    padding: 12px 14px;
+  }
+
+  body.route-public-view .sv-public-car {
+    height: 58px;
+  }
+
+  body.route-public-view .sv-public-vehicle-row .sv-public-car {
+    height: 50px;
+  }
+
+  body.route-public-view .sv-public-dashboard-stats span,
+  body.route-public-view .sv-public-vehicle-row span,
+  body.route-public-view .sv-public-add-card {
+    padding: 9px;
+  }
+
+  body.route-public-view .sv-public-float {
+    padding: 11px 13px;
+  }
+
+  body.route-public-view .sv-public-float-1 { top: 72px; }
+  body.route-public-view .sv-public-float-2 { top: 140px; }
+  body.route-public-view .sv-public-float-3 { top: 208px; }
+  body.route-public-view .sv-public-float-4 { top: 276px; }
+
+  body.route-public-view .sv-public-benefits article {
+    min-height: 86px;
+    padding: 14px 18px;
+  }
+
+  body.route-public-view .sv-public-benefits span {
+    width: 46px;
+    height: 46px;
+  }
+
+  body.route-public-view .sv-public-benefits h2 {
+    font-size: 1rem;
+  }
+
+  body.route-public-view .sv-public-benefits p {
+    font-size: 0.8rem;
+    line-height: 1.28;
+  }
+
+  body.route-public-view .sv-public-audience-card {
+    min-height: 150px;
+    padding: 20px 24px;
+  }
+
+  body.route-public-view .sv-public-audience-card ul {
+    margin: 12px 0 12px;
+    gap: 6px;
+  }
+
+  body.route-public-view .sv-public-phone-mock,
+  body.route-public-view .sv-public-laptop-mock {
+    min-height: 118px;
+  }
+
+  body.route-public-view .sv-public-how h2 {
+    font-size: 1.45rem;
+  }
+
+  body.route-public-view .sv-public-steps article {
+    padding: 14px 18px;
+  }
+
+  body.route-public-view .sv-public-steps p {
+    font-size: 0.82rem;
+    line-height: 1.32;
+  }
+
+  body.route-public-view .sv-public-security article {
+    padding: 13px 16px;
+  }
+
+  body.route-public-view .sv-public-security span {
+    width: 40px;
+    height: 40px;
+  }
+
+  body.route-public-view .sv-public-security h3 {
+    font-size: 0.95rem;
+  }
+
+  body.route-public-view .sv-public-security p {
+    font-size: 0.78rem;
+    line-height: 1.28;
+  }
+
+  body.route-public-view .sv-public-final-cta {
+    min-height: 62px;
+    padding: 13px 24px;
+  }
+
+  body.route-public-view .sv-public-final-cta h2 {
+    font-size: 1.28rem;
+  }
+
+  body.route-public-view .sv-public-final-cta p {
+    font-size: 0.86rem;
+  }
+
+  body.route-public-view .sv-public-footer {
+    min-height: 42px;
+    font-size: 0.76rem;
+  }
+}
+
+@media (max-width: 760px) {
+  body.route-public-view .public-site-header {
+    padding: 8px 10px 0 !important;
+  }
+
+  body.route-public-view .public-site-header .public-site-bar,
+  body.route-public-view .sv-public-main,
+  body.route-auth-view #authSection {
+    width: 100% !important;
+  }
+
+  body.route-public-view .sv-public-main,
+  body.route-auth-view #authSection {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  body.route-public-view .sv-public-title {
+    font-size: clamp(2.35rem, 12vw, 3rem);
+  }
+
+  body.route-public-view .sv-public-dashboard {
+    min-height: 0;
+  }
+
+  body.route-public-view .sv-public-dashboard-hero,
+  body.route-public-view .sv-public-dashboard-top,
+  body.route-public-view .sv-public-dashboard-stats,
+  body.route-public-view .sv-public-vehicle-row,
+  body.route-public-view .sv-public-benefits,
+  body.route-public-view .sv-public-audience,
+  body.route-public-view .sv-public-steps,
+  body.route-public-view .sv-public-security,
+  body.route-public-view .sv-public-final-cta,
+  body.route-public-view .sv-public-footer,
+  body.route-auth-view .auth-form-grid,
+  body.route-auth-view #aresDataFields,
+  body.route-auth-view .sv-auth-security-card {
+    grid-template-columns: 1fr !important;
+  }
+
+  body.route-public-view .sv-public-benefits article {
+    grid-template-columns: 58px minmax(0, 1fr) 26px;
+  }
+
+  body.route-public-view .sv-public-audience-card {
+    padding: 22px;
+  }
+
+  body.route-public-view .sv-public-final-cta {
+    text-align: left;
+  }
+
+  body.route-auth-view .sv-auth-header {
+    gap: 12px;
+  }
+
+  body.route-auth-view .sv-auth-header-actions {
+    justify-content: space-between;
+  }
+
+  body.route-auth-view .auth-section,
+  body.route-auth-view .auth-promo {
+    padding: 26px 18px;
+    border-radius: 20px;
+  }
+
+  body.route-register-view .auth-login-mode-switch {
+    grid-template-columns: 1fr;
+  }
+
+  body.route-register-view .auth-login-mode-btn {
+    min-height: 132px;
+  }
+
+  body.route-auth-view .auth-promo-preview,
+  body.route-auth-view .sv-auth-security-card {
+    display: none;
   }
 }

@@ -33610,6 +33610,7 @@
                             <li><strong>Servisní historie</strong><span>Přehled oprav, nájezdů a servisních záznamů.</span></li>
                             <li><strong>Dokumenty a faktury</strong><span>Technické průkazy, faktury, pojistky a PDF výpisy.</span></li>
                             <li><strong>STK a připomínky</strong><span>Upozornění na STK, pojištění a další termíny.</span></li>
+                            <li><strong>Připraveno pro QR výpis vozidla</strong><span>Sdílejte ověřenou historii kdykoliv a s kýmkoliv.</span></li>
                         </ul>
                         <div class="auth-promo-strip" aria-hidden="true">
                             <div class="auth-promo-metric">
@@ -33750,34 +33751,46 @@
                                     <p id="registerModeHint" class="auth-login-mode-hint">Standardní registrace uživatele s okamžitou aktivací.</p>
                                 </div>
 
-                                <div class="auth-register-section">
+                                <div class="auth-register-section auth-register-section--account">
                                     <div class="auth-register-section-head">
-                                        <strong>Základní údaje</strong>
+                                        <strong>Údaje o účtu</strong>
                                         <span>Údaje o účtu</span>
                                     </div>
                                     <div class="auth-form-grid auth-form-grid--compact">
                                         <div class="form-group">
-                                            <label for="regIco"><span id="regIcoLabel">IČO (volitelně):</span></label>
-                                            <input type="text" id="regIco" data-testid="input-reg-ico" placeholder="12345678" maxlength="8" autocomplete="organization">
-                                            <small class="ares-info-text">Po zadání 8 číslic se automaticky načtou údaje z ARES.</small>
+                                            <label for="regName"><span id="regNameLabel">Jméno / název:</span></label>
+                                            <input type="text" id="regName" placeholder="Zadejte své jméno" autocomplete="name" required>
                                         </div>
                                         <div class="form-group">
                                             <label for="regEmail">Email *</label>
                                             <input type="email" id="regEmail" data-testid="input-reg-email" placeholder="vas@email.cz" autocomplete="email" required>
                                             <small class="ares-info-text">Na tento e-mail přijde ověřovací odkaz (platnost 30 minut).</small>
                                         </div>
+                                        <div class="form-group">
+                                            <label for="regPhone">Telefon *</label>
+                                            <input type="text" id="regPhone" data-testid="input-reg-phone" placeholder="+420 123 456 789" autocomplete="tel" required>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="regPassword">Heslo *</label>
+                                            <input type="password" id="regPassword" data-testid="input-reg-password" placeholder="Min. 8 znaků" autocomplete="new-password" required>
+                                        </div>
+                                        <div class="form-group form-group-full">
+                                            <label for="regPasswordConfirm">Potvrzení hesla *</label>
+                                            <input type="password" id="regPasswordConfirm" data-testid="input-reg-password-confirm" placeholder="Zadejte heslo znovu" autocomplete="new-password" required>
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div class="auth-register-section">
+                                <div class="auth-register-section sv-register-service-details">
                                     <div class="auth-register-section-head">
-                                        <strong>Údaje účtu</strong>
-                                        <span>Doplňte název, adresu a kontaktní údaje</span>
+                                        <strong>Firemní údaje</strong>
+                                        <span>Doplňte IČO a adresu servisu</span>
                                     </div>
                                     <div id="aresDataFields" class="auth-form-grid auth-register-grid">
                                         <div class="form-group">
-                                            <label for="regName"><span id="regNameLabel">Jméno a příjmení / Název *</span></label>
-                                            <input type="text" id="regName" placeholder="Vaše jméno nebo název firmy" autocomplete="name" required>
+                                            <label for="regIco"><span id="regIcoLabel">IČO (volitelně):</span></label>
+                                            <input type="text" id="regIco" data-testid="input-reg-ico" placeholder="12345678" maxlength="8" autocomplete="organization">
+                                            <small class="ares-info-text">Po zadání 8 číslic se automaticky načtou údaje z ARES.</small>
                                         </div>
                                         <div class="form-group">
                                             <label for="regDic">DIČ</label>
@@ -33798,27 +33811,6 @@
                                         <div class="form-group">
                                             <label for="regZip">PSČ</label>
                                             <input type="text" id="regZip" placeholder="Načte se z ARES nebo doplňte ručně" autocomplete="postal-code">
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="auth-register-section">
-                                    <div class="auth-register-section-head">
-                                        <strong>Přístup do aplikace</strong>
-                                        <span>Telefon v mezinárodním formátu E.164 (např. +420731552299)</span>
-                                    </div>
-                                    <div class="auth-form-grid auth-form-grid--compact">
-                                        <div class="form-group">
-                                            <label for="regPhone">Telefon *</label>
-                                            <input type="text" id="regPhone" data-testid="input-reg-phone" placeholder="+420 123 456 789" autocomplete="tel" required>
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="regPassword">Heslo *</label>
-                                            <input type="password" id="regPassword" data-testid="input-reg-password" placeholder="Min. 8 znaků" autocomplete="new-password" required>
-                                        </div>
-                                        <div class="form-group form-group-full">
-                                            <label for="regPasswordConfirm">Potvrzení hesla *</label>
-                                            <input type="password" id="regPasswordConfirm" data-testid="input-reg-password-confirm" placeholder="Zadejte heslo znovu" autocomplete="new-password" required>
                                         </div>
                                     </div>
                                 </div>
@@ -33905,7 +33897,7 @@
                 <header class="public-site-header" aria-label="Veřejná navigace">
                     <div class="public-site-shell public-site-bar">
                         <a href="/" class="public-site-brand" onclick="goToPublicRoute('home'); return false;">
-                            <img src="/web/assets/toozservis-logo-icon.png" alt="" class="public-site-logo">
+                            <span class="sv-logo-mark" aria-hidden="true"></span>
                             <span data-app-display-name></span>
                         </a>
                         <nav class="public-site-nav" aria-label="Sekce veřejného webu">
@@ -33953,7 +33945,7 @@
                     <section class="sv-public-hero" aria-labelledby="publicHeroTitle">
                         <div class="sv-public-copy">
                             <p class="sv-public-badge">Digitální garáž pro vaše vozidla</p>
-                            <h1 id="publicHeroTitle" class="sv-public-title">Mějte všechna vozidla, servis a dokumenty <span>pod kontrolou</span></h1>
+                            <h1 id="publicHeroTitle" class="sv-public-title"><span class="sv-title-line">Mějte všechna vozidla,</span><span class="sv-title-line">servis a dokumenty</span><span class="sv-title-line sv-title-accent">pod kontrolou</span></h1>
                             <p class="sv-public-lead">Správa vozidel spojuje servisní historii, STK, připomínky, faktury, dokumenty a propojení se servisy na jednom bezpečném místě.</p>
                             <div class="sv-public-actions">
                                 <button type="button" class="sv-btn sv-btn-primary" onclick="showRegister()">Začít zdarma</button>
