@@ -9,7 +9,7 @@
     vehiclesFilter: 'all',
     vehiclesSort: 'activity',
     vehiclesSearchQuery: '',
-    detailModal: { open: false, vehicleId: null, activeTab: 'tech', vehicle: null, records: [] },
+    detailModal: { open: false, vehicleId: null, activeTab: 'tech', vehicle: null, records: [], optionsOpen: false },
     attentionModalOpen: false,
     attentionItems: [],
     legacyDetailReadyFor: null,
@@ -1692,6 +1692,11 @@
       const floatingRoot = document.getElementById('appFloatingModalRoot');
       if (floatingRoot && floatingRoot.innerHTML.trim()) return;
       if (STATE.detailModal.open) {
+        if (STATE.detailModal.optionsOpen) {
+          STATE.detailModal.optionsOpen = false;
+          refreshDetailModalShell();
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
         closeUserVehicleDetailModal();
@@ -1706,7 +1711,7 @@
   }
 
   function closeUserVehicleDetailModal() {
-    STATE.detailModal = { open: false, vehicleId: null, activeTab: 'tech', vehicle: null, records: [] };
+    STATE.detailModal = { open: false, vehicleId: null, activeTab: 'tech', vehicle: null, records: [], optionsOpen: false };
     STATE.legacyDetailReadyFor = null;
     document.body.classList.remove('uapp-next-detail-open');
     const root = document.getElementById(DETAIL_MODAL_ID);
@@ -1801,10 +1806,41 @@
       <section class="uapp-next-detail-note">
         <div class="uapp-next-detail-note-head">
           <h3 class="uapp-next-detail-panel-title">Poznámka k vozidlu</h3>
-          ${hasFn('startEditModal') ? `<button type="button" class="uapp-next-link-btn" data-uapp-action="detailEdit:${Number(vehicle.id)}">Upravit</button>` : ''}
         </div>
         <p>${esc(notes || '—')}</p>
       </section>`;
+  }
+
+  function renderDetailOptionsMenu(vehicleId) {
+    const id = Number(vehicleId);
+    const items = [];
+    if (hasFn('openAddServiceRecordModal')) items.push([`addRecord:${id}`, 'Přidat servisní záznam']);
+    items.push([`detailTab:documents:${id}`, 'Nahrát dokument']);
+    items.push([`detailTab:access:${id}`, 'Sdílet se servisem']);
+    items.push([`detailTab:ops:${id}`, 'Připomínky a STK']);
+    items.push([`detailTab:gallery:${id}`, 'Fotogalerie a QR']);
+    if (hasFn('downloadVehicleReportFromHub')) items.push([`detailPdf:${id}`, 'Exportovat PDF report']);
+    if (hasFn('refreshExistingVehicleFromVin')) items.push([`detailVinRefresh:${id}`, 'Obnovit údaje z VIN']);
+    return items.map(([action, label]) => (
+      `<button type="button" class="uapp-next-detail-options-item" data-uapp-action="${esc(action)}">${esc(label)}</button>`
+    )).join('');
+  }
+
+  function refreshDetailModalShell() {
+    if (!STATE.detailModal.open || !STATE.detailModal.vehicle) return;
+    mountDetailModalShell(renderDetailModalContent(
+      STATE.detailModal.vehicle,
+      STATE.detailModal.records,
+      STATE.latestData || {},
+    ));
+    const img = document.getElementById(`uappNextDetailPhoto-${Number(STATE.detailModal.vehicleId)}`);
+    if (img) hydrateImageForVehicle(STATE.detailModal.vehicle, img, `uapp-next-detail:${STATE.detailModal.vehicleId}`);
+  }
+
+  function closeDetailOptionsMenu() {
+    if (!STATE.detailModal.optionsOpen) return;
+    STATE.detailModal.optionsOpen = false;
+    refreshDetailModalShell();
   }
 
   function renderDetailModalContent(vehicle, records, data) {
@@ -1822,6 +1858,7 @@
     const timeline = detailTimelineRows(records);
     const upcoming = detailReminderRows(data, id);
     const activeTab = STATE.detailModal.activeTab || 'tech';
+    const optionsOpen = Boolean(STATE.detailModal.optionsOpen);
 
     return `
       <div class="uapp-next-detail-modal" role="dialog" aria-modal="true" aria-labelledby="uappNextDetailTitle">
@@ -1842,7 +1879,10 @@
             <div class="uapp-next-detail-hero-body">
               <div class="uapp-next-detail-hero-top">
                 <h2 id="uappNextDetailTitle" class="uapp-next-detail-title">${esc(getVehicleName(vehicle))}</h2>
-                <button type="button" class="uapp-next-detail-menu" data-uapp-action="detailEdit:${id}" aria-label="Možnosti vozidla">⋯</button>
+                <div class="uapp-next-detail-menu-wrap">
+                  <button type="button" class="uapp-next-detail-menu${optionsOpen ? ' is-open' : ''}" data-uapp-action="detailOptionsToggle:${id}" aria-label="Možnosti vozidla" aria-expanded="${optionsOpen}" aria-haspopup="menu">⋯</button>
+                  ${optionsOpen ? `<div class="uapp-next-detail-options" role="menu">${renderDetailOptionsMenu(id)}</div>` : ''}
+                </div>
               </div>
               <div class="uapp-next-detail-hero-meta">
                 ${renderPlateBadge(vehicle.plate, 'lg')}
@@ -1856,7 +1896,6 @@
                 <div><dt>Objem</dt><dd>${esc(vehicleVolumeLabel(vehicle))}</dd></div>
               </dl>
               <div class="uapp-next-detail-hero-actions">
-                ${hasFn('startEditModal') ? `<button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="detailEdit:${id}">${ICO.edit}<span>Upravit</span></button>` : ''}
                 ${hasFn('openAddServiceRecordModal') ? `<button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="addRecord:${id}">+ <span>Přidat záznam</span></button>` : ''}
                 <button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="detailTab:documents:${id}">${ICO.upload}<span>Nahrát dokument</span></button>
                 <button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="detailTab:access:${id}">${ICO.share}<span>Sdílet se servisem</span></button>
@@ -1938,7 +1977,7 @@
     const id = Number(vehicleId);
     if (!Number.isFinite(id) || id <= 0) return;
     bindModalEsc();
-    STATE.detailModal = { open: true, vehicleId: id, activeTab: 'tech', vehicle: null, records: [] };
+    STATE.detailModal = { open: true, vehicleId: id, activeTab: 'tech', vehicle: null, records: [], optionsOpen: false };
     document.body.classList.add('uapp-next-detail-open');
     mountDetailModalShell('<div class="uapp-next-loading">Načítám detail vozidla…</div>');
 
@@ -1986,6 +2025,15 @@
   function runAction(action, event) {
     const [name, rawId] = String(action || '').split(':');
     const id = Number(rawId || 0);
+    if (name === 'detailOptionsToggle' && id) {
+      STATE.detailModal.optionsOpen = !STATE.detailModal.optionsOpen;
+      refreshDetailModalShell();
+      return;
+    }
+    if (STATE.detailModal.open && STATE.detailModal.optionsOpen) {
+      STATE.detailModal.optionsOpen = false;
+      refreshDetailModalShell();
+    }
     if (name === 'home' && hasFn('switchTab')) return window.switchTab('home');
     if (name === 'vehicles' && hasFn('switchTab')) return window.switchTab('vehicles');
     if (name === 'reminders' && hasFn('switchTab')) return window.switchTab('reminders');
@@ -2028,10 +2076,18 @@
     }
     if (name === 'detailClose') return closeUserVehicleDetailModal();
     if (name === 'detailEdit' && id) {
+      if (STATE.detailModal.open) {
+        STATE.detailModal.activeTab = 'tech';
+        refreshDetailModalShell();
+        return;
+      }
       return ensureLegacyDetailDom(id).then(() => {
         if (hasFn('openVehicleDetailFloatingSection')) window.openVehicleDetailFloatingSection('basic', id);
         else if (hasFn('startEditModal')) window.startEditModal('nickname', id);
       });
+    }
+    if (name === 'detailVinRefresh' && id && hasFn('refreshExistingVehicleFromVin')) {
+      return window.refreshExistingVehicleFromVin(id);
     }
     if (name === 'detailTab') {
       const parts = String(action || '').split(':');
