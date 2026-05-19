@@ -19,6 +19,7 @@
     viewOverride: null,
     remindersTipHidden: false,
     serviceHistoryLimit: 8,
+    serviceHistoryFilters: { vehicle: 'all', period: '2y', type: 'all', service: 'all', docStatus: 'all' },
   };
 
   const DETAIL_MODAL_ID = 'uappNextVehicleDetail';
@@ -1284,39 +1285,98 @@
 
   function serviceRecordStatusMeta(record) {
     const status = String(record?.record_status || '').toLowerCase();
-    if (status === 'in_progress' || status === 'draft') {
-      return { label: 'Probíhá', tone: 'warn' };
+    if (status === 'in_progress' || status === 'draft' || status === 'pending') {
+      return { label: 'Čeká na ověření', tone: 'warn' };
     }
     if (status === 'cancelled' || status === 'canceled') {
       return { label: 'Zrušeno', tone: 'muted' };
     }
-    return { label: 'Dokončeno', tone: 'ok' };
+    return { label: 'Ověřeno', tone: 'ok' };
+  }
+
+  function serviceRecordIconGlyph(record) {
+    const cls = serviceRecordIconClass(record);
+    const map = { stk: '✓', oil: '🛢', brakes: '◉', tires: '◎', service: '⚙' };
+    return map[cls] || map.service;
+  }
+
+  function filterServiceHistoryRows(data) {
+    const filters = STATE.serviceHistoryFilters || {};
+    let rows = flattenAllRecords(data);
+    if (filters.vehicle && filters.vehicle !== 'all') {
+      const vid = Number(filters.vehicle);
+      rows = rows.filter((entry) => Number(entry.vehicleId) === vid);
+    }
+    if (filters.period === '1y') {
+      const cutoff = Date.now() - (365 * 86400000);
+      rows = rows.filter((entry) => (Date.parse(entry.record?.performed_at || entry.record?.created_at) || 0) >= cutoff);
+    } else if (filters.period === '2y') {
+      const cutoff = Date.now() - (730 * 86400000);
+      rows = rows.filter((entry) => (Date.parse(entry.record?.performed_at || entry.record?.created_at) || 0) >= cutoff);
+    }
+    if (filters.docStatus === 'with_doc') {
+      rows = rows.filter((entry) => Array.isArray(entry.record?.attachments) && entry.record.attachments.length > 0);
+    }
+    return rows;
+  }
+
+  function serviceHistoryTopActions(data) {
+    const counts = {};
+    flattenAllRecords(data).forEach((entry) => {
+      const title = String(entry.record?.description || entry.record?.service_type || 'Servis').trim();
+      const key = title.length > 28 ? `${title.slice(0, 28)}…` : title;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }
+
+  function serviceHistoryWorkshops(data) {
+    const map = new Map();
+    flattenAllRecords(data).forEach((entry) => {
+      const name = String(entry.record?.service_name || entry.record?.workshop_name || 'TooZServis').trim() || 'TooZServis';
+      const price = Number(entry.record?.total_price ?? entry.record?.price);
+      const hit = map.get(name) || { name, count: 0, total: 0 };
+      hit.count += 1;
+      if (Number.isFinite(price) && price > 0) hit.total += price;
+      map.set(name, hit);
+    });
+    return Array.from(map.values()).sort((a, b) => b.count - a.count).slice(0, 4);
   }
 
   function serviceHistoryStats(data) {
-    const rows = flattenAllRecords(data);
+    const rows = filterServiceHistoryRows(data);
     const limit = STATE.serviceHistoryLimit || 8;
     const visible = rows.slice(0, limit);
     let totalCost = 0;
     let costCount = 0;
-    visible.forEach((entry) => {
+    rows.forEach((entry) => {
       const price = Number(entry.record?.total_price ?? entry.record?.price);
       if (Number.isFinite(price) && price > 0) {
         totalCost += price;
         costCount += 1;
       }
     });
-    const workshops = new Set();
-    visible.forEach((entry) => {
-      const name = String(entry.record?.service_name || entry.record?.workshop_name || '').trim();
-      if (name) workshops.add(name);
+    const mid = Math.floor(visible.length / 2);
+    let firstHalf = 0;
+    let secondHalf = 0;
+    visible.forEach((entry, idx) => {
+      const price = Number(entry.record?.total_price ?? entry.record?.price);
+      if (!Number.isFinite(price) || price <= 0) return;
+      if (idx < mid) firstHalf += price;
+      else secondHalf += price;
     });
+    let trendPct = null;
+    if (firstHalf > 0 && secondHalf >= 0) {
+      trendPct = Math.round(((secondHalf - firstHalf) / firstHalf) * 100);
+    }
     return {
       totalRecords: rows.length,
       visibleCount: visible.length,
       totalCost,
       averageCost: costCount ? totalCost / costCount : 0,
-      workshops: Array.from(workshops).slice(0, 4),
+      trendPct,
+      workshops: serviceHistoryWorkshops(data),
+      topActions: serviceHistoryTopActions(data),
     };
   }
 
@@ -1325,44 +1385,121 @@
     const meta = serviceRecordStatusMeta(record);
     const iconClass = serviceRecordIconClass(record);
     const title = String(record?.description || record?.service_type || 'Servisní záznam').trim();
-    const when = formatDateTime(record?.performed_at || record?.created_at);
+    const dateLabel = formatDate(record?.performed_at || record?.created_at);
     const cost = formatMoneyCzk(record?.total_price ?? record?.price);
     const km = record?.mileage_km != null && record.mileage_km !== ''
       ? `${Number(record.mileage_km).toLocaleString('cs-CZ')} km`
-      : '';
+      : (vehicle?.current_mileage_km != null ? `${Number(vehicle.current_mileage_km).toLocaleString('cs-CZ')} km` : '');
+    const workshop = String(record?.service_name || record?.workshop_name || 'TooZServis').trim() || 'TooZServis';
+    const recordId = Number(record?.id) || 0;
+    const attCount = Array.isArray(record?.attachments) ? record.attachments.length : 0;
     return `
-      <article class="uapp-sh-timeline-item">
-        <div class="uapp-sh-timeline-rail" aria-hidden="true">
-          <span class="uapp-sh-timeline-dot is-${esc(iconClass)}"></span>
+      <article class="uapp-sh-record">
+        <div class="uapp-sh-record-date">
+          <strong>${esc(dateLabel)}</strong>
+          ${km ? `<span>${esc(km)}</span>` : ''}
         </div>
-        <div class="uapp-sh-timeline-body">
-          <div class="uapp-sh-timeline-top">
-            <div>
-              <h4>${esc(title)}</h4>
-              <p class="uapp-sh-timeline-meta">${esc(getVehicleName(vehicle || {}))}${vehicle?.plate ? ` · ${esc(vehicle.plate)}` : ''}</p>
-            </div>
-            <span class="uapp-sh-status is-${meta.tone}">${esc(meta.label)}</span>
-          </motion>
-          <div class="uapp-sh-timeline-foot">
-            <span>${esc(when)}</span>
-            ${km ? `<span>${esc(km)}</span>` : ''}
+        <div class="uapp-sh-record-icon is-${esc(iconClass)}" aria-hidden="true">${serviceRecordIconGlyph(record)}</div>
+        <div class="uapp-sh-record-main">
+          <h4>${esc(title)}</h4>
+          <p class="uapp-sh-record-vehicle">
+            <span>${esc(getVehicleName(vehicle || {}))}</span>
+            ${vehicle?.plate ? renderPlateBadge(vehicle.plate, 'sm') : ''}
+          </p>
+          <p class="uapp-sh-record-workshop">${esc(workshop)}</p>
+          <div class="uapp-sh-record-meta">
             <span class="uapp-sh-cost">${esc(cost)}</span>
-            <button type="button" class="uapp-sh-timeline-link" data-uapp-action="serviceRecordDetail:${vehicleId}">Detail vozidla ›</button>
+            <span class="uapp-sh-status is-${meta.tone}">${esc(meta.label)}</span>
+            ${attCount ? `<span class="uapp-sh-att">📎 ${attCount}</span>` : ''}
           </div>
+        </div>
+        <div class="uapp-sh-record-actions">
+          <button type="button" data-uapp-action="serviceRecordDetail:${vehicleId}">Detail</button>
+          <button type="button" data-uapp-action="detailTab:documents:${vehicleId}">Dokumenty</button>
+          ${recordId && hasFn('openEditServiceRecordModal') ? `<button type="button" data-uapp-action="serviceRecordEdit:${vehicleId}:${recordId}">Upravit</button>` : ''}
         </div>
       </article>`;
   }
 
-  function renderServiceHistoryPage(data) {
-    const rows = flattenAllRecords(data);
+  function renderServiceHistoryTimeline(data) {
+    const rows = filterServiceHistoryRows(data);
     const limit = STATE.serviceHistoryLimit || 8;
     const visible = rows.slice(0, limit);
+    if (!visible.length) {
+      return '<p class="uapp-sh-empty">Zatím nemáte žádné servisní záznamy. Přidejte první záznam tlačítkem výše nebo z detailu vozidla.</p>';
+    }
+    let html = '';
+    let lastYear = null;
+    visible.forEach((entry) => {
+      const d = parseDate(entry.record?.performed_at || entry.record?.created_at);
+      const year = d ? d.getFullYear() : null;
+      if (year && year !== lastYear) {
+        html += `<div class="uapp-sh-year" aria-hidden="true">${year}</div>`;
+        lastYear = year;
+      }
+      html += renderServiceHistoryRecordRow(entry);
+    });
+    return html;
+  }
+
+  function renderServiceHistoryFilters(data) {
+    const f = STATE.serviceHistoryFilters || {};
+    const vehicleOptions = (data?.vehicles || []).map((v) => {
+      const id = Number(v.id);
+      const selected = String(f.vehicle) === String(id) ? ' selected' : '';
+      return `<option value="${id}"${selected}>${esc(getVehicleName(v))}</option>`;
+    }).join('');
+    return `
+      <div class="uapp-sh-filters" role="region" aria-label="Filtry historie">
+        <label class="uapp-sh-filter-field"><span>Vozidlo</span>
+          <select data-uapp-sh-filter="vehicle">
+            <option value="all"${f.vehicle === 'all' ? ' selected' : ''}>Všechna vozidla</option>
+            ${vehicleOptions}
+          </select>
+        </label>
+        <label class="uapp-sh-filter-field"><span>Období</span>
+          <select data-uapp-sh-filter="period">
+            <option value="2y"${f.period === '2y' ? ' selected' : ''}>Poslední 2 roky</option>
+            <option value="1y"${f.period === '1y' ? ' selected' : ''}>Poslední rok</option>
+            <option value="all"${f.period === 'all' ? ' selected' : ''}>Celá historie</option>
+          </select>
+        </label>
+        <label class="uapp-sh-filter-field"><span>Typ úkonu</span>
+          <select data-uapp-sh-filter="type">
+            <option value="all"${f.type === 'all' ? ' selected' : ''}>Všechny typy</option>
+          </select>
+        </label>
+        <label class="uapp-sh-filter-field"><span>Servis</span>
+          <select data-uapp-sh-filter="service">
+            <option value="all"${f.service === 'all' ? ' selected' : ''}>Všechny servisy</option>
+          </select>
+        </label>
+        <label class="uapp-sh-filter-field"><span>Stav dokladu</span>
+          <select data-uapp-sh-filter="docStatus">
+            <option value="all"${f.docStatus === 'all' ? ' selected' : ''}>Všechny stavy</option>
+            <option value="with_doc"${f.docStatus === 'with_doc' ? ' selected' : ''}>S dokladem</option>
+          </select>
+        </label>
+        <button type="button" class="uapp-sh-filter-reset" data-uapp-action="serviceHistoryResetFilters">↺ Vymazat filtry</button>
+      </div>`;
+  }
+
+  function renderServiceHistoryPage(data) {
+    const rows = filterServiceHistoryRows(data);
+    const limit = STATE.serviceHistoryLimit || 8;
     const stats = serviceHistoryStats(data);
     const hasMore = rows.length > limit;
+    const trendHtml = stats.trendPct == null
+      ? ''
+      : `<p class="uapp-sh-trend${stats.trendPct <= 0 ? ' is-down' : ' is-up'}">${stats.trendPct <= 0 ? '↓' : '↑'} ${esc(String(Math.abs(stats.trendPct)))} % ${stats.trendPct <= 0 ? 'méně' : 'více'} než předchozí období</p>`;
 
     const workshopList = stats.workshops.length
-      ? stats.workshops.map((name) => `<li><span>${esc(name)}</span></li>`).join('')
-      : (data?.services || []).slice(0, 3).map((svc) => `<li><span>${esc(svc.name || svc.email || 'Servis')}</span></li>`).join('') || '<li class="uapp-sh-widget-empty">Zatím bez evidovaných servisů.</li>';
+      ? stats.workshops.map((ws) => `<li><strong>${esc(ws.name)}</strong><span>${esc(String(ws.count))} zásahů · ${esc(formatMoneyCzk(ws.total))}</span></li>`).join('')
+      : '<li class="uapp-sh-widget-empty">Zatím bez evidovaných servisů.</li>';
+
+    const topActions = stats.topActions.length
+      ? stats.topActions.map(([label, count]) => `<li><span>${esc(label)}</span><strong>${esc(String(count))}×</strong></li>`).join('')
+      : '<li class="uapp-sh-widget-empty">Zatím bez opakovaných úkonů.</li>';
 
     return `
       <div class="uapp-sh-page" data-testid="user-app-next-service-history">
@@ -1373,55 +1510,66 @@
           </div>
           ${hasFn('openAddServiceRecordModal') ? '<button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="serviceHistoryAdd">+ Přidat servisní záznam</button>' : ''}
         </header>
-        <div class="uapp-sh-filters" role="region" aria-label="Filtry historie">
-          <span class="uapp-sh-filter is-active">Všechna vozidla</span>
-          <span class="uapp-sh-filter">Poslední rok</span>
-          <span class="uapp-sh-filter">S dokladem</span>
-          <span class="uapp-sh-filter">Dokončené</span>
-        </div>
+        ${renderServiceHistoryFilters(data)}
         <div class="uapp-sh-layout">
           <div class="uapp-sh-main">
+            <div class="uapp-sh-list-head">
+              <h2>Servisní záznamy</h2>
+              <span class="uapp-sh-list-count">${esc(String(stats.totalRecords))} záznamů</span>
+            </div>
             <section class="uapp-sh-timeline" aria-label="Servisní záznamy">
-              ${visible.length
-                ? visible.map((entry) => renderServiceHistoryRecordRow(entry)).join('')
-                : '<p class="uapp-sh-empty">Zatím nemáte žádné servisní záznamy. Přidejte první záznam z detailu vozidla nebo tlačítkem výše.</p>'}
+              ${renderServiceHistoryTimeline(data)}
             </section>
-            ${hasMore ? `<button type="button" class="uapp-sh-load-more" data-uapp-action="loadMoreServiceHistory">Načíst další záznamy (${rows.length - limit})</button>` : ''}
+            ${hasMore ? `<button type="button" class="uapp-sh-load-more" data-uapp-action="loadMoreServiceHistory">Načíst další záznamy ▾</button>` : ''}
           </div>
           <aside class="uapp-sh-aside" aria-label="Souhrn servisní historie">
             <section class="uapp-sh-widget">
-              <h3>Náklady (přehled)</h3>
+              <div class="uapp-sh-widget-head">
+                <h3>Souhrn nákladů</h3>
+                <span class="uapp-sh-widget-period">Poslední 2 roky</span>
+              </div>
               <p class="uapp-sh-widget-kpi">${esc(formatMoneyCzk(stats.totalCost))}</p>
-              <p class="uapp-sh-widget-sub">Průměr ${esc(formatMoneyCzk(stats.averageCost))} · ${esc(String(stats.visibleCount))} záznamů</p>
-              <div class="uapp-sh-chart-placeholder" aria-hidden="true">
-                <span></span><span></span><span></span><span></span><span></span><span></span>
-              </div>
+              ${trendHtml}
+              <div class="uapp-sh-chart-placeholder" aria-hidden="true"><svg viewBox="0 0 200 48" preserveAspectRatio="none"><polyline fill="none" stroke="currentColor" stroke-width="2.5" points="0,40 30,34 60,28 90,32 120,18 150,22 180,12 200,16"/></svg></div>
             </section>
             <section class="uapp-sh-widget">
-              <h3>Časté akce</h3>
-              <div class="uapp-sh-quick-actions">
-                ${hasFn('openAddServiceRecordModal') ? '<button type="button" data-uapp-action="serviceHistoryAdd">+ Nový servisní záznam</button>' : ''}
-                <button type="button" data-uapp-action="vehicles">Přejít na vozidla</button>
-                <button type="button" data-uapp-action="documents">Nahrát doklad</button>
-              </div>
+              <h3>Nejčastější úkony</h3>
+              <ul class="uapp-sh-top-actions">${topActions}</ul>
             </section>
             <section class="uapp-sh-widget">
-              <h3>Workshopy</h3>
+              <h3>Servisy, které vozidla obsluhovaly</h3>
               <ul class="uapp-sh-workshops">${workshopList}</ul>
+              <button type="button" class="uapp-sh-widget-link" data-uapp-action="servicesDirectory">Zobrazit všechny servisy ›</button>
             </section>
             <section class="uapp-sh-widget">
-              <h3>Doporučení</h3>
+              <h3>Doporučené další kroky</h3>
               <ul class="uapp-sh-rec">
                 ${(data?.vehicles || []).slice(0, 2).map((vehicle) => {
                   const svc = serviceFieldMeta(recordsFor(data, vehicle.id));
                   if (svc.tone !== 'warn') return '';
-                  return `<li><button type="button" data-uapp-action="detail:${Number(vehicle.id)}"><strong>${esc(getVehicleName(vehicle))}</strong><span>${esc(svc.label)} — naplánujte servis</span></button></li>`;
+                  return `<li class="uapp-sh-rec-card is-warn"><button type="button" data-uapp-action="detail:${Number(vehicle.id)}"><strong>Vyměnit brzdovou kapalinu</strong><span>${esc(getVehicleName(vehicle))} · ${esc(svc.label)}</span></button></li>`;
                 }).filter(Boolean).join('') || '<li class="uapp-sh-widget-empty">Všechna vozidla mají aktuální servis.</li>'}
               </ul>
+              <button type="button" class="uapp-sh-widget-link" data-uapp-action="reminders">Zobrazit všechny doporučené kroky ›</button>
             </section>
           </aside>
         </div>
       </div>`;
+  }
+
+  function bindServiceHistoryFilters() {
+    document.querySelectorAll('[data-uapp-sh-filter]').forEach((select) => {
+      if (select.dataset.uappShBound === '1') return;
+      select.dataset.uappShBound = '1';
+      select.addEventListener('change', () => {
+        const key = select.getAttribute('data-uapp-sh-filter');
+        if (!key) return;
+        STATE.serviceHistoryFilters = STATE.serviceHistoryFilters || {};
+        STATE.serviceHistoryFilters[key] = select.value;
+        STATE.serviceHistoryLimit = 8;
+        render();
+      });
+    });
   }
 
   function renderSidebar(data, activeNav) {
@@ -1999,6 +2147,8 @@
       bindSortSelect();
     } else if (activeView === 'home') {
       hydrateImages(data);
+    } else if (activeView === 'serviceHistory') {
+      bindServiceHistoryFilters();
     }
   }
 
@@ -2544,14 +2694,49 @@
       STATE.detailModal.optionsOpen = false;
       refreshDetailModalShell();
     }
-    if (name === 'home' && hasFn('switchTab')) return window.switchTab('home');
-    if (name === 'vehicles' && hasFn('switchTab')) return window.switchTab('vehicles');
-    if (name === 'reminders' && hasFn('switchTab')) return window.switchTab('reminders');
-    if (name === 'documents' && hasFn('switchTab')) return window.switchTab('documents');
-    if (name === 'servicesDirectory' && hasFn('switchTab')) return window.switchTab('servicesDirectory');
-    if (name === 'account' && hasFn('switchTab')) return window.switchTab('account');
-    if (name === 'invoices' && hasFn('switchTab')) return window.switchTab('documents');
-    if (name === 'serviceHistory' && hasFn('switchTab')) return window.switchTab('vehicles');
+    if (name === 'home' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('home'); }
+    if (name === 'vehicles' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('vehicles'); }
+    if (name === 'reminders' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('reminders'); }
+    if (name === 'documents' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('documents'); }
+    if (name === 'servicesDirectory' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('servicesDirectory'); }
+    if (name === 'account' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('account'); }
+    if (name === 'invoices' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('documents'); }
+    if (name === 'serviceHistory') { STATE.viewOverride = 'serviceHistory'; return render(); }
+    if (name === 'serviceHistoryAdd') {
+      if (hasFn('openAddServiceRecordModal')) return window.openAddServiceRecordModal();
+      return;
+    }
+    if (name === 'loadMoreServiceHistory') {
+      STATE.serviceHistoryLimit = (STATE.serviceHistoryLimit || 8) + 8;
+      return render();
+    }
+    if (name === 'serviceHistoryResetFilters') {
+      STATE.serviceHistoryFilters = { vehicle: 'all', period: '2y', type: 'all', service: 'all', docStatus: 'all' };
+      STATE.serviceHistoryLimit = 8;
+      return render();
+    }
+    if (name === 'serviceRecordDetail' && id) return openUserVehicleDetailModal(id);
+    if (name === 'serviceRecordEdit') {
+      const parts = String(action || '').split(':');
+      const vehicleId = Number(parts[1] || 0);
+      const recordId = Number(parts[2] || 0);
+      if (vehicleId && recordId && hasFn('openEditServiceRecordModal')) {
+        return window.openEditServiceRecordModal(recordId, vehicleId);
+      }
+      return;
+    }
+    if (name === 'newReminder') {
+      if (hasFn('showCreateReminderForm')) return window.showCreateReminderForm();
+      return;
+    }
+    if (name === 'reminderComplete' && id && apiReady()) {
+      return apiCall(`/api/v1/reminders/${id}`, 'PUT', { is_completed: true })
+        .then(() => render())
+        .catch((err) => console.warn('[USER_APP_NEXT] reminder complete failed', err));
+    }
+    if (name === 'reminderDetail' && id && hasFn('editReminder')) return window.editReminder(id);
+    if (name === 'reminderSnooze' && id && hasFn('editReminder')) return window.editReminder(id);
+    if (name === 'remindersTipClose') { STATE.remindersTipHidden = true; return render(); }
     if (name === 'help') {
       if (hasFn('openHowToHubModal')) return window.openHowToHubModal();
       if (hasFn('switchTab')) return window.switchTab('support');
@@ -2689,6 +2874,8 @@
     const originalSwitchTab = window.switchTab;
     if (typeof originalSwitchTab === 'function') {
       window.switchTab = function () {
+        const tabName = arguments[0];
+        if (tabName !== 'serviceHistory') STATE.viewOverride = null;
         const result = originalSwitchTab.apply(this, arguments);
         window.setTimeout(() => {
           if (shouldActivate()) {
