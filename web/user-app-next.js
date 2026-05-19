@@ -9,12 +9,15 @@
     vehiclesFilter: 'all',
     vehiclesSort: 'activity',
     detailModal: { open: false, vehicleId: null, activeTab: 'tech', vehicle: null, records: [] },
+    attentionModalOpen: false,
+    attentionItems: [],
     legacyDetailReadyFor: null,
     originalShowVehicleDetail: null,
-    detailEscBound: false,
+    modalEscBound: false,
   };
 
   const DETAIL_MODAL_ID = 'uappNextVehicleDetail';
+  const ATTENTION_MODAL_ID = 'uappNextAttentionModal';
 
   const LOGO_SRC = '/web/assets/landing/sprava-vozidel-logo.jpeg';
   const USER_APP_SCREEN_ID = 'userAppNextScreen';
@@ -556,6 +559,252 @@
     });
   }
 
+  function attentionPriorityRank(priority) {
+    if (priority === 'high') return 3;
+    if (priority === 'warning') return 2;
+    return 1;
+  }
+
+  function attentionItemIcon(type) {
+    const map = {
+      stk: ICO.quickStk,
+      insurance: ICO.quickShield,
+      service: ICO.wrench,
+      documents: ICO.doc,
+      access: ICO.share,
+      reminder: ICO.bell,
+    };
+    return map[type] || ICO.bell;
+  }
+
+  function reminderLooksLikeStk(text) {
+    const hay = String(text || '').toLowerCase();
+    return hay.includes('stk') || hay.includes('sme') || hay.includes('technick');
+  }
+
+  function reminderLooksLikeInsurance(text) {
+    const hay = String(text || '').toLowerCase();
+    return hay.includes('pojišt') || hay.includes('pojist');
+  }
+
+  function getVehicleAttentionItems(vehicle, data) {
+    const items = [];
+    const id = Number(vehicle?.id);
+    if (!Number.isFinite(id) || id <= 0) return items;
+    const records = recordsFor(data, id);
+    const vehicleName = getVehicleName(vehicle);
+    const plate = vehicle.plate || '';
+    const push = (item) => items.push({ vehicleId: id, vehicleName, plate, vehicle, ...item });
+
+    const stk = stkFieldMeta(vehicle);
+    if (stk.tone === 'bad') {
+      push({
+        type: 'stk',
+        problemText: 'STK po termínu',
+        priority: 'high',
+        priorityLabel: 'Po termínu',
+        actionText: 'Otevřít STK',
+        action: `detailTab:ops:${id}`,
+      });
+    } else if (stk.tone === 'warn') {
+      push({
+        type: 'stk',
+        problemText: stk.label === 'po termínu' ? 'STK po termínu' : `STK ${stk.label}`,
+        priority: 'warning',
+        priorityLabel: 'Blíží se',
+        actionText: 'Otevřít STK',
+        action: `detailTab:ops:${id}`,
+      });
+    } else if (stk.tone === 'muted' && stk.label === 'Nezadáno') {
+      push({
+        type: 'stk',
+        problemText: 'STK nezadána',
+        priority: 'warning',
+        priorityLabel: 'Vyžaduje doplnění',
+        actionText: 'Otevřít detail',
+        action: `detail:${id}`,
+      });
+    }
+
+    const ins = insuranceFieldMeta(vehicle);
+    if (ins.tone === 'bad') {
+      push({
+        type: 'insurance',
+        problemText: 'Pojištění po termínu',
+        priority: 'high',
+        priorityLabel: 'Po termínu',
+        actionText: 'Otevřít detail',
+        action: `detail:${id}`,
+      });
+    } else if (ins.tone === 'warn') {
+      push({
+        type: 'insurance',
+        problemText: 'Pojištění brzy končí',
+        priority: 'warning',
+        priorityLabel: 'Blíží se',
+        actionText: 'Otevřít detail',
+        action: `detail:${id}`,
+      });
+    } else if (ins.tone === 'muted') {
+      push({
+        type: 'insurance',
+        problemText: 'Pojištění nezadáno',
+        priority: 'warning',
+        priorityLabel: 'Vyžaduje doplnění',
+        actionText: 'Otevřít detail',
+        action: `detail:${id}`,
+      });
+    }
+
+    const openService = (records || []).filter((record) => {
+      const st = String(record?.record_status || '').toLowerCase();
+      return st === 'in_progress' || st === 'draft';
+    });
+    if (openService.length) {
+      const draft = openService.some((record) => String(record?.record_status || '').toLowerCase() === 'draft');
+      push({
+        type: 'service',
+        problemText: draft ? 'Rozepsaný servisní záznam' : 'Servis právě probíhá',
+        priority: 'warning',
+        priorityLabel: 'V servisu',
+        actionText: 'Otevřít servis',
+        action: `detailTab:service:${id}`,
+      });
+    }
+
+    const hasStkItem = items.some((item) => item.type === 'stk');
+    const hasInsuranceItem = items.some((item) => item.type === 'insurance');
+    (data?.reminders || []).forEach((reminder) => {
+      if (reminder?.is_completed || Number(reminder?.vehicle_id) !== id) return;
+      const title = String(reminder.text || reminder.title || reminder.type || 'Připomínka').trim();
+      if (hasStkItem && reminderLooksLikeStk(title)) return;
+      if (hasInsuranceItem && reminderLooksLikeInsurance(title)) return;
+      const diff = daysUntil(reminder.due_date || reminder.notify_at);
+      if (diff == null || diff > 60) return;
+      push({
+        type: 'reminder',
+        problemText: title,
+        priority: diff < 0 ? 'high' : 'warning',
+        priorityLabel: diff < 0 ? 'Po termínu' : 'Blíží se',
+        actionText: 'Otevřít připomínky',
+        action: `detailTab:ops:${id}`,
+      });
+    });
+
+    (data?.accessGrants || []).forEach((grant) => {
+      if (Number(grant?.vehicle_id) !== id) return;
+      const badge = grantBadge(grant.status);
+      if (badge.tone !== 'warn') return;
+      const serviceLabel = grant.service_name || grant.service_email || 'servis';
+      push({
+        type: 'access',
+        problemText: `Přístup servisu — ${serviceLabel}`,
+        priority: 'warning',
+        priorityLabel: 'Čeká na schválení',
+        actionText: 'Otevřít přístupy',
+        action: `detailTab:access:${id}`,
+      });
+    });
+
+    return items;
+  }
+
+  function collectAllAttentionItems(data) {
+    const all = [];
+    (data?.vehicles || []).forEach((vehicle) => {
+      getVehicleAttentionItems(vehicle, data).forEach((item) => all.push(item));
+    });
+    all.sort((a, b) => {
+      const rankDiff = attentionPriorityRank(b.priority) - attentionPriorityRank(a.priority);
+      if (rankDiff !== 0) return rankDiff;
+      return String(a.vehicleName || '').localeCompare(String(b.vehicleName || ''), 'cs');
+    });
+    return all;
+  }
+
+  function attentionCountLabel(count) {
+    if (count === 1) return '1 položka k řešení';
+    if (count >= 2 && count <= 4) return `${count} položky k řešení`;
+    return `${count} položek k řešení`;
+  }
+
+  function renderAttentionModalContent(data) {
+    const items = collectAllAttentionItems(data);
+    STATE.attentionItems = items;
+    const count = items.length;
+    const listHtml = count
+      ? items.map((item, index) => `
+        <article class="uapp-next-attention-item">
+          <div class="uapp-next-attention-item-main">
+            <span class="uapp-next-attention-item-ico" aria-hidden="true">${attentionItemIcon(item.type)}</span>
+            <div class="uapp-next-attention-item-body">
+              <div class="uapp-next-attention-item-head">
+                <strong class="uapp-next-attention-vehicle">${esc(item.vehicleName)}</strong>
+                ${renderPlateBadge(item.plate)}
+                <span class="uapp-next-attention-badge is-${esc(item.priority)}">${esc(item.priorityLabel)}</span>
+              </div>
+              <p class="uapp-next-attention-problem">${esc(item.problemText)}</p>
+            </div>
+          </div>
+          <button type="button" class="uapp-next-attention-resolve" data-uapp-action="attentionResolve:${index}">${esc(item.actionText)}</button>
+        </article>`).join('')
+      : `
+        <div class="uapp-next-attention-empty">
+          <div class="uapp-next-attention-empty-ico" aria-hidden="true">${ICO.checkOk}</div>
+          <p>Všechna vozidla jsou aktuálně v pořádku.</p>
+          <button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="attentionAllVehicles">Zobrazit přehled vozidel</button>
+        </div>`;
+
+    return `
+      <div class="uapp-next-attention-modal" role="dialog" aria-modal="true" aria-labelledby="uappNextAttentionTitle">
+        <button type="button" class="uapp-next-attention-close" data-uapp-action="attentionClose" aria-label="Zavřít">×</button>
+        <header class="uapp-next-attention-head">
+          <h2 id="uappNextAttentionTitle">Co je potřeba řešit</h2>
+          <p class="uapp-next-attention-sub">Přehled vozidel a úkolů, které vyžadují vaši pozornost.</p>
+          ${count ? `<p class="uapp-next-attention-count">${esc(attentionCountLabel(count))}</p>` : ''}
+        </header>
+        <div class="uapp-next-attention-list">${listHtml}</div>
+        <footer class="uapp-next-attention-foot">
+          <button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="attentionAllVehicles">Zobrazit všechna vozidla</button>
+          <button type="button" class="uapp-next-btn uapp-next-btn-ghost" data-uapp-action="attentionClose">Zavřít</button>
+        </footer>
+      </div>`;
+  }
+
+  function mountAttentionModalShell(html) {
+    let backdrop = document.getElementById(ATTENTION_MODAL_ID);
+    if (!backdrop) {
+      backdrop = document.createElement('div');
+      backdrop.id = ATTENTION_MODAL_ID;
+      backdrop.className = 'uapp-next-attention-backdrop';
+      backdrop.setAttribute('data-testid', 'user-app-next-attention-modal');
+      document.body.appendChild(backdrop);
+    }
+    backdrop.innerHTML = `<div class="uapp-next-attention-backdrop-inner">${html}</div>`;
+    backdrop.onclick = (event) => {
+      if (event.target === backdrop || event.target.classList.contains('uapp-next-attention-backdrop-inner')) {
+        closeAttentionModal();
+      }
+    };
+  }
+
+  function openAttentionModal() {
+    bindModalEsc();
+    const data = STATE.latestData;
+    if (!data) return;
+    STATE.attentionModalOpen = true;
+    document.body.classList.add('uapp-next-attention-open');
+    mountAttentionModalShell(renderAttentionModalContent(data));
+  }
+
+  function closeAttentionModal() {
+    STATE.attentionModalOpen = false;
+    STATE.attentionItems = [];
+    document.body.classList.remove('uapp-next-attention-open');
+    const root = document.getElementById(ATTENTION_MODAL_ID);
+    if (root) root.remove();
+  }
+
   function computeQuickCards(data) {
     const vehicles = data.vehicles || [];
     let stkN = 0;
@@ -756,16 +1005,17 @@
             </div>
           </div>
         </section>
-        <aside class="uapp-next-overall-status">
+        <button type="button" class="uapp-next-overall-status" data-uapp-action="attentionOpen" aria-label="Zobrazit, co je potřeba řešit">
           <div class="uapp-next-overall-inner">
             <div class="uapp-next-overall-text">
               <h2>Celkový stav</h2>
               <p class="uapp-next-overall-main ${needsAttention ? 'is-warn' : 'is-ok'}">${needsAttention ? 'Vyžaduje pozornost' : 'Vozidla pod kontrolou'}</p>
               <p class="uapp-next-overall-meta">Poslední aktualizace: dnes v ${esc(formatTodayTimeHm())}</p>
+              <span class="uapp-next-overall-link">Zobrazit detaily <span aria-hidden="true">›</span></span>
             </div>
             <div class="uapp-next-overall-ico-wrap" aria-hidden="true">${needsAttention ? ICO.checkWarn : ICO.checkOk}</div>
           </div>
-        </aside>
+        </button>
       </div>
     `;
   }
@@ -1335,16 +1585,24 @@
     STATE.legacyDetailReadyFor = id;
   }
 
-  function bindDetailModalEsc() {
-    if (STATE.detailEscBound) return;
-    STATE.detailEscBound = true;
+  function bindModalEsc() {
+    if (STATE.modalEscBound) return;
+    STATE.modalEscBound = true;
     document.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape' || !STATE.detailModal.open) return;
+      if (event.key !== 'Escape') return;
       const floatingRoot = document.getElementById('appFloatingModalRoot');
       if (floatingRoot && floatingRoot.innerHTML.trim()) return;
-      event.preventDefault();
-      event.stopPropagation();
-      closeUserVehicleDetailModal();
+      if (STATE.detailModal.open) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeUserVehicleDetailModal();
+        return;
+      }
+      if (STATE.attentionModalOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeAttentionModal();
+      }
     }, true);
   }
 
@@ -1580,7 +1838,7 @@
   async function openUserVehicleDetailModal(vehicleId) {
     const id = Number(vehicleId);
     if (!Number.isFinite(id) || id <= 0) return;
-    bindDetailModalEsc();
+    bindModalEsc();
     STATE.detailModal = { open: true, vehicleId: id, activeTab: 'tech', vehicle: null, records: [] };
     document.body.classList.add('uapp-next-detail-open');
     mountDetailModalShell('<div class="uapp-next-loading">Načítám detail vozidla…</div>');
@@ -1658,6 +1916,19 @@
     if (name === 'addRecord' && id && hasFn('openAddServiceRecordModal')) return window.openAddServiceRecordModal(id);
     if (name === 'documentsVehicle' && id) return openVehicleSection(id, 'documents');
     if (name === 'shareVehicle' && id) return openVehicleSection(id, 'access');
+    if (name === 'attentionOpen') return openAttentionModal();
+    if (name === 'attentionClose') return closeAttentionModal();
+    if (name === 'attentionAllVehicles') {
+      closeAttentionModal();
+      if (hasFn('switchTab')) return window.switchTab('vehicles');
+    }
+    if (name === 'attentionResolve') {
+      const idx = Number(rawId);
+      const item = STATE.attentionItems[idx];
+      if (!item?.action) return;
+      closeAttentionModal();
+      return runAction(item.action, event);
+    }
     if (name === 'detailClose') return closeUserVehicleDetailModal();
     if (name === 'detailEdit' && id) {
       return ensureLegacyDetailDom(id).then(() => {
