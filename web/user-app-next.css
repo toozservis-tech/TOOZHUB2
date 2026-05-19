@@ -1317,6 +1317,42 @@ body.route-app-view.user-app-next-active #vehiclesTab {
   border-bottom: 1px solid rgba(16, 24, 40, 0.06);
 }
 
+button.uapp-next-aside-row,
+button.uapp-next-aside-activity-item,
+button.uapp-next-aside-access-item {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+button.uapp-next-aside-row:hover,
+button.uapp-next-aside-row:focus-visible,
+button.uapp-next-aside-activity-item:hover,
+button.uapp-next-aside-activity-item:focus-visible,
+button.uapp-next-aside-access-item:hover,
+button.uapp-next-aside-access-item:focus-visible {
+  background: rgba(11, 31, 122, 0.04);
+  outline: none;
+}
+
+.uapp-next-card-action.is-blocked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+body.user-app-next-active #appNotificationsPanel.app-notifications-dropdown:not([hidden]) {
+  z-index: 12100 !important;
+}
+
+body.user-app-next-active #mobileProfileMenu.mobile-profile-menu:not([hidden]) {
+  z-index: 12100 !important;
+}
+
 .uapp-next-aside-access-item:last-child {
   border-bottom: 0;
 }

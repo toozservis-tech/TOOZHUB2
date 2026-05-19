@@ -8,6 +8,7 @@
     latestData: null,
     vehiclesFilter: 'all',
     vehiclesSort: 'activity',
+    vehiclesSearchQuery: '',
     detailModal: { open: false, vehicleId: null, activeTab: 'tech', vehicle: null, records: [] },
     attentionModalOpen: false,
     attentionItems: [],
@@ -342,13 +343,14 @@
 
   function renderCardActionBar(vehicleId, withArrow) {
     const id = Number(vehicleId);
+    const addRecordBlocked = !hasFn('openAddServiceRecordModal');
     return `
       <div class="uapp-next-card-actions">
         <button type="button" class="uapp-next-card-action" data-uapp-action="detail:${id}">
           <span class="uapp-next-card-action-ico" aria-hidden="true">${ICO.detail}</span>
           <span class="uapp-next-card-action-label">Detail</span>
         </button>
-        <button type="button" class="uapp-next-card-action" data-uapp-action="addRecord:${id}">
+        <button type="button" class="uapp-next-card-action${addRecordBlocked ? ' is-blocked' : ''}" data-uapp-action="addRecord:${id}"${addRecordBlocked ? ' disabled title="Funkce není dostupná"' : ''}>
           <span class="uapp-next-card-action-ico" aria-hidden="true">${ICO.wrench}</span>
           <span class="uapp-next-card-action-label">Přidat záznam</span>
         </button>
@@ -891,7 +893,7 @@
         desc: insWarn + insBad > 0 ? 'Zkontrolujte pojištění' : 'Platné smlouvy',
         action: 'reminders',
       },
-      svc: { ...svcBlock, action: data.vehicles[0] ? `addRecord:${data.vehicles[0].id}` : 'vehicles' },
+      svc: { ...svcBlock, action: 'serviceHistory' },
       docs: {
         tone: docPending > 0 ? 'warning' : 'success',
         title: docPending > 0 ? `${docPending} dokumenty čekají na doplnění` : 'Dokumenty v pořádku',
@@ -899,6 +901,11 @@
         action: 'documents',
       },
     };
+  }
+
+  function preserveLegacyOverlays() {
+    preserveLegacyVehicleModal();
+    detachedPanels();
   }
 
   function detachedPanels() {
@@ -1161,7 +1168,14 @@
           value = 'po termínu';
           tone = 'bad';
         }
-        return { icon: '□', title, detail: vehicle, value, tone };
+        return {
+          icon: '□',
+          title,
+          detail: vehicle,
+          value,
+          tone,
+          action: Number(item?.vehicle_id) > 0 ? `detailTab:ops:${Number(item.vehicle_id)}` : 'reminders',
+        };
       });
     if (rows.length) return rows;
     return [];
@@ -1173,6 +1187,7 @@
       title: item.description || item.title || 'Aktivita',
       when: formatDateTime(item.performed_at || item.created_at),
       detail: item.vehicle_name || '',
+      action: Number(item?.vehicle_id) > 0 ? `detail:${Number(item.vehicle_id)}` : 'serviceHistory',
     }));
     if (fromSummary.length) return fromSummary;
     const fromRecords = [];
@@ -1182,6 +1197,7 @@
           title: record.description || 'Servisní záznam',
           when: formatDateTime(record.performed_at || record.created_at),
           detail: getVehicleName(vehicle),
+          action: `detailTab:service:${Number(vehicle.id)}`,
         });
       });
     });
@@ -1211,6 +1227,7 @@
         meta: [grant.vehicle_name || grant.vehicle_plate, grant.access_level || grant.role].filter(Boolean).join(' · ') || 'Servisní přístup',
         badge: badge.label,
         tone: badge.tone,
+        action: Number(grant?.vehicle_id) > 0 ? `detailTab:access:${Number(grant.vehicle_id)}` : 'servicesDirectory',
       };
     });
     if (grants.length) return grants;
@@ -1229,36 +1246,42 @@
 
     const reminderList = reminders.length
       ? reminders.map((row) => `
-          <li class="uapp-next-aside-row">
-            <span class="uapp-next-aside-row-icon" aria-hidden="true">${row.icon}</span>
-            <div class="uapp-next-aside-row-main">
-              <strong>${esc(row.title)}</strong>
-              <span>${esc(row.detail || '')}</span>
-            </div>
-            <span class="uapp-next-aside-pill ${toneClass(row.tone)}">${esc(row.value)}</span>
-            <span class="uapp-next-aside-row-arrow" aria-hidden="true">›</span>
+          <li>
+            <button type="button" class="uapp-next-aside-row" data-uapp-action="${esc(row.action || 'reminders')}">
+              <span class="uapp-next-aside-row-icon" aria-hidden="true">${row.icon}</span>
+              <div class="uapp-next-aside-row-main">
+                <strong>${esc(row.title)}</strong>
+                <span>${esc(row.detail || '')}</span>
+              </div>
+              <span class="uapp-next-aside-pill ${toneClass(row.tone)}">${esc(row.value)}</span>
+              <span class="uapp-next-aside-row-arrow" aria-hidden="true">›</span>
+            </button>
           </li>`).join('')
       : '<li class="uapp-next-aside-empty">Bez blížících se termínů.</li>';
 
     const activityList = activity.length
       ? activity.map((row) => `
-          <li class="uapp-next-aside-activity-item">
-            <span class="uapp-next-act-dot" aria-hidden="true"></span>
-            <div>
-              <strong>${esc(row.title)}</strong>
-              <span>${esc(row.when)}${row.detail ? ` · ${esc(row.detail)}` : ''}</span>
-            </div>
+          <li>
+            <button type="button" class="uapp-next-aside-activity-item" data-uapp-action="${esc(row.action || 'serviceHistory')}">
+              <span class="uapp-next-act-dot" aria-hidden="true"></span>
+              <div>
+                <strong>${esc(row.title)}</strong>
+                <span>${esc(row.when)}${row.detail ? ` · ${esc(row.detail)}` : ''}</span>
+              </div>
+            </button>
           </li>`).join('')
       : '<li class="uapp-next-aside-empty">Zatím bez poslední aktivity.</li>';
 
     const serviceList = services.length
       ? services.map((row) => `
-          <li class="uapp-next-aside-access-item">
-            <div class="uapp-next-aside-access-top">
-              <strong>${esc(row.name)}</strong>
-              <span class="uapp-next-aside-pill ${toneClass(row.tone)}">${esc(row.badge)}</span>
-            </div>
-            <span class="uapp-next-aside-access-meta">${esc(row.meta)}</span>
+          <li>
+            <button type="button" class="uapp-next-aside-access-item" data-uapp-action="${esc(row.action || 'servicesDirectory')}">
+              <div class="uapp-next-aside-access-top">
+                <strong>${esc(row.name)}</strong>
+                <span class="uapp-next-aside-pill ${toneClass(row.tone)}">${esc(row.badge)}</span>
+              </div>
+              <span class="uapp-next-aside-access-meta">${esc(row.meta)}</span>
+            </button>
           </li>`).join('')
       : '<li class="uapp-next-aside-empty">Zatím nejsou aktivní sdílené přístupy ani servisní kontakty.</li>';
 
@@ -1375,7 +1398,7 @@
     const counts = getFilterCounts(data);
     const total = counts.all;
     const viewMode = getStoredViewMode();
-    const filtered = sortCatalogVehicles(filterCatalogVehicles(data, STATE.vehiclesFilter, ''), data, STATE.vehiclesSort);
+    const filtered = sortCatalogVehicles(filterCatalogVehicles(data, STATE.vehiclesFilter, STATE.vehiclesSearchQuery), data, STATE.vehiclesSort);
     const vehicleWord = total === 1 ? 'vozidlo' : (total > 1 && total < 5 ? 'vozidla' : 'vozidel');
     const gridClass = viewMode === 'list' ? 'uapp-next-garage-grid uapp-next-garage-grid--list' : 'uapp-next-garage-grid';
 
@@ -1455,8 +1478,7 @@
   }
 
   function renderUserAppScreen(view, data) {
-    preserveLegacyVehicleModal();
-    detachedPanels();
+    preserveLegacyOverlays();
     const root = ensureUserAppScreenRoot();
     if (!root) return;
 
@@ -1568,9 +1590,16 @@
 
   function bindSearch() {
     const input = document.getElementById('uappNextSearch');
-    if (!input) return;
+    if (!input || input.dataset.uappBound === '1') return;
+    input.dataset.uappBound = '1';
+    if (STATE.vehiclesSearchQuery) input.value = STATE.vehiclesSearchQuery;
     input.addEventListener('input', () => {
       const q = input.value.trim().toLowerCase();
+      STATE.vehiclesSearchQuery = q;
+      if (getActiveView() === 'vehicles') {
+        reRenderCatalog();
+        return;
+      }
       document.querySelectorAll('[data-uapp-vehicle-card]').forEach((card) => {
         const haystack = String(card.getAttribute('data-search-text') || '');
         card.style.display = !q || haystack.includes(q) ? '' : 'none';
@@ -1587,9 +1616,45 @@
     return false;
   }
 
+  function legacyPanelAnchor(event) {
+    return (event && event.currentTarget) || document.querySelector('.uapp-next-icon-btn[data-uapp-action="notifications"]') || document.querySelector('.uapp-next-profile[data-uapp-action="profile"]');
+  }
+
+  function openNotificationsPanel(event) {
+    preserveLegacyOverlays();
+    if (hasFn('toggleAppNotificationsPanel')) {
+      return window.toggleAppNotificationsPanel({
+        currentTarget: legacyPanelAnchor(event),
+        stopPropagation() {},
+      });
+    }
+    return clickOriginal('#desktopNotificationsButton') || clickOriginal('#mobileNotificationsButton');
+  }
+
+  function openProfileMenu() {
+    preserveLegacyOverlays();
+    if (hasFn('toggleMobileProfileMenu')) return window.toggleMobileProfileMenu();
+    return clickOriginal('#desktopProfileButton') || clickOriginal('#mobileProfileButton');
+  }
+
+  async function openVehicleDocuments(vehicleId) {
+    const id = Number(vehicleId);
+    if (!Number.isFinite(id) || id <= 0) return;
+    await openUserVehicleDetailModal(id);
+    return openDetailLegacyTab('documents', id);
+  }
+
+  async function openVehicleAccess(vehicleId) {
+    const id = Number(vehicleId);
+    if (!Number.isFinite(id) || id <= 0) return;
+    await openUserVehicleDetailModal(id);
+    return openDetailLegacyTab('access', id);
+  }
+
   function openVehicleSection(vehicleId, section) {
     const id = Number(vehicleId);
     if (!Number.isFinite(id) || id <= 0) return;
+    preserveLegacyOverlays();
     ensureLegacyDetailDom(id).then(() => {
       if (hasFn('openVehicleDetailFloatingSection')) {
         window.openVehicleDetailFloatingSection(section, id);
@@ -1665,9 +1730,9 @@
       return st.includes('pending') || st.includes('ček') || st.includes('wait');
     }).length;
     return [
-      { key: 'stk', tone: stk.tone, icon: '◷', title: 'STK / SME', value: stk.label, sub: 'Platnost technické kontroly' },
-      { key: 'ins', tone: ins.tone, icon: '⛨', title: 'Pojištění', value: ins.label, sub: vehicle.insurance_provider || 'Povinné ručení' },
-      { key: 'km', tone: 'ok', icon: '◔', title: 'Nájezd', value: km, sub: 'Aktuální stav tachometru' },
+      { key: 'stk', tone: stk.tone, icon: '◷', title: 'STK / SME', value: stk.label, sub: 'Platnost technické kontroly', action: `detailTab:ops:${id}` },
+      { key: 'ins', tone: ins.tone, icon: '⛨', title: 'Pojištění', value: ins.label, sub: vehicle.insurance_provider || 'Povinné ručení', action: `detail:${id}` },
+      { key: 'km', tone: 'ok', icon: '◔', title: 'Nájezd', value: km, sub: 'Aktuální stav tachometru', action: `detailTab:ops:${id}` },
       { key: 'svc', tone: svc.tone, icon: '⚙', title: 'Poslední servis', value: svc.label, sub: records.length ? 'Servisní historie k dispozici' : 'Bez záznamu', action: `detailTab:service:${id}` },
       { key: 'docs', tone: 'warn', icon: '▣', title: 'Dokumenty', value: String(records.length || '0'), sub: 'Servisní záznamy a přílohy', action: `detailTab:documents:${id}` },
       { key: 'access', tone: pendingAccess ? 'warn' : 'ok', icon: '👥', title: 'Přístupy servisů', value: String(grants.length), sub: pendingAccess ? `${pendingAccess} čeká na schválení` : 'Aktivní servisní přístupy', action: `detailTab:access:${id}` },
@@ -1843,7 +1908,7 @@
                   <button type="button" data-uapp-action="detailTab:ops:${id}">+ Přidat záznam tachometru</button>
                   <button type="button" data-uapp-action="detailTab:documents:${id}">Nahrát dokument</button>
                   ${hasFn('downloadVehicleReportFromHub') ? `<button type="button" data-uapp-action="detailPdf:${id}">Exportovat PDF report</button>` : ''}
-                  ${vehicle.has_qr_token && vehicle.public_history_url ? `<button type="button" data-uapp-action="detailQrOpen:${id}">Generovat QR historii</button>` : ''}
+                  ${hasFn('openVehicleDetailFloatingSection') ? `<button type="button" data-uapp-action="detailTab:gallery:${id}">Generovat QR historii</button>` : ''}
                 </div>
               </section>
             </aside>
@@ -1938,18 +2003,16 @@
       if (hasFn('openAddVehicleModal')) return window.openAddVehicleModal();
       return clickOriginal('#btnOpenAddVehicleModal');
     }
-    if (name === 'notifications') {
-      if (clickOriginal('#desktopNotificationsButton') || clickOriginal('#mobileNotificationsButton')) return;
-      if (hasFn('toggleAppNotificationsPanel')) return window.toggleAppNotificationsPanel(event || window.event);
-    }
-    if (name === 'profile') {
-      if (clickOriginal('#desktopProfileButton') || clickOriginal('#mobileProfileButton')) return;
-      if (hasFn('toggleMobileProfileMenu')) return window.toggleMobileProfileMenu();
-    }
+    if (name === 'notifications') return openNotificationsPanel(event);
+    if (name === 'profile') return openProfileMenu();
     if (name === 'detail' && id) return openUserVehicleDetailModal(id);
-    if (name === 'addRecord' && id && hasFn('openAddServiceRecordModal')) return window.openAddServiceRecordModal(id);
-    if (name === 'documentsVehicle' && id) return openVehicleSection(id, 'documents');
-    if (name === 'shareVehicle' && id) return openVehicleSection(id, 'access');
+    if (name === 'addRecord' && id) {
+      if (hasFn('openAddServiceRecordModal')) return window.openAddServiceRecordModal(id);
+      console.warn('[USER_APP_NEXT] BLOCKER: openAddServiceRecordModal missing');
+      return;
+    }
+    if (name === 'documentsVehicle' && id) return openVehicleDocuments(id);
+    if (name === 'shareVehicle' && id) return openVehicleAccess(id);
     if (name === 'attentionOpen') return openAttentionModal();
     if (name === 'attentionClose') return closeAttentionModal();
     if (name === 'attentionAllVehicles') {
@@ -1988,9 +2051,7 @@
     }
     if (name === 'detailPdf' && id && hasFn('downloadVehicleReportFromHub')) return window.downloadVehicleReportFromHub(id);
     if (name === 'detailVerifiedPdf' && id && hasFn('downloadVehicleVerifiedReportFromHub')) return window.downloadVehicleVerifiedReportFromHub(id);
-    if (name === 'detailQrOpen' && id && STATE.detailModal.vehicle?.public_history_url && hasFn('openVehiclePublicHistory')) {
-      return window.openVehiclePublicHistory(STATE.detailModal.vehicle.public_history_url);
-    }
+    if (name === 'detailQrOpen' && id) return openDetailLegacyTab('gallery', id);
     if (name === 'filter') {
       const key = String(rawId || 'all');
       if (['all', 'ok', 'attention', 'service', 'archived'].includes(key)) {
@@ -2014,7 +2075,7 @@
     }
     const token = ++STATE.renderToken;
     setActiveClass(true);
-    preserveLegacyVehicleModal();
+    preserveLegacyOverlays();
     const view = getActiveView() || 'home';
     const root = ensureUserAppScreenRoot();
     if (root && !root.querySelector('.uapp-next-shell')) {
@@ -2086,7 +2147,7 @@
 
     document.addEventListener('click', (event) => {
       const trigger = event.target && event.target.closest && event.target.closest('[data-uapp-action]');
-      if (!trigger) return;
+      if (!trigger || trigger.disabled || trigger.getAttribute('aria-disabled') === 'true') return;
       event.preventDefault();
       event.stopPropagation();
       if (typeof event.stopImmediatePropagation === 'function') {
@@ -2116,7 +2177,7 @@
   }
 
   function boot() {
-    preserveLegacyVehicleModal();
+    preserveLegacyOverlays();
     installHooks();
     window.setTimeout(() => {
       if (shouldActivate()) render();
