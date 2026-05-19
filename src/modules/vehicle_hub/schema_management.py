@@ -236,6 +236,7 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
     "service_dashboard": {
         "tables": {
             "service_work_orders",
+            "service_work_order_items",
             "service_work_order_audit_logs",
             "service_quotes",
             "service_quote_audit_logs",
@@ -251,6 +252,16 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
                 "source_type",
                 "status",
                 "due_date",
+            },
+            "service_work_order_items": {
+                "work_order_id",
+                "item_type",
+                "quantity",
+                "vat_rate",
+                "sale_price_without_vat",
+                "discount_percent",
+                "source",
+                "deleted_at",
             },
             "service_quotes": {
                 "service_record_id",

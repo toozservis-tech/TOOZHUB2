@@ -932,6 +932,35 @@ class ServiceWorkOrderAuditLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+class ServiceWorkOrderItem(Base):
+    """Položka servisní zakázky: práce, materiál nebo ostatní náklad."""
+    __tablename__ = "service_work_order_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    work_order_id = Column(Integer, ForeignKey("service_work_orders.id"), nullable=False, index=True)
+    service_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)
+
+    item_type = Column(String(32), nullable=False, index=True)
+    name = Column(String(512), nullable=False)
+    code = Column(String(128), nullable=True, index=True)
+    quantity = Column(Float, nullable=False, default=1)
+    unit = Column(String(32), nullable=False, default="ks")
+    vat_rate = Column(Float, nullable=False, default=21)
+    purchase_price_without_vat = Column(Float, nullable=True)
+    sale_price_without_vat = Column(Float, nullable=False, default=0)
+    discount_percent = Column(Float, nullable=False, default=0)
+    mechanic_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    source = Column(String(32), nullable=False, default="manual", index=True)
+    created_by = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class ServiceQuote(Base):
     """Cenová nabídka navázaná na existující servisní zakázku nebo záznam."""
     __tablename__ = "service_quotes"
