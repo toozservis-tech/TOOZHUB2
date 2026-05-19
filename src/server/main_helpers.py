@@ -275,6 +275,25 @@ def get_customer_by_email(db, email: str):
     return db.query(Customer).filter(func.lower(Customer.email) == normalized_email).first()
 
 
+def is_public_demo_account_email(email: str | None) -> bool:
+    normalized_email = normalize_email(email or "")
+    if not normalized_email:
+        return False
+    demo_email = (
+        os.getenv("SPRAVA_VOZIDEL_DEMO_ACCOUNT_EMAIL", "").strip()
+        or os.getenv("TOOZHUB_DEMO_ACCOUNT_EMAIL", "").strip()
+    )
+    return bool(demo_email) and normalized_email == normalize_email(demo_email)
+
+
+def forbid_public_demo_account_mutation(email: str | None) -> None:
+    if is_public_demo_account_email(email):
+        raise HTTPException(
+            status_code=403,
+            detail="Demo účet je jen pro ukázku. Nastavení účtu, e-mail ani heslo nelze měnit.",
+        )
+
+
 def get_active_ip_block(db, ip_address: Optional[str]) -> Optional[SecurityBlockedIp]:
     if not ip_address:
         return None

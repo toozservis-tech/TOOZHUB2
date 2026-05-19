@@ -33575,7 +33575,7 @@
             <div id="authSection" class="auth-shell auth-shell-root" data-view-context="auth" hidden aria-hidden="true" inert>
                 <header class="sv-auth-header" aria-label="Navigace přihlášení">
                     <a href="/" class="sv-auth-brand" onclick="goToPublicRoute('home'); return false;">
-                        <img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" />
+                        <img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo.jpeg" alt="" />
                         <span>Správa vozidel</span>
                     </a>
                     <nav class="sv-auth-header-actions" aria-label="Auth akce">
@@ -33594,7 +33594,7 @@
                     </div>
                     <aside class="auth-promo" id="authPromoAside" aria-label="Představení aplikace Správa vozidel">
                         <div class="auth-promo-brand">
-                            <img src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" class="auth-promo-logo">
+                            <img src="/web/assets/landing/sprava-vozidel-logo.jpeg" alt="" class="auth-promo-logo">
                             <div class="auth-promo-brand-text">
                                 <strong data-app-display-name></strong>
                             </div>
@@ -33897,7 +33897,7 @@
                 <header class="public-site-header" aria-label="Veřejná navigace">
                     <div class="public-site-shell public-site-bar">
                         <a href="/" class="public-site-brand" onclick="goToPublicRoute('home'); return false;">
-                            <img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" />
+                            <img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo.jpeg" alt="" />
                             <span data-app-display-name></span>
                         </a>
                         <nav class="public-site-nav" aria-label="Sekce veřejného webu">
@@ -34139,7 +34139,7 @@
                     </section>
 
                     <footer class="sv-public-footer">
-                        <strong><img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" /> Správa vozidel</strong>
+                        <strong><img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo.jpeg" alt="" /> Správa vozidel</strong>
                         <span>Digitální správa vozidel pro majitele, firmy a autoservisy.</span>
                         <nav aria-label="Footer odkazy"><a href="#funkce">Funkce</a><a href="#cenik">Ceník</a><a href="#jak-to-funguje">Jak to funguje</a><a href="#pro-majitele">Pro majitele</a><a href="#pro-servisy">Pro servisy</a><a href="https://www.toozservis.cz/#kontakt" target="_blank" rel="noopener noreferrer">Kontakt</a></nav>
                         <small>© 2026 Správa vozidel. Všechna práva vyhrazena.</small>
@@ -36078,6 +36078,7 @@
             staySignedIn: 'staySignedIn',
             loginMode: 'loginMode'
         };
+        var DEMO_SESSION_STORAGE_KEY = 'sv_demo_session_v1';
         var reservationsUiState = {
             isServiceView: false,
             all: [],
@@ -37791,6 +37792,18 @@
             }
         }
 
+        function isDemoProtectedMutationEndpoint(endpoint, method) {
+            const normalizedMethod = String(method || 'GET').toUpperCase();
+            if (normalizedMethod === 'GET') return false;
+            const path = String(endpoint || '').split('?')[0];
+            return path === '/user/me'
+                || path === '/user/change-password'
+                || path === '/user/security/totp/setup'
+                || path === '/user/security/totp/enable'
+                || path === '/user/security/totp/disable'
+                || path === '/user/security/biometric';
+        }
+
         // API volání s timeout a jednotným error handlingem
         async function apiCall(endpoint, method = 'GET', data = null, timeoutOrSignal = 30000) {
             // Aktualizovat API_URL při každém volání (pro případ změny)
@@ -37803,6 +37816,10 @@
                     showApiUrlConfig();
                 }
                 throw new Error('API URL není nastavena. Kontaktujte administrátora.');
+            }
+
+            if (isPublicDemoSession() && isDemoProtectedMutationEndpoint(endpoint, method)) {
+                throw new Error('Demo účet je jen pro ukázku. Nastavení účtu, e-mail ani heslo nelze měnit.');
             }
             
             const headers = {
@@ -40866,6 +40883,44 @@
                 localStorage.removeItem(key);
                 sessionStorage.removeItem(key);
             });
+            sessionStorage.removeItem(DEMO_SESSION_STORAGE_KEY);
+        }
+
+        function markPublicDemoSession(active) {
+            try {
+                if (active) {
+                    sessionStorage.setItem(DEMO_SESSION_STORAGE_KEY, 'true');
+                } else {
+                    sessionStorage.removeItem(DEMO_SESSION_STORAGE_KEY);
+                }
+            } catch (e) {
+                /* ignore sessionStorage errors */
+            }
+        }
+
+        function isPublicDemoSession() {
+            if (currentUser && (
+                currentUser.is_demo_account === true
+                || currentUser.demo_session === true
+                || currentUser.account_readonly === true
+            )) {
+                return true;
+            }
+            try {
+                return sessionStorage.getItem(DEMO_SESSION_STORAGE_KEY) === 'true';
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function withDemoReadonlyFlags(user) {
+            if (!user || typeof user !== 'object') return user;
+            return {
+                ...user,
+                is_demo_account: true,
+                demo_session: true,
+                account_readonly: true
+            };
         }
 
         function markAuthSessionEstablished() {
@@ -40895,6 +40950,11 @@
                 target.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
             }
             target.setItem(AUTH_STORAGE_KEYS.loggedIn, 'true');
+            markPublicDemoSession(Boolean(user && (
+                user.is_demo_account === true
+                || user.demo_session === true
+                || user.account_readonly === true
+            )));
             if (token && user) {
                 markAuthSessionEstablished();
             } else {
@@ -40924,10 +40984,11 @@
             if (!accessToken) return false;
             if (!force && currentUser && currentUser.email) return true;
             try {
+                const keepDemoReadonly = isPublicDemoSession();
                 const me = await apiCall('/user/me', 'GET');
                 if (me && typeof me === 'object' && me.email) {
-                    currentUser = me;
-                    persistCurrentUserToActiveStorage(me);
+                    currentUser = keepDemoReadonly ? withDemoReadonlyFlags(me) : me;
+                    persistCurrentUserToActiveStorage(currentUser);
                 }
             } catch (error) {
                 console.warn('[AUTH] Nelze načíst /user/me po loginu:', error?.message || error);
@@ -40938,6 +40999,9 @@
                     lastWorkspaceMePayload = ctx;
                     updateWorkspaceContextBadge(ctx);
                     currentUser = { ...(currentUser || {}), ...ctx };
+                    if (isPublicDemoSession()) {
+                        currentUser = withDemoReadonlyFlags(currentUser);
+                    }
                     persistCurrentUserToActiveStorage(currentUser);
                     syncAppDisplayNameFromMe(ctx);
                 }
@@ -41078,6 +41142,68 @@
             return 'Běžný zákaznický účet pro správu vlastních vozidel. Pro servis použijte samostatný servisní účet.';
         }
 
+        function getPublicDemoTokenFromUrl() {
+            const path = normalizePublicPathname(window.location.pathname);
+            if (path !== '/demo.html') {
+                return '';
+            }
+            try {
+                return String(new URLSearchParams(window.location.search || '').get('token') || '').trim();
+            } catch (e) {
+                return '';
+            }
+        }
+
+        async function redeemPublicDemoTokenFromUrl() {
+            const token = getPublicDemoTokenFromUrl();
+            if (!token) {
+                return false;
+            }
+
+            try {
+                const response = await fetch(`${getApiBaseUrl()}/api/public/demo-account/redeem`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8'
+                    },
+                    credentials: 'omit',
+                    body: JSON.stringify({ token })
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    const detail = payload && payload.detail ? String(payload.detail) : 'Odkaz na ukázku už není platný. Požádejte si o nový odkaz.';
+                    throw new Error(detail);
+                }
+                const redeemToken = payload && payload.access_token ? String(payload.access_token) : '';
+                const redeemUser = payload && payload.user && typeof payload.user === 'object' ? payload.user : null;
+                if (!redeemToken || !redeemUser || !redeemUser.email) {
+                    throw new Error('Ukázkový odkaz nevrátil platnou relaci.');
+                }
+                sessionStorage.setItem('sv_public_demo_redeem_v1', JSON.stringify({
+                    access_token: redeemToken,
+                    user: withDemoReadonlyFlags(redeemUser),
+                    demo_session: true,
+                    account_readonly: true,
+                    disclaimer: payload.disclaimer || ''
+                }));
+                window.history.replaceState({}, document.title, toBrowserAppPath('/'));
+                return true;
+            } catch (error) {
+                console.warn('[DEMO] Redeem odkazu z URL selhal:', error);
+                try {
+                    window.history.replaceState({}, document.title, toBrowserAppPath('/'));
+                } catch (e) {
+                    /* ignore */
+                }
+                if (typeof showAlert === 'function') {
+                    showAlert(error?.message || 'Odkaz na ukázku už není platný. Požádejte si o nový odkaz.', 'error');
+                }
+                return false;
+            }
+        }
+
         async function applyPublicDemoRedeemFromSession() {
             let redeemToken = '';
             let redeemUser = null;
@@ -41092,6 +41218,9 @@
                 redeemUser = data && data.user && typeof data.user === 'object' ? data.user : null;
                 if (!redeemToken || !redeemUser || !redeemUser.email) {
                     return;
+                }
+                if (data.demo_session === true || data.account_readonly === true || redeemUser.demo_session === true) {
+                    redeemUser = withDemoReadonlyFlags(redeemUser);
                 }
             } catch (e) {
                 try {
@@ -57240,8 +57369,12 @@
             serverStatusCheckInterval = setInterval(checkServerStatus, 30000);
             
             // Načíst uložený JWT token a uživatele
-            const savedToken = getAuthStorageItem(AUTH_STORAGE_KEYS.token);
-            const savedUser = getAuthStorageItem(AUTH_STORAGE_KEYS.user);
+            const hasPublicDemoUrlToken = Boolean(getPublicDemoTokenFromUrl());
+            if (hasPublicDemoUrlToken) {
+                clearAuthStorage();
+            }
+            const savedToken = hasPublicDemoUrlToken ? null : getAuthStorageItem(AUTH_STORAGE_KEYS.token);
+            const savedUser = hasPublicDemoUrlToken ? null : getAuthStorageItem(AUTH_STORAGE_KEYS.user);
             
             // DIAGNOSTIKA PŘI STARTU
             console.log('[APP] ===== DIAGNOSTIKA STARTU =====');
@@ -57305,7 +57438,11 @@
             void (async () => {
                 let hadDemoRedeemPayload = false;
                 try {
+                    const redeemedDemoUrl = await redeemPublicDemoTokenFromUrl();
                     hadDemoRedeemPayload = Boolean(sessionStorage.getItem('sv_public_demo_redeem_v1'));
+                    if (redeemedDemoUrl) {
+                        hadDemoRedeemPayload = true;
+                    }
                 } catch (eDemo) {
                     /* ignore */
                 }

@@ -413,6 +413,9 @@ def redeem_demo_access(
             "name": customer.name,
             "ico": customer.ico,
             "role": customer.role or "user",
+            "is_demo_account": True,
+            "demo_session": True,
+            "account_readonly": True,
         },
         disclaimer=disclaimer,
     )
