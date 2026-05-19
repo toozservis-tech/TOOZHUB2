@@ -33931,11 +33931,11 @@
                             <span data-app-display-name></span>
                         </a>
                         <nav class="public-site-nav" aria-label="Sekce veřejného webu">
-                            <a href="#funkce" data-public-nav="features" onclick="document.getElementById('funkce')?.scrollIntoView({behavior:'smooth'}); return false;">Funkce</a>
-                            <a href="#pro-majitele" data-public-nav="audiences" onclick="document.getElementById('pro-majitele')?.scrollIntoView({behavior:'smooth'}); return false;">Pro majitele</a>
-                            <a href="#pro-servisy" data-public-nav="audiences" onclick="document.getElementById('pro-servisy')?.scrollIntoView({behavior:'smooth'}); return false;">Pro servisy</a>
-                            <a href="#cenik" data-public-nav="contact" onclick="document.getElementById('cenik')?.scrollIntoView({behavior:'smooth'}); return false;">Ceník</a>
-                            <a href="#jak-to-funguje" data-public-nav="features" onclick="document.getElementById('jak-to-funguje')?.scrollIntoView({behavior:'smooth'}); return false;">Jak to funguje</a>
+                            <a href="#funkce" data-public-nav="features" onclick="return scrollToPublicSection('funkce');">Funkce</a>
+                            <a href="#pro-majitele" data-public-nav="audiences" onclick="return scrollToPublicSection('pro-majitele');">Pro majitele</a>
+                            <a href="#pro-servisy" data-public-nav="audiences" onclick="return scrollToPublicSection('pro-servisy');">Pro servisy</a>
+                            <a href="#cenik" data-public-nav="contact" onclick="return scrollToPublicSection('cenik');">Ceník</a>
+                            <a href="#jak-to-funguje" data-public-nav="features" onclick="return scrollToPublicSection('jak-to-funguje');">Jak to funguje</a>
                         </nav>
                         <div class="public-site-actions">
                             <button type="button" class="btn btn-secondary public-site-btn hidden" data-public-demo-visible="1" onclick="openPublicDemoEntry(); return false;">Vyzkoušet ukázku</button>
@@ -33957,11 +33957,11 @@
                             <button type="button" class="public-site-drawer-close" onclick="closePublicSiteMobileMenu(); return false;" aria-label="Zavřít menu">×</button>
                         </div>
                         <nav class="public-site-drawer-nav" aria-label="Sekce webu">
-                            <a href="#funkce" onclick="closePublicSiteMobileMenu(); document.getElementById('funkce')?.scrollIntoView({behavior:'smooth'}); return false;">Funkce</a>
-                            <a href="#pro-majitele" onclick="closePublicSiteMobileMenu(); document.getElementById('pro-majitele')?.scrollIntoView({behavior:'smooth'}); return false;">Pro majitele</a>
-                            <a href="#pro-servisy" onclick="closePublicSiteMobileMenu(); document.getElementById('pro-servisy')?.scrollIntoView({behavior:'smooth'}); return false;">Pro servisy</a>
-                            <a href="#cenik" onclick="closePublicSiteMobileMenu(); document.getElementById('cenik')?.scrollIntoView({behavior:'smooth'}); return false;">Ceník</a>
-                            <a href="#jak-to-funguje" onclick="closePublicSiteMobileMenu(); document.getElementById('jak-to-funguje')?.scrollIntoView({behavior:'smooth'}); return false;">Jak to funguje</a>
+                            <a href="#funkce" onclick="return scrollToPublicSection('funkce');">Funkce</a>
+                            <a href="#pro-majitele" onclick="return scrollToPublicSection('pro-majitele');">Pro majitele</a>
+                            <a href="#pro-servisy" onclick="return scrollToPublicSection('pro-servisy');">Pro servisy</a>
+                            <a href="#cenik" onclick="return scrollToPublicSection('cenik');">Ceník</a>
+                            <a href="#jak-to-funguje" onclick="return scrollToPublicSection('jak-to-funguje');">Jak to funguje</a>
                         </nav>
                         <div class="public-site-drawer-footer">
                             <button type="button" class="btn btn-secondary public-site-btn public-site-drawer-btn hidden" data-public-demo-visible="1" onclick="openPublicDemoEntry(); return false;">Vyzkoušet ukázku</button>
@@ -34109,7 +34109,7 @@
                         <div class="sv-public-section-head">
                             <p>Ceník</p>
                             <h2 id="svPublicPricingTitle">Jednoduchý ceník</h2>
-                            <span>Začněte zdarma a rozšiřte možnosti podle toho, kolik vozidel a funkcí potřebujete. Ceny odpovídají aktuálním licenčním plánům.</span>
+                            <span>Začněte zdarma a rozšiřte možnosti podle toho, kolik vozidel a funkcí potřebujete. Veřejný přehled vychází z aktuálních licenčních plánů.</span>
                         </div>
                         <div class="sv-public-pricing-grid">
                             <article class="sv-price-card">
@@ -34135,6 +34135,7 @@
                                 <button type="button" class="sv-btn sv-btn-light" onclick="showRegister(); setRegistrationMode('service'); return false;">Vytvořit servisní účet</button>
                             </article>
                         </div>
+                        <p class="sv-public-pricing-note">Ceník je připravený pro veřejnou orientaci; finální dostupnost funkcí se řídí aktivním licenčním nastavením v aplikaci.</p>
                     </section>
 
                     <section id="jak-to-funguje" class="sv-public-section sv-public-how sv-public-how-deep" aria-labelledby="svPublicHowTitle">
@@ -34171,7 +34172,7 @@
                     <footer class="sv-public-footer">
                         <strong><img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo.jpeg" alt="" /> Správa vozidel</strong>
                         <span>Digitální správa vozidel pro majitele, firmy a autoservisy.</span>
-                        <nav aria-label="Footer odkazy"><a href="#funkce">Funkce</a><a href="#cenik">Ceník</a><a href="#jak-to-funguje">Jak to funguje</a><a href="#pro-majitele">Pro majitele</a><a href="#pro-servisy">Pro servisy</a><a href="https://www.toozservis.cz/#kontakt" target="_blank" rel="noopener noreferrer">Kontakt</a></nav>
+                        <nav aria-label="Footer odkazy"><a href="#funkce" onclick="return scrollToPublicSection('funkce');">Funkce</a><a href="#cenik" onclick="return scrollToPublicSection('cenik');">Ceník</a><a href="#jak-to-funguje" onclick="return scrollToPublicSection('jak-to-funguje');">Jak to funguje</a><a href="#pro-majitele" onclick="return scrollToPublicSection('pro-majitele');">Pro majitele</a><a href="#pro-servisy" onclick="return scrollToPublicSection('pro-servisy');">Pro servisy</a><a href="https://www.toozservis.cz/#kontakt" target="_blank" rel="noopener noreferrer">Kontakt</a></nav>
                         <small>© 2026 Správa vozidel. Všechna práva vyhrazena.</small>
                     </footer>
                 </main>
@@ -44192,6 +44193,21 @@
             if (btn) {
                 btn.setAttribute('aria-expanded', 'false');
             }
+        }
+
+        function scrollToPublicSection(sectionId) {
+            closePublicSiteMobileMenu();
+            const target = document.getElementById(sectionId);
+            if (!target || typeof target.scrollIntoView !== 'function') {
+                return false;
+            }
+            target.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+            try {
+                window.history.replaceState(window.history.state, document.title, `#${sectionId}`);
+            } catch (error) {
+                // Hash update is a visual navigation aid; scrolling should still work without it.
+            }
+            return false;
         }
 
         function openPublicSiteMobileMenu() {
