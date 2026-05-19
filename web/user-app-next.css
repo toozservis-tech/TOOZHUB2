@@ -54,7 +54,8 @@ body.route-app-view.user-app-next-active #userAppNextScreen {
 }
 
 body.route-app-view.user-app-next-active #homeTab,
-body.route-app-view.user-app-next-active #vehiclesTab {
+body.route-app-view.user-app-next-active #vehiclesTab,
+body.route-app-view.user-app-next-active #dashboard > .tab-content {
   display: none !important;
 }
 
@@ -2794,5 +2795,162 @@ body.uapp-next-attention-open {
 
   .uapp-next-attention-foot .uapp-next-btn {
     width: 100%;
+  }
+}
+
+/* Legacy sections mounted inside the new shell */
+.uapp-next-legacy-page {
+  padding: 0 1.35rem 1.5rem;
+  min-width: 0;
+}
+
+.uapp-next-legacy-mount {
+  min-width: 0;
+}
+
+.uapp-next-legacy-mount .app-section-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+.uapp-next-legacy-mount .hub-card,
+.uapp-next-legacy-mount .app-section-hero-card {
+  background: var(--uapp-card);
+  border: 1px solid var(--uapp-border);
+  border-radius: var(--uapp-radius-lg);
+  box-shadow: var(--uapp-shadow);
+  margin-bottom: 0;
+  padding: 1.15rem 1.25rem;
+}
+
+.uapp-next-legacy-mount .app-section-hero-card::after {
+  background: linear-gradient(90deg, var(--uapp-primary-bright), #3b82f6);
+}
+
+.uapp-next-legacy-mount .app-section-kicker {
+  color: var(--uapp-primary-bright);
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+}
+
+.uapp-next-legacy-mount .app-section-hero-toggle-title,
+.uapp-next-legacy-mount .app-section-hero-card h2,
+.uapp-next-legacy-mount .hub-section-title,
+.uapp-next-legacy-mount h2,
+.uapp-next-legacy-mount h3 {
+  color: var(--uapp-navy-deep);
+}
+
+.uapp-next-legacy-mount .app-section-lead,
+.uapp-next-legacy-mount .hub-section-subtitle,
+.uapp-next-legacy-mount .hub-meta,
+.uapp-next-legacy-mount .text-muted {
+  color: var(--uapp-muted);
+}
+
+.uapp-next-legacy-mount .app-section-hero-toggle:hover {
+  background: rgba(11, 75, 242, 0.06);
+}
+
+.uapp-next-legacy-mount .app-section-hero-toggle-chevron {
+  background: var(--uapp-pill-active);
+  color: var(--uapp-primary);
+}
+
+.uapp-next-legacy-mount .btn,
+.uapp-next-legacy-mount .btn-secondary,
+.uapp-next-legacy-mount .btn-primary {
+  border-radius: 12px;
+  min-height: 42px;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.uapp-next-legacy-mount .btn-primary {
+  background: var(--uapp-primary-bright);
+  border-color: var(--uapp-primary-bright);
+  color: #fff;
+}
+
+.uapp-next-legacy-mount .btn-primary:hover {
+  background: #0940d4;
+  border-color: #0940d4;
+}
+
+.uapp-next-legacy-mount .btn-secondary {
+  background: #fff;
+  border: 1px solid var(--uapp-border);
+  color: var(--uapp-text);
+}
+
+.uapp-next-legacy-mount .btn-secondary:hover {
+  background: #f9fafb;
+  border-color: rgba(16, 24, 40, 0.14);
+}
+
+.uapp-next-legacy-mount .hub-workspace-tile {
+  border-radius: var(--uapp-radius-md);
+  border-color: var(--uapp-border);
+  box-shadow: var(--uapp-shadow-soft);
+}
+
+.uapp-next-legacy-mount .hub-workspace-tile:hover {
+  border-color: rgba(11, 75, 242, 0.35);
+  box-shadow: var(--uapp-shadow);
+}
+
+.uapp-next-legacy-mount input[type="text"],
+.uapp-next-legacy-mount input[type="email"],
+.uapp-next-legacy-mount input[type="password"],
+.uapp-next-legacy-mount input[type="search"],
+.uapp-next-legacy-mount input[type="tel"],
+.uapp-next-legacy-mount input[type="number"],
+.uapp-next-legacy-mount input[type="date"],
+.uapp-next-legacy-mount select,
+.uapp-next-legacy-mount textarea {
+  border-radius: 12px;
+  border-color: var(--uapp-border);
+  color: var(--uapp-text);
+}
+
+.uapp-next-legacy-mount input:focus,
+.uapp-next-legacy-mount select:focus,
+.uapp-next-legacy-mount textarea:focus {
+  border-color: rgba(11, 75, 242, 0.45);
+  box-shadow: 0 0 0 3px rgba(11, 75, 242, 0.12);
+  outline: none;
+}
+
+.uapp-next-legacy-mount .table,
+.uapp-next-legacy-mount table {
+  border-radius: var(--uapp-radius-md);
+  overflow: hidden;
+}
+
+.uapp-next-legacy-mount .badge,
+.uapp-next-legacy-mount .hub-badge {
+  border-radius: 999px;
+}
+
+@media (max-width: 900px) {
+  .uapp-next-legacy-page {
+    padding: 0 1rem 1.25rem;
+  }
+
+  .uapp-next-legacy-mount .app-section-hero-collapsible-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .uapp-next-legacy-mount .app-section-hero-actions {
+    width: 100%;
+  }
+
+  .uapp-next-legacy-mount .app-section-hero-actions .btn {
+    flex: 1 1 auto;
   }
 }

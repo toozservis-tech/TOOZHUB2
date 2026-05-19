@@ -13,6 +13,7 @@
     attentionModalOpen: false,
     attentionItems: [],
     legacyDetailReadyFor: null,
+    legacyMount: { tabId: null },
     originalShowVehicleDetail: null,
     modalEscBound: false,
   };
@@ -105,16 +106,35 @@
     }
   }
 
+  const LEGACY_SECTION_META = {
+    reminders: { tabId: 'remindersTab', testId: 'user-app-next-reminders' },
+    documents: { tabId: 'documentsTab', testId: 'user-app-next-documents' },
+    servicesDirectory: { tabId: 'servicesDirectoryTab', testId: 'user-app-next-services' },
+    account: { tabId: 'accountTab', testId: 'user-app-next-account' },
+    support: { tabId: 'supportTab', testId: 'user-app-next-support' },
+    reservations: { tabId: 'reservationsTab', testId: 'user-app-next-reservations' },
+  };
+
   function getActiveView() {
     if (!document.body.classList.contains('route-app-view') || !isAuthed() || isServiceMode()) {
       return null;
     }
     const appShell = document.getElementById('app-shell');
     if (!appShell || appShell.hidden) return null;
-    const vehiclesTab = document.getElementById('vehiclesTab');
-    const homeTab = document.getElementById('homeTab');
-    if (vehiclesTab && vehiclesTab.classList.contains('active')) return 'vehicles';
-    if (homeTab && homeTab.classList.contains('active')) return 'home';
+    const viewByTabId = {
+      homeTab: 'home',
+      vehiclesTab: 'vehicles',
+      remindersTab: 'reminders',
+      documentsTab: 'documents',
+      servicesDirectoryTab: 'servicesDirectory',
+      accountTab: 'account',
+      supportTab: 'support',
+      reservationsTab: 'reservations',
+    };
+    for (const [tabId, view] of Object.entries(viewByTabId)) {
+      const tab = document.getElementById(tabId);
+      if (tab && tab.classList.contains('active')) return view;
+    }
     return null;
   }
 
@@ -939,14 +959,48 @@
   }
 
   function clearUserAppScreen() {
+    restoreLegacyTabMount();
     const root = document.getElementById(USER_APP_SCREEN_ID);
     if (root) root.replaceChildren();
+  }
+
+  function restoreLegacyTabMount() {
+    if (!STATE.legacyMount.tabId) return;
+    const tab = document.getElementById(STATE.legacyMount.tabId);
+    const mount = document.getElementById('uappNextLegacyMount');
+    if (tab && mount) {
+      while (mount.firstChild) {
+        tab.appendChild(mount.firstChild);
+      }
+    }
+    STATE.legacyMount = { tabId: null };
+  }
+
+  function mountLegacyTabContent(view) {
+    const meta = LEGACY_SECTION_META[view];
+    if (!meta) return;
+    const tab = document.getElementById(meta.tabId);
+    const mount = document.getElementById('uappNextLegacyMount');
+    if (!tab || !mount) return;
+    while (tab.firstChild) {
+      mount.appendChild(tab.firstChild);
+    }
+    STATE.legacyMount = { tabId: meta.tabId };
+  }
+
+  function renderLegacySectionCanvas(view) {
+    const meta = LEGACY_SECTION_META[view] || { testId: `user-app-next-${view}` };
+    return `
+      ${renderTopbar()}
+      <div class="uapp-next-legacy-page" data-testid="${esc(meta.testId)}">
+        <div class="uapp-next-legacy-mount" id="uappNextLegacyMount"></div>
+      </div>`;
   }
 
   function setActiveClass(active) {
     document.body.classList.toggle('user-app-next-active', Boolean(active));
     if (!active) {
-      document.body.classList.remove('user-app-next-sidebar-collapsed', 'user-app-next-view-vehicles');
+      document.body.classList.remove('user-app-next-sidebar-collapsed', 'user-app-next-view-vehicles', 'user-app-next-view-legacy');
       clearUserAppScreen();
     }
   }
@@ -969,11 +1023,11 @@
           ${navButton('Přehled', ICO.home, 'home', nav === 'home', 0)}
           ${navButton('Moje vozidla', ICO.car, 'vehicles', nav === 'vehicles', 0)}
           ${navButton('Servisní historie', ICO.wrench, 'serviceHistory', false, 0)}
-          ${navButton('Připomínky', ICO.bell, 'reminders', false, reminderBadge)}
-          ${navButton('Dokumenty', ICO.doc, 'documents', false, 0)}
-          ${navButton('Servisy', ICO.building, 'servicesDirectory', false, 0)}
-          ${navButton('Faktury', ICO.invoice, 'invoices', false, 0)}
-          ${navButton('Nastavení', ICO.gear, 'account', false, 0)}
+          ${navButton('Připomínky', ICO.bell, 'reminders', nav === 'reminders', reminderBadge)}
+          ${navButton('Dokumenty', ICO.doc, 'documents', nav === 'documents', 0)}
+          ${navButton('Servisy', ICO.building, 'servicesDirectory', nav === 'servicesDirectory', 0)}
+          ${navButton('Faktury', ICO.invoice, 'invoices', nav === 'documents', 0)}
+          ${navButton('Nastavení', ICO.gear, 'account', nav === 'account', 0)}
         </nav>
         <div class="uapp-next-sidebar-bottom">
           <p class="uapp-next-help-label">Potřebujete pomoc?</p>
@@ -1462,28 +1516,35 @@
         ${renderVehiclesCatalog(data)}
       `;
     }
-    return `
-      ${renderTopbar()}
-      <div class="uapp-next-overview-shell">
-        ${renderHero(data)}
-        ${quickCards(data)}
-        <div class="uapp-next-overview-body">
-          <div class="uapp-next-overview-main">
-            ${renderVehicles(data)}
+    if (view === 'home') {
+      return `
+        ${renderTopbar()}
+        <div class="uapp-next-overview-shell">
+          ${renderHero(data)}
+          ${quickCards(data)}
+          <div class="uapp-next-overview-body">
+            <div class="uapp-next-overview-main">
+              ${renderVehicles(data)}
+            </div>
+            ${renderSide(data)}
           </div>
-          ${renderSide(data)}
         </div>
-      </div>
-    `;
+      `;
+    }
+    return renderLegacySectionCanvas(view);
   }
 
   function renderUserAppScreen(view, data) {
     preserveLegacyOverlays();
+    restoreLegacyTabMount();
     const root = ensureUserAppScreenRoot();
     if (!root) return;
 
-    const activeView = view === 'vehicles' ? 'vehicles' : 'home';
-    const testId = activeView === 'vehicles' ? 'user-app-next-vehicles' : 'user-app-next-dashboard';
+    const activeView = view || 'home';
+    const isLegacySection = Boolean(LEGACY_SECTION_META[activeView]);
+    const testId = isLegacySection
+      ? LEGACY_SECTION_META[activeView].testId
+      : (activeView === 'vehicles' ? 'user-app-next-vehicles' : 'user-app-next-dashboard');
 
     root.replaceChildren();
     root.innerHTML = `
@@ -1498,11 +1559,15 @@
     `;
 
     document.body.classList.toggle('user-app-next-view-vehicles', activeView === 'vehicles');
+    document.body.classList.toggle('user-app-next-view-legacy', isLegacySection);
+    if (isLegacySection) {
+      mountLegacyTabContent(activeView);
+    }
     bindSearch();
     if (activeView === 'vehicles') {
       hydrateGarageImages(data);
       bindSortSelect();
-    } else {
+    } else if (activeView === 'home') {
       hydrateImages(data);
     }
   }
