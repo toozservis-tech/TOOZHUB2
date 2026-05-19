@@ -4524,3 +4524,39 @@ body.route-public-view .sv-public-how-note span {
     display: none;
   }
 }
+
+/* Final hero polish: keep the notification cards outside the dashboard mockup. */
+@media (min-width: 1061px) {
+  body.route-public-view .sv-public-visual {
+    padding-right: 214px;
+  }
+
+  body.route-public-view .sv-public-visual::before {
+    right: 2px;
+    top: 60px;
+    width: 258px;
+    height: 270px;
+    background:
+      radial-gradient(circle at 56% 44%, rgba(11, 75, 242, 0.12), rgba(219, 234, 254, 0.36) 42%, transparent 68%),
+      radial-gradient(circle at 78% 75%, rgba(22, 163, 74, 0.10), transparent 52%),
+      url("/web/assets/landing/vehicle-hero-small.webp") center 70% / 92% auto no-repeat;
+    opacity: 0.68;
+  }
+
+  body.route-public-view .sv-public-float {
+    right: 10px;
+    width: 184px;
+    z-index: 4;
+  }
+}
+
+@media (min-width: 1061px) and (max-width: 1320px) {
+  body.route-public-view .sv-public-visual {
+    padding-right: 190px;
+  }
+
+  body.route-public-view .sv-public-float {
+    right: 8px;
+    width: 166px;
+  }
+}
