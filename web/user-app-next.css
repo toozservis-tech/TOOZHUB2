@@ -3019,6 +3019,14 @@ body.user-app-next-view-reminders .uapp-next-canvas {
   font-weight: 600;
 }
 
+.uapp-rem-stat small {
+  display: block;
+  margin-top: 0.12rem;
+  font-size: 0.74rem;
+  color: var(--uapp-muted);
+  font-weight: 500;
+}
+
 .uapp-rem-stat-ico {
   width: 2.2rem;
   height: 2.2rem;
