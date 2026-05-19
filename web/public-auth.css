@@ -18,6 +18,159 @@
   --sv-public-radius-md: 16px;
 }
 
+/* Public landing color balance: keep blue as brand, add section-level hierarchy. */
+body.route-public-view {
+  background:
+    radial-gradient(circle at 7% 20%, rgba(124, 58, 237, 0.055), transparent 24%),
+    radial-gradient(circle at 89% 26%, rgba(249, 115, 22, 0.055), transparent 24%),
+    radial-gradient(circle at 74% 63%, rgba(22, 163, 74, 0.070), transparent 26%),
+    linear-gradient(180deg, #fbfcff 0%, #f6f9fd 48%, #fbfcff 100%) !important;
+}
+
+body.route-public-view #funkce .sv-public-section-head p,
+body.route-public-view #jak-to-funguje .sv-public-section-head p {
+  color: #7c3aed;
+}
+
+body.route-public-view #cenik .sv-public-section-head p {
+  color: #f97316;
+}
+
+body.route-public-view #pro-servisy .sv-public-section-kicker {
+  color: #16a34a;
+}
+
+body.route-public-view .sv-feature-card {
+  overflow: hidden;
+}
+
+body.route-public-view .sv-accent-blue {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(244, 248, 255, 0.94));
+}
+
+body.route-public-view .sv-accent-purple {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(248, 245, 255, 0.94));
+}
+
+body.route-public-view .sv-accent-orange {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(255, 247, 237, 0.94));
+}
+
+body.route-public-view .sv-accent-green {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(240, 253, 244, 0.94));
+}
+
+body.route-public-view .sv-accent-purple:hover {
+  border-color: rgba(124, 58, 237, 0.24);
+}
+
+body.route-public-view .sv-accent-orange:hover {
+  border-color: rgba(249, 115, 22, 0.24);
+}
+
+body.route-public-view .sv-accent-green:hover {
+  border-color: rgba(22, 163, 74, 0.24);
+}
+
+body.route-public-view .sv-public-owner-deep {
+  background:
+    radial-gradient(circle at 76% 23%, rgba(11, 75, 242, 0.070), transparent 28%),
+    radial-gradient(circle at 12% 86%, rgba(124, 58, 237, 0.052), transparent 24%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 255, 0.90));
+}
+
+body.route-public-view .sv-public-service-deep {
+  border-color: rgba(187, 226, 204, 0.95);
+  background:
+    radial-gradient(circle at 25% 19%, rgba(22, 163, 74, 0.11), transparent 30%),
+    radial-gradient(circle at 89% 84%, rgba(249, 115, 22, 0.052), transparent 26%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(239, 253, 244, 0.90));
+}
+
+body.route-public-view #pro-majitele .sv-public-check-list li:nth-child(2)::before,
+body.route-public-view #pro-majitele .sv-public-check-list li:nth-child(4)::before {
+  background: #7c3aed;
+}
+
+body.route-public-view #pro-majitele .sv-public-check-list li:nth-child(3)::before {
+  background: #16a34a;
+}
+
+body.route-public-view .sv-owner-timeline {
+  background: linear-gradient(135deg, #f8fbff, #f5f3ff);
+}
+
+body.route-public-view .sv-owner-timeline i {
+  background: #7c3aed;
+}
+
+body.route-public-view .sv-service-mini-card-one {
+  border-color: rgba(249, 115, 22, 0.25);
+}
+
+body.route-public-view .sv-service-mini-card-two {
+  border-color: rgba(11, 75, 242, 0.22);
+}
+
+body.route-public-view .sv-service-mini-card-three {
+  border-color: rgba(22, 163, 74, 0.25);
+}
+
+body.route-public-view .sv-price-card:nth-child(1) {
+  border-color: rgba(22, 163, 74, 0.25);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(240, 253, 244, 0.72));
+}
+
+body.route-public-view .sv-price-card-featured {
+  border-color: rgba(124, 58, 237, 0.48);
+  background:
+    radial-gradient(circle at 88% 10%, rgba(124, 58, 237, 0.08), transparent 28%),
+    rgba(255, 255, 255, 0.96);
+  box-shadow: 0 22px 60px rgba(124, 58, 237, 0.14);
+}
+
+body.route-public-view .sv-price-card:nth-child(3) {
+  border-color: rgba(249, 115, 22, 0.28);
+  background:
+    radial-gradient(circle at 88% 12%, rgba(249, 115, 22, 0.08), transparent 28%),
+    rgba(255, 255, 255, 0.96);
+}
+
+body.route-public-view .sv-price-card em {
+  color: #7c3aed;
+  background: #f5f3ff;
+}
+
+body.route-public-view .sv-price-card:nth-child(3) li::before {
+  color: #f97316;
+}
+
+body.route-public-view .sv-public-steps-four article:nth-child(2) span {
+  background: #7c3aed;
+}
+
+body.route-public-view .sv-public-steps-four article:nth-child(3) span {
+  background: #f97316;
+}
+
+body.route-public-view .sv-public-steps-four article:nth-child(4) span,
+body.route-public-view .sv-public-how-note span {
+  background: #16a34a;
+}
+
+body.route-public-view .sv-public-how-note {
+  border-color: rgba(187, 226, 204, 0.95);
+  background: linear-gradient(135deg, #ffffff, #f0fdf4);
+}
+
+body.route-public-view .sv-public-final-cta {
+  background:
+    radial-gradient(circle at 35px 50%, rgba(255, 255, 255, 0.20) 0 34px, transparent 35px),
+    radial-gradient(circle at 92% 15%, rgba(124, 58, 237, 0.28), transparent 25%),
+    radial-gradient(circle at 96% 82%, rgba(22, 163, 74, 0.18), transparent 24%),
+    linear-gradient(135deg, #0b4bf2 0%, #194bd8 45%, #2563eb 100%);
+}
+
 body.route-public-view,
 body.route-auth-view {
   background:
