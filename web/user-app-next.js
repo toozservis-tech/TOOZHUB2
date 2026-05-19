@@ -1026,7 +1026,7 @@
     const diff = daysUntil(ref);
     if (diff == null) return 'planned';
     if (diff < 0) return 'overdue';
-    if (diff <= 14) return 'upcoming';
+    if (diff <= 60) return 'upcoming';
     return 'planned';
   }
 
@@ -1041,24 +1041,30 @@
 
   function reminderSummaryStats(data) {
     const buckets = bucketReminders(data);
-    const open = [...buckets.overdue, ...buckets.upcoming, ...buckets.planned];
-    let stk = 0;
-    let oil = 0;
-    let general = 0;
-    open.forEach((item) => {
-      const t = String(item?.type || '').toUpperCase();
-      if (t === 'STK') stk += 1;
-      else if (t === 'OLEJ') oil += 1;
-      else general += 1;
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    let today = 0;
+    let thisWeek = 0;
+    (data?.reminders || []).forEach((item) => {
+      if (item?.is_completed) return;
+      const ref = reminderReferenceDate(item);
+      const diff = ref ? daysUntil(ref) : null;
+      if (diff === 0) today += 1;
+      if (diff != null && diff >= 0 && diff <= 7) thisWeek += 1;
     });
+    const completedMonth = (data?.reminders || []).filter((item) => {
+      if (!item?.is_completed) return false;
+      const ref = parseDate(item?.completed_at || item?.due_date || item?.updated_at);
+      return ref && ref >= monthStart;
+    }).length;
     return {
+      today,
+      thisWeek,
       overdue: buckets.overdue.length,
-      upcoming: buckets.upcoming.length,
+      completedMonth,
       planned: buckets.planned.length,
+      upcoming: buckets.upcoming.length,
       completed: buckets.completed.length,
-      stk,
-      oil,
-      general,
     };
   }
 
@@ -1122,9 +1128,9 @@
         <p class="uapp-rem-kanban-vehicle">${plate}<span>${esc(vehicleLabelById(data, vehicleId))}</span></p>
         <p class="uapp-rem-kanban-due ${col === 'overdue' ? 'is-overdue' : ''}">${esc(reminderDueLabel(item))}</p>
         <div class="uapp-rem-kanban-actions">
-          ${col !== 'completed' ? `<button type="button" class="uapp-rem-kanban-btn" data-uapp-action="reminderComplete:${id}" title="Označit hotovo">✓</button>` : ''}
-          <button type="button" class="uapp-rem-kanban-btn" data-uapp-action="reminderDetail:${id}" title="Detail">Detail</button>
-          ${col !== 'completed' ? `<button type="button" class="uapp-rem-kanban-btn" data-uapp-action="reminderSnooze:${id}" title="Upravit termín">Odložit</button>` : ''}
+          ${col !== 'completed' ? `<button type="button" class="uapp-rem-kanban-btn" data-uapp-action="reminderComplete:${id}">✓ Splnit</button>` : ''}
+          ${col !== 'completed' ? `<button type="button" class="uapp-rem-kanban-btn" data-uapp-action="reminderSnooze:${id}">◷ Odložit</button>` : ''}
+          <button type="button" class="uapp-rem-kanban-btn" data-uapp-action="reminderDetail:${id}">▣ Detail</button>
         </div>
       </article>`;
   }
@@ -1193,7 +1199,7 @@
       <div class="uapp-rem-tip" role="note">
         <div>
           <strong>Tip</strong>
-          <p>Automatické připomínky STK a pojištění se generují z údajů vozidla. Ruční připomínky můžete kdykoli upravit nebo odložit.</p>
+          <p>Tip: Připomínky se automaticky synchronizují s vozidly a jejich servisní historií.</p>
         </div>
         <button type="button" class="uapp-rem-tip-close" data-uapp-action="remindersTipClose" aria-label="Zavřít tip">×</button>
       </div>`;
@@ -1203,15 +1209,15 @@
         <header class="uapp-rem-page-head">
           <div>
             <h1 class="uapp-rem-page-title">Připomínky</h1>
-            <p class="uapp-rem-page-sub">Přehled termínů, STK a servisních úkolů napříč vozidly</p>
+            <p class="uapp-rem-page-sub">Hlídejte STK, pojištění, servis i vlastní úkoly</p>
           </div>
           <button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="newReminder">+ Nová připomínka</button>
         </header>
         <div class="uapp-rem-stats">
-          <article class="uapp-rem-stat is-danger"><span class="uapp-rem-stat-ico" aria-hidden="true">!</span><div><strong>${esc(String(stats.overdue))}</strong><span>Po termínu</span></div></article>
-          <article class="uapp-rem-stat is-warn"><span class="uapp-rem-stat-ico" aria-hidden="true">◷</span><div><strong>${esc(String(stats.upcoming))}</strong><span>Blíží se</span></div></article>
-          <article class="uapp-rem-stat is-info"><span class="uapp-rem-stat-ico" aria-hidden="true">📅</span><div><strong>${esc(String(stats.planned))}</strong><span>Naplánováno</span></div></article>
-          <article class="uapp-rem-stat is-ok"><span class="uapp-rem-stat-ico" aria-hidden="true">✓</span><div><strong>${esc(String(stats.completed))}</strong><span>Dokončeno</span></div></article>
+          <article class="uapp-rem-stat is-danger"><span class="uapp-rem-stat-ico" aria-hidden="true">📅</span><div><strong>${esc(String(stats.today))}</strong><span>Dnes</span><small>${esc(String(stats.today))} ${stats.today === 1 ? 'úkol' : 'úkoly'}</small></div></article>
+          <article class="uapp-rem-stat is-warn"><span class="uapp-rem-stat-ico" aria-hidden="true">📅</span><div><strong>${esc(String(stats.thisWeek))}</strong><span>Tento týden</span><small>${esc(String(stats.thisWeek))} ${stats.thisWeek === 1 ? 'úkol' : 'úkolů'}</small></div></article>
+          <article class="uapp-rem-stat is-danger-soft"><span class="uapp-rem-stat-ico" aria-hidden="true">!</span><div><strong>${esc(String(stats.overdue))}</strong><span>Po termínu</span><small>${esc(String(stats.overdue))} ${stats.overdue === 1 ? 'úkol' : 'úkoly'}</small></div></article>
+          <article class="uapp-rem-stat is-ok"><span class="uapp-rem-stat-ico" aria-hidden="true">✓</span><div><strong>${esc(String(stats.completedMonth))}</strong><span>Dokončeno</span><small>tento měsíc</small></div></article>
         </div>
         <div class="uapp-rem-layout">
           <div class="uapp-rem-main">
@@ -1336,7 +1342,7 @@
               <p class="uapp-sh-timeline-meta">${esc(getVehicleName(vehicle || {}))}${vehicle?.plate ? ` · ${esc(vehicle.plate)}` : ''}</p>
             </div>
             <span class="uapp-sh-status is-${meta.tone}">${esc(meta.label)}</span>
-          </div>
+          </motion>
           <div class="uapp-sh-timeline-foot">
             <span>${esc(when)}</span>
             ${km ? `<span>${esc(km)}</span>` : ''}
@@ -1363,9 +1369,9 @@
         <header class="uapp-sh-page-head">
           <div>
             <h1 class="uapp-sh-page-title">Servisní historie</h1>
-            <p class="uapp-sh-page-sub">Chronologický přehled servisních zásahů napříč vozidly</p>
+            <p class="uapp-sh-page-sub">Kompletní přehled servisních zásahů napříč vašimi vozidly</p>
           </div>
-          ${hasFn('openAddServiceRecordModal') ? '<button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="serviceHistoryAdd">+ Přidat záznam</button>' : ''}
+          ${hasFn('openAddServiceRecordModal') ? '<button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="serviceHistoryAdd">+ Přidat servisní záznam</button>' : ''}
         </header>
         <div class="uapp-sh-filters" role="region" aria-label="Filtry historie">
           <span class="uapp-sh-filter is-active">Všechna vozidla</span>
@@ -2296,10 +2302,7 @@
           </dl>
         </section>
         <section class="uapp-next-detail-panel">
-          <div class="uapp-next-detail-panel-head">
-            <h3 class="uapp-next-detail-panel-title">Identifikace vozidla</h3>
-            ${vehicleIdentificationVerified(vehicle) ? '<span class="uapp-next-detail-verified-badge">Ověřeno</span>' : ''}
-          </div>
+          <h3 class="uapp-next-detail-panel-title">Identifikace vozidla</h3>
           <div class="uapp-next-detail-id-box">
             <ul class="uapp-next-detail-id-list">
               <li class="${vehicle.vin ? 'is-ok' : 'is-muted'}">${vehicle.vin ? '✓' : '○'} VIN ${vehicle.vin ? 'evidován' : 'neuveden'}</li>
@@ -2386,12 +2389,9 @@
             <div class="uapp-next-detail-hero-body">
               <div class="uapp-next-detail-hero-top">
                 <h2 id="uappNextDetailTitle" class="uapp-next-detail-title">${esc(getVehicleName(vehicle))}</h2>
-                <div class="uapp-next-detail-hero-top-actions">
-                  <button type="button" class="uapp-next-btn uapp-next-btn-secondary uapp-next-detail-edit-btn" data-uapp-action="detailEdit:${id}">${ICO.edit}<span>Upravit</span></button>
-                  <div class="uapp-next-detail-menu-wrap">
-                    <button type="button" class="uapp-next-detail-menu${optionsOpen ? ' is-open' : ''}" data-uapp-action="detailOptionsToggle:${id}" aria-label="Možnosti vozidla" aria-expanded="${optionsOpen}" aria-haspopup="menu">⋯</button>
-                    ${optionsOpen ? `<div class="uapp-next-detail-options" role="menu">${renderDetailOptionsMenu(id)}</div>` : ''}
-                  </div>
+                <div class="uapp-next-detail-menu-wrap">
+                  <button type="button" class="uapp-next-detail-menu${optionsOpen ? ' is-open' : ''}" data-uapp-action="detailOptionsToggle:${id}" aria-label="Možnosti vozidla" aria-expanded="${optionsOpen}" aria-haspopup="menu">⋯</button>
+                  ${optionsOpen ? `<div class="uapp-next-detail-options" role="menu">${renderDetailOptionsMenu(id)}</div>` : ''}
                 </div>
               </div>
               <div class="uapp-next-detail-hero-meta">
@@ -2438,15 +2438,8 @@
                 <h3>Časová osa vozidla</h3>
                 ${timeline.length ? timeline.map((row) => `
                   <div class="uapp-next-detail-timeline-item is-${row.tone}">
-                    <span class="uapp-next-detail-timeline-dot is-${esc(row.iconClass)}" aria-hidden="true"></span>
-                    <div class="uapp-next-detail-timeline-main">
-                      <div class="uapp-next-detail-timeline-head">
-                        <strong>${esc(row.title)}</strong>
-                        <span class="uapp-next-detail-timeline-status is-${row.tone}">${esc(row.statusLabel)}</span>
-                      </div>
-                      <span class="uapp-next-detail-timeline-when">${esc(row.when)}</span>
-                      ${row.detail && row.detail !== '—' ? `<span class="uapp-next-detail-timeline-cost">${esc(row.detail)}</span>` : ''}
-                    </div>
+                    <strong>${esc(row.title)}</strong>
+                    <span>${esc(row.when)}</span>
                   </div>`).join('') : '<p class="uapp-next-detail-empty">Zatím bez záznamů.</p>'}
               </section>
               <section class="uapp-next-detail-aside-card">
@@ -2551,49 +2544,14 @@
       STATE.detailModal.optionsOpen = false;
       refreshDetailModalShell();
     }
-    if (name === 'home' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('home'); }
-    if (name === 'vehicles' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('vehicles'); }
-    if (name === 'reminders' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('reminders'); }
-    if (name === 'documents' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('documents'); }
-    if (name === 'servicesDirectory' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('servicesDirectory'); }
-    if (name === 'account' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('account'); }
-    if (name === 'invoices' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('documents'); }
-    if (name === 'serviceHistory') { STATE.viewOverride = 'serviceHistory'; return render(); }
-    if (name === 'newReminder') {
-      if (hasFn('showCreateReminderForm')) return window.showCreateReminderForm();
-      if (hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('reminders'); }
-    }
-    if (name === 'reminderComplete' && id && apiReady()) {
-      return apiCall(`/api/v1/reminders/${id}`, 'PUT', { is_completed: true }).then(() => render()).catch((err) => {
-        console.warn('[USER_APP_NEXT] reminderComplete failed', err);
-      });
-    }
-    if (name === 'reminderDetail' && id) {
-      const reminder = (STATE.latestData?.reminders || []).find((r) => Number(r.id) === id);
-      if (hasFn('editReminder')) return window.editReminder(id);
-      if (reminder && Number(reminder.vehicle_id) > 0) return openUserVehicleDetailModal(Number(reminder.vehicle_id));
-    }
-    if (name === 'reminderSnooze' && id) {
-      if (hasFn('editReminder')) return window.editReminder(id);
-    }
-    if (name === 'serviceRecordDetail' && rawId) {
-      const parts = String(action || '').split(':');
-      const vehicleId = Number(parts[1] || 0);
-      if (vehicleId > 0) {
-        return openUserVehicleDetailModal(vehicleId).then(() => openDetailLegacyTab('service', vehicleId));
-      }
-    }
-    if (name === 'serviceHistoryAdd') {
-      if (hasFn('openAddServiceRecordModal')) return window.openAddServiceRecordModal();
-    }
-    if (name === 'remindersTipClose') {
-      STATE.remindersTipHidden = true;
-      return render();
-    }
-    if (name === 'loadMoreServiceHistory') {
-      STATE.serviceHistoryLimit = (STATE.serviceHistoryLimit || 8) + 8;
-      return render();
-    }
+    if (name === 'home' && hasFn('switchTab')) return window.switchTab('home');
+    if (name === 'vehicles' && hasFn('switchTab')) return window.switchTab('vehicles');
+    if (name === 'reminders' && hasFn('switchTab')) return window.switchTab('reminders');
+    if (name === 'documents' && hasFn('switchTab')) return window.switchTab('documents');
+    if (name === 'servicesDirectory' && hasFn('switchTab')) return window.switchTab('servicesDirectory');
+    if (name === 'account' && hasFn('switchTab')) return window.switchTab('account');
+    if (name === 'invoices' && hasFn('switchTab')) return window.switchTab('documents');
+    if (name === 'serviceHistory' && hasFn('switchTab')) return window.switchTab('vehicles');
     if (name === 'help') {
       if (hasFn('openHowToHubModal')) return window.openHowToHubModal();
       if (hasFn('switchTab')) return window.switchTab('support');
@@ -2628,9 +2586,14 @@
     }
     if (name === 'detailClose') return closeUserVehicleDetailModal();
     if (name === 'detailEdit' && id) {
+      if (STATE.detailModal.open) {
+        STATE.detailModal.activeTab = 'tech';
+        refreshDetailModalShell();
+        return;
+      }
       return ensureLegacyDetailDom(id).then(() => {
-        if (hasFn('startEditModal')) window.startEditModal('nickname', id);
-        else if (hasFn('openVehicleDetailFloatingSection')) window.openVehicleDetailFloatingSection('basic', id);
+        if (hasFn('openVehicleDetailFloatingSection')) window.openVehicleDetailFloatingSection('basic', id);
+        else if (hasFn('startEditModal')) window.startEditModal('nickname', id);
       });
     }
     if (name === 'detailVinRefresh' && id && hasFn('refreshExistingVehicleFromVin')) {
@@ -2726,7 +2689,6 @@
     const originalSwitchTab = window.switchTab;
     if (typeof originalSwitchTab === 'function') {
       window.switchTab = function () {
-        STATE.viewOverride = null;
         const result = originalSwitchTab.apply(this, arguments);
         window.setTimeout(() => {
           if (shouldActivate()) {

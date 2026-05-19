@@ -3030,6 +3030,7 @@ body.user-app-next-view-reminders .uapp-next-canvas {
 }
 
 .uapp-rem-stat.is-danger .uapp-rem-stat-ico { background: #fef3f2; color: var(--uapp-danger); }
+.uapp-rem-stat.is-danger-soft .uapp-rem-stat-ico { background: #fef3f2; color: #b42318; }
 .uapp-rem-stat.is-warn .uapp-rem-stat-ico { background: #fffaeb; color: var(--uapp-warning); }
 .uapp-rem-stat.is-info .uapp-rem-stat-ico { background: #eff4ff; color: var(--uapp-primary-bright); }
 .uapp-rem-stat.is-ok .uapp-rem-stat-ico { background: #ecfdf3; color: var(--uapp-success); }
