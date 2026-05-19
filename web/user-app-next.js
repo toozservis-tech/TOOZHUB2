@@ -11,6 +11,7 @@
   };
 
   const LOGO_SRC = '/web/assets/landing/sprava-vozidel-logo.jpeg';
+  const USER_APP_SCREEN_ID = 'userAppNextScreen';
 
   const ICO = {
     home: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>',
@@ -561,10 +562,37 @@
     });
   }
 
+  function preserveLegacyVehicleModal() {
+    const modal = document.getElementById('addVehicleModal');
+    if (modal && modal.parentElement !== document.body) {
+      document.body.appendChild(modal);
+    }
+  }
+
+  function ensureUserAppScreenRoot() {
+    const dashboard = document.getElementById('dashboard');
+    if (!dashboard) return null;
+    let root = document.getElementById(USER_APP_SCREEN_ID);
+    if (!root) {
+      root = document.createElement('div');
+      root.id = USER_APP_SCREEN_ID;
+      root.className = 'user-app-next-screen';
+      root.setAttribute('data-testid', 'user-app-next-screen');
+      dashboard.appendChild(root);
+    }
+    return root;
+  }
+
+  function clearUserAppScreen() {
+    const root = document.getElementById(USER_APP_SCREEN_ID);
+    if (root) root.replaceChildren();
+  }
+
   function setActiveClass(active) {
     document.body.classList.toggle('user-app-next-active', Boolean(active));
     if (!active) {
-      document.body.classList.remove('user-app-next-sidebar-collapsed');
+      document.body.classList.remove('user-app-next-sidebar-collapsed', 'user-app-next-view-vehicles');
+      clearUserAppScreen();
     }
   }
 
@@ -1066,62 +1094,63 @@
       </section>`;
   }
 
-  function renderHomeShell(data) {
-    const homeTab = document.getElementById('homeTab');
-    if (!homeTab) return;
-    homeTab.innerHTML = `
-      <div class="uapp-next-shell" data-testid="user-app-next-dashboard">
-        ${renderSidebar(data, 'home')}
-        <main class="uapp-next-main">
-          <div class="uapp-next-canvas">
-            ${renderTopbar()}
-            <div class="uapp-next-overview-shell">
-              ${renderHero(data)}
-              ${quickCards(data)}
-              <div class="uapp-next-overview-body">
-                <div class="uapp-next-overview-main">
-                  ${renderVehicles(data)}
-                </div>
-                ${renderSide(data)}
-              </div>
-            </div>
+  function renderMainCanvas(view, data) {
+    if (view === 'vehicles') {
+      return `
+        ${renderTopbar()}
+        ${renderVehiclesCatalog(data)}
+      `;
+    }
+    return `
+      ${renderTopbar()}
+      <div class="uapp-next-overview-shell">
+        ${renderHero(data)}
+        ${quickCards(data)}
+        <div class="uapp-next-overview-body">
+          <div class="uapp-next-overview-main">
+            ${renderVehicles(data)}
           </div>
-        </main>
+          ${renderSide(data)}
+        </div>
       </div>
     `;
-    bindSearch();
-    hydrateImages(data);
   }
 
-  function renderVehiclesShell(data) {
-    const vehiclesTab = document.getElementById('vehiclesTab');
-    if (!vehiclesTab) return;
-    vehiclesTab.innerHTML = `
-      <div class="uapp-next-shell" data-testid="user-app-next-vehicles">
-        ${renderSidebar(data, 'vehicles')}
+  function renderUserAppScreen(view, data) {
+    preserveLegacyVehicleModal();
+    detachedPanels();
+    const root = ensureUserAppScreenRoot();
+    if (!root) return;
+
+    const activeView = view === 'vehicles' ? 'vehicles' : 'home';
+    const testId = activeView === 'vehicles' ? 'user-app-next-vehicles' : 'user-app-next-dashboard';
+
+    root.replaceChildren();
+    root.innerHTML = `
+      <div class="uapp-next-shell" data-testid="${testId}">
+        ${renderSidebar(data, activeView)}
         <main class="uapp-next-main">
           <div class="uapp-next-canvas">
-            ${renderTopbar()}
-            ${renderVehiclesCatalog(data)}
+            ${renderMainCanvas(activeView, data)}
           </div>
         </main>
       </div>
     `;
+
+    document.body.classList.toggle('user-app-next-view-vehicles', activeView === 'vehicles');
     bindSearch();
-    hydrateGarageImages(data);
-    bindSortSelect();
+    if (activeView === 'vehicles') {
+      hydrateGarageImages(data);
+      bindSortSelect();
+    } else {
+      hydrateImages(data);
+    }
   }
 
   function renderShell(data) {
-    detachedPanels();
     setActiveClass(true);
-    document.body.classList.toggle('user-app-next-view-vehicles', getActiveView() === 'vehicles');
-    const view = getActiveView();
-    if (view === 'vehicles') {
-      renderVehiclesShell(data);
-    } else {
-      renderHomeShell(data);
-    }
+    const view = getActiveView() || 'home';
+    renderUserAppScreen(view, data);
   }
 
   async function hydrateImageForVehicle(vehicle, img, scope) {
@@ -1185,7 +1214,7 @@
 
   function reRenderCatalog() {
     if (STATE.latestData && getActiveView() === 'vehicles') {
-      renderShell(STATE.latestData);
+      renderUserAppScreen('vehicles', STATE.latestData);
     }
   }
 
@@ -1287,17 +1316,19 @@
   async function render() {
     if (!shouldActivate()) {
       setActiveClass(false);
-      document.body.classList.remove('user-app-next-view-vehicles');
       return;
     }
     const token = ++STATE.renderToken;
-    detachedPanels();
     setActiveClass(true);
-    const view = getActiveView();
-    const tab = view === 'vehicles' ? document.getElementById('vehiclesTab') : document.getElementById('homeTab');
-    const testId = view === 'vehicles' ? 'user-app-next-vehicles' : 'user-app-next-dashboard';
-    if (tab && !tab.querySelector(`[data-testid="${testId}"]`)) {
-      tab.innerHTML = '<div class="uapp-next-loading">Načítám...</div>';
+    preserveLegacyVehicleModal();
+    const view = getActiveView() || 'home';
+    const root = ensureUserAppScreenRoot();
+    if (root && !root.querySelector('.uapp-next-shell')) {
+      root.replaceChildren();
+      const loading = document.createElement('div');
+      loading.className = 'uapp-next-loading';
+      loading.textContent = 'Načítám...';
+      root.appendChild(loading);
     }
     const data = await loadData();
     if (token !== STATE.renderToken || !shouldActivate()) return;
@@ -1324,8 +1355,10 @@
     const originalLoadVehicles = window.loadVehicles;
     if (typeof originalLoadVehicles === 'function') {
       window.loadVehicles = async function () {
-        if (getActiveView() === 'vehicles') {
-          await render();
+        if (shouldActivate()) {
+          if (getActiveView() === 'vehicles') {
+            await render();
+          }
           return;
         }
         return originalLoadVehicles.apply(this, arguments);
@@ -1377,6 +1410,7 @@
   }
 
   function boot() {
+    preserveLegacyVehicleModal();
     installHooks();
     window.setTimeout(() => {
       if (shouldActivate()) render();

@@ -44,18 +44,18 @@ body.route-app-view.user-app-next-active .dashboard {
   background: transparent !important;
 }
 
-body.route-app-view.user-app-next-active #homeTab {
-  display: block;
-  padding: 0;
+#userAppNextScreen {
+  display: none;
+  min-width: 0;
 }
 
+body.route-app-view.user-app-next-active #userAppNextScreen {
+  display: block;
+}
+
+body.route-app-view.user-app-next-active #homeTab,
 body.route-app-view.user-app-next-active #vehiclesTab {
-  display: block;
-  padding: 0;
-}
-
-body.route-app-view.user-app-next-active #vehiclesTab.active {
-  display: block;
+  display: none !important;
 }
 
 .uapp-next-shell,
