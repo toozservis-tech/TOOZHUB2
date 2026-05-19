@@ -8,7 +8,13 @@
     latestData: null,
     vehiclesFilter: 'all',
     vehiclesSort: 'activity',
+    detailModal: { open: false, vehicleId: null, activeTab: 'tech', vehicle: null, records: [] },
+    legacyDetailReadyFor: null,
+    originalShowVehicleDetail: null,
+    detailEscBound: false,
   };
+
+  const DETAIL_MODAL_ID = 'uappNextVehicleDetail';
 
   const LOGO_SRC = '/web/assets/landing/sprava-vozidel-logo.jpeg';
   const USER_APP_SCREEN_ID = 'userAppNextScreen';
@@ -26,6 +32,12 @@
     quickStk: '<svg class="uapp-next-quick-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>',
     quickShield: '<svg class="uapp-next-quick-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>',
     share: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',
+    detail: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>',
+    edit: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>',
+    upload: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>',
+    odometer: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/></svg>',
+    pdf: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>',
+    qr: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm13-2h3v2h-3v-2zM14 13h2v3h-2v-3zm3 3h2v2h-2v-2zm-3 0h2v2h-2v-2zm3 3h2v3h-2v-3zm-3 0h2v2h-2v-2z"/></svg>',
     checkOk: '<svg class="uapp-next-overall-ico uapp-next-overall-ico--ok" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>',
     checkWarn: '<svg class="uapp-next-overall-ico uapp-next-overall-ico--warn" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>',
   };
@@ -283,6 +295,59 @@
     const s = String(vehicle?.vin || '').trim();
     if (!s) return '—';
     return s.length <= 14 ? s : `${s.slice(0, 12)}…`;
+  }
+
+  function renderPlateBadge(plate, extraClass) {
+    const text = String(plate || '').trim() || 'Nezadáno';
+    const cls = extraClass ? ` ${extraClass}` : '';
+    return `<span class="uapp-next-plate-badge uapp-next-plate-badge--cz${cls}"><span class="uapp-next-plate-cz" aria-hidden="true">CZ</span><span class="uapp-next-plate-text">${esc(text)}</span></span>`;
+  }
+
+  function renderCardActionBar(vehicleId, withArrow) {
+    const id = Number(vehicleId);
+    return `
+      <div class="uapp-next-card-actions">
+        <button type="button" class="uapp-next-card-action" data-uapp-action="detail:${id}">
+          <span class="uapp-next-card-action-ico" aria-hidden="true">${ICO.detail}</span>
+          <span class="uapp-next-card-action-label">Detail</span>
+        </button>
+        <button type="button" class="uapp-next-card-action" data-uapp-action="addRecord:${id}">
+          <span class="uapp-next-card-action-ico" aria-hidden="true">${ICO.wrench}</span>
+          <span class="uapp-next-card-action-label">Přidat záznam</span>
+        </button>
+        <button type="button" class="uapp-next-card-action" data-uapp-action="documentsVehicle:${id}">
+          <span class="uapp-next-card-action-ico" aria-hidden="true">${ICO.doc}</span>
+          <span class="uapp-next-card-action-label">Dokumenty</span>
+        </button>
+        <button type="button" class="uapp-next-card-action" data-uapp-action="shareVehicle:${id}">
+          <span class="uapp-next-card-action-ico" aria-hidden="true">${ICO.share}</span>
+          <span class="uapp-next-card-action-label">Sdílet se servisem</span>
+        </button>
+        ${withArrow ? `<button type="button" class="uapp-next-card-action uapp-next-card-action--arrow" data-uapp-action="detail:${id}" aria-label="Otevřít detail">›</button>` : ''}
+      </div>`;
+  }
+
+  function vehicleFuelLabel(vehicle) {
+    const raw = vehicle?.fuel_type;
+    if (!raw) return '—';
+    if (hasFn('normalizeFuelType')) {
+      try { return window.normalizeFuelType(raw); } catch (_) {}
+    }
+    return String(raw);
+  }
+
+  function vehiclePowerLabel(vehicle) {
+    if (vehicle?.engine_power_kw != null && vehicle.engine_power_kw !== '') {
+      return `${vehicle.engine_power_kw} kW`;
+    }
+    return '—';
+  }
+
+  function vehicleVolumeLabel(vehicle) {
+    if (vehicle?.engine_displacement_cc != null && vehicle.engine_displacement_cc !== '') {
+      return `${Number(vehicle.engine_displacement_cc).toLocaleString('cs-CZ')} ccm`;
+    }
+    return '—';
   }
 
   function getStkValue(vehicle) {
@@ -747,7 +812,7 @@
         <div class="uapp-next-vehicle-body">
           <h3 class="uapp-next-vehicle-title">${esc(getVehicleName(vehicle))}</h3>
           <div class="uapp-next-vehicle-subrow">
-            <span class="uapp-next-plate-badge">${esc(vehicle.plate || 'Nezadáno')}</span>
+            ${renderPlateBadge(vehicle.plate)}
           </div>
           <div class="uapp-next-vehicle-meta">
             <div class="uapp-next-meta-row"><span class="uapp-next-meta-k">VIN</span><span class="uapp-next-meta-v">${esc(shortVin(vehicle))}</span></div>
@@ -758,12 +823,7 @@
             <div class="uapp-next-status-line"><span>Pojištění</span><strong class="uapp-next-status-val ${toneClass(ins.tone)}">${esc(ins.label)}</strong></div>
             <div class="uapp-next-status-line"><span>Servis</span><strong class="uapp-next-status-val ${toneClass(svc.tone)}">${esc(svc.label)}</strong></div>
           </div>
-          <div class="uapp-next-vehicle-actions">
-            <button type="button" class="uapp-next-veh-ico" data-uapp-action="detail:${id}" title="Detail">${ICO.doc}<span>Detail</span></button>
-            <button type="button" class="uapp-next-veh-ico" data-uapp-action="addRecord:${id}" title="Přidat záznam">${ICO.wrench}<span>Přidat záznam</span></button>
-            <button type="button" class="uapp-next-veh-ico" data-uapp-action="documentsVehicle:${id}" title="Dokumenty">${ICO.doc}<span>Dokumenty</span></button>
-            <button type="button" class="uapp-next-veh-ico" data-uapp-action="shareVehicle:${id}" title="Sdílet">${ICO.share}<span>Sdílet</span></button>
-          </div>
+          ${renderCardActionBar(id, false)}
         </div>
       </article>
     `;
@@ -955,7 +1015,7 @@
           <button type="button" class="uapp-next-garage-list-main" data-uapp-action="detail:${id}">
             <span class="${catalogBadgeClass(status.tone)}">${esc(status.label)}</span>
             <strong>${esc(getVehicleName(vehicle))}</strong>
-            <span class="uapp-next-plate-badge uapp-next-plate-badge--cz"><span class="uapp-next-plate-cz">CZ</span>${esc(vehicle.plate || '—')}</span>
+            ${renderPlateBadge(vehicle.plate || '—', 'uapp-next-plate-badge--sm')}
             <span class="uapp-next-garage-list-meta">${esc(stk.label)} · ${esc(svc.label)}</span>
           </button>
           <div class="uapp-next-garage-list-actions">
@@ -979,7 +1039,7 @@
         <div class="uapp-next-garage-body">
           <h3 class="uapp-next-garage-title">${esc(getVehicleName(vehicle))}</h3>
           <div class="uapp-next-garage-sub">
-            <span class="uapp-next-plate-badge uapp-next-plate-badge--cz"><span class="uapp-next-plate-cz">CZ</span>${esc(vehicle.plate || 'Nezadáno')}</span>
+            ${renderPlateBadge(vehicle.plate)}
             <span class="uapp-next-garage-vin">VIN ${esc(vehicle.vin || '—')}</span>
           </div>
           <div class="uapp-next-garage-km-row">
@@ -1004,13 +1064,7 @@
               <strong class="uapp-next-status-val ${toneClass(svc.tone)}">${esc(svc.label)}</strong>
             </div>
           </div>
-          <div class="uapp-next-garage-actions">
-            <button type="button" data-uapp-action="detail:${id}">Detail</button>
-            <button type="button" data-uapp-action="addRecord:${id}">Přidat záznam</button>
-            <button type="button" data-uapp-action="documentsVehicle:${id}">Dokumenty</button>
-            <button type="button" data-uapp-action="shareVehicle:${id}">Sdílet se servisem</button>
-            <button type="button" class="uapp-next-garage-arrow" data-uapp-action="detail:${id}" aria-label="Otevřít detail">›</button>
-          </div>
+          ${renderCardActionBar(id, true)}
         </div>
       </article>`;
   }
@@ -1252,16 +1306,323 @@
   function openVehicleSection(vehicleId, section) {
     const id = Number(vehicleId);
     if (!Number.isFinite(id) || id <= 0) return;
-    if (!hasFn('showVehicleDetail')) {
-      console.warn('[USER_APP_NEXT] BLOCKER: showVehicleDetail handler missing');
+    ensureLegacyDetailDom(id).then(() => {
+      if (hasFn('openVehicleDetailFloatingSection')) {
+        window.openVehicleDetailFloatingSection(section, id);
+      }
+    });
+  }
+
+  function suppressLegacyDetailModal() {
+    const modal = document.getElementById('vehicleDetailModal');
+    if (!modal) return;
+    modal.classList.add('uapp-next-legacy-detail-suppressed');
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    if (typeof clearBodyScrollLocks === 'function') {
+      try { clearBodyScrollLocks(); } catch (_) {}
+    }
+  }
+
+  async function ensureLegacyDetailDom(vehicleId) {
+    const id = Number(vehicleId);
+    if (!Number.isFinite(id) || id <= 0) return;
+    if (STATE.legacyDetailReadyFor === id) return;
+    const loader = STATE.originalShowVehicleDetail;
+    if (typeof loader !== 'function') return;
+    await loader(id);
+    suppressLegacyDetailModal();
+    STATE.legacyDetailReadyFor = id;
+  }
+
+  function bindDetailModalEsc() {
+    if (STATE.detailEscBound) return;
+    STATE.detailEscBound = true;
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !STATE.detailModal.open) return;
+      const floatingRoot = document.getElementById('appFloatingModalRoot');
+      if (floatingRoot && floatingRoot.innerHTML.trim()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeUserVehicleDetailModal();
+    }, true);
+  }
+
+  function closeUserVehicleDetailModal() {
+    STATE.detailModal = { open: false, vehicleId: null, activeTab: 'tech', vehicle: null, records: [] };
+    STATE.legacyDetailReadyFor = null;
+    document.body.classList.remove('uapp-next-detail-open');
+    const root = document.getElementById(DETAIL_MODAL_ID);
+    if (root) root.remove();
+    if (hasFn('closeVehicleModal')) {
+      try { window.closeVehicleModal(); } catch (_) {}
+    }
+  }
+
+  function detailSummaryCards(vehicle, records, data) {
+    const id = Number(vehicle.id);
+    const stk = stkCatalogLabel(vehicle);
+    const ins = insuranceFieldMeta(vehicle);
+    const svc = lastServiceLabel(records);
+    const km = vehicle.current_mileage_km != null && vehicle.current_mileage_km !== ''
+      ? `${Number(vehicle.current_mileage_km).toLocaleString('cs-CZ')} km`
+      : '—';
+    const grants = (data?.accessGrants || []).filter((g) => Number(g.vehicle_id) === id);
+    const pendingAccess = grants.filter((g) => {
+      const st = String(g?.status || '').toLowerCase();
+      return st.includes('pending') || st.includes('ček') || st.includes('wait');
+    }).length;
+    return [
+      { key: 'stk', tone: stk.tone, icon: '◷', title: 'STK / SME', value: stk.label, sub: 'Platnost technické kontroly' },
+      { key: 'ins', tone: ins.tone, icon: '⛨', title: 'Pojištění', value: ins.label, sub: vehicle.insurance_provider || 'Povinné ručení' },
+      { key: 'km', tone: 'ok', icon: '◔', title: 'Nájezd', value: km, sub: 'Aktuální stav tachometru' },
+      { key: 'svc', tone: svc.tone, icon: '⚙', title: 'Poslední servis', value: svc.label, sub: records.length ? 'Servisní historie k dispozici' : 'Bez záznamu', action: `detailTab:service:${id}` },
+      { key: 'docs', tone: 'warn', icon: '▣', title: 'Dokumenty', value: String(records.length || '0'), sub: 'Servisní záznamy a přílohy', action: `detailTab:documents:${id}` },
+      { key: 'access', tone: pendingAccess ? 'warn' : 'ok', icon: '👥', title: 'Přístupy servisů', value: String(grants.length), sub: pendingAccess ? `${pendingAccess} čeká na schválení` : 'Aktivní servisní přístupy', action: `detailTab:access:${id}` },
+    ];
+  }
+
+  function detailTimelineRows(records) {
+    const sorted = (records || []).slice().sort((a, b) => (Date.parse(b?.performed_at || b?.created_at) || 0) - (Date.parse(a?.performed_at || a?.created_at) || 0));
+    return sorted.slice(0, 5).map((record) => ({
+      title: record.description || record.service_type || 'Servisní záznam',
+      when: formatDate(record.performed_at || record.created_at),
+      tone: String(record?.record_status || '').toLowerCase() === 'in_progress' ? 'warn' : 'ok',
+    }));
+  }
+
+  function detailReminderRows(data, vehicleId) {
+    return (data?.reminders || [])
+      .filter((item) => !item?.is_completed && Number(item?.vehicle_id) === Number(vehicleId))
+      .slice(0, 4)
+      .map((item) => {
+        const diff = daysUntil(item.due_date || item.notify_at);
+        let value = formatDate(item.due_date || item.notify_at);
+        if (diff != null && diff >= 0 && diff <= 120) {
+          value = diff === 0 ? 'dnes' : (diff === 1 ? 'zítra' : `za ${diff} dnů`);
+        }
+        return { title: item.text || item.title || item.type || 'Připomínka', value };
+      });
+  }
+
+  function renderDetailTechTab(vehicle) {
+    const rows = [
+      ['Značka', vehicle.brand || '—'],
+      ['Typ / model', [vehicle.brand, vehicle.model].filter(Boolean).join(' ') || '—'],
+      ['VIN', vehicle.vin || '—'],
+      ['SPZ', vehicle.plate || '—'],
+      ['Barva', vehicle.color || '—'],
+      ['Emisní norma', vehicle.emission_norm || vehicle.emission_class || '—'],
+      ['Palivo', vehicleFuelLabel(vehicle)],
+      ['Objem', vehicleVolumeLabel(vehicle)],
+      ['Výkon', vehiclePowerLabel(vehicle)],
+      ['Převodovka', vehicle.transmission || '—'],
+      ['Rok výroby', vehicle.year || '—'],
+      ['Motor', vehicle.engine || '—'],
+    ];
+    const notes = String(vehicle.notes || '').trim();
+    return `
+      <div class="uapp-next-detail-tab-grid">
+        <section class="uapp-next-detail-panel">
+          <h3 class="uapp-next-detail-panel-title">Základní informace</h3>
+          <dl class="uapp-next-detail-spec">
+            ${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(String(v))}</dd></div>`).join('')}
+          </dl>
+        </section>
+        <section class="uapp-next-detail-panel">
+          <h3 class="uapp-next-detail-panel-title">Identifikace vozidla</h3>
+          <div class="uapp-next-detail-id-box">
+            <ul class="uapp-next-detail-id-list">
+              <li class="${vehicle.vin ? 'is-ok' : 'is-muted'}">${vehicle.vin ? '✓' : '○'} VIN ${vehicle.vin ? 'evidován' : 'neuveden'}</li>
+              <li class="${vehicle.plate ? 'is-ok' : 'is-muted'}">${vehicle.plate ? '✓' : '○'} SPZ ${vehicle.plate ? 'evidována' : 'neuvedena'}</li>
+              <li class="${vehicle.stk_valid_until ? 'is-ok' : 'is-muted'}">${vehicle.stk_valid_until ? '✓' : '○'} STK ${vehicle.stk_valid_until ? 'evidována' : 'neuvedena'}</li>
+            </ul>
+            ${hasFn('downloadVehicleVerifiedReportFromHub') ? `<button type="button" class="uapp-next-btn uapp-next-btn-secondary uapp-next-detail-id-btn" data-uapp-action="detailVerifiedPdf:${Number(vehicle.id)}">Zobrazit protokol kontroly</button>` : ''}
+          </div>
+        </section>
+      </div>
+      <section class="uapp-next-detail-note">
+        <div class="uapp-next-detail-note-head">
+          <h3 class="uapp-next-detail-panel-title">Poznámka k vozidlu</h3>
+          ${hasFn('startEditModal') ? `<button type="button" class="uapp-next-link-btn" data-uapp-action="detailEdit:${Number(vehicle.id)}">Upravit</button>` : ''}
+        </div>
+        <p>${esc(notes || '—')}</p>
+      </section>`;
+  }
+
+  function renderDetailModalContent(vehicle, records, data) {
+    const id = Number(vehicle.id);
+    const status = getCatalogVehicleStatus(vehicle, records);
+    const tabs = [
+      ['tech', 'Technické údaje'],
+      ['service', 'Servisní historie'],
+      ['documents', 'Dokumenty'],
+      ['gallery', 'Fotogalerie'],
+      ['reminders', 'Připomínky'],
+      ['access', 'Přístupy a sdílení'],
+    ];
+    const summary = detailSummaryCards(vehicle, records, data);
+    const timeline = detailTimelineRows(records);
+    const upcoming = detailReminderRows(data, id);
+    const activeTab = STATE.detailModal.activeTab || 'tech';
+
+    return `
+      <div class="uapp-next-detail-modal" role="dialog" aria-modal="true" aria-labelledby="uappNextDetailTitle">
+        <button type="button" class="uapp-next-detail-close" data-uapp-action="detailClose" aria-label="Zavřít detail">×</button>
+        <div class="uapp-next-detail-scroll">
+          <nav class="uapp-next-detail-crumb" aria-label="Drobečková navigace">
+            <button type="button" class="uapp-next-link-btn" data-uapp-action="vehicles">Moje vozidla</button>
+            <span aria-hidden="true">/</span>
+            <span>Detail vozidla</span>
+          </nav>
+          <section class="uapp-next-detail-hero">
+            <div class="uapp-next-detail-photo">
+              <div class="uapp-next-photo" data-next-photo-wrap="detail-${id}">
+                <img id="uappNextDetailPhoto-${id}" alt="Fotka vozidla ${esc(getVehicleName(vehicle))}" loading="lazy">
+                <div class="uapp-next-photo-fallback">Bez fotky</div>
+              </div>
+            </div>
+            <div class="uapp-next-detail-hero-body">
+              <div class="uapp-next-detail-hero-top">
+                <h2 id="uappNextDetailTitle" class="uapp-next-detail-title">${esc(getVehicleName(vehicle))}</h2>
+                <button type="button" class="uapp-next-detail-menu" data-uapp-action="detailEdit:${id}" aria-label="Možnosti vozidla">⋯</button>
+              </div>
+              <div class="uapp-next-detail-hero-meta">
+                ${renderPlateBadge(vehicle.plate, 'uapp-next-plate-badge--lg')}
+                <span class="${catalogBadgeClass(status.tone)}">${esc(status.label)}</span>
+              </div>
+              <dl class="uapp-next-detail-metrics-inline">
+                <div><dt>VIN</dt><dd>${esc(vehicle.vin || '—')}</dd></div>
+                <div><dt>Rok výroby</dt><dd>${esc(vehicle.year || '—')}</dd></div>
+                <div><dt>Palivo</dt><dd>${esc(vehicleFuelLabel(vehicle))}</dd></div>
+                <div><dt>Výkon</dt><dd>${esc(vehiclePowerLabel(vehicle))}</dd></div>
+                <div><dt>Objem</dt><dd>${esc(vehicleVolumeLabel(vehicle))}</dd></div>
+              </dl>
+              <div class="uapp-next-detail-hero-actions">
+                ${hasFn('startEditModal') ? `<button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="detailEdit:${id}">${ICO.edit}<span>Upravit</span></button>` : ''}
+                ${hasFn('openAddServiceRecordModal') ? `<button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="addRecord:${id}">+ <span>Přidat záznam</span></button>` : ''}
+                <button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="detailTab:documents:${id}">${ICO.upload}<span>Nahrát dokument</span></button>
+                <button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="detailTab:access:${id}">${ICO.share}<span>Sdílet se servisem</span></button>
+              </div>
+            </div>
+          </section>
+          <div class="uapp-next-detail-summary-grid">
+            ${summary.map((card) => `
+              <article class="uapp-next-detail-summary-card is-${esc(card.tone)}">
+                <div class="uapp-next-detail-summary-ico" aria-hidden="true">${card.icon}</div>
+                <div>
+                  <span class="uapp-next-detail-summary-k">${esc(card.title)}</span>
+                  <strong>${esc(card.value)}</strong>
+                  <span class="uapp-next-detail-summary-sub">${esc(card.sub)}</span>
+                  ${card.action ? `<button type="button" class="uapp-next-detail-summary-link" data-uapp-action="${esc(card.action)}">Zobrazit ›</button>` : ''}
+                </div>
+              </article>`).join('')}
+          </div>
+          <div class="uapp-next-detail-body">
+            <div class="uapp-next-detail-main">
+              <div class="uapp-next-detail-tabs" role="tablist" aria-label="Sekce detailu vozidla">
+                ${tabs.map(([key, label]) => `<button type="button" role="tab" class="uapp-next-detail-tab${activeTab === key ? ' is-active' : ''}" data-uapp-action="detailTab:${key}:${id}" aria-selected="${activeTab === key}">${esc(label)}</button>`).join('')}
+              </div>
+              <div class="uapp-next-detail-tab-content">
+                ${activeTab === 'tech' ? renderDetailTechTab(vehicle) : `<div class="uapp-next-detail-tab-placeholder"><p>Obsah sekce se otevře v plné verzi detailu.</p><button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="detailTab:${activeTab}:${id}">Otevřít ${esc(tabs.find((t) => t[0] === activeTab)?.[1] || 'sekci')}</button></div>`}
+              </div>
+            </div>
+            <aside class="uapp-next-detail-aside">
+              <section class="uapp-next-detail-aside-card">
+                <h3>Časová osa vozidla</h3>
+                ${timeline.length ? timeline.map((row) => `
+                  <div class="uapp-next-detail-timeline-item is-${row.tone}">
+                    <strong>${esc(row.title)}</strong>
+                    <span>${esc(row.when)}</span>
+                  </div>`).join('') : '<p class="uapp-next-detail-empty">Zatím bez záznamů.</p>'}
+              </section>
+              <section class="uapp-next-detail-aside-card">
+                <h3>Nejbližší termíny</h3>
+                ${upcoming.length ? upcoming.map((row) => `
+                  <div class="uapp-next-detail-upcoming-item">
+                    <strong>${esc(row.title)}</strong>
+                    <span>${esc(row.value)}</span>
+                  </div>`).join('') : '<p class="uapp-next-detail-empty">Žádné blížící se termíny.</p>'}
+              </section>
+              <section class="uapp-next-detail-aside-card">
+                <h3>Rychlé akce</h3>
+                <div class="uapp-next-detail-quick">
+                  ${hasFn('openAddServiceRecordModal') ? `<button type="button" data-uapp-action="addRecord:${id}">+ Přidat servisní úkon</button>` : ''}
+                  <button type="button" data-uapp-action="detailTab:ops:${id}">+ Přidat záznam tachometru</button>
+                  <button type="button" data-uapp-action="detailTab:documents:${id}">Nahrát dokument</button>
+                  ${hasFn('downloadVehicleReportFromHub') ? `<button type="button" data-uapp-action="detailPdf:${id}">Exportovat PDF report</button>` : ''}
+                  ${vehicle.has_qr_token && vehicle.public_history_url ? `<button type="button" data-uapp-action="detailQrOpen:${id}">Generovat QR historii</button>` : ''}
+                </div>
+              </section>
+            </aside>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function mountDetailModalShell(html) {
+    let backdrop = document.getElementById(DETAIL_MODAL_ID);
+    if (!backdrop) {
+      backdrop = document.createElement('div');
+      backdrop.id = DETAIL_MODAL_ID;
+      backdrop.className = 'uapp-next-detail-backdrop';
+      backdrop.setAttribute('data-testid', 'user-app-next-vehicle-detail');
+      document.body.appendChild(backdrop);
+    }
+    backdrop.innerHTML = `<div class="uapp-next-detail-backdrop-inner">${html}</div>`;
+    backdrop.onclick = (event) => {
+      if (event.target === backdrop || event.target.classList.contains('uapp-next-detail-backdrop-inner')) {
+        closeUserVehicleDetailModal();
+      }
+    };
+  }
+
+  async function openUserVehicleDetailModal(vehicleId) {
+    const id = Number(vehicleId);
+    if (!Number.isFinite(id) || id <= 0) return;
+    bindDetailModalEsc();
+    STATE.detailModal = { open: true, vehicleId: id, activeTab: 'tech', vehicle: null, records: [] };
+    document.body.classList.add('uapp-next-detail-open');
+    mountDetailModalShell('<div class="uapp-next-loading">Načítám detail vozidla…</div>');
+
+    let vehicle = (STATE.latestData?.vehicles || []).find((v) => Number(v.id) === id) || null;
+    let records = recordsFor(STATE.latestData || {}, id);
+    if (apiReady()) {
+      vehicle = await safeApi(`/api/v1/vehicles/${id}`, vehicle);
+      records = await safeApi(`/api/v1/vehicles/${id}/records`, records);
+    }
+
+    if (!vehicle) {
+      mountDetailModalShell('<div class="uapp-next-empty">Vozidlo se nepodařilo načíst.</div>');
       return;
     }
-    Promise.resolve(window.showVehicleDetail(id)).then(() => {
-      window.setTimeout(() => {
-        if (hasFn('openVehicleDetailFloatingSection')) {
-          window.openVehicleDetailFloatingSection(section, id);
-        }
-      }, 220);
+
+    STATE.detailModal.vehicle = vehicle;
+    STATE.detailModal.records = Array.isArray(records) ? records : [];
+    const data = STATE.latestData || { vehicles: [vehicle], reminders: [], accessGrants: [], recordEntries: [{ vehicle, records: STATE.detailModal.records }] };
+    mountDetailModalShell(renderDetailModalContent(vehicle, STATE.detailModal.records, data));
+    void ensureLegacyDetailDom(id);
+    const img = document.getElementById(`uappNextDetailPhoto-${id}`);
+    if (img) hydrateImageForVehicle(vehicle, img, `uapp-next-detail:${id}`);
+  }
+
+  function openDetailLegacyTab(tabKey, vehicleId) {
+    const id = Number(vehicleId);
+    const map = { tech: 'basic', service: 'service', documents: 'documents', gallery: 'gallery', reminders: 'ops', access: 'access', ops: 'ops' };
+    const section = map[String(tabKey || '').toLowerCase()] || 'basic';
+    if (section === 'basic') {
+      STATE.detailModal.activeTab = 'tech';
+      if (STATE.detailModal.vehicle) {
+        mountDetailModalShell(renderDetailModalContent(STATE.detailModal.vehicle, STATE.detailModal.records, STATE.latestData || {}));
+        const img = document.getElementById(`uappNextDetailPhoto-${id}`);
+        if (img) hydrateImageForVehicle(STATE.detailModal.vehicle, img, `uapp-next-detail:${id}`);
+      }
+      return;
+    }
+    ensureLegacyDetailDom(id).then(() => {
+      if (hasFn('openVehicleDetailFloatingSection')) {
+        window.openVehicleDetailFloatingSection(section, id);
+      }
     });
   }
 
@@ -1293,10 +1654,38 @@
       if (clickOriginal('#desktopProfileButton') || clickOriginal('#mobileProfileButton')) return;
       if (hasFn('toggleMobileProfileMenu')) return window.toggleMobileProfileMenu();
     }
-    if (name === 'detail' && id && hasFn('showVehicleDetail')) return window.showVehicleDetail(id);
+    if (name === 'detail' && id) return openUserVehicleDetailModal(id);
     if (name === 'addRecord' && id && hasFn('openAddServiceRecordModal')) return window.openAddServiceRecordModal(id);
     if (name === 'documentsVehicle' && id) return openVehicleSection(id, 'documents');
     if (name === 'shareVehicle' && id) return openVehicleSection(id, 'access');
+    if (name === 'detailClose') return closeUserVehicleDetailModal();
+    if (name === 'detailEdit' && id) {
+      return ensureLegacyDetailDom(id).then(() => {
+        if (hasFn('openVehicleDetailFloatingSection')) window.openVehicleDetailFloatingSection('basic', id);
+        else if (hasFn('startEditModal')) window.startEditModal('nickname', id);
+      });
+    }
+    if (name === 'detailTab') {
+      const parts = String(action || '').split(':');
+      const tabKey = parts[1];
+      const vid = Number(parts[2] || 0);
+      if (tabKey && vid) {
+        if (tabKey === 'tech') {
+          STATE.detailModal.activeTab = 'tech';
+          if (STATE.detailModal.vehicle) {
+            mountDetailModalShell(renderDetailModalContent(STATE.detailModal.vehicle, STATE.detailModal.records, STATE.latestData || {}));
+          }
+          return;
+        }
+        STATE.detailModal.activeTab = tabKey;
+        return openDetailLegacyTab(tabKey, vid);
+      }
+    }
+    if (name === 'detailPdf' && id && hasFn('downloadVehicleReportFromHub')) return window.downloadVehicleReportFromHub(id);
+    if (name === 'detailVerifiedPdf' && id && hasFn('downloadVehicleVerifiedReportFromHub')) return window.downloadVehicleVerifiedReportFromHub(id);
+    if (name === 'detailQrOpen' && id && STATE.detailModal.vehicle?.public_history_url && hasFn('openVehiclePublicHistory')) {
+      return window.openVehiclePublicHistory(STATE.detailModal.vehicle.public_history_url);
+    }
     if (name === 'filter') {
       const key = String(rawId || 'all');
       if (['all', 'ok', 'attention', 'service', 'archived'].includes(key)) {
@@ -1380,6 +1769,16 @@
       };
     }
 
+    if (typeof window.showVehicleDetail === 'function') {
+      STATE.originalShowVehicleDetail = window.showVehicleDetail;
+      window.showVehicleDetail = async function (vehicleId) {
+        if (shouldActivate()) {
+          return openUserVehicleDetailModal(vehicleId);
+        }
+        return STATE.originalShowVehicleDetail.apply(this, arguments);
+      };
+    }
+
     document.addEventListener('click', (event) => {
       const trigger = event.target && event.target.closest && event.target.closest('[data-uapp-action]');
       if (!trigger) return;
@@ -1395,6 +1794,8 @@
       render,
       runAction,
       openVehicleSection,
+      openUserVehicleDetailModal,
+      closeUserVehicleDetailModal,
       get audit() {
         return {
           loadHomeDashboard: hasFn('loadHomeDashboard'),
