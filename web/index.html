@@ -33949,7 +33949,7 @@
                             <p class="sv-public-lead">Správa vozidel spojuje servisní historii, STK, připomínky, faktury, dokumenty a propojení se servisy na jednom bezpečném místě.</p>
                             <div class="sv-public-actions">
                                 <button type="button" class="sv-btn sv-btn-primary" onclick="showRegister()">Začít zdarma <span aria-hidden="true">›</span></button>
-                                <button type="button" class="sv-btn sv-btn-secondary" onclick="document.getElementById('funkce')?.scrollIntoView({behavior:'smooth'}); return false;"><span class="sv-btn-play" aria-hidden="true"></span>Zobrazit ukázku</button>
+                                <button type="button" class="sv-btn sv-btn-secondary" onclick="openPublicDemoEntry(); return false;"><span class="sv-btn-play" aria-hidden="true"></span>Zobrazit ukázku</button>
                             </div>
                             <ul class="sv-public-trust" aria-label="Výhody">
                                 <li>Bez papírování</li>
@@ -44281,16 +44281,123 @@
             }, 0);
         }
 
+        function ensurePublicDemoModal() {
+            let modal = document.getElementById('publicDemoModal');
+            if (modal) {
+                return modal;
+            }
+            modal = document.createElement('div');
+            modal.id = 'publicDemoModal';
+            modal.className = 'sv-public-demo-modal hidden';
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.setAttribute('aria-labelledby', 'publicDemoModalTitle');
+            modal.innerHTML = `
+                <div class="sv-public-demo-modal__backdrop" onclick="closePublicDemoModal()"></div>
+                <div class="sv-public-demo-modal__panel" role="document">
+                    <button type="button" class="sv-public-demo-modal__close" aria-label="Zavřít ukázku" onclick="closePublicDemoModal()">×</button>
+                    <p class="sv-public-demo-modal__kicker">Interaktivní ukázka</p>
+                    <h2 id="publicDemoModalTitle">Pošleme vám bezpečný odkaz do ukázky</h2>
+                    <p>Ukázkový účet je chráněný jednorázovým odkazem. Otevřete ho ze stejného připojení, ze kterého o něj požádáte.</p>
+                    <form id="publicDemoAccessForm" class="sv-public-demo-form" onsubmit="handlePublicDemoAccessSubmit(event)">
+                        <label for="publicDemoEmail">E-mail pro zaslání odkazu</label>
+                        <input id="publicDemoEmail" type="email" autocomplete="email" placeholder="vas@email.cz" required>
+                        <label class="sv-public-demo-consent">
+                            <input id="publicDemoConsent" type="checkbox" required>
+                            <span>Souhlasím se zasláním informací v souvislosti s nabídkou a ukázkou aplikace.</span>
+                        </label>
+                        <div id="publicDemoMessage" class="sv-public-demo-message" aria-live="polite"></div>
+                        <button type="submit" id="publicDemoSubmitBtn" class="sv-btn sv-btn-primary">Poslat odkaz do ukázky</button>
+                    </form>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            modal.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') {
+                    closePublicDemoModal();
+                }
+            });
+            return modal;
+        }
+
+        function setPublicDemoMessage(message = '', type = 'info') {
+            const el = document.getElementById('publicDemoMessage');
+            if (!el) return;
+            el.textContent = message;
+            el.dataset.type = type;
+        }
+
+        function closePublicDemoModal() {
+            const modal = document.getElementById('publicDemoModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+
+        async function handlePublicDemoAccessSubmit(event) {
+            event.preventDefault();
+            const emailInput = document.getElementById('publicDemoEmail');
+            const consentInput = document.getElementById('publicDemoConsent');
+            const submitBtn = document.getElementById('publicDemoSubmitBtn');
+            const visitorEmail = String(emailInput?.value || '').trim();
+            const contactConsent = !!consentInput?.checked;
+            if (!visitorEmail) {
+                setPublicDemoMessage('Zadejte prosím e-mail.', 'error');
+                emailInput?.focus();
+                return;
+            }
+            if (!contactConsent) {
+                setPublicDemoMessage('Pro odeslání odkazu je potřeba potvrdit souhlas.', 'error');
+                consentInput?.focus();
+                return;
+            }
+            try {
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = 'Odesílám odkaz…';
+                }
+                setPublicDemoMessage('', 'info');
+                const base = getApiBaseUrl();
+                const response = await fetch(`${base}/api/public/demo-account/access`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    credentials: 'omit',
+                    body: JSON.stringify({ visitor_email: visitorEmail, contact_consent: contactConsent }),
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(payload?.detail || payload?.message || 'Odkaz se nepodařilo odeslat.');
+                }
+                setPublicDemoMessage(payload?.message || 'Odkaz do ukázky jsme odeslali na váš e-mail.', 'success');
+            } catch (error) {
+                setPublicDemoMessage(error?.message || 'Odkaz se nepodařilo odeslat.', 'error');
+            } finally {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Poslat odkaz do ukázky';
+                }
+            }
+        }
+
         function openPublicDemoEntry() {
             try {
                 closePublicSiteMobileMenu();
             } catch (e2) {
                 /* ignore */
             }
-            window.location.href = '/web/demo.html';
+            const modal = ensurePublicDemoModal();
+            modal.classList.remove('hidden');
+            modal.removeAttribute('aria-hidden');
+            setPublicDemoMessage('', 'info');
+            setTimeout(() => {
+                const emailInput = document.getElementById('publicDemoEmail');
+                if (emailInput) emailInput.focus();
+            }, 60);
         }
         window.openPublicDemoEntry = openPublicDemoEntry;
         window.openPublicDemoLogin = openPublicDemoEntry;
+        window.closePublicDemoModal = closePublicDemoModal;
+        window.handlePublicDemoAccessSubmit = handlePublicDemoAccessSubmit;
 
         // Zobrazení dashboardu (skrýt login)
         function showDashboard() {
