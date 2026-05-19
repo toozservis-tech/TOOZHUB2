@@ -45,6 +45,21 @@
     checkWarn: '<svg class="uapp-next-overall-ico uapp-next-overall-ico--warn" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>',
   };
 
+  const PLATE_EU_STARS_SVG = (function buildPlateEuStarsSvg() {
+    const cx = 9;
+    const cy = 9;
+    const r = 5.15;
+    const star = 'M0,-0.95 L0.22,-0.3 L0.95,-0.3 L0.36,0.12 L0.58,0.82 L0,0.38 L-0.58,0.82 L-0.36,0.12 L-0.95,-0.3 L-0.22,-0.3 Z';
+    let paths = '';
+    for (let i = 0; i < 12; i += 1) {
+      const rad = ((i * 30) - 90) * (Math.PI / 180);
+      const x = cx + r * Math.cos(rad);
+      const y = cy + r * Math.sin(rad);
+      paths += `<path d="${star}" transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(0.36)"/>`;
+    }
+    return `<svg class="uapp-plate__eu-stars" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g fill="#FFCC00">${paths}</g></svg>`;
+  })();
+
   function hasFn(name) {
     return typeof window[name] === 'function';
   }
@@ -317,7 +332,7 @@
     return (
       `<span class="uapp-plate uapp-plate--${sizeKey}${isEmpty ? ' uapp-plate--empty' : ''}"${titleAttr}>` +
       `<span class="uapp-plate__country" aria-hidden="true">` +
-      `<span class="uapp-plate__stars">• •</span>` +
+      `<span class="uapp-plate__eu">${PLATE_EU_STARS_SVG}</span>` +
       `<span class="uapp-plate__cz">CZ</span>` +
       `</span>` +
       `<span class="uapp-plate__number">${esc(text)}</span>` +
