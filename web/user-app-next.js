@@ -300,10 +300,29 @@
     return s.length <= 14 ? s : `${s.slice(0, 12)}…`;
   }
 
-  function renderPlateBadge(plate, extraClass) {
-    const text = String(plate || '').trim() || 'Nezadáno';
-    const cls = extraClass ? ` ${extraClass}` : '';
-    return `<span class="uapp-next-plate-badge uapp-next-plate-badge--cz${cls}"><span class="uapp-next-plate-cz" aria-hidden="true">CZ</span><span class="uapp-next-plate-text">${esc(text)}</span></span>`;
+  function normalizePlateSize(size) {
+    const raw = String(size || '').toLowerCase();
+    if (raw.includes('lg')) return 'lg';
+    if (raw.includes('sm')) return 'sm';
+    if (raw === 'lg' || raw === 'sm') return raw;
+    return 'sm';
+  }
+
+  function renderPlateBadge(plate, size) {
+    const raw = String(plate || '').trim();
+    const isEmpty = !raw || raw === '—';
+    const text = isEmpty ? 'Nezadáno' : raw;
+    const sizeKey = normalizePlateSize(size);
+    const titleAttr = isEmpty ? '' : ` title="${esc(text)}"`;
+    return (
+      `<span class="uapp-plate uapp-plate--${sizeKey}${isEmpty ? ' uapp-plate--empty' : ''}"${titleAttr}>` +
+      `<span class="uapp-plate__country" aria-hidden="true">` +
+      `<span class="uapp-plate__stars">• •</span>` +
+      `<span class="uapp-plate__cz">CZ</span>` +
+      `</span>` +
+      `<span class="uapp-plate__number">${esc(text)}</span>` +
+      `</span>`
+    );
   }
 
   function renderCardActionBar(vehicleId, withArrow) {
@@ -1265,7 +1284,7 @@
           <button type="button" class="uapp-next-garage-list-main" data-uapp-action="detail:${id}">
             <span class="${catalogBadgeClass(status.tone)}">${esc(status.label)}</span>
             <strong>${esc(getVehicleName(vehicle))}</strong>
-            ${renderPlateBadge(vehicle.plate || '—', 'uapp-next-plate-badge--sm')}
+            ${renderPlateBadge(vehicle.plate, 'sm')}
             <span class="uapp-next-garage-list-meta">${esc(stk.label)} · ${esc(svc.label)}</span>
           </button>
           <div class="uapp-next-garage-list-actions">
@@ -1746,7 +1765,7 @@
                 <button type="button" class="uapp-next-detail-menu" data-uapp-action="detailEdit:${id}" aria-label="Možnosti vozidla">⋯</button>
               </div>
               <div class="uapp-next-detail-hero-meta">
-                ${renderPlateBadge(vehicle.plate, 'uapp-next-plate-badge--lg')}
+                ${renderPlateBadge(vehicle.plate, 'lg')}
                 <span class="${catalogBadgeClass(status.tone)}">${esc(status.label)}</span>
               </div>
               <dl class="uapp-next-detail-metrics-inline">

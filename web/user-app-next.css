@@ -895,67 +895,122 @@ body.route-app-view.user-app-next-active #vehiclesTab {
   color: var(--uapp-navy-deep);
 }
 
-.uapp-next-plate-badge {
+/* Czech license plate — unified registration tab */
+
+.uapp-plate {
   display: inline-flex;
   align-items: stretch;
+  overflow: hidden;
   max-width: 100%;
-  border: 1px solid #cbd5e1;
-  border-radius: 5px;
   background: #fff;
-  color: #111827;
-  font-size: 0.82rem;
+  border: 1px solid #b8c0cc;
+  border-radius: 4px;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.65),
+    0 1px 0 rgba(16, 24, 40, 0.06);
+  color: #0f172a;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.uapp-plate__country {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+  align-self: stretch;
+  background: linear-gradient(180deg, #0052cc 0%, #0047ba 100%);
+  color: #fff;
+  min-width: 24px;
+  width: 26px;
+  padding: 2px 3px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.uapp-plate__stars {
+  display: block;
+  font-size: 5px;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  opacity: 0.92;
+  margin-bottom: 1px;
+}
+
+.uapp-plate__cz {
+  display: block;
+  font-size: 8px;
   font-weight: 800;
   letter-spacing: 0.04em;
   line-height: 1;
-  overflow: hidden;
-  box-shadow: 0 1px 0 rgba(16, 24, 40, 0.04);
 }
 
-.uapp-next-plate-badge--cz {
-  padding: 0;
-}
-
-.uapp-next-plate-cz {
+.uapp-plate__number {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
-  padding: 0.34rem 0.28rem;
-  background: linear-gradient(180deg, #0049c7 0%, #003399 100%);
-  color: #fff;
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  border-right: 1px solid rgba(255, 255, 255, 0.18);
-}
-
-.uapp-next-plate-text {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.34rem 0.55rem 0.34rem 0.45rem;
-  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 76px;
+  max-width: 140px;
+  padding: 0 10px;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 12ch;
+  background: #fff;
 }
 
-.uapp-next-plate-badge--sm .uapp-next-plate-text {
-  font-size: 0.74rem;
-  max-width: 10ch;
+.uapp-plate--sm {
+  height: 28px;
+  font-size: 13px;
 }
 
-.uapp-next-plate-badge--lg {
-  font-size: 0.92rem;
+.uapp-plate--sm .uapp-plate__country {
+  width: 24px;
+  min-width: 24px;
 }
 
-.uapp-next-plate-badge--lg .uapp-next-plate-cz {
-  min-width: 30px;
-  font-size: 0.62rem;
+.uapp-plate--sm .uapp-plate__number {
+  min-width: 68px;
+  max-width: 120px;
+  padding: 0 8px;
 }
 
-.uapp-next-plate-badge--lg .uapp-next-plate-text {
-  max-width: 14ch;
-  padding: 0.42rem 0.65rem 0.42rem 0.5rem;
+.uapp-plate--lg {
+  height: 38px;
+  font-size: 18px;
+}
+
+.uapp-plate--lg .uapp-plate__country {
+  width: 28px;
+  min-width: 28px;
+  padding: 3px 4px;
+}
+
+.uapp-plate--lg .uapp-plate__stars {
+  font-size: 6px;
+  margin-bottom: 2px;
+}
+
+.uapp-plate--lg .uapp-plate__cz {
+  font-size: 9px;
+}
+
+.uapp-plate--lg .uapp-plate__number {
+  min-width: 96px;
+  max-width: 160px;
+  padding: 0 12px;
+  letter-spacing: 0.06em;
+}
+
+.uapp-plate--empty .uapp-plate__number {
+  color: #64748b;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .uapp-next-vehicle-meta {
