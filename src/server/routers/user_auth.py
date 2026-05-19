@@ -64,6 +64,7 @@ from src.server.main_helpers import (
     is_public_demo_account_email,
     normalize_email,
     normalize_ico,
+    public_demo_account_flags,
     send_registration_alert_email,
 )
 from src.server.security_helpers import (
@@ -775,6 +776,7 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
                 "ico": customer.ico,
                 "role": customer.role or "user",
                 "force_password_change": bool(getattr(customer, "force_password_change", False)),
+                **public_demo_account_flags(customer.email),
             },
             password_change_required=bool(getattr(customer, "force_password_change", False)),
         )
@@ -895,6 +897,7 @@ def verify_login_two_factor(
             "ico": customer.ico,
             "role": customer.role or "user",
             "force_password_change": bool(getattr(customer, "force_password_change", False)),
+            **public_demo_account_flags(customer.email),
         },
     )
 
@@ -931,6 +934,7 @@ def complete_service_invite_onboarding(
             "ico": customer.ico,
             "role": customer.role or "user",
             "force_password_change": False,
+            **public_demo_account_flags(customer.email),
         },
         password_change_required=False,
     )

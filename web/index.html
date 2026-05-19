@@ -21817,6 +21817,36 @@
             line-height: 1.35;
         }
 
+        #profileContainer .demo-readonly-banner {
+            display: grid;
+            gap: 6px;
+            margin: 0 0 18px;
+            padding: 14px 16px;
+            border: 1px solid #fed7aa;
+            border-radius: 16px;
+            background: #fff7ed;
+            color: #7c2d12;
+            font-size: 0.92rem;
+            line-height: 1.45;
+        }
+
+        #profileContainer .demo-readonly-banner strong {
+            color: #9a3412;
+            font-size: 0.98rem;
+        }
+
+        #profileContainer.is-demo-readonly input,
+        #profileContainer.is-demo-readonly select,
+        #profileContainer.is-demo-readonly textarea {
+            cursor: not-allowed;
+        }
+
+        #profileContainer.is-demo-readonly button.is-disabled,
+        #accountHeroSaveButton.is-disabled {
+            cursor: not-allowed;
+            opacity: 0.58;
+        }
+
         #profileContainer .profile-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -35650,7 +35680,7 @@
                                     <span class="public-site-sr-only">Zobrazit nebo skrýt popis sekce Nastavení</span>
                                 </button>
                                 <div class="app-section-hero-actions">
-                                    <button type="button" class="btn btn-primary" onclick="scrollToProfileSaveButton()">Uložit změny</button>
+                                    <button type="button" class="btn btn-primary" id="accountHeroSaveButton" onclick="scrollToProfileSaveButton()">Uložit změny</button>
                                     <button type="button" class="btn btn-secondary" onclick="setSettingsPanel('security')">Zabezpečení</button>
                                 </div>
                             </div>
@@ -37054,7 +37084,7 @@
             }
             if (emailEl) {
                 const desktopEmail = document.getElementById('userEmail')?.textContent?.trim();
-                const email = (currentUser && currentUser.email) ? currentUser.email : desktopEmail;
+                const email = (currentUser && currentUser.email) ? getVisibleUserEmail(currentUser) : desktopEmail;
                 emailEl.textContent = email || '-';
                 emailEl.title = email || '';
             }
@@ -40899,11 +40929,7 @@
         }
 
         function isPublicDemoSession() {
-            if (currentUser && (
-                currentUser.is_demo_account === true
-                || currentUser.demo_session === true
-                || currentUser.account_readonly === true
-            )) {
+            if (isDemoAccountUser(currentUser)) {
                 return true;
             }
             try {
@@ -40911,6 +40937,14 @@
             } catch (e) {
                 return false;
             }
+        }
+
+        function isDemoAccountUser(user) {
+            return !!(user && typeof user === 'object' && (
+                user.is_demo_account === true
+                || user.demo_session === true
+                || user.account_readonly === true
+            ));
         }
 
         function withDemoReadonlyFlags(user) {
@@ -40921,6 +40955,17 @@
                 demo_session: true,
                 account_readonly: true
             };
+        }
+
+        function getDemoHiddenEmailLabel() {
+            return 'E-mail je v demo režimu skrytý';
+        }
+
+        function getVisibleUserEmail(user = currentUser) {
+            if (isPublicDemoSession() || isDemoAccountUser(user)) {
+                return getDemoHiddenEmailLabel();
+            }
+            return String(user?.email || '').trim();
         }
 
         function markAuthSessionEstablished() {
@@ -40987,7 +41032,11 @@
                 const keepDemoReadonly = isPublicDemoSession();
                 const me = await apiCall('/user/me', 'GET');
                 if (me && typeof me === 'object' && me.email) {
-                    currentUser = keepDemoReadonly ? withDemoReadonlyFlags(me) : me;
+                    const isDemoMe = keepDemoReadonly || isDemoAccountUser(me);
+                    currentUser = isDemoMe ? withDemoReadonlyFlags(me) : me;
+                    if (isDemoMe) {
+                        markPublicDemoSession(true);
+                    }
                     persistCurrentUserToActiveStorage(currentUser);
                 }
             } catch (error) {
@@ -40999,8 +41048,9 @@
                     lastWorkspaceMePayload = ctx;
                     updateWorkspaceContextBadge(ctx);
                     currentUser = { ...(currentUser || {}), ...ctx };
-                    if (isPublicDemoSession()) {
+                    if (isPublicDemoSession() || isDemoAccountUser(currentUser)) {
                         currentUser = withDemoReadonlyFlags(currentUser);
+                        markPublicDemoSession(true);
                     }
                     persistCurrentUserToActiveStorage(currentUser);
                     syncAppDisplayNameFromMe(ctx);
@@ -44586,7 +44636,7 @@
             
             // Zobrazit badge uživatele a logout button
             if (userEmailEl && currentUser) {
-                userEmailEl.textContent = currentUser.email;
+                userEmailEl.textContent = getVisibleUserEmail(currentUser);
                 if (userBadge) {
                     userBadge.classList.remove('hidden');
                 }
@@ -65097,13 +65147,27 @@
                 container.classList.add('loading');
                 container.innerHTML = '<div class="loading">Načítám profil...</div>';
                 const profile = await apiCall('/user/me');
+                const isDemoProfile = isPublicDemoSession() || isDemoAccountUser(profile);
+                if (isDemoProfile) {
+                    markPublicDemoSession(true);
+                    currentUser = withDemoReadonlyFlags({ ...(currentUser || {}), ...(profile || {}) });
+                    persistCurrentUserToActiveStorage(currentUser);
+                }
+                const visibleProfileEmail = isDemoProfile ? getDemoHiddenEmailLabel() : String(profile.email || '');
+                const sidebarAccountLabel = isDemoProfile ? 'Ukázkový účet' : (profile.email || '-');
+                const demoReadonlyBanner = isDemoProfile ? `
+                    <div class="demo-readonly-banner" role="note">
+                        <strong>Ukázkový režim</strong>
+                        <span>${getDemoReadonlyMessage()}</span>
+                    </div>
+                ` : '';
                 
                 container.innerHTML = `
                     <div class="settings-shell">
                         <aside class="settings-sidebar">
                             <div class="settings-sidebar-head">
                                 <h3>Nastavení</h3>
-                                <p>Účet: ${profile.email || '-'}</p>
+                                <p>Účet: ${escapeHtml(sidebarAccountLabel)}</p>
                             </div>
                             <button type="button" class="settings-nav-item active" data-settings-panel-btn="account" onclick="setSettingsPanel('account')">
                                 Osobní údaje
@@ -65125,6 +65189,7 @@
                                 <button type="button" id="settingsSaveButton" class="btn-primary" onclick="handleSaveProfile()">Uložit změny</button>
                             </div>
                             <div id="profileErrorContainer" class="profile-form-status"></div>
+                            ${demoReadonlyBanner}
 
                             <section class="settings-panel active" data-settings-panel="account">
                                 <div class="card profile-panel">
@@ -65136,8 +65201,8 @@
                                         <div class="profile-grid">
                                             <div class="form-group">
                                                 <label for="profileEmail">Přihlašovací e-mail</label>
-                                                <input type="email" id="profileEmail" value="${profile.email || ''}" disabled class="input-disabled">
-                                                <small class="form-hint">E-mail slouží jako přihlašovací jméno a nelze jej změnit</small>
+                                                <input type="text" id="profileEmail" value="${escapeHtml(visibleProfileEmail)}" disabled class="input-disabled">
+                                                <small class="form-hint">${isDemoProfile ? 'Skutečný e-mail demo účtu se v ukázce nezobrazuje.' : 'E-mail slouží jako přihlašovací jméno a nelze jej změnit'}</small>
                                             </div>
                                             <div class="form-group">
                                                 <label for="profileName">Jméno a příjmení / Název firmy *</label>
@@ -65414,6 +65479,7 @@
                 setSettingsPanel('account');
                 initProfileAresAutofill();
                 refreshProfileSecuritySettings();
+                applyDemoAccountSettingsLock();
             } catch (error) {
                 profileUiState.loadedAt = 0;
                 console.error('[PROFILE] Chyba při načítání profilu:', error);
@@ -65448,10 +65514,14 @@
                 titleEl.textContent = panelTitles[normalized] || 'Nastavení';
             }
 
-            const showProfileSave = normalized !== 'security' && normalized !== 'data';
+            const showProfileSave = normalized !== 'security' && normalized !== 'data' && !isPublicDemoSession();
             const saveButton = document.getElementById('settingsSaveButton');
             if (saveButton) {
                 saveButton.classList.toggle('hidden', !showProfileSave);
+                if (isPublicDemoSession()) {
+                    saveButton.disabled = true;
+                    saveButton.setAttribute('aria-disabled', 'true');
+                }
             }
 
             const profileErrorContainer = document.getElementById('profileErrorContainer');
@@ -65467,6 +65537,10 @@
         async function handleSaveProfile(event) {
             if (event && typeof event.preventDefault === 'function') {
                 event.preventDefault();
+            }
+            if (isPublicDemoSession()) {
+                showDemoReadonlySettingsMessage('profileErrorContainer');
+                return;
             }
             const errorContainer = document.getElementById('profileErrorContainer');
             
@@ -65556,9 +65630,54 @@
             container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
 
+        function getDemoReadonlyMessage() {
+            return 'Ukázkový účet je jen pro prohlížení. E-mail je skrytý a nastavení účtu, telefon, notifikace, heslo, 2FA, biometrie ani smazání účtu nelze měnit.';
+        }
+
+        function showDemoReadonlySettingsMessage(containerId = 'profileErrorContainer') {
+            const message = getDemoReadonlyMessage();
+            if (typeof setProfileDataStatus === 'function') {
+                setProfileDataStatus(containerId, message, 'warning');
+            } else if (typeof showAlert === 'function') {
+                showAlert(message, 'warning');
+            }
+            return false;
+        }
+
+        function applyDemoAccountSettingsLock() {
+            if (!isPublicDemoSession()) return;
+            const container = document.getElementById('profileContainer');
+            if (!container) return;
+            container.classList.add('is-demo-readonly');
+
+            container.querySelectorAll('input, select, textarea').forEach((field) => {
+                field.disabled = true;
+                field.setAttribute('aria-disabled', 'true');
+                field.classList.add('input-disabled');
+            });
+
+            container.querySelectorAll('button').forEach((button) => {
+                if (button.hasAttribute('data-settings-panel-btn')) return;
+                button.disabled = true;
+                button.setAttribute('aria-disabled', 'true');
+                button.classList.add('is-disabled');
+            });
+
+            const heroSaveButton = document.getElementById('accountHeroSaveButton');
+            if (heroSaveButton) {
+                heroSaveButton.disabled = true;
+                heroSaveButton.setAttribute('aria-disabled', 'true');
+                heroSaveButton.classList.add('is-disabled');
+            }
+        }
+
         async function handleAccountDataExport() {
             if (!isAuthenticated()) {
                 showAlert('Nejprve se přihlaste.', 'error');
+                return;
+            }
+            if (isPublicDemoSession()) {
+                showDemoReadonlySettingsMessage('profileExportStatus');
                 return;
             }
 
@@ -65649,6 +65768,10 @@
         async function handleDeleteAccount() {
             if (!isAuthenticated()) {
                 showAlert('Nejprve se přihlaste.', 'error');
+                return;
+            }
+            if (isPublicDemoSession()) {
+                showDemoReadonlySettingsMessage('profileDeleteStatus');
                 return;
             }
 
@@ -65837,6 +65960,7 @@
                 const settings = await apiCall('/user/security/settings', 'GET');
                 authSecuritySettingsCache = settings || {};
                 renderProfileSecuritySettings();
+                applyDemoAccountSettingsLock();
             } catch (error) {
                 console.error('[SECURITY] Chyba při načítání nastavení zabezpečení:', error);
                 setSecurityInlineMessage(
@@ -65845,10 +65969,15 @@
                     'error'
                 );
                 renderProfileSecuritySettings();
+                applyDemoAccountSettingsLock();
             }
         }
 
         async function startTotpSetup() {
+            if (isPublicDemoSession()) {
+                showDemoReadonlySettingsMessage('security2faMessage');
+                return;
+            }
             setSecurityInlineMessage('security2faMessage', '');
             const setupPanel = document.getElementById('securityTotpSetupPanel');
             const disablePanel = document.getElementById('securityTotpDisablePanel');
@@ -65924,6 +66053,10 @@
         }
 
         async function confirmTotpEnable() {
+            if (isPublicDemoSession()) {
+                showDemoReadonlySettingsMessage('security2faMessage');
+                return;
+            }
             const code = String(document.getElementById('securityTotpEnableCode')?.value || '').trim();
             if (!/^\d{6}$/.test(code)) {
                 setSecurityInlineMessage('security2faMessage', 'Zadejte platný 6místný kód.', 'error');
@@ -65945,6 +66078,10 @@
         }
 
         function toggleTotpDisableForm(forceOpen) {
+            if (isPublicDemoSession()) {
+                showDemoReadonlySettingsMessage('security2faMessage');
+                return;
+            }
             const panel = document.getElementById('securityTotpDisablePanel');
             if (!panel) return;
             const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : panel.classList.contains('hidden');
@@ -65957,6 +66094,10 @@
         }
 
         async function confirmTotpDisable() {
+            if (isPublicDemoSession()) {
+                showDemoReadonlySettingsMessage('security2faMessage');
+                return;
+            }
             const currentPassword = String(document.getElementById('securityDisable2faPassword')?.value || '');
             const code = String(document.getElementById('securityDisable2faCode')?.value || '').trim();
 
@@ -65987,6 +66128,10 @@
         }
 
         async function toggleBiometricPreference() {
+            if (isPublicDemoSession()) {
+                showDemoReadonlySettingsMessage('securityBiometricMessage');
+                return;
+            }
             const support = getBiometricClientSupport();
             if (!support.supported) {
                 setSecurityInlineMessage('securityBiometricMessage', support.reason, 'warning');
@@ -66035,8 +66180,8 @@
             }
 
             const userName = (currentUser && currentUser.name) ? currentUser.name : 'Uživatel';
-            const userEmail = (currentUser && currentUser.email) ? currentUser.email : '-';
-            const userPhone = (currentUser && currentUser.phone) ? currentUser.phone : '';
+            const userEmail = (currentUser && currentUser.email) ? getVisibleUserEmail(currentUser) : '-';
+            const userPhone = (isPublicDemoSession() || !currentUser || !currentUser.phone) ? '' : currentUser.phone;
 
             container.innerHTML = `
                 <div class="support-layout">
@@ -66091,7 +66236,7 @@
                                 </div>
                                 <div class="form-group">
                                     <label>Email odesílatele</label>
-                                    <input type="email" value="${userEmail}" disabled class="input-disabled">
+                                    <input type="text" value="${escapeHtml(userEmail)}" disabled class="input-disabled">
                                 </div>
                                 <div class="form-actions">
                                     <button type="submit" id="supportSubmitBtn" class="btn-primary">Odeslat na podporu</button>
@@ -66505,6 +66650,10 @@
         // Změna hesla
         async function handleChangePassword(event) {
             event.preventDefault();
+            if (isPublicDemoSession()) {
+                showDemoReadonlySettingsMessage('changePasswordMessage');
+                return;
+            }
             const errorContainer = document.getElementById('changePasswordErrorContainer');
             const button = event.target.querySelector('button[type="submit"]');
             const originalButtonText = button ? button.textContent : 'Změnit heslo';
@@ -66642,7 +66791,7 @@
                 }
             }
             const user = currentUser || parsedStoredUser;
-            document.getElementById('debug-user-email').textContent = user?.email || '-';
+            document.getElementById('debug-user-email').textContent = getVisibleUserEmail(user) || '-';
             
             // Recent requests
             const requestsList = document.getElementById('debug-requests-list');
