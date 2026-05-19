@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Správa vozidel">
+  <rect width="120" height="120" rx="60" fill="#fff"/>
+  <path d="M19 85a48 48 0 0 1 70-61" fill="none" stroke="#111" stroke-width="7" stroke-linecap="round"/>
+  <path d="M82 22a48 48 0 0 1 18 58" fill="none" stroke="#e91b2d" stroke-width="7" stroke-linecap="round"/>
+  <path d="M25 68V52c0-5 4-9 9-9h22c4 0 7 2 9 5l7 12v16H31c-3 0-6-3-6-8Z" fill="#fff" stroke="#111" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M36 45h20c3 0 5 1 7 4l4 7H36V45Z" fill="#f8fafc" stroke="#111" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M26 61h12l-5 8h-7" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="39" cy="76" r="6" fill="#111"/>
+  <circle cx="67" cy="76" r="6" fill="#111"/>
+  <path d="M72 33h24c4 0 7 3 7 7v43c0 4-3 7-7 7H72c-4 0-7-3-7-7V40c0-4 3-7 7-7Z" fill="#fff" stroke="#111" stroke-width="4"/>
+  <path d="M77 31c0-5 4-9 9-9s9 4 9 9v5H77v-5Z" fill="#fff" stroke="#111" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M76 53l5 5 10-12" fill="none" stroke="#e91b2d" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M76 69l5 5 10-12" fill="none" stroke="#e91b2d" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M89 56h8M89 72h8" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="92" cy="89" r="15" fill="#fff" stroke="#111" stroke-width="4"/>
+  <path d="M84 89l6 6 12-15" fill="none" stroke="#e91b2d" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

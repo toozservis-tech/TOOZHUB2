@@ -33082,7 +33082,7 @@
         }
 
     </style>
-    <link rel="stylesheet" href="/web/public-auth.css?v=2026051902" />
+    <link rel="stylesheet" href="/web/public-auth.css?v=2026051903" />
     
     <!-- Security Protection - Anti-debugging a ochrana kódu -->
     <!-- DOČASNĚ ÚPLNĚ ZAKÁZÁNO - způsobovalo zmizení aplikace -->
@@ -33575,7 +33575,7 @@
             <div id="authSection" class="auth-shell auth-shell-root" data-view-context="auth" hidden aria-hidden="true" inert>
                 <header class="sv-auth-header" aria-label="Navigace přihlášení">
                     <a href="/" class="sv-auth-brand" onclick="goToPublicRoute('home'); return false;">
-                        <span class="sv-logo-mark" aria-hidden="true">▱</span>
+                        <img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" />
                         <span>Správa vozidel</span>
                     </a>
                     <nav class="sv-auth-header-actions" aria-label="Auth akce">
@@ -33594,7 +33594,7 @@
                     </div>
                     <aside class="auth-promo" id="authPromoAside" aria-label="Představení aplikace Správa vozidel">
                         <div class="auth-promo-brand">
-                            <img src="/web/assets/toozservis-logo-icon.png" alt="" class="auth-promo-logo">
+                            <img src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" class="auth-promo-logo">
                             <div class="auth-promo-brand-text">
                                 <strong data-app-display-name></strong>
                             </div>
@@ -33745,8 +33745,8 @@
                                 <div class="auth-login-mode" aria-label="Volba typu registrace">
                                     <span class="auth-login-mode-label">Typ účtu</span>
                                     <div class="auth-login-mode-switch" role="group" aria-label="Typ registrace">
-                                        <button type="button" id="registerModeUserBtn" class="auth-login-mode-btn active" onclick="setRegistrationMode('user')"><strong>Majitel vozidla</strong><span>Správa vlastních vozidel, dokumentů, STK a servisní historie.</span></button>
-                                        <button type="button" id="registerModeServiceBtn" class="auth-login-mode-btn" onclick="setRegistrationMode('service')"><strong>Autoservis</strong><span>Správa zákazníků, vozidel, zakázek a servisních záznamů.</span></button>
+                                        <button type="button" id="registerModeUserBtn" class="auth-login-mode-btn active" onclick="setRegistrationMode('user')"><span class="auth-mode-icon auth-mode-icon-user" aria-hidden="true"><svg viewBox="0 0 48 48" focusable="false"><path d="M18 25h17l4 7v7H12v-6l3-6c.5-1.2 1.5-2 3-2Z" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linejoin="round"/><path d="M18 25l3-6h10l4 6" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="18" cy="39" r="3.2" fill="currentColor"/><circle cx="34" cy="39" r="3.2" fill="currentColor"/><circle cx="14" cy="12" r="4.6" fill="none" stroke="currentColor" stroke-width="2.7"/><path d="M6 23c1.4-4.5 4.2-7 8-7s6.6 2.5 8 7" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round"/></svg></span><strong>Majitel vozidla</strong><span>Správa vlastních vozidel, dokumentů, STK a servisní historie.</span></button>
+                                        <button type="button" id="registerModeServiceBtn" class="auth-login-mode-btn" onclick="setRegistrationMode('service')"><span class="auth-mode-icon auth-mode-icon-service" aria-hidden="true"><svg viewBox="0 0 48 48" focusable="false"><path d="M7 40h34V17L24 8 7 17v23Z" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linejoin="round"/><path d="M15 40V26h18v14M16 20h16M20 31h8M36 40V25h5" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 15V9h7" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span><strong>Autoservis</strong><span>Správa zákazníků, vozidel, zakázek a servisních záznamů.</span></button>
                                     </div>
                                     <p id="registerModeHint" class="auth-login-mode-hint">Standardní registrace uživatele s okamžitou aktivací.</p>
                                 </div>
@@ -33897,7 +33897,7 @@
                 <header class="public-site-header" aria-label="Veřejná navigace">
                     <div class="public-site-shell public-site-bar">
                         <a href="/" class="public-site-brand" onclick="goToPublicRoute('home'); return false;">
-                            <span class="sv-logo-mark" aria-hidden="true"></span>
+                            <img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" />
                             <span data-app-display-name></span>
                         </a>
                         <nav class="public-site-nav" aria-label="Sekce veřejného webu">
@@ -34139,7 +34139,7 @@
                     </section>
 
                     <footer class="sv-public-footer">
-                        <strong><span class="sv-logo-mark" aria-hidden="true">▱</span> Správa vozidel</strong>
+                        <strong><img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" /> Správa vozidel</strong>
                         <span>Digitální správa vozidel pro majitele, firmy a autoservisy.</span>
                         <nav aria-label="Footer odkazy"><a href="#funkce">Funkce</a><a href="#cenik">Ceník</a><a href="#jak-to-funguje">Jak to funguje</a><a href="#pro-majitele">Pro majitele</a><a href="#pro-servisy">Pro servisy</a><a href="https://www.toozservis.cz/#kontakt" target="_blank" rel="noopener noreferrer">Kontakt</a></nav>
                         <small>© 2026 Správa vozidel. Všechna práva vyhrazena.</small>
