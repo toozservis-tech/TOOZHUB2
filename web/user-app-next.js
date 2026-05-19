@@ -16,6 +16,9 @@
     legacyMount: { tabId: null },
     originalShowVehicleDetail: null,
     modalEscBound: false,
+    viewOverride: null,
+    remindersTipHidden: false,
+    serviceHistoryLimit: 8,
   };
 
   const DETAIL_MODAL_ID = 'uappNextVehicleDetail';
@@ -107,7 +110,6 @@
   }
 
   const LEGACY_SECTION_META = {
-    reminders: { tabId: 'remindersTab', testId: 'user-app-next-reminders' },
     documents: { tabId: 'documentsTab', testId: 'user-app-next-documents' },
     servicesDirectory: { tabId: 'servicesDirectoryTab', testId: 'user-app-next-services' },
     account: { tabId: 'accountTab', testId: 'user-app-next-account' },
@@ -116,6 +118,7 @@
   };
 
   function getActiveView() {
+    if (STATE.viewOverride) return STATE.viewOverride;
     if (!document.body.classList.contains('route-app-view') || !isAuthed() || isServiceMode()) {
       return null;
     }
@@ -1010,6 +1013,411 @@
     return `<button type="button" class="${active ? 'is-active' : ''}" data-uapp-action="${esc(action)}"><span class="uapp-next-nav-ico" aria-hidden="true">${iconSvg}</span><span class="uapp-next-nav-label">${esc(label)}</span>${badgeHtml}</button>`;
   }
 
+  function reminderReferenceDate(reminder) {
+    const notify = parseDate(reminder?.notify_at);
+    if (notify) return notify;
+    return parseDate(reminder?.due_date);
+  }
+
+  function reminderColumnKey(reminder) {
+    if (reminder?.is_completed === true) return 'completed';
+    const ref = reminderReferenceDate(reminder);
+    if (!ref) return 'planned';
+    const diff = daysUntil(ref);
+    if (diff == null) return 'planned';
+    if (diff < 0) return 'overdue';
+    if (diff <= 14) return 'upcoming';
+    return 'planned';
+  }
+
+  function reminderPriorityLabel(reminder) {
+    const key = String(reminder?.type || '').toUpperCase();
+    if (key === 'STK') return 'STK';
+    if (key === 'OLEJ') return 'Olej';
+    if (key === 'GENERAL') return 'Servis';
+    if (key === 'VLASTNI') return 'Vlastní';
+    return key || 'Připomínka';
+  }
+
+  function reminderSummaryStats(data) {
+    const buckets = bucketReminders(data);
+    const open = [...buckets.overdue, ...buckets.upcoming, ...buckets.planned];
+    let stk = 0;
+    let oil = 0;
+    let general = 0;
+    open.forEach((item) => {
+      const t = String(item?.type || '').toUpperCase();
+      if (t === 'STK') stk += 1;
+      else if (t === 'OLEJ') oil += 1;
+      else general += 1;
+    });
+    return {
+      overdue: buckets.overdue.length,
+      upcoming: buckets.upcoming.length,
+      planned: buckets.planned.length,
+      completed: buckets.completed.length,
+      stk,
+      oil,
+      general,
+    };
+  }
+
+  function bucketReminders(data) {
+    const buckets = { overdue: [], upcoming: [], planned: [], completed: [] };
+    (data?.reminders || []).forEach((item) => {
+      const col = reminderColumnKey(item);
+      if (buckets[col]) buckets[col].push(item);
+    });
+    const sortByDate = (a, b) => {
+      const da = reminderReferenceDate(a);
+      const db = reminderReferenceDate(b);
+      if (!da && !db) return 0;
+      if (!da) return 1;
+      if (!db) return -1;
+      return da.getTime() - db.getTime();
+    };
+    buckets.overdue.sort(sortByDate);
+    buckets.upcoming.sort(sortByDate);
+    buckets.planned.sort(sortByDate);
+    buckets.completed.sort((a, b) => {
+      const da = parseDate(a?.completed_at || a?.due_date);
+      const db = parseDate(b?.completed_at || b?.due_date);
+      return (db?.getTime() || 0) - (da?.getTime() || 0);
+    });
+    return buckets;
+  }
+
+  function vehicleLabelById(data, vehicleId) {
+    const id = Number(vehicleId);
+    if (!id) return 'Bez vozidla';
+    const vehicle = (data?.vehicles || []).find((v) => Number(v.id) === id);
+    return vehicle ? getVehicleName(vehicle) : `Vozidlo #${id}`;
+  }
+
+  function reminderDueLabel(reminder) {
+    const ref = reminderReferenceDate(reminder);
+    if (!ref) return 'Bez termínu';
+    const diff = daysUntil(ref);
+    if (diff == null) return formatDate(ref);
+    if (diff < 0) return `${Math.abs(diff) === 1 ? '1 den' : `${Math.abs(diff)} dní`} po termínu`;
+    if (diff === 0) return 'Dnes';
+    if (diff === 1) return 'Zítra';
+    if (diff <= 14) return `Za ${diff} dní`;
+    return formatDate(ref);
+  }
+
+  function renderReminderKanbanCard(item, data) {
+    const id = Number(item.id);
+    const col = reminderColumnKey(item);
+    const vehicleId = Number(item?.vehicle_id) || 0;
+    const vehicle = (data?.vehicles || []).find((v) => Number(v.id) === vehicleId);
+    const plate = vehicle?.plate ? renderPlateBadge(vehicle.plate, 'sm') : '';
+    return `
+      <article class="uapp-rem-kanban-card is-${esc(col)}" data-testid="uapp-reminder-card-${id}">
+        <div class="uapp-rem-kanban-card-top">
+          <span class="uapp-rem-kanban-priority">${esc(reminderPriorityLabel(item))}</span>
+          ${item?.is_manual === false ? '<span class="uapp-rem-kanban-auto">Auto</span>' : ''}
+        </div>
+        <h4 class="uapp-rem-kanban-title">${esc(String(item.text || item.title || item.type || 'Připomínka').trim())}</h4>
+        <p class="uapp-rem-kanban-vehicle">${plate}<span>${esc(vehicleLabelById(data, vehicleId))}</span></p>
+        <p class="uapp-rem-kanban-due ${col === 'overdue' ? 'is-overdue' : ''}">${esc(reminderDueLabel(item))}</p>
+        <div class="uapp-rem-kanban-actions">
+          ${col !== 'completed' ? `<button type="button" class="uapp-rem-kanban-btn" data-uapp-action="reminderComplete:${id}" title="Označit hotovo">✓</button>` : ''}
+          <button type="button" class="uapp-rem-kanban-btn" data-uapp-action="reminderDetail:${id}" title="Detail">Detail</button>
+          ${col !== 'completed' ? `<button type="button" class="uapp-rem-kanban-btn" data-uapp-action="reminderSnooze:${id}" title="Upravit termín">Odložit</button>` : ''}
+        </div>
+      </article>`;
+  }
+
+  function renderRemindersCalendar(data) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const first = new Date(year, month, 1);
+    const startPad = (first.getDay() + 6) % 7;
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const monthLabel = first.toLocaleDateString('cs-CZ', { month: 'long', year: 'numeric' });
+    const dueDays = new Set();
+    (data?.reminders || []).forEach((item) => {
+      if (item?.is_completed) return;
+      const ref = reminderReferenceDate(item);
+      if (!ref || ref.getFullYear() !== year || ref.getMonth() !== month) return;
+      dueDays.add(ref.getDate());
+    });
+    let cells = '';
+    for (let i = 0; i < startPad; i += 1) {
+      cells += '<span class="uapp-rem-cal-day is-empty" aria-hidden="true"></span>';
+    }
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const isToday = day === now.getDate();
+      const hasDue = dueDays.has(day);
+      cells += `<span class="uapp-rem-cal-day${isToday ? ' is-today' : ''}${hasDue ? ' has-due' : ''}">${day}</span>`;
+    }
+    return `
+      <section class="uapp-rem-aside-card">
+        <h3>Kalendář termínů</h3>
+        <p class="uapp-rem-cal-month">${esc(monthLabel)}</p>
+        <div class="uapp-rem-cal-weekdays" aria-hidden="true">
+          <span>Po</span><span>Út</span><span>St</span><span>Čt</span><span>Pá</span><span>So</span><span>Ne</span>
+        </div>
+        <div class="uapp-rem-cal-grid" role="grid" aria-label="Kalendář připomínek">${cells}</div>
+      </section>`;
+  }
+
+  function renderRemindersPage(data) {
+    const stats = reminderSummaryStats(data);
+    const buckets = bucketReminders(data);
+    const columns = [
+      { key: 'overdue', title: 'Po termínu', tone: 'danger' },
+      { key: 'upcoming', title: 'Blíží se', tone: 'warn' },
+      { key: 'planned', title: 'Naplánováno', tone: 'info' },
+      { key: 'completed', title: 'Dokončeno', tone: 'ok' },
+    ];
+    const kanban = columns.map((col) => {
+      const items = buckets[col.key] || [];
+      return `
+        <section class="uapp-rem-kanban-col is-${col.tone}" aria-label="${esc(col.title)}">
+          <header class="uapp-rem-kanban-col-head">
+            <h3>${esc(col.title)}</h3>
+            <span class="uapp-rem-kanban-count">${items.length}</span>
+          </header>
+          <div class="uapp-rem-kanban-col-body">
+            ${items.length
+              ? items.map((item) => renderReminderKanbanCard(item, data)).join('')
+              : '<p class="uapp-rem-kanban-empty">Žádné položky</p>'}
+          </div>
+        </section>`;
+    }).join('');
+
+    const tipBanner = STATE.remindersTipHidden ? '' : `
+      <div class="uapp-rem-tip" role="note">
+        <div>
+          <strong>Tip</strong>
+          <p>Automatické připomínky STK a pojištění se generují z údajů vozidla. Ruční připomínky můžete kdykoli upravit nebo odložit.</p>
+        </div>
+        <button type="button" class="uapp-rem-tip-close" data-uapp-action="remindersTipClose" aria-label="Zavřít tip">×</button>
+      </div>`;
+
+    return `
+      <div class="uapp-rem-page" data-testid="user-app-next-reminders">
+        <header class="uapp-rem-page-head">
+          <div>
+            <h1 class="uapp-rem-page-title">Připomínky</h1>
+            <p class="uapp-rem-page-sub">Přehled termínů, STK a servisních úkolů napříč vozidly</p>
+          </div>
+          <button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="newReminder">+ Nová připomínka</button>
+        </header>
+        <div class="uapp-rem-stats">
+          <article class="uapp-rem-stat is-danger"><span class="uapp-rem-stat-ico" aria-hidden="true">!</span><div><strong>${esc(String(stats.overdue))}</strong><span>Po termínu</span></div></article>
+          <article class="uapp-rem-stat is-warn"><span class="uapp-rem-stat-ico" aria-hidden="true">◷</span><div><strong>${esc(String(stats.upcoming))}</strong><span>Blíží se</span></div></article>
+          <article class="uapp-rem-stat is-info"><span class="uapp-rem-stat-ico" aria-hidden="true">📅</span><div><strong>${esc(String(stats.planned))}</strong><span>Naplánováno</span></div></article>
+          <article class="uapp-rem-stat is-ok"><span class="uapp-rem-stat-ico" aria-hidden="true">✓</span><div><strong>${esc(String(stats.completed))}</strong><span>Dokončeno</span></div></article>
+        </div>
+        <div class="uapp-rem-layout">
+          <div class="uapp-rem-main">
+            <div class="uapp-rem-kanban-board" role="region" aria-label="Kanban připomínek">${kanban}</div>
+            ${tipBanner}
+          </div>
+          <aside class="uapp-rem-aside" aria-label="Nastavení připomínek">
+            ${renderRemindersCalendar(data)}
+            <section class="uapp-rem-aside-card">
+              <h3>Automatické připomínky</h3>
+              <label class="uapp-rem-toggle"><input type="checkbox" checked disabled><span>STK / SME před termínem</span></label>
+              <label class="uapp-rem-toggle"><input type="checkbox" checked disabled><span>Pojištění před vypršením</span></label>
+              <label class="uapp-rem-toggle"><input type="checkbox" checked disabled><span>Servisní intervaly</span></label>
+              <p class="uapp-rem-aside-hint">Nastavení upravíte v sekci Nastavení účtu.</p>
+            </section>
+            <section class="uapp-rem-aside-card">
+              <h3>Doporučení pro vozidla</h3>
+              <ul class="uapp-rem-rec-list">
+                ${(data?.vehicles || []).slice(0, 3).map((vehicle) => {
+                  const stk = stkFieldMeta(vehicle);
+                  const hint = stk.tone === 'bad' || stk.tone === 'warn'
+                    ? `STK ${stk.label}`
+                    : (serviceFieldMeta(recordsFor(data, vehicle.id)).tone === 'warn' ? 'Zkontrolujte servis' : 'V pořádku');
+                  return `<li><button type="button" data-uapp-action="detail:${Number(vehicle.id)}"><strong>${esc(getVehicleName(vehicle))}</strong><span>${esc(hint)}</span></button></li>`;
+                }).join('') || '<li class="uapp-rem-rec-empty">Zatím bez vozidel.</li>'}
+              </ul>
+            </section>
+          </aside>
+        </div>
+      </div>`;
+  }
+
+  function flattenAllRecords(data) {
+    const rows = [];
+    (data?.recordEntries || []).forEach((entry) => {
+      const vehicle = entry?.vehicle;
+      const vehicleId = Number(vehicle?.id) || 0;
+      (entry?.records || []).forEach((record) => {
+        rows.push({ vehicle, vehicleId, record });
+      });
+    });
+    rows.sort((a, b) => (Date.parse(b.record?.performed_at || b.record?.created_at) || 0) - (Date.parse(a.record?.performed_at || a.record?.created_at) || 0));
+    return rows;
+  }
+
+  function formatMoneyCzk(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return '—';
+    try {
+      return `${num.toLocaleString('cs-CZ', { maximumFractionDigits: 0 })} Kč`;
+    } catch (_) {
+      return `${Math.round(num)} Kč`;
+    }
+  }
+
+  function serviceRecordIconClass(record) {
+    const type = String(record?.service_type || record?.category || '').toLowerCase();
+    if (type.includes('stk') || type.includes('technick')) return 'stk';
+    if (type.includes('olej') || type.includes('oil')) return 'oil';
+    if (type.includes('brzd') || type.includes('brake')) return 'brakes';
+    if (type.includes('pneu') || type.includes('tire')) return 'tires';
+    return 'service';
+  }
+
+  function serviceRecordStatusMeta(record) {
+    const status = String(record?.record_status || '').toLowerCase();
+    if (status === 'in_progress' || status === 'draft') {
+      return { label: 'Probíhá', tone: 'warn' };
+    }
+    if (status === 'cancelled' || status === 'canceled') {
+      return { label: 'Zrušeno', tone: 'muted' };
+    }
+    return { label: 'Dokončeno', tone: 'ok' };
+  }
+
+  function serviceHistoryStats(data) {
+    const rows = flattenAllRecords(data);
+    const limit = STATE.serviceHistoryLimit || 8;
+    const visible = rows.slice(0, limit);
+    let totalCost = 0;
+    let costCount = 0;
+    visible.forEach((entry) => {
+      const price = Number(entry.record?.total_price ?? entry.record?.price);
+      if (Number.isFinite(price) && price > 0) {
+        totalCost += price;
+        costCount += 1;
+      }
+    });
+    const workshops = new Set();
+    visible.forEach((entry) => {
+      const name = String(entry.record?.service_name || entry.record?.workshop_name || '').trim();
+      if (name) workshops.add(name);
+    });
+    return {
+      totalRecords: rows.length,
+      visibleCount: visible.length,
+      totalCost,
+      averageCost: costCount ? totalCost / costCount : 0,
+      workshops: Array.from(workshops).slice(0, 4),
+    };
+  }
+
+  function renderServiceHistoryRecordRow(entry) {
+    const { vehicle, vehicleId, record } = entry;
+    const meta = serviceRecordStatusMeta(record);
+    const iconClass = serviceRecordIconClass(record);
+    const title = String(record?.description || record?.service_type || 'Servisní záznam').trim();
+    const when = formatDateTime(record?.performed_at || record?.created_at);
+    const cost = formatMoneyCzk(record?.total_price ?? record?.price);
+    const km = record?.mileage_km != null && record.mileage_km !== ''
+      ? `${Number(record.mileage_km).toLocaleString('cs-CZ')} km`
+      : '';
+    return `
+      <article class="uapp-sh-timeline-item">
+        <div class="uapp-sh-timeline-rail" aria-hidden="true">
+          <span class="uapp-sh-timeline-dot is-${esc(iconClass)}"></span>
+        </div>
+        <div class="uapp-sh-timeline-body">
+          <div class="uapp-sh-timeline-top">
+            <div>
+              <h4>${esc(title)}</h4>
+              <p class="uapp-sh-timeline-meta">${esc(getVehicleName(vehicle || {}))}${vehicle?.plate ? ` · ${esc(vehicle.plate)}` : ''}</p>
+            </div>
+            <span class="uapp-sh-status is-${meta.tone}">${esc(meta.label)}</span>
+          </div>
+          <div class="uapp-sh-timeline-foot">
+            <span>${esc(when)}</span>
+            ${km ? `<span>${esc(km)}</span>` : ''}
+            <span class="uapp-sh-cost">${esc(cost)}</span>
+            <button type="button" class="uapp-sh-timeline-link" data-uapp-action="serviceRecordDetail:${vehicleId}">Detail vozidla ›</button>
+          </div>
+        </div>
+      </article>`;
+  }
+
+  function renderServiceHistoryPage(data) {
+    const rows = flattenAllRecords(data);
+    const limit = STATE.serviceHistoryLimit || 8;
+    const visible = rows.slice(0, limit);
+    const stats = serviceHistoryStats(data);
+    const hasMore = rows.length > limit;
+
+    const workshopList = stats.workshops.length
+      ? stats.workshops.map((name) => `<li><span>${esc(name)}</span></li>`).join('')
+      : (data?.services || []).slice(0, 3).map((svc) => `<li><span>${esc(svc.name || svc.email || 'Servis')}</span></li>`).join('') || '<li class="uapp-sh-widget-empty">Zatím bez evidovaných servisů.</li>';
+
+    return `
+      <div class="uapp-sh-page" data-testid="user-app-next-service-history">
+        <header class="uapp-sh-page-head">
+          <div>
+            <h1 class="uapp-sh-page-title">Servisní historie</h1>
+            <p class="uapp-sh-page-sub">Chronologický přehled servisních zásahů napříč vozidly</p>
+          </div>
+          ${hasFn('openAddServiceRecordModal') ? '<button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="serviceHistoryAdd">+ Přidat záznam</button>' : ''}
+        </header>
+        <div class="uapp-sh-filters" role="region" aria-label="Filtry historie">
+          <span class="uapp-sh-filter is-active">Všechna vozidla</span>
+          <span class="uapp-sh-filter">Poslední rok</span>
+          <span class="uapp-sh-filter">S dokladem</span>
+          <span class="uapp-sh-filter">Dokončené</span>
+        </div>
+        <div class="uapp-sh-layout">
+          <div class="uapp-sh-main">
+            <section class="uapp-sh-timeline" aria-label="Servisní záznamy">
+              ${visible.length
+                ? visible.map((entry) => renderServiceHistoryRecordRow(entry)).join('')
+                : '<p class="uapp-sh-empty">Zatím nemáte žádné servisní záznamy. Přidejte první záznam z detailu vozidla nebo tlačítkem výše.</p>'}
+            </section>
+            ${hasMore ? `<button type="button" class="uapp-sh-load-more" data-uapp-action="loadMoreServiceHistory">Načíst další záznamy (${rows.length - limit})</button>` : ''}
+          </div>
+          <aside class="uapp-sh-aside" aria-label="Souhrn servisní historie">
+            <section class="uapp-sh-widget">
+              <h3>Náklady (přehled)</h3>
+              <p class="uapp-sh-widget-kpi">${esc(formatMoneyCzk(stats.totalCost))}</p>
+              <p class="uapp-sh-widget-sub">Průměr ${esc(formatMoneyCzk(stats.averageCost))} · ${esc(String(stats.visibleCount))} záznamů</p>
+              <div class="uapp-sh-chart-placeholder" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span><span></span>
+              </div>
+            </section>
+            <section class="uapp-sh-widget">
+              <h3>Časté akce</h3>
+              <div class="uapp-sh-quick-actions">
+                ${hasFn('openAddServiceRecordModal') ? '<button type="button" data-uapp-action="serviceHistoryAdd">+ Nový servisní záznam</button>' : ''}
+                <button type="button" data-uapp-action="vehicles">Přejít na vozidla</button>
+                <button type="button" data-uapp-action="documents">Nahrát doklad</button>
+              </div>
+            </section>
+            <section class="uapp-sh-widget">
+              <h3>Workshopy</h3>
+              <ul class="uapp-sh-workshops">${workshopList}</ul>
+            </section>
+            <section class="uapp-sh-widget">
+              <h3>Doporučení</h3>
+              <ul class="uapp-sh-rec">
+                ${(data?.vehicles || []).slice(0, 2).map((vehicle) => {
+                  const svc = serviceFieldMeta(recordsFor(data, vehicle.id));
+                  if (svc.tone !== 'warn') return '';
+                  return `<li><button type="button" data-uapp-action="detail:${Number(vehicle.id)}"><strong>${esc(getVehicleName(vehicle))}</strong><span>${esc(svc.label)} — naplánujte servis</span></button></li>`;
+                }).filter(Boolean).join('') || '<li class="uapp-sh-widget-empty">Všechna vozidla mají aktuální servis.</li>'}
+              </ul>
+            </section>
+          </aside>
+        </div>
+      </div>`;
+  }
+
   function renderSidebar(data, activeNav) {
     const reminderBadge = activeRemindersCount(data);
     const nav = activeNav || 'home';
@@ -1022,7 +1430,7 @@
         <nav class="uapp-next-nav" aria-label="Sekce aplikace">
           ${navButton('Přehled', ICO.home, 'home', nav === 'home', 0)}
           ${navButton('Moje vozidla', ICO.car, 'vehicles', nav === 'vehicles', 0)}
-          ${navButton('Servisní historie', ICO.wrench, 'serviceHistory', false, 0)}
+          ${navButton('Servisní historie', ICO.wrench, 'serviceHistory', nav === 'serviceHistory', 0)}
           ${navButton('Připomínky', ICO.bell, 'reminders', nav === 'reminders', reminderBadge)}
           ${navButton('Dokumenty', ICO.doc, 'documents', nav === 'documents', 0)}
           ${navButton('Servisy', ICO.building, 'servicesDirectory', nav === 'servicesDirectory', 0)}
@@ -1516,6 +1924,18 @@
         ${renderVehiclesCatalog(data)}
       `;
     }
+    if (view === 'reminders') {
+      return `
+        ${renderTopbar()}
+        ${renderRemindersPage(data)}
+      `;
+    }
+    if (view === 'serviceHistory') {
+      return `
+        ${renderTopbar()}
+        ${renderServiceHistoryPage(data)}
+      `;
+    }
     if (view === 'home') {
       return `
         ${renderTopbar()}
@@ -1542,9 +1962,11 @@
 
     const activeView = view || 'home';
     const isLegacySection = Boolean(LEGACY_SECTION_META[activeView]);
-    const testId = isLegacySection
-      ? LEGACY_SECTION_META[activeView].testId
-      : (activeView === 'vehicles' ? 'user-app-next-vehicles' : 'user-app-next-dashboard');
+    let testId = 'user-app-next-dashboard';
+    if (isLegacySection) testId = LEGACY_SECTION_META[activeView].testId;
+    else if (activeView === 'vehicles') testId = 'user-app-next-vehicles';
+    else if (activeView === 'reminders') testId = 'user-app-next-reminders';
+    else if (activeView === 'serviceHistory') testId = 'user-app-next-service-history';
 
     root.replaceChildren();
     root.innerHTML = `
@@ -1560,6 +1982,8 @@
 
     document.body.classList.toggle('user-app-next-view-vehicles', activeView === 'vehicles');
     document.body.classList.toggle('user-app-next-view-legacy', isLegacySection);
+    document.body.classList.toggle('user-app-next-view-reminders', activeView === 'reminders');
+    document.body.classList.toggle('user-app-next-view-service-history', activeView === 'serviceHistory');
     if (isLegacySection) {
       mountLegacyTabContent(activeView);
     }
@@ -1788,7 +2212,7 @@
 
   function detailSummaryCards(vehicle, records, data) {
     const id = Number(vehicle.id);
-    const stk = stkCatalogLabel(vehicle);
+    const stk = stkFieldMeta(vehicle);
     const ins = insuranceFieldMeta(vehicle);
     const svc = lastServiceLabel(records);
     const km = vehicle.current_mileage_km != null && vehicle.current_mileage_km !== ''
@@ -1799,23 +2223,38 @@
       const st = String(g?.status || '').toLowerCase();
       return st.includes('pending') || st.includes('ček') || st.includes('wait');
     }).length;
+    const stkDate = getStkValue(vehicle) ? formatDate(getStkValue(vehicle)) : 'Nezadáno';
+    const insDate = vehicle.insurance_valid_until ? formatDate(vehicle.insurance_valid_until) : 'Nezadáno';
+    const latestRecord = (records || []).slice().sort((a, b) => (Date.parse(b?.performed_at || b?.created_at) || 0) - (Date.parse(a?.performed_at || a?.created_at) || 0))[0];
+    const svcDate = latestRecord ? formatDate(latestRecord.performed_at || latestRecord.created_at) : 'Bez záznamu';
     return [
-      { key: 'stk', tone: stk.tone, icon: '◷', title: 'STK / SME', value: stk.label, sub: 'Platnost technické kontroly', action: `detailTab:ops:${id}` },
-      { key: 'ins', tone: ins.tone, icon: '⛨', title: 'Pojištění', value: ins.label, sub: vehicle.insurance_provider || 'Povinné ručení', action: `detail:${id}` },
+      { key: 'stk', tone: stk.tone, icon: '◷', title: 'STK / SME', value: stk.label, sub: stkDate, action: `detailTab:ops:${id}` },
+      { key: 'ins', tone: ins.tone, icon: '⛨', title: 'Pojištění', value: ins.label, sub: insDate, action: `detailTab:ops:${id}` },
       { key: 'km', tone: 'ok', icon: '◔', title: 'Nájezd', value: km, sub: 'Aktuální stav tachometru', action: `detailTab:ops:${id}` },
-      { key: 'svc', tone: svc.tone, icon: '⚙', title: 'Poslední servis', value: svc.label, sub: records.length ? 'Servisní historie k dispozici' : 'Bez záznamu', action: `detailTab:service:${id}` },
-      { key: 'docs', tone: 'warn', icon: '▣', title: 'Dokumenty', value: String(records.length || '0'), sub: 'Servisní záznamy a přílohy', action: `detailTab:documents:${id}` },
+      { key: 'svc', tone: svc.tone, icon: '⚙', title: 'Poslední servis', value: svc.label, sub: svcDate, action: `detailTab:service:${id}` },
+      { key: 'docs', tone: records.length ? 'ok' : 'warn', icon: '▣', title: 'Dokumenty', value: String(records.length || '0'), sub: records.length ? 'Servisní záznamy a přílohy' : 'Bez příloh', action: `detailTab:documents:${id}` },
       { key: 'access', tone: pendingAccess ? 'warn' : 'ok', icon: '👥', title: 'Přístupy servisů', value: String(grants.length), sub: pendingAccess ? `${pendingAccess} čeká na schválení` : 'Aktivní servisní přístupy', action: `detailTab:access:${id}` },
     ];
   }
 
   function detailTimelineRows(records) {
     const sorted = (records || []).slice().sort((a, b) => (Date.parse(b?.performed_at || b?.created_at) || 0) - (Date.parse(a?.performed_at || a?.created_at) || 0));
-    return sorted.slice(0, 5).map((record) => ({
-      title: record.description || record.service_type || 'Servisní záznam',
-      when: formatDate(record.performed_at || record.created_at),
-      tone: String(record?.record_status || '').toLowerCase() === 'in_progress' ? 'warn' : 'ok',
-    }));
+    return sorted.slice(0, 6).map((record) => {
+      const meta = serviceRecordStatusMeta(record);
+      const iconClass = serviceRecordIconClass(record);
+      return {
+        title: record.description || record.service_type || 'Servisní záznam',
+        when: formatDateTime(record.performed_at || record.created_at),
+        detail: formatMoneyCzk(record?.total_price ?? record?.price),
+        tone: meta.tone,
+        iconClass,
+        statusLabel: meta.label,
+      };
+    });
+  }
+
+  function vehicleIdentificationVerified(vehicle) {
+    return Boolean(String(vehicle?.vin || '').trim() && String(vehicle?.plate || '').trim());
   }
 
   function detailReminderRows(data, vehicleId) {
@@ -1857,7 +2296,10 @@
           </dl>
         </section>
         <section class="uapp-next-detail-panel">
-          <h3 class="uapp-next-detail-panel-title">Identifikace vozidla</h3>
+          <div class="uapp-next-detail-panel-head">
+            <h3 class="uapp-next-detail-panel-title">Identifikace vozidla</h3>
+            ${vehicleIdentificationVerified(vehicle) ? '<span class="uapp-next-detail-verified-badge">Ověřeno</span>' : ''}
+          </div>
           <div class="uapp-next-detail-id-box">
             <ul class="uapp-next-detail-id-list">
               <li class="${vehicle.vin ? 'is-ok' : 'is-muted'}">${vehicle.vin ? '✓' : '○'} VIN ${vehicle.vin ? 'evidován' : 'neuveden'}</li>
@@ -1944,9 +2386,12 @@
             <div class="uapp-next-detail-hero-body">
               <div class="uapp-next-detail-hero-top">
                 <h2 id="uappNextDetailTitle" class="uapp-next-detail-title">${esc(getVehicleName(vehicle))}</h2>
-                <div class="uapp-next-detail-menu-wrap">
-                  <button type="button" class="uapp-next-detail-menu${optionsOpen ? ' is-open' : ''}" data-uapp-action="detailOptionsToggle:${id}" aria-label="Možnosti vozidla" aria-expanded="${optionsOpen}" aria-haspopup="menu">⋯</button>
-                  ${optionsOpen ? `<div class="uapp-next-detail-options" role="menu">${renderDetailOptionsMenu(id)}</div>` : ''}
+                <div class="uapp-next-detail-hero-top-actions">
+                  <button type="button" class="uapp-next-btn uapp-next-btn-secondary uapp-next-detail-edit-btn" data-uapp-action="detailEdit:${id}">${ICO.edit}<span>Upravit</span></button>
+                  <div class="uapp-next-detail-menu-wrap">
+                    <button type="button" class="uapp-next-detail-menu${optionsOpen ? ' is-open' : ''}" data-uapp-action="detailOptionsToggle:${id}" aria-label="Možnosti vozidla" aria-expanded="${optionsOpen}" aria-haspopup="menu">⋯</button>
+                    ${optionsOpen ? `<div class="uapp-next-detail-options" role="menu">${renderDetailOptionsMenu(id)}</div>` : ''}
+                  </div>
                 </div>
               </div>
               <div class="uapp-next-detail-hero-meta">
@@ -1993,8 +2438,15 @@
                 <h3>Časová osa vozidla</h3>
                 ${timeline.length ? timeline.map((row) => `
                   <div class="uapp-next-detail-timeline-item is-${row.tone}">
-                    <strong>${esc(row.title)}</strong>
-                    <span>${esc(row.when)}</span>
+                    <span class="uapp-next-detail-timeline-dot is-${esc(row.iconClass)}" aria-hidden="true"></span>
+                    <div class="uapp-next-detail-timeline-main">
+                      <div class="uapp-next-detail-timeline-head">
+                        <strong>${esc(row.title)}</strong>
+                        <span class="uapp-next-detail-timeline-status is-${row.tone}">${esc(row.statusLabel)}</span>
+                      </div>
+                      <span class="uapp-next-detail-timeline-when">${esc(row.when)}</span>
+                      ${row.detail && row.detail !== '—' ? `<span class="uapp-next-detail-timeline-cost">${esc(row.detail)}</span>` : ''}
+                    </div>
                   </div>`).join('') : '<p class="uapp-next-detail-empty">Zatím bez záznamů.</p>'}
               </section>
               <section class="uapp-next-detail-aside-card">
@@ -2099,14 +2551,49 @@
       STATE.detailModal.optionsOpen = false;
       refreshDetailModalShell();
     }
-    if (name === 'home' && hasFn('switchTab')) return window.switchTab('home');
-    if (name === 'vehicles' && hasFn('switchTab')) return window.switchTab('vehicles');
-    if (name === 'reminders' && hasFn('switchTab')) return window.switchTab('reminders');
-    if (name === 'documents' && hasFn('switchTab')) return window.switchTab('documents');
-    if (name === 'servicesDirectory' && hasFn('switchTab')) return window.switchTab('servicesDirectory');
-    if (name === 'account' && hasFn('switchTab')) return window.switchTab('account');
-    if (name === 'invoices' && hasFn('switchTab')) return window.switchTab('documents');
-    if (name === 'serviceHistory' && hasFn('switchTab')) return window.switchTab('vehicles');
+    if (name === 'home' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('home'); }
+    if (name === 'vehicles' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('vehicles'); }
+    if (name === 'reminders' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('reminders'); }
+    if (name === 'documents' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('documents'); }
+    if (name === 'servicesDirectory' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('servicesDirectory'); }
+    if (name === 'account' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('account'); }
+    if (name === 'invoices' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('documents'); }
+    if (name === 'serviceHistory') { STATE.viewOverride = 'serviceHistory'; return render(); }
+    if (name === 'newReminder') {
+      if (hasFn('showCreateReminderForm')) return window.showCreateReminderForm();
+      if (hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('reminders'); }
+    }
+    if (name === 'reminderComplete' && id && apiReady()) {
+      return apiCall(`/api/v1/reminders/${id}`, 'PUT', { is_completed: true }).then(() => render()).catch((err) => {
+        console.warn('[USER_APP_NEXT] reminderComplete failed', err);
+      });
+    }
+    if (name === 'reminderDetail' && id) {
+      const reminder = (STATE.latestData?.reminders || []).find((r) => Number(r.id) === id);
+      if (hasFn('editReminder')) return window.editReminder(id);
+      if (reminder && Number(reminder.vehicle_id) > 0) return openUserVehicleDetailModal(Number(reminder.vehicle_id));
+    }
+    if (name === 'reminderSnooze' && id) {
+      if (hasFn('editReminder')) return window.editReminder(id);
+    }
+    if (name === 'serviceRecordDetail' && rawId) {
+      const parts = String(action || '').split(':');
+      const vehicleId = Number(parts[1] || 0);
+      if (vehicleId > 0) {
+        return openUserVehicleDetailModal(vehicleId).then(() => openDetailLegacyTab('service', vehicleId));
+      }
+    }
+    if (name === 'serviceHistoryAdd') {
+      if (hasFn('openAddServiceRecordModal')) return window.openAddServiceRecordModal();
+    }
+    if (name === 'remindersTipClose') {
+      STATE.remindersTipHidden = true;
+      return render();
+    }
+    if (name === 'loadMoreServiceHistory') {
+      STATE.serviceHistoryLimit = (STATE.serviceHistoryLimit || 8) + 8;
+      return render();
+    }
     if (name === 'help') {
       if (hasFn('openHowToHubModal')) return window.openHowToHubModal();
       if (hasFn('switchTab')) return window.switchTab('support');
@@ -2141,14 +2628,9 @@
     }
     if (name === 'detailClose') return closeUserVehicleDetailModal();
     if (name === 'detailEdit' && id) {
-      if (STATE.detailModal.open) {
-        STATE.detailModal.activeTab = 'tech';
-        refreshDetailModalShell();
-        return;
-      }
       return ensureLegacyDetailDom(id).then(() => {
-        if (hasFn('openVehicleDetailFloatingSection')) window.openVehicleDetailFloatingSection('basic', id);
-        else if (hasFn('startEditModal')) window.startEditModal('nickname', id);
+        if (hasFn('startEditModal')) window.startEditModal('nickname', id);
+        else if (hasFn('openVehicleDetailFloatingSection')) window.openVehicleDetailFloatingSection('basic', id);
       });
     }
     if (name === 'detailVinRefresh' && id && hasFn('refreshExistingVehicleFromVin')) {
@@ -2244,6 +2726,7 @@
     const originalSwitchTab = window.switchTab;
     if (typeof originalSwitchTab === 'function') {
       window.switchTab = function () {
+        STATE.viewOverride = null;
         const result = originalSwitchTab.apply(this, arguments);
         window.setTimeout(() => {
           if (shouldActivate()) {
