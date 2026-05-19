@@ -18,7 +18,6 @@ from src.server.main_helpers import (
     TotpDisableRequest,
     TotpEnableRequest,
     TotpSetupResponse,
-    forbid_public_demo_account_mutation,
     get_customer_by_email,
     normalize_email,
 )
@@ -73,7 +72,6 @@ def setup_totp(
     customer = get_customer_by_email(db, email)
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-    forbid_public_demo_account_mutation(customer.email)
 
     settings = get_or_create_security_settings(db, customer)
     secret = generate_totp_secret()
@@ -111,7 +109,6 @@ def enable_totp(
     customer = get_customer_by_email(db, email)
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-    forbid_public_demo_account_mutation(customer.email)
 
     settings = get_or_create_security_settings(db, customer)
     if not settings.totp_secret:
@@ -150,7 +147,6 @@ def disable_totp(
     customer = get_customer_by_email(db, email)
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-    forbid_public_demo_account_mutation(customer.email)
 
     if not customer.password_hash or not verify_password(payload.current_password, customer.password_hash):
         raise HTTPException(status_code=401, detail="Neplatné současné heslo")
@@ -190,7 +186,6 @@ def update_biometric_preference(
     customer = get_customer_by_email(db, email)
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-    forbid_public_demo_account_mutation(customer.email)
 
     settings = get_or_create_security_settings(db, customer)
     settings.biometric_enabled = bool(payload.enabled)

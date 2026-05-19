@@ -24,7 +24,6 @@ from src.server.main_helpers import (
     cleanup_export_dir,
     delete_customer_account,
     export_current_customer_bundle,
-    forbid_public_demo_account_mutation,
     get_customer_by_email,
     normalize_delete_confirmation,
 )
@@ -64,7 +63,6 @@ def update_current_user(
     customer = db.query(Customer).filter(Customer.email == email).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-    forbid_public_demo_account_mutation(customer.email)
     log_user_activity(
         request=request,
         user_email=customer.email,
@@ -146,7 +144,6 @@ def delete_current_user_account(
     customer = get_customer_by_email(db, email)
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-    forbid_public_demo_account_mutation(customer.email)
 
     confirmation = normalize_delete_confirmation(payload.confirmation_text)
     if confirmation not in ACCOUNT_DELETE_CONFIRM_TOKENS:
@@ -196,7 +193,6 @@ def change_password(
     customer = db.query(Customer).filter(Customer.email == email).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-    forbid_public_demo_account_mutation(customer.email)
     log_user_activity(
         request=request,
         user_email=customer.email,

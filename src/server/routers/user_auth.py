@@ -58,13 +58,10 @@ from src.server.main_helpers import (
     UserLogin,
     UserRegister,
     VerifyEmailRequest,
-    forbid_public_demo_account_mutation,
     get_active_ip_block,
     get_customer_by_email,
-    is_public_demo_account_email,
     normalize_email,
     normalize_ico,
-    public_demo_account_flags,
     send_registration_alert_email,
 )
 from src.server.security_helpers import (
@@ -776,7 +773,6 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
                 "ico": customer.ico,
                 "role": customer.role or "user",
                 "force_password_change": bool(getattr(customer, "force_password_change", False)),
-                **public_demo_account_flags(customer.email),
             },
             password_change_required=bool(getattr(customer, "force_password_change", False)),
         )
@@ -897,7 +893,6 @@ def verify_login_two_factor(
             "ico": customer.ico,
             "role": customer.role or "user",
             "force_password_change": bool(getattr(customer, "force_password_change", False)),
-            **public_demo_account_flags(customer.email),
         },
     )
 
@@ -934,7 +929,6 @@ def complete_service_invite_onboarding(
             "ico": customer.ico,
             "role": customer.role or "user",
             "force_password_change": False,
-            **public_demo_account_flags(customer.email),
         },
         password_change_required=False,
     )
@@ -1113,8 +1107,6 @@ def forgot_password(
 
     if customer.email_verified_at is None:
         return {"message": "Pokud email existuje, byl odeslán reset odkaz"}
-    if is_public_demo_account_email(customer.email):
-        return {"message": "Pokud email existuje, byl odeslán reset odkaz"}
 
     target_email = customer.email
     reset_token = secrets.token_urlsafe(32)
@@ -1171,7 +1163,6 @@ def reset_password(payload: ResetPasswordRequest, db=Depends(get_db)):
     ).first()
     if not customer:
         raise HTTPException(status_code=400, detail="Neplatný nebo expirovaný reset token")
-    forbid_public_demo_account_mutation(customer.email)
 
     customer.password_hash = hash_password(payload.new_password)
     customer.reset_token = None

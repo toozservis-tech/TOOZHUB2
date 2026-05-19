@@ -164,9 +164,6 @@ class UserResponse(BaseModel):
     phone_e164: Optional[str] = None
     phone_verified_at: Optional[datetime] = None
     phone_verification_status: str = "unverified"
-    is_demo_account: bool = False
-    demo_session: bool = False
-    account_readonly: bool = False
 
     class Config:
         from_attributes = True
@@ -179,10 +176,6 @@ class UserResponse(BaseModel):
             object.__setattr__(self, "phone_verification_status", "unverified")
         else:
             object.__setattr__(self, "phone_verification_status", "invalid")
-        if is_public_demo_account_email(self.email):
-            object.__setattr__(self, "is_demo_account", True)
-            object.__setattr__(self, "demo_session", True)
-            object.__setattr__(self, "account_readonly", True)
         return self
 
 
@@ -280,35 +273,6 @@ def get_customer_by_email(db, email: str):
     ensure_customer_account_state_schema(db)
     normalized_email = normalize_email(email)
     return db.query(Customer).filter(func.lower(Customer.email) == normalized_email).first()
-
-
-def is_public_demo_account_email(email: str | None) -> bool:
-    normalized_email = normalize_email(email or "")
-    if not normalized_email:
-        return False
-    demo_email = (
-        os.getenv("SPRAVA_VOZIDEL_DEMO_ACCOUNT_EMAIL", "").strip()
-        or os.getenv("TOOZHUB_DEMO_ACCOUNT_EMAIL", "").strip()
-    )
-    return bool(demo_email) and normalized_email == normalize_email(demo_email)
-
-
-def forbid_public_demo_account_mutation(email: str | None) -> None:
-    if is_public_demo_account_email(email):
-        raise HTTPException(
-            status_code=403,
-            detail="Demo účet je jen pro ukázku. Nastavení účtu, e-mail ani heslo nelze měnit.",
-        )
-
-
-def public_demo_account_flags(email: str | None) -> dict:
-    if not is_public_demo_account_email(email):
-        return {}
-    return {
-        "is_demo_account": True,
-        "demo_session": True,
-        "account_readonly": True,
-    }
 
 
 def get_active_ip_block(db, ip_address: Optional[str]) -> Optional[SecurityBlockedIp]:

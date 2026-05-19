@@ -33,7 +33,7 @@ from src.modules.vehicle_hub.account_state import (
 )
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import CustomerSecuritySettings, DemoAccessToken
-from src.server.main_helpers import get_customer_by_email, normalize_email, public_demo_account_flags
+from src.server.main_helpers import get_customer_by_email, normalize_email
 from src.server.security_tracking import extract_client_ip, log_security_event
 
 router = APIRouter(prefix="/api/public/demo-account", tags=["public-demo-account"])
@@ -413,7 +413,6 @@ def redeem_demo_access(
             "name": customer.name,
             "ico": customer.ico,
             "role": customer.role or "user",
-            **public_demo_account_flags(customer.email),
         },
         disclaimer=disclaimer,
     )
