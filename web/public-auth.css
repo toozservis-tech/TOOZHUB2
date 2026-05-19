@@ -4569,7 +4569,7 @@ body.route-auth-view .auth-promo-logo {
   border: 0;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
 }
 
 body.route-public-view img.sv-logo-mark::before,
@@ -4581,13 +4581,18 @@ body.route-auth-view img.sv-logo-mark::after {
 
 body.route-public-view .public-site-brand img.sv-logo-mark,
 body.route-auth-view .sv-auth-brand img.sv-logo-mark {
-  width: 38px;
-  height: 38px;
+  width: 48px;
+  height: 48px;
 }
 
 body.route-public-view .sv-public-footer strong img.sv-logo-mark {
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
+}
+
+body.route-auth-view .auth-promo-logo {
+  width: 46px;
+  height: 46px;
 }
 
 body.route-register-view .auth-login-mode-btn::before {
