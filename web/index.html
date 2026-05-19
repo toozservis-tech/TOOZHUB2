@@ -33901,11 +33901,11 @@
                             <span data-app-display-name></span>
                         </a>
                         <nav class="public-site-nav" aria-label="Sekce veřejného webu">
-                            <a href="#sv-public-features" data-public-nav="features" onclick="document.getElementById('sv-public-features')?.scrollIntoView({behavior:'smooth'}); return false;">Funkce</a>
-                            <a href="#sv-public-owners" data-public-nav="audiences" onclick="document.getElementById('sv-public-owners')?.scrollIntoView({behavior:'smooth'}); return false;">Pro majitele</a>
-                            <a href="#sv-public-services" data-public-nav="audiences" onclick="document.getElementById('sv-public-services')?.scrollIntoView({behavior:'smooth'}); return false;">Pro servisy</a>
-                            <a href="#sv-public-pricing" data-public-nav="contact" onclick="document.getElementById('sv-public-pricing')?.scrollIntoView({behavior:'smooth'}); return false;">Ceník</a>
-                            <a href="#sv-public-how" data-public-nav="features" onclick="document.getElementById('sv-public-how')?.scrollIntoView({behavior:'smooth'}); return false;">Jak to funguje</a>
+                            <a href="#funkce" data-public-nav="features" onclick="document.getElementById('funkce')?.scrollIntoView({behavior:'smooth'}); return false;">Funkce</a>
+                            <a href="#pro-majitele" data-public-nav="audiences" onclick="document.getElementById('pro-majitele')?.scrollIntoView({behavior:'smooth'}); return false;">Pro majitele</a>
+                            <a href="#pro-servisy" data-public-nav="audiences" onclick="document.getElementById('pro-servisy')?.scrollIntoView({behavior:'smooth'}); return false;">Pro servisy</a>
+                            <a href="#cenik" data-public-nav="contact" onclick="document.getElementById('cenik')?.scrollIntoView({behavior:'smooth'}); return false;">Ceník</a>
+                            <a href="#jak-to-funguje" data-public-nav="features" onclick="document.getElementById('jak-to-funguje')?.scrollIntoView({behavior:'smooth'}); return false;">Jak to funguje</a>
                         </nav>
                         <div class="public-site-actions">
                             <button type="button" class="btn btn-secondary public-site-btn hidden" data-public-demo-visible="1" onclick="openPublicDemoEntry(); return false;">Vyzkoušet ukázku</button>
@@ -33927,11 +33927,11 @@
                             <button type="button" class="public-site-drawer-close" onclick="closePublicSiteMobileMenu(); return false;" aria-label="Zavřít menu">×</button>
                         </div>
                         <nav class="public-site-drawer-nav" aria-label="Sekce webu">
-                            <a href="#sv-public-features" onclick="closePublicSiteMobileMenu(); document.getElementById('sv-public-features')?.scrollIntoView({behavior:'smooth'}); return false;">Funkce</a>
-                            <a href="#sv-public-owners" onclick="closePublicSiteMobileMenu(); document.getElementById('sv-public-owners')?.scrollIntoView({behavior:'smooth'}); return false;">Pro majitele</a>
-                            <a href="#sv-public-services" onclick="closePublicSiteMobileMenu(); document.getElementById('sv-public-services')?.scrollIntoView({behavior:'smooth'}); return false;">Pro servisy</a>
-                            <a href="#sv-public-pricing" onclick="closePublicSiteMobileMenu(); document.getElementById('sv-public-pricing')?.scrollIntoView({behavior:'smooth'}); return false;">Ceník</a>
-                            <a href="#sv-public-how" onclick="closePublicSiteMobileMenu(); document.getElementById('sv-public-how')?.scrollIntoView({behavior:'smooth'}); return false;">Jak to funguje</a>
+                            <a href="#funkce" onclick="closePublicSiteMobileMenu(); document.getElementById('funkce')?.scrollIntoView({behavior:'smooth'}); return false;">Funkce</a>
+                            <a href="#pro-majitele" onclick="closePublicSiteMobileMenu(); document.getElementById('pro-majitele')?.scrollIntoView({behavior:'smooth'}); return false;">Pro majitele</a>
+                            <a href="#pro-servisy" onclick="closePublicSiteMobileMenu(); document.getElementById('pro-servisy')?.scrollIntoView({behavior:'smooth'}); return false;">Pro servisy</a>
+                            <a href="#cenik" onclick="closePublicSiteMobileMenu(); document.getElementById('cenik')?.scrollIntoView({behavior:'smooth'}); return false;">Ceník</a>
+                            <a href="#jak-to-funguje" onclick="closePublicSiteMobileMenu(); document.getElementById('jak-to-funguje')?.scrollIntoView({behavior:'smooth'}); return false;">Jak to funguje</a>
                         </nav>
                         <div class="public-site-drawer-footer">
                             <button type="button" class="btn btn-secondary public-site-btn public-site-drawer-btn hidden" data-public-demo-visible="1" onclick="openPublicDemoEntry(); return false;">Vyzkoušet ukázku</button>
@@ -33949,7 +33949,7 @@
                             <p class="sv-public-lead">Správa vozidel spojuje servisní historii, STK, připomínky, faktury, dokumenty a propojení se servisy na jednom bezpečném místě.</p>
                             <div class="sv-public-actions">
                                 <button type="button" class="sv-btn sv-btn-primary" onclick="showRegister()">Začít zdarma <span aria-hidden="true">›</span></button>
-                                <button type="button" class="sv-btn sv-btn-secondary" onclick="document.getElementById('sv-public-features')?.scrollIntoView({behavior:'smooth'}); return false;"><span class="sv-btn-play" aria-hidden="true"></span>Zobrazit ukázku</button>
+                                <button type="button" class="sv-btn sv-btn-secondary" onclick="document.getElementById('funkce')?.scrollIntoView({behavior:'smooth'}); return false;"><span class="sv-btn-play" aria-hidden="true"></span>Zobrazit ukázku</button>
                             </div>
                             <ul class="sv-public-trust" aria-label="Výhody">
                                 <li>Bez papírování</li>
@@ -33993,39 +33993,133 @@
                         </div>
                     </section>
 
-                    <section id="sv-public-features" class="sv-public-benefits" aria-label="Funkce">
-                        <article class="sv-benefit-blue"><span>▤</span><h2>Digitální garáž</h2><p>Evidence všech vozidel podle VIN, SPZ, fotek a technických údajů.</p></article>
-                        <article class="sv-benefit-purple"><span>◷</span><h2>Servisní historie</h2><p>Přehled oprav, nájezdů, dokladů a záznamů v jedné časové ose.</p></article>
-                        <article class="sv-benefit-green"><span>▣</span><h2>Dokumenty a faktury</h2><p>Technické průkazy, pojistky, faktury, STK a PDF výpisy na jednom místě.</p></article>
-                        <article class="sv-benefit-orange"><span>♧</span><h2>Propojení se servisem</h2><p>Bezpečně sdílejte vybraná vozidla se servisem a mějte přehled o práci.</p></article>
-                    </section>
-
-                    <section class="sv-public-audience">
-                        <article id="sv-public-owners" class="sv-public-audience-card">
-                            <div>
-                                <h2>Pro majitele vozidel</h2>
-                                <ul><li>Správa osobních i firemních aut</li><li>STK, pojištění a připomínky pod kontrolou</li><li>Dokumenty a náklady na jednom místě</li><li>Kompletní historie vozidla při prodeji</li></ul>
-                                <button type="button" class="sv-btn sv-btn-light" onclick="document.getElementById('sv-public-how')?.scrollIntoView({behavior:'smooth'}); return false;">Zjistit více <span aria-hidden="true">›</span></button>
-                            </div>
-                            <div class="sv-public-owner-visual"><img src="/web/assets/landing/owners-scene.webp" width="1040" height="460" alt="" loading="lazy" /></div>
-                        </article>
-                        <article id="sv-public-services" class="sv-public-audience-card sv-public-audience-card-service">
-                            <div>
-                                <h2>Pro autoservisy</h2>
-                                <ul><li>Přístup k povoleným vozidlům</li><li>Servisní záznamy a dokumentace oprav</li><li>Zakázky, faktury a komunikace s klienty</li><li>Profesní nástroj, který šetří čas</li></ul>
-                                <button type="button" class="sv-btn sv-btn-light" onclick="showRegister(); setRegistrationMode('service');">Zjistit více <span aria-hidden="true">›</span></button>
-                            </div>
-                            <div class="sv-public-service-visual"><img src="/web/assets/landing/service-scene.webp" width="1120" height="610" alt="" loading="lazy" /></div>
-                        </article>
-                    </section>
-
-                    <section id="sv-public-how" class="sv-public-how" aria-labelledby="svPublicHowTitle">
-                        <h2 id="svPublicHowTitle">Jak to funguje</h2>
-                        <div class="sv-public-steps">
-                            <article><span>1</span><h3>Přidejte vozidlo</h3><p>Zadejte VIN nebo SPZ a vytvořte digitální kartu vozidla během pár vteřin.</p></article>
-                            <article><span>2</span><h3>Doplňte historii</h3><p>Přidejte servisní záznamy, dokumenty, fotky a připomínky.</p></article>
-                            <article><span>3</span><h3>Sdílejte bezpečně</h3><p>Umožněte servisu přístup jen k vybraným vozidlům a údajům.</p></article>
+                    <section id="funkce" class="sv-public-section sv-public-feature-section" aria-labelledby="svPublicFeaturesTitle">
+                        <div class="sv-public-section-head">
+                            <p>Funkce</p>
+                            <h2 id="svPublicFeaturesTitle">Vše pro správu vozidel na jednom místě</h2>
+                            <span>Od digitální garáže přes servisní historii až po dokumenty, faktury a bezpečné sdílení se servisem.</span>
                         </div>
+                        <div class="sv-public-feature-grid">
+                            <article class="sv-feature-card sv-accent-blue"><span>▤</span><h3>Digitální garáž</h3><p>Evidence všech vozidel podle VIN, SPZ, fotek a technických údajů.</p></article>
+                            <article class="sv-feature-card sv-accent-purple"><span>◷</span><h3>Servisní historie</h3><p>Opravy, nájezdy, doklady a poznámky v přehledné časové ose.</p></article>
+                            <article class="sv-feature-card sv-accent-orange"><span>□</span><h3>STK a připomínky</h3><p>Automatické hlídání důležitých termínů, STK, pojištění a servisu.</p></article>
+                            <article class="sv-feature-card sv-accent-green"><span>▣</span><h3>Dokumenty a faktury</h3><p>Technické průkazy, pojistky, faktury, STK protokoly a PDF výpisy na jednom místě.</p></article>
+                            <article class="sv-feature-card sv-accent-blue"><span>♧</span><h3>Sdílení se servisem</h3><p>Bezpečně umožníte servisu přístup jen ke konkrétním vozidlům a údajům.</p></article>
+                            <article class="sv-feature-card sv-accent-purple"><span>⌗</span><h3>QR výpis vozidla</h3><p>Sdílejte ověřenou historii vozidla při prodeji nebo kontrole přes veřejný odkaz.</p></article>
+                            <article class="sv-feature-card sv-accent-green"><span>↗</span><h3>Náklady a přehled</h3><p>Sledujte servisní náklady, faktury a výdaje podle vozidel.</p></article>
+                            <article class="sv-feature-card sv-accent-orange"><span>✦</span><h3>Připraveno pro budoucnost</h3><p>Jednotný systém pro majitele, firmy i autoservisy.</p></article>
+                        </div>
+                    </section>
+
+                    <section id="pro-majitele" class="sv-public-section sv-public-deep-section sv-public-owner-deep" aria-labelledby="svPublicOwnersTitle">
+                        <div class="sv-public-deep-copy">
+                            <p class="sv-public-section-kicker">Pro majitele</p>
+                            <h2 id="svPublicOwnersTitle">Pro majitele vozidel</h2>
+                            <p>Mějte přehled o svých autech, termínech, dokumentech i historii oprav bez papírů a zmatku.</p>
+                            <ul class="sv-public-check-list">
+                                <li>Všechna vozidla v jedné digitální garáži</li>
+                                <li>STK, pojištění a servisní termíny pod kontrolou</li>
+                                <li>Dokumenty, faktury a fotky bezpečně uložené</li>
+                                <li>Přehled servisní historie při prodeji vozidla</li>
+                                <li>Sdílení vozidla se servisem jen se souhlasem</li>
+                            </ul>
+                            <div class="sv-public-inline-actions">
+                                <button type="button" class="sv-btn sv-btn-primary" onclick="showRegister()">Začít zdarma</button>
+                                <button type="button" class="sv-btn sv-btn-light" onclick="showLogin()">Přihlásit se</button>
+                            </div>
+                        </div>
+                        <div class="sv-public-owner-product" aria-label="Ukázka digitální garáže">
+                            <div class="sv-owner-product-card">
+                                <div class="sv-owner-product-top">
+                                    <span>Volkswagen Transporter T5.1</span>
+                                    <b>V pořádku</b>
+                                </div>
+                                <img src="/web/assets/landing/owners-scene.webp" width="1040" height="460" alt="" loading="eager" />
+                                <div class="sv-owner-product-grid">
+                                    <span><b>STK</b><small>za 18 dní</small></span>
+                                    <span><b>Pojištění</b><small>v pořádku</small></span>
+                                    <span><b>Servis</b><small>před 2 měsíci</small></span>
+                                    <span><b>Dokumenty</b><small>12 souborů</small></span>
+                                </div>
+                                <div class="sv-owner-timeline">
+                                    <i></i>
+                                    <div><b>Nový servisní záznam</b><small>Výměna oleje, filtrů a kontrola brzd.</small></div>
+                                </div>
+                                <div class="sv-owner-safe-badge"><span>✓</span> Data máte pod kontrolou</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="pro-servisy" class="sv-public-section sv-public-deep-section sv-public-service-deep" aria-labelledby="svPublicServicesTitle">
+                        <div class="sv-public-service-product" aria-label="Ukázka servisního přehledu">
+                            <img src="/web/assets/landing/service-scene.webp" width="1120" height="610" alt="" loading="eager" />
+                            <div class="sv-service-mini-card sv-service-mini-card-one"><b>Čekající žádost o přístup</b><span>Škoda Kodiaq</span></div>
+                            <div class="sv-service-mini-card sv-service-mini-card-two"><b>Nový servisní záznam</b><span>Diagnostika hotová</span></div>
+                            <div class="sv-service-mini-card sv-service-mini-card-three"><b>Dokumentace opravy</b><span>Fotky a faktura</span></div>
+                        </div>
+                        <div class="sv-public-deep-copy">
+                            <p class="sv-public-section-kicker">Pro autoservisy</p>
+                            <h2 id="svPublicServicesTitle">Pro autoservisy</h2>
+                            <p>Získejte přehled o povolených vozidlech zákazníků, servisních záznamech, dokumentaci a komunikaci.</p>
+                            <ul class="sv-public-check-list sv-public-check-list-green">
+                                <li>Přístup pouze k vozidlům, která zákazník povolí</li>
+                                <li>Servisní záznamy a dokumentace oprav</li>
+                                <li>Zakázky, faktury a komunikace s klienty</li>
+                                <li>Přehled zákaznických vozidel a historie</li>
+                                <li>Profesionální nástroj pro každodenní práci servisu</li>
+                            </ul>
+                            <div class="sv-public-inline-actions">
+                                <button type="button" class="sv-btn sv-btn-primary" onclick="showRegister(); setRegistrationMode('service'); return false;">Vytvořit servisní účet</button>
+                                <button type="button" class="sv-btn sv-btn-light" onclick="showLogin(); setLoginMode('service'); return false;">Přihlásit servis</button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="cenik" class="sv-public-section sv-public-pricing-section" aria-labelledby="svPublicPricingTitle">
+                        <div class="sv-public-section-head">
+                            <p>Ceník</p>
+                            <h2 id="svPublicPricingTitle">Jednoduchý ceník</h2>
+                            <span>Začněte zdarma a rozšiřte možnosti podle toho, kolik vozidel a funkcí potřebujete. Ceny jsou orientační pro veřejnou prezentaci.</span>
+                        </div>
+                        <div class="sv-public-pricing-grid">
+                            <article class="sv-price-card">
+                                <h3>Free</h3>
+                                <strong>0 Kč</strong>
+                                <p>Pro první vyzkoušení a základní evidenci vozidla.</p>
+                                <ul><li>1 vozidlo</li><li>základní údaje vozidla</li><li>základní připomínky</li><li>dokumenty v omezeném rozsahu</li></ul>
+                                <button type="button" class="sv-btn sv-btn-light" onclick="showRegister()">Začít zdarma</button>
+                            </article>
+                            <article class="sv-price-card sv-price-card-featured">
+                                <em>Doporučeno</em>
+                                <h3>Premium</h3>
+                                <strong>99 Kč <small>/ měsíc</small></strong>
+                                <p>Pro majitele, kteří chtějí mít kompletní správu vozidel pod kontrolou.</p>
+                                <ul><li>více vozidel</li><li>servisní historie</li><li>dokumenty a faktury</li><li>STK a připomínky</li><li>QR výpis vozidla</li><li>sdílení se servisem</li></ul>
+                                <button type="button" class="sv-btn sv-btn-primary" onclick="showRegister()">Vyzkoušet zdarma</button>
+                            </article>
+                            <article class="sv-price-card">
+                                <h3>Servis</h3>
+                                <strong>Individuálně</strong>
+                                <p>Pro autoservisy, které chtějí pracovat s vozidly zákazníků přehledně a digitálně.</p>
+                                <ul><li>zákaznická vozidla</li><li>servisní záznamy</li><li>dokumentace oprav</li><li>zakázky a faktury</li><li>přístupy podle souhlasu zákazníka</li></ul>
+                                <button type="button" class="sv-btn sv-btn-light" onclick="showRegister(); setRegistrationMode('service'); return false;">Vytvořit servisní účet</button>
+                            </article>
+                        </div>
+                    </section>
+
+                    <section id="jak-to-funguje" class="sv-public-section sv-public-how sv-public-how-deep" aria-labelledby="svPublicHowTitle">
+                        <div class="sv-public-section-head">
+                            <p>Jak to funguje</p>
+                            <h2 id="svPublicHowTitle">Jak to funguje</h2>
+                            <span>Od prvního vozidla po sdílenou servisní historii během několika kroků.</span>
+                        </div>
+                        <div class="sv-public-steps sv-public-steps-four">
+                            <article><span>1</span><h3>Přidejte vozidlo</h3><p>Zadejte VIN nebo SPZ a vytvořte digitální kartu vozidla.</p></article>
+                            <article><span>2</span><h3>Doplňte údaje a dokumenty</h3><p>Nahrajte technický průkaz, faktury, fotky a servisní dokumentaci.</p></article>
+                            <article><span>3</span><h3>Hlídejte termíny</h3><p>Aplikace vám pomůže pohlídat STK, pojištění, servis a další připomínky.</p></article>
+                            <article><span>4</span><h3>Sdílejte se servisem</h3><p>Servisu povolíte přístup jen k vybraným vozidlům a údajům.</p></article>
+                        </div>
+                        <div class="sv-public-how-note"><span>✓</span> Vy rozhodujete, kdo vidí jaká data.</div>
                     </section>
 
                     <section class="sv-public-security" aria-label="Důvěra a bezpečnost">
@@ -34035,7 +34129,7 @@
                         <article><span>✦</span><h3>Připraveno pro transparentní historii</h3><p>Kompletní a důvěryhodná historie zvyšuje hodnotu vozidla.</p></article>
                     </section>
 
-                    <section id="sv-public-pricing" class="sv-public-final-cta" aria-labelledby="publicFinalCtaTitle">
+                    <section class="sv-public-final-cta" aria-labelledby="publicFinalCtaTitle">
                         <div>
                             <h2 id="publicFinalCtaTitle">Začněte si budovat digitální historii vozidla ještě dnes</h2>
                             <p>Přidejte první vozidlo zdarma a mějte servis, dokumenty i termíny konečně na jednom místě.</p>
@@ -34047,7 +34141,7 @@
                     <footer class="sv-public-footer">
                         <strong><span class="sv-logo-mark" aria-hidden="true">▱</span> Správa vozidel</strong>
                         <span>Digitální správa vozidel pro majitele, firmy a autoservisy.</span>
-                        <nav aria-label="Footer odkazy"><a href="#sv-public-features">Funkce</a><a href="#sv-public-pricing">Ceník</a><a href="#sv-public-how">Jak to funguje</a><a href="#sv-public-owners">Pro majitele</a><a href="#sv-public-services">Pro servisy</a><a href="https://www.toozservis.cz/#kontakt" target="_blank" rel="noopener noreferrer">Kontakt</a></nav>
+                        <nav aria-label="Footer odkazy"><a href="#funkce">Funkce</a><a href="#cenik">Ceník</a><a href="#jak-to-funguje">Jak to funguje</a><a href="#pro-majitele">Pro majitele</a><a href="#pro-servisy">Pro servisy</a><a href="https://www.toozservis.cz/#kontakt" target="_blank" rel="noopener noreferrer">Kontakt</a></nav>
                         <small>© 2026 Správa vozidel. Všechna práva vyhrazena.</small>
                     </footer>
                 </main>
