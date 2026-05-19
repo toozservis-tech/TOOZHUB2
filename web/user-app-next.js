@@ -6,6 +6,8 @@
     renderToken: 0,
     lastVehicles: [],
     latestData: null,
+    vehiclesFilter: 'all',
+    vehiclesSort: 'activity',
   };
 
   const LOGO_SRC = '/web/assets/landing/sprava-vozidel-logo.jpeg';
@@ -71,18 +73,131 @@
     }
   }
 
-  function shouldActivate() {
-    const homeTab = document.getElementById('homeTab');
+  function getActiveView() {
+    if (!document.body.classList.contains('route-app-view') || !isAuthed() || isServiceMode()) {
+      return null;
+    }
     const appShell = document.getElementById('app-shell');
-    return Boolean(
-      document.body.classList.contains('route-app-view')
-      && appShell
-      && !appShell.hidden
-      && homeTab
-      && homeTab.classList.contains('active')
-      && !isServiceMode()
-      && isAuthed()
-    );
+    if (!appShell || appShell.hidden) return null;
+    const vehiclesTab = document.getElementById('vehiclesTab');
+    const homeTab = document.getElementById('homeTab');
+    if (vehiclesTab && vehiclesTab.classList.contains('active')) return 'vehicles';
+    if (homeTab && homeTab.classList.contains('active')) return 'home';
+    return null;
+  }
+
+  function shouldActivate() {
+    return getActiveView() !== null;
+  }
+
+  function getStoredViewMode() {
+    if (hasFn('getVehicleViewMode')) {
+      try {
+        const mode = window.getVehicleViewMode();
+        if (mode === 'grid' || mode === 'list' || mode === 'compact') return mode;
+      } catch (_) {}
+    }
+    return 'grid';
+  }
+
+  function stkCatalogLabel(vehicle) {
+    const meta = stkFieldMeta(vehicle);
+    const raw = getStkValue(vehicle);
+    const diff = daysUntil(raw);
+    if (diff != null && diff >= 0) {
+      if (diff === 0) return { label: 'dnes', tone: meta.tone };
+      if (diff === 1) return { label: 'do 1 dne', tone: meta.tone };
+      return { label: `do ${diff} dnů`, tone: meta.tone };
+    }
+    return { label: meta.label, tone: meta.tone };
+  }
+
+  function lastServiceLabel(records) {
+    const list = Array.isArray(records) ? records.slice() : [];
+    if (!list.length) return { label: 'Bez záznamu', tone: 'muted' };
+    list.sort((a, b) => (Date.parse(b?.performed_at || b?.created_at) || 0) - (Date.parse(a?.performed_at || a?.created_at) || 0));
+    const latest = list[0];
+    const status = String(latest?.record_status || '').toLowerCase();
+    if (status === 'in_progress' || status === 'draft') {
+      return { label: 'právě probíhá', tone: 'bad' };
+    }
+    const months = monthsSince(latest?.performed_at || latest?.created_at);
+    if (months == null) return { label: 'Záznam k dispozici', tone: 'ok' };
+    if (months <= 0) return { label: 'tento měsíc', tone: 'ok' };
+    if (months === 1) return { label: 'před 1 měsícem', tone: 'ok' };
+    return { label: `před ${months} měsíci`, tone: 'ok' };
+  }
+
+  function getCatalogVehicleStatus(vehicle, records) {
+    if (String(vehicle?.status || '').toLowerCase() === 'archived') {
+      return { key: 'archived', label: 'V archivu', tone: 'archived' };
+    }
+    const openService = (records || []).some((record) => {
+      const st = String(record?.record_status || '').toLowerCase();
+      return st === 'in_progress' || st === 'draft';
+    });
+    if (openService) {
+      return { key: 'service', label: 'V servisu', tone: 'service' };
+    }
+    const stk = stkFieldMeta(vehicle);
+    const ins = insuranceFieldMeta(vehicle);
+    if (stk.tone === 'bad' || ins.tone === 'bad' || stk.tone === 'warn' || ins.tone === 'warn') {
+      return { key: 'attention', label: 'Vyžaduje pozornost', tone: 'warn' };
+    }
+    return { key: 'ok', label: 'V pořádku', tone: 'ok' };
+  }
+
+  function catalogBadgeClass(tone) {
+    if (tone === 'warn') return 'uapp-next-badge uapp-next-badge--warn';
+    if (tone === 'service' || tone === 'bad') return 'uapp-next-badge uapp-next-badge--danger';
+    if (tone === 'archived') return 'uapp-next-badge uapp-next-badge--muted';
+    return 'uapp-next-badge uapp-next-badge--ok';
+  }
+
+  function getFilterCounts(data) {
+    const counts = { all: 0, ok: 0, attention: 0, service: 0, archived: 0 };
+    (data.vehicles || []).forEach((vehicle) => {
+      counts.all += 1;
+      const status = getCatalogVehicleStatus(vehicle, recordsFor(data, vehicle.id));
+      if (status.key === 'ok') counts.ok += 1;
+      else if (status.key === 'attention') counts.attention += 1;
+      else if (status.key === 'service') counts.service += 1;
+      else if (status.key === 'archived') counts.archived += 1;
+    });
+    return counts;
+  }
+
+  function filterCatalogVehicles(data, filter, query) {
+    const q = String(query || '').trim().toLowerCase();
+    let list = (data.vehicles || []).slice();
+    if (q) {
+      list = list.filter((vehicle) => {
+        const hay = [getVehicleName(vehicle), vehicle.plate, vehicle.vin, vehicle.brand, vehicle.model].filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    if (filter === 'all') return list;
+    return list.filter((vehicle) => getCatalogVehicleStatus(vehicle, recordsFor(data, vehicle.id)).key === filter);
+  }
+
+  function sortCatalogVehicles(list, data, sortKey) {
+    const copy = list.slice();
+    if (sortKey === 'name') {
+      copy.sort((a, b) => getVehicleName(a).localeCompare(getVehicleName(b), 'cs'));
+      return copy;
+    }
+    const rank = { service: 0, attention: 1, ok: 2, archived: 3 };
+    copy.sort((a, b) => {
+      const sa = getCatalogVehicleStatus(a, recordsFor(data, a.id)).key;
+      const sb = getCatalogVehicleStatus(b, recordsFor(data, b.id)).key;
+      const da = rank[sa] != null ? rank[sa] : 9;
+      const db = rank[sb] != null ? rank[sb] : 9;
+      if (da !== db) return da - db;
+      const ra = (recordsFor(data, a.id)[0]?.performed_at || recordsFor(data, a.id)[0]?.created_at || '');
+      const rb = (recordsFor(data, b.id)[0]?.performed_at || recordsFor(data, b.id)[0]?.created_at || '');
+      return (Date.parse(rb) || 0) - (Date.parse(ra) || 0);
+    });
+    return copy;
   }
 
   function fullName() {
@@ -458,8 +573,9 @@
     return `<button type="button" class="${active ? 'is-active' : ''}" data-uapp-action="${esc(action)}"><span class="uapp-next-nav-ico" aria-hidden="true">${iconSvg}</span><span class="uapp-next-nav-label">${esc(label)}</span>${badgeHtml}</button>`;
   }
 
-  function renderSidebar(data) {
+  function renderSidebar(data, activeNav) {
     const reminderBadge = activeRemindersCount(data);
+    const nav = activeNav || 'home';
     return `
       <aside class="uapp-next-sidebar" aria-label="Navigace uživatelského rozhraní">
         <div class="uapp-next-brand">
@@ -467,8 +583,8 @@
           <span>Správa vozidel</span>
         </div>
         <nav class="uapp-next-nav" aria-label="Sekce aplikace">
-          ${navButton('Přehled', ICO.home, 'home', true, 0)}
-          ${navButton('Moje vozidla', ICO.car, 'vehicles', false, 0)}
+          ${navButton('Přehled', ICO.home, 'home', nav === 'home', 0)}
+          ${navButton('Moje vozidla', ICO.car, 'vehicles', nav === 'vehicles', 0)}
           ${navButton('Servisní historie', ICO.wrench, 'serviceHistory', false, 0)}
           ${navButton('Připomínky', ICO.bell, 'reminders', false, reminderBadge)}
           ${navButton('Dokumenty', ICO.doc, 'documents', false, 0)}
@@ -793,14 +909,169 @@
     `;
   }
 
-  function renderShell(data) {
-    detachedPanels();
-    setActiveClass(true);
+  function renderGarageVehicleCard(vehicle, data, viewMode) {
+    const id = Number(vehicle.id);
+    const records = recordsFor(data, id);
+    const status = getCatalogVehicleStatus(vehicle, records);
+    const stk = stkCatalogLabel(vehicle);
+    const ins = insuranceFieldMeta(vehicle);
+    const svc = lastServiceLabel(records);
+    const km = vehicle.current_mileage_km != null && vehicle.current_mileage_km !== ''
+      ? `${Number(vehicle.current_mileage_km).toLocaleString('cs-CZ')} km`
+      : '—';
+    const searchText = [getVehicleName(vehicle), vehicle.plate, vehicle.vin, vehicle.brand, vehicle.model].filter(Boolean).join(' ').toLowerCase();
+
+    if (viewMode === 'list') {
+      return `
+        <article class="uapp-next-garage-card uapp-next-garage-card--list" data-uapp-vehicle-card data-search-text="${esc(searchText)}" data-vehicle-id="${id}">
+          <button type="button" class="uapp-next-garage-list-main" data-uapp-action="detail:${id}">
+            <span class="${catalogBadgeClass(status.tone)}">${esc(status.label)}</span>
+            <strong>${esc(getVehicleName(vehicle))}</strong>
+            <span class="uapp-next-plate-badge uapp-next-plate-badge--cz"><span class="uapp-next-plate-cz">CZ</span>${esc(vehicle.plate || '—')}</span>
+            <span class="uapp-next-garage-list-meta">${esc(stk.label)} · ${esc(svc.label)}</span>
+          </button>
+          <div class="uapp-next-garage-list-actions">
+            <button type="button" data-uapp-action="detail:${id}">Detail</button>
+            <button type="button" data-uapp-action="addRecord:${id}">Přidat záznam</button>
+            <button type="button" data-uapp-action="documentsVehicle:${id}">Dokumenty</button>
+            <button type="button" data-uapp-action="shareVehicle:${id}">Sdílet</button>
+          </div>
+        </article>`;
+    }
+
+    return `
+      <article class="uapp-next-garage-card" data-uapp-vehicle-card data-search-text="${esc(searchText)}" data-vehicle-id="${id}">
+        <div class="uapp-next-garage-photo">
+          <div class="uapp-next-photo" data-next-photo-wrap="${id}">
+            <img id="uappNextGaragePhoto-${id}" alt="Fotka vozidla ${esc(getVehicleName(vehicle))}" loading="lazy">
+            <div class="uapp-next-photo-fallback">Bez fotky</div>
+          </div>
+          <span class="${catalogBadgeClass(status.tone)}">${esc(status.label)}</span>
+        </div>
+        <div class="uapp-next-garage-body">
+          <h3 class="uapp-next-garage-title">${esc(getVehicleName(vehicle))}</h3>
+          <div class="uapp-next-garage-sub">
+            <span class="uapp-next-plate-badge uapp-next-plate-badge--cz"><span class="uapp-next-plate-cz">CZ</span>${esc(vehicle.plate || 'Nezadáno')}</span>
+            <span class="uapp-next-garage-vin">VIN ${esc(vehicle.vin || '—')}</span>
+          </div>
+          <div class="uapp-next-garage-km-row">
+            <span class="uapp-next-garage-km-ico" aria-hidden="true">◔</span>
+            <span>Nájezd</span>
+            <strong>${esc(km)}</strong>
+          </div>
+          <div class="uapp-next-garage-lines">
+            <div class="uapp-next-garage-line">
+              <span class="uapp-next-garage-line-ico" aria-hidden="true">${ICO.quickStk}</span>
+              <span>STK</span>
+              <strong class="uapp-next-status-val ${toneClass(stk.tone)}">${esc(stk.label)}</strong>
+            </div>
+            <div class="uapp-next-garage-line">
+              <span class="uapp-next-garage-line-ico" aria-hidden="true">${ICO.quickShield}</span>
+              <span>Pojištění</span>
+              <strong class="uapp-next-status-val ${toneClass(ins.tone)}">${esc(ins.label)}</strong>
+            </div>
+            <div class="uapp-next-garage-line">
+              <span class="uapp-next-garage-line-ico" aria-hidden="true">${ICO.wrench}</span>
+              <span>Poslední servis</span>
+              <strong class="uapp-next-status-val ${toneClass(svc.tone)}">${esc(svc.label)}</strong>
+            </div>
+          </div>
+          <div class="uapp-next-garage-actions">
+            <button type="button" data-uapp-action="detail:${id}">Detail</button>
+            <button type="button" data-uapp-action="addRecord:${id}">Přidat záznam</button>
+            <button type="button" data-uapp-action="documentsVehicle:${id}">Dokumenty</button>
+            <button type="button" data-uapp-action="shareVehicle:${id}">Sdílet se servisem</button>
+            <button type="button" class="uapp-next-garage-arrow" data-uapp-action="detail:${id}" aria-label="Otevřít detail">›</button>
+          </div>
+        </div>
+      </article>`;
+  }
+
+  function renderAddGarageCard() {
+    return `
+      <article class="uapp-next-garage-card uapp-next-garage-card--add">
+        <div class="uapp-next-garage-add-inner">
+          <div class="uapp-next-garage-add-ico" aria-hidden="true">${ICO.car}<span>+</span></div>
+          <h3 class="uapp-next-garage-add-title">Přidat nové vozidlo</h3>
+          <p class="uapp-next-garage-add-text">Přidejte vozidlo podle SPZ nebo VIN a mějte vše pohromadě.</p>
+          <button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="addVehicle">+ Přidat vozidlo</button>
+        </div>
+      </article>`;
+  }
+
+  function renderFilterPill(id, label, count, dotClass) {
+    const active = STATE.vehiclesFilter === id ? ' is-active' : '';
+    const dot = dotClass ? `<span class="uapp-next-filter-dot ${dotClass}" aria-hidden="true"></span>` : '';
+    return `<button type="button" class="uapp-next-filter-pill${active}" data-uapp-action="filter:${id}">${dot}${esc(label)} <span class="uapp-next-filter-count">${esc(String(count))}</span></button>`;
+  }
+
+  function renderVehiclesCatalog(data) {
+    const counts = getFilterCounts(data);
+    const total = counts.all;
+    const viewMode = getStoredViewMode();
+    const filtered = sortCatalogVehicles(filterCatalogVehicles(data, STATE.vehiclesFilter, ''), data, STATE.vehiclesSort);
+    const vehicleWord = total === 1 ? 'vozidlo' : (total > 1 && total < 5 ? 'vozidla' : 'vozidel');
+    const gridClass = viewMode === 'list' ? 'uapp-next-garage-grid uapp-next-garage-grid--list' : 'uapp-next-garage-grid';
+
+    const cards = filtered.length
+      ? filtered.map((vehicle) => renderGarageVehicleCard(vehicle, data, viewMode)).join('')
+      : `<div class="uapp-next-empty uapp-next-garage-empty">${STATE.vehiclesFilter === 'archived' ? 'Archivovaná vozidla nejsou v aktuálním seznamu API. Po archivaci vozidlo zmizí z běžného přehledu.' : 'Žádné vozidlo neodpovídá filtru nebo vyhledávání.'}</div>`;
+
+    return `
+      <section class="uapp-next-catalog" data-testid="user-app-next-vehicles">
+        <header class="uapp-next-catalog-head">
+          <div>
+            <h1 class="uapp-next-catalog-title">Moje vozidla</h1>
+            <p class="uapp-next-catalog-sub">Máte <strong>${esc(String(total))}</strong> ${vehicleWord} · <button type="button" class="uapp-next-link-btn" data-uapp-action="filter:archived">Zobrazit archivovaná</button></p>
+          </div>
+        </header>
+        <div class="uapp-next-catalog-toolbar">
+          <div class="uapp-next-filter-pills">
+            ${renderFilterPill('all', 'Všechna', counts.all, '')}
+            ${renderFilterPill('ok', 'V pořádku', counts.ok, 'is-green')}
+            ${renderFilterPill('attention', 'Vyžaduje pozornost', counts.attention, 'is-orange')}
+            ${renderFilterPill('service', 'V servisu', counts.service, 'is-red')}
+            ${renderFilterPill('archived', 'V archivu', counts.archived, 'is-gray')}
+          </div>
+          <div class="uapp-next-catalog-controls">
+            <label class="uapp-next-sort-label">
+              <span>Řadit podle:</span>
+              <select id="uappNextSortSelect" data-uapp-sort-select>
+                <option value="activity"${STATE.vehiclesSort === 'activity' ? ' selected' : ''}>Poslední aktivity</option>
+                <option value="name"${STATE.vehiclesSort === 'name' ? ' selected' : ''}>Název A–Z</option>
+              </select>
+            </label>
+            <div class="uapp-next-view-toggle" role="group" aria-label="Zobrazení vozidel">
+              <button type="button" class="${viewMode === 'grid' || viewMode === 'compact' ? 'is-active' : ''}" data-uapp-action="viewMode:grid" aria-label="Mřížka">▦</button>
+              <button type="button" class="${viewMode === 'list' ? 'is-active' : ''}" data-uapp-action="viewMode:list" aria-label="Seznam">☰</button>
+            </div>
+          </div>
+        </div>
+        <div class="${gridClass}">
+          ${cards}
+          ${viewMode !== 'list' ? renderAddGarageCard() : ''}
+        </div>
+        <div class="uapp-next-catalog-summary">
+          <div class="uapp-next-summary-stats">
+            <div class="uapp-next-summary-stat is-blue"><span aria-hidden="true">▣</span><div><strong>${esc(String(counts.all))}</strong><span>Celkem vozidel</span></div></div>
+            <div class="uapp-next-summary-stat is-orange"><span aria-hidden="true">◷</span><div><strong>${esc(String(counts.attention))}</strong><span>Vyžaduje pozornost</span></div></div>
+            <div class="uapp-next-summary-stat is-red"><span aria-hidden="true">${ICO.wrench.replace('class="uapp-next-svg"', 'class="uapp-next-svg uapp-next-summary-ico"')}</span><div><strong>${esc(String(counts.service))}</strong><span>V servisu</span></div></div>
+            <div class="uapp-next-summary-stat is-green"><span aria-hidden="true">✓</span><div><strong>${esc(String(counts.ok))}</strong><span>V pořádku</span></div></div>
+          </div>
+          <button type="button" class="uapp-next-summary-link-card" data-uapp-action="home">
+            <span>Zobrazit všechna vozidla v přehledu</span>
+            <span aria-hidden="true">›</span>
+          </button>
+        </div>
+      </section>`;
+  }
+
+  function renderHomeShell(data) {
     const homeTab = document.getElementById('homeTab');
     if (!homeTab) return;
     homeTab.innerHTML = `
       <div class="uapp-next-shell" data-testid="user-app-next-dashboard">
-        ${renderSidebar(data)}
+        ${renderSidebar(data, 'home')}
         <main class="uapp-next-main">
           <div class="uapp-next-canvas">
             ${renderTopbar()}
@@ -820,6 +1091,37 @@
     `;
     bindSearch();
     hydrateImages(data);
+  }
+
+  function renderVehiclesShell(data) {
+    const vehiclesTab = document.getElementById('vehiclesTab');
+    if (!vehiclesTab) return;
+    vehiclesTab.innerHTML = `
+      <div class="uapp-next-shell" data-testid="user-app-next-vehicles">
+        ${renderSidebar(data, 'vehicles')}
+        <main class="uapp-next-main">
+          <div class="uapp-next-canvas">
+            ${renderTopbar()}
+            ${renderVehiclesCatalog(data)}
+          </div>
+        </main>
+      </div>
+    `;
+    bindSearch();
+    hydrateGarageImages(data);
+    bindSortSelect();
+  }
+
+  function renderShell(data) {
+    detachedPanels();
+    setActiveClass(true);
+    document.body.classList.toggle('user-app-next-view-vehicles', getActiveView() === 'vehicles');
+    const view = getActiveView();
+    if (view === 'vehicles') {
+      renderVehiclesShell(data);
+    } else {
+      renderHomeShell(data);
+    }
   }
 
   async function hydrateImageForVehicle(vehicle, img, scope) {
@@ -859,6 +1161,41 @@
     }
     data.vehicles.slice(0, 3).forEach((vehicle) => {
       hydrateImageForVehicle(vehicle, document.getElementById(`uappNextVehiclePhoto-${Number(vehicle.id)}`), `uapp-next-card:${vehicle.id}`);
+    });
+  }
+
+  function hydrateGarageImages(data) {
+    (data.vehicles || []).forEach((vehicle) => {
+      const img = document.getElementById(`uappNextGaragePhoto-${Number(vehicle.id)}`);
+      if (img) {
+        hydrateImageForVehicle(vehicle, img, `uapp-next-garage:${vehicle.id}`);
+      }
+    });
+  }
+
+  function setStoredViewMode(mode) {
+    const next = mode === 'list' ? 'list' : 'grid';
+    if (typeof SpravaVozidelStorage !== 'undefined') {
+      SpravaVozidelStorage.setLocal('vehicleViewMode', next);
+    } else {
+      localStorage.setItem('sprava_vozidel_vehicle_view_mode', next);
+      localStorage.removeItem('toozhub_vehicle_view_mode');
+    }
+  }
+
+  function reRenderCatalog() {
+    if (STATE.latestData && getActiveView() === 'vehicles') {
+      renderShell(STATE.latestData);
+    }
+  }
+
+  function bindSortSelect() {
+    const select = document.getElementById('uappNextSortSelect');
+    if (!select || select.dataset.uappBound === '1') return;
+    select.dataset.uappBound = '1';
+    select.addEventListener('change', () => {
+      STATE.vehiclesSort = select.value === 'name' ? 'name' : 'activity';
+      reRenderCatalog();
     });
   }
 
@@ -931,20 +1268,36 @@
     if (name === 'addRecord' && id && hasFn('openAddServiceRecordModal')) return window.openAddServiceRecordModal(id);
     if (name === 'documentsVehicle' && id) return openVehicleSection(id, 'documents');
     if (name === 'shareVehicle' && id) return openVehicleSection(id, 'access');
+    if (name === 'filter') {
+      const key = String(rawId || 'all');
+      if (['all', 'ok', 'attention', 'service', 'archived'].includes(key)) {
+        STATE.vehiclesFilter = key;
+        reRenderCatalog();
+      }
+      return;
+    }
+    if (name === 'viewMode') {
+      setStoredViewMode(rawId === 'list' ? 'list' : 'grid');
+      reRenderCatalog();
+      return;
+    }
     console.warn('[USER_APP_NEXT] BLOCKER: handler not found for action', action);
   }
 
   async function render() {
     if (!shouldActivate()) {
       setActiveClass(false);
+      document.body.classList.remove('user-app-next-view-vehicles');
       return;
     }
     const token = ++STATE.renderToken;
     detachedPanels();
     setActiveClass(true);
-    const homeTab = document.getElementById('homeTab');
-    if (homeTab && !homeTab.querySelector('[data-testid="user-app-next-dashboard"]')) {
-      homeTab.innerHTML = '<div class="uapp-next-loading">Načítám přehled...</div>';
+    const view = getActiveView();
+    const tab = view === 'vehicles' ? document.getElementById('vehiclesTab') : document.getElementById('homeTab');
+    const testId = view === 'vehicles' ? 'user-app-next-vehicles' : 'user-app-next-dashboard';
+    if (tab && !tab.querySelector(`[data-testid="${testId}"]`)) {
+      tab.innerHTML = '<div class="uapp-next-loading">Načítám...</div>';
     }
     const data = await loadData();
     if (token !== STATE.renderToken || !shouldActivate()) return;
@@ -965,6 +1318,17 @@
           setActiveClass(false);
         }
         return result;
+      };
+    }
+
+    const originalLoadVehicles = window.loadVehicles;
+    if (typeof originalLoadVehicles === 'function') {
+      window.loadVehicles = async function () {
+        if (getActiveView() === 'vehicles') {
+          await render();
+          return;
+        }
+        return originalLoadVehicles.apply(this, arguments);
       };
     }
 
