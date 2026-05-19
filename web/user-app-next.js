@@ -565,10 +565,11 @@
     const cards = computeQuickCards(data);
     const icoMap = { stk: ICO.quickStk, ins: ICO.quickShield, svc: ICO.wrench, docs: ICO.doc };
     const labels = { stk: 'STK / SME', ins: 'Pojištění', svc: 'Servis', docs: 'Dokumenty' };
+    const accentClass = { stk: 'uapp-next-quick-card--warn', ins: 'uapp-next-quick-card--ok', svc: 'uapp-next-quick-card--info', docs: 'uapp-next-quick-card--warn' };
     return `<div class="uapp-next-quick-grid">${Object.keys(cards).map((key) => {
       const card = cards[key];
       return `
-        <button type="button" class="uapp-next-quick-card ${quickToneClass(card.tone)}" data-uapp-action="${esc(card.action)}">
+        <button type="button" class="uapp-next-quick-card ${accentClass[key] || quickToneClass(card.tone)}" data-uapp-action="${esc(card.action)}">
           <span class="uapp-next-quick-card-ico">${icoMap[key] || ICO.quickStk}</span>
           <span class="uapp-next-quick-card-body">
             <span class="uapp-next-quick-card-cat">${labels[key]}</span>
