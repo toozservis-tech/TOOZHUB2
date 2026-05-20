@@ -3299,6 +3299,42 @@
     return error?.message || fallback;
   }
 
+  async function serviceShellApiFormData(endpoint, formData) {
+    const baseUrl = typeof window.getApiBaseUrl === 'function'
+      ? window.getApiBaseUrl()
+      : window.location.origin;
+    const headers = { Accept: 'application/json' };
+    const token = window.accessToken || localStorage.getItem('accessToken') || localStorage.getItem('token');
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    } else if (window.currentUser?.email) {
+      headers['X-User-Email'] = window.currentUser.email;
+    }
+    const response = await fetch(`${baseUrl}${endpoint}`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: formData,
+    });
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (e) {
+      payload = null;
+    }
+    if (!response.ok) {
+      const err = new Error(
+        typeof payload?.detail === 'string'
+          ? payload.detail
+          : payload?.detail?.message || payload?.message || `HTTP ${response.status}`,
+      );
+      err.status = response.status;
+      err.data = payload;
+      throw err;
+    }
+    return payload;
+  }
+
   async function fetchWorkOrderItemsSummary(workOrderId) {
     const id = Number(workOrderId || 0);
     if (!id) throw new Error('Chybí ID zakázky.');
@@ -3345,6 +3381,7 @@
             <button type="button" class="btn btn-primary" onclick="window.serviceShell.openWorkOrderItemModal(${id}, 'labor')">Přidat práci</button>
             <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openWorkOrderItemModal(${id}, 'material')">Přidat materiál</button>
             <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openWorkOrderItemModal(${id}, 'other')">Přidat ostatní</button>
+            <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openWorkOrderCsvImportModal(${id})">Import CSV dílů</button>
           </div>
         </div>
         ${errorMessage ? `<div class="service-shell-inline-error">${escape(errorMessage)}</div>` : ''}
@@ -3515,6 +3552,183 @@
 
   async function submitWorkOrderItemModal() {
     if (String(state.modal?.key || '').startsWith('work-order-item-')) {
+      return runModalAction('save');
+    }
+  }
+
+  const csvImportFields = [
+    ['name', 'Název dílu *'],
+    ['code', 'Kód dílu'],
+    ['quantity', 'Množství *'],
+    ['unit', 'Jednotka'],
+    ['vat_rate', 'Sazba DPH'],
+    ['purchase_price_without_vat', 'Nákup bez DPH'],
+    ['sale_price_without_vat', 'Prodej bez DPH *'],
+    ['discount_percent', 'Sleva %'],
+    ['note', 'Poznámka'],
+  ];
+
+  function getCsvImportMappingFromDom(columns) {
+    const mapping = {};
+    csvImportFields.forEach(([field]) => {
+      const value = String(document.getElementById(`serviceShellCsvMap_${field}`)?.value || '').trim();
+      if (value && columns.includes(value)) mapping[field] = value;
+    });
+    return mapping;
+  }
+
+  function renderCsvImportPreview(preview, mapping) {
+    if (!preview) {
+      return '<div class="service-shell-empty">Nahrajte CSV soubor s hlavičkou. Náhled nic nezapisuje do zakázky.</div>';
+    }
+    const columns = Array.isArray(preview.columns) ? preview.columns : [];
+    const validation = preview.validation || {};
+    const rows = Array.isArray(validation.rows) ? validation.rows : [];
+    const sampleRows = Array.isArray(preview.sample_rows) ? preview.sample_rows : [];
+    const optionHtml = (selected) => `
+      <option value="">Nenamapovat</option>
+      ${columns.map((column) => `<option value="${escape(column)}" ${column === selected ? 'selected' : ''}>${escape(column)}</option>`).join('')}
+    `;
+    return `
+      <div class="service-shell-csv-summary">
+        <div><span>Oddělovač</span><strong>${escape(preview.delimiter === '\t' ? 'tabulátor' : preview.delimiter || '-')}</strong></div>
+        <div><span>Řádků</span><strong>${Number(validation.rows_count || 0)}</strong></div>
+        <div><span>K importu</span><strong>${Number(validation.importable_count || 0)}</strong></div>
+        <div><span>Přeskočeno</span><strong>${Number(validation.skipped_count || 0)}</strong></div>
+        <div><span>Duplicity</span><strong>${Number(validation.duplicate_count || 0)}</strong></div>
+      </div>
+      <div class="service-shell-csv-mapping">
+        ${csvImportFields.map(([field, label]) => `
+          <label>
+            <span>${escape(label)}</span>
+            <select id="serviceShellCsvMap_${field}">
+              ${optionHtml(mapping?.[field] || '')}
+            </select>
+          </label>
+        `).join('')}
+      </div>
+      ${sampleRows.length ? `
+        <div class="service-shell-table-wrap service-shell-csv-preview-wrap">
+          <table class="service-shell-data-table service-shell-csv-preview-table">
+            <thead><tr>${columns.map((column) => `<th>${escape(column)}</th>`).join('')}</tr></thead>
+            <tbody>
+              ${sampleRows.map((row) => `<tr>${columns.map((column) => `<td>${escape(row?.[column] || '')}</td>`).join('')}</tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
+      ${rows.some((row) => row.errors?.length || row.warnings?.length) ? `
+        <div class="service-shell-csv-errors">
+          ${rows.filter((row) => row.errors?.length || row.warnings?.length).slice(0, 8).map((row) => `
+            <div>
+              <strong>Řádek ${Number(row.row_number || 0)}</strong>
+              <span>${escape([...(row.errors || []), ...(row.warnings || [])].join(' '))}</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+    `;
+  }
+
+  async function previewWorkOrderCsvImport(workOrderId) {
+    const id = Number(workOrderId || 0);
+    if (!id || !isModalOpen(`work-order-csv-import-${id}`)) return;
+    const input = document.getElementById('serviceShellCsvFile');
+    const file = input?.files?.[0] || state.modal?.context?.csvFile || null;
+    if (!file) {
+      showToast('Vyberte CSV soubor.', 'warning');
+      return;
+    }
+    const formData = new FormData();
+    formData.append('file', file);
+    const currentColumns = Array.isArray(state.modal?.data?.preview?.columns) ? state.modal.data.preview.columns : [];
+    if (currentColumns.length) {
+      formData.append('mapping_json', JSON.stringify(getCsvImportMappingFromDom(currentColumns)));
+    }
+    setModalState({ saving: true, error: '', actionKey: 'preview' });
+    try {
+      const preview = await serviceShellApiFormData(`/api/v1/services/workspace/work-orders/${id}/csv/preview`, formData);
+      const detected = preview?.mapping && typeof preview.mapping === 'object'
+        ? preview.mapping
+        : preview?.detected_mapping && typeof preview.detected_mapping === 'object'
+          ? preview.detected_mapping
+        : {};
+      state.modal.data = { ...(state.modal.data || {}), preview };
+      state.modal.context = { ...(state.modal.context || {}), csvFile: file, mapping: detected };
+      setModalState({ saving: false, actionKey: '' });
+    } catch (error) {
+      showToast(serviceShellApiErrorMessage(error, 'CSV náhled se nepodařilo načíst.'), 'error');
+      setModalState({ saving: false, actionKey: '', error: serviceShellApiErrorMessage(error, 'CSV náhled se nepodařilo načíst.') });
+    }
+  }
+
+  function openWorkOrderCsvImportModal(workOrderId) {
+    const id = Number(workOrderId || 0);
+    if (!id || !hasFloatingModalSupport()) return;
+    openModal({
+      key: `work-order-csv-import-${id}`,
+      entityType: 'work_order_csv_import',
+      kicker: `Zakázka #${id}`,
+      title: 'Import CSV dílů',
+      description: 'Preview je bezpečné a nic nezapisuje. Položky vzniknou až po potvrzení importu.',
+      context: { workOrderId: id, csvFile: null, mapping: {} },
+      actions: {
+        save: async (modal) => {
+          const preview = modal?.data?.preview || null;
+          const file = modal?.context?.csvFile || document.getElementById('serviceShellCsvFile')?.files?.[0] || null;
+          if (!preview || !file) throw new Error('Nejdřív nahrajte CSV a zkontrolujte náhled.');
+          const columns = Array.isArray(preview.columns) ? preview.columns : [];
+          const mapping = getCsvImportMappingFromDom(columns);
+          ['name', 'quantity', 'sale_price_without_vat'].forEach((field) => {
+            if (!mapping[field]) throw new Error('Namapujte název dílu, množství a prodej bez DPH.');
+          });
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('mapping_json', JSON.stringify(mapping));
+          formData.append('skip_duplicates', document.getElementById('serviceShellCsvSkipDuplicates')?.checked ? 'true' : 'false');
+          const result = await serviceShellApiFormData(`/api/v1/services/workspace/work-orders/${id}/csv/import`, formData);
+          await fetchWorkOrderItemsSummary(id);
+          window.setTimeout(() => openWorkOrderDetailModal(id), 50);
+          const imported = Number(result?.import_result?.imported_count || 0);
+          const skipped = Number(result?.import_result?.skipped_count || 0);
+          return {
+            close: true,
+            message: `CSV import hotový: importováno ${imported}, přeskočeno ${skipped}.`,
+          };
+        },
+      },
+      renderContent: (modal) => {
+        const preview = modal?.data?.preview || null;
+        const mapping = modal?.context?.mapping || preview?.detected_mapping || {};
+        return `
+          <form class="service-dashboard-modal-form" onsubmit="event.preventDefault(); window.serviceShell.submitWorkOrderCsvImportModal();">
+            <div class="form-group">
+              <label for="serviceShellCsvFile">CSV soubor</label>
+              <input type="file" id="serviceShellCsvFile" accept=".csv,text/csv" onchange="window.serviceShell.previewWorkOrderCsvImport(${id})">
+            </div>
+            <div class="service-shell-inline-alert">
+              <span>Povinné minimum: název dílu, množství a prodej bez DPH. Výchozí hodnoty: jednotka ks, DPH 21 %, sleva 0 %.</span>
+            </div>
+            ${renderCsvImportPreview(preview, mapping)}
+            <label class="service-shell-checkbox-row">
+              <input type="checkbox" id="serviceShellCsvSkipDuplicates" checked>
+              <span>Přeskočit možné duplicity z předchozího CSV importu</span>
+            </label>
+          </form>
+        `;
+      },
+      renderFooter: (modal) => `
+        <div class="service-shell-modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openWorkOrderDetailModal(${id})">Zpět na zakázku</button>
+          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.previewWorkOrderCsvImport(${id})">${modal.saving && modal.actionKey === 'preview' ? 'Načítám…' : 'Načíst náhled'}</button>
+          <button type="button" class="btn btn-primary" onclick="window.serviceShell.submitWorkOrderCsvImportModal()">${modal.saving && modal.actionKey === 'save' ? 'Importuji…' : 'Potvrdit import'}</button>
+        </div>
+      `,
+    });
+  }
+
+  async function submitWorkOrderCsvImportModal() {
+    if (String(state.modal?.key || '').startsWith('work-order-csv-import-')) {
       return runModalAction('save');
     }
   }
@@ -7755,6 +7969,9 @@
     submitWorkOrderDetailUpdate,
     openWorkOrderItemModal,
     submitWorkOrderItemModal,
+    openWorkOrderCsvImportModal,
+    previewWorkOrderCsvImport,
+    submitWorkOrderCsvImportModal,
     removeWorkOrderItem,
     createWorkOrderFromIntake,
     openAddVehicleModal,

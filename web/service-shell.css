@@ -1354,6 +1354,83 @@ body.service-shell-theme-light .service-shell-modal-header {
   background: rgba(75, 130, 255, 0.1) !important;
 }
 
+.service-shell-csv-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.service-shell-csv-summary > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--service-border);
+  border-radius: var(--service-radius-sm);
+  background: var(--service-panel-soft);
+}
+
+.service-shell-csv-summary span,
+.service-shell-csv-mapping label span {
+  color: var(--service-text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.service-shell-csv-summary strong {
+  color: var(--service-text);
+  font-size: 1rem;
+}
+
+.service-shell-csv-mapping {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.service-shell-csv-mapping label {
+  display: grid;
+  gap: 6px;
+}
+
+.service-shell-csv-preview-wrap {
+  margin: 0;
+  overflow-x: auto;
+}
+
+.service-shell-csv-preview-table {
+  min-width: 680px;
+}
+
+.service-shell-csv-errors {
+  display: grid;
+  gap: 8px;
+}
+
+.service-shell-csv-errors > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--service-radius-sm);
+  background: rgba(245, 158, 11, 0.09);
+}
+
+.service-shell-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 0;
+  color: var(--service-text);
+  font-weight: 700;
+}
+
+.service-shell-checkbox-row input {
+  width: 18px;
+  height: 18px;
+}
+
 @keyframes serviceShellModalSpin {
   to {
     transform: rotate(360deg);
@@ -2167,6 +2244,11 @@ body.service-shell-theme-light .service-shell-inline-error {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .service-shell-csv-summary,
+  .service-shell-csv-mapping {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .service-shell-work-order-summary-total {
     grid-column: 1 / -1;
   }
@@ -2224,6 +2306,11 @@ body.service-shell-theme-light .service-shell-inline-error {
   }
 
   .service-shell-work-order-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .service-shell-csv-summary,
+  .service-shell-csv-mapping {
     grid-template-columns: 1fr;
   }
 }

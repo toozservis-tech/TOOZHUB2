@@ -70,6 +70,46 @@ Pokryte UI scenare:
 - existujici create/update flow zakazky zustal funkcni
 - test bezi proti staging URL, ne proti portu produkce
 
+## Dodatek 2026-05-20: CSV import dilu
+
+Testovaci prikazy:
+
+```bash
+python3 -m py_compile src/modules/vehicle_hub/routers_v1/service_workspace_work_orders.py src/modules/vehicle_hub/models.py src/modules/vehicle_hub/schema_management.py alembic/versions/20260520_0042_service_work_order_csv_imports.py
+alembic upgrade head
+alembic current
+python3 -m pytest tests/api/test_service_work_order_items.py
+node --check web/service-shell.js
+BASE_URL=http://127.0.0.1:8010 npx playwright test service-shell-work-order-flow.spec.ts --config=playwright.config.ts --workers=1 --retries=0 --reporter=line
+```
+
+Vysledky:
+
+- `py_compile`: PASS
+- `alembic upgrade head`: PASS, staging DB upgraded to `20260520_0042`
+- `alembic current`: PASS, `20260520_0042 (head)`
+- `tests/api/test_service_work_order_items.py`: PASS, 14 passed
+- `node --check web/service-shell.js`: PASS
+- `service-shell-work-order-flow.spec.ts`: PASS, 1 passed proti staging portu `8010`
+
+Pokryte CSV scenare:
+
+- CSV preview nic nezapise do DB
+- CSV preview detekuje strednik
+- CSV preview detekuje carku
+- CSV import vlozi validni material polozku
+- CSV import preskoci nevalidni radky a vrati cisla radku
+- CSV import preskoci duplicity pri `skip_duplicates=true`
+- CSV import vrati aktualizovane server-side summary
+- cizi servis dostane 403
+- vznikne zaznam `service_work_order_csv_imports`
+- vznikne global audit log CSV importu
+- v detailu zakazky je tlacitko `Import CSV dilu`
+- upload CSV zobrazi preview
+- mapovani sloupcu funguje
+- potvrzeni importu vola import endpoint
+- po importu se obnovi summary v UI
+
 ## Pokryte scenare
 
 - vytvoreni work order z `ServiceIntake`

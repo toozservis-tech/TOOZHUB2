@@ -71,6 +71,7 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
     purchase_price_without_vat: number | null;
     sale_price_without_vat: number;
     discount_percent: number;
+    note?: string | null;
     source: string;
     deleted_at: string | null;
     created_at: string;
@@ -809,6 +810,96 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
       item.deleted_at = '2026-04-13T12:45:00Z';
       item.updated_at = item.deleted_at;
       return json(route, 200, { ok: true, summary: buildWorkOrderItemsSummary(workOrderId) });
+    }
+    if (/^\/api\/v1\/services\/workspace\/work-orders\/\d+\/csv\/preview$/.test(path) && method === 'POST') {
+      const workOrderId = Number(path.split('/').slice(-3, -2)[0]);
+      const exists = workOrders.some((entry) => entry.id === workOrderId);
+      if (!exists) return json(route, 404, { detail: 'Not Found' });
+      return json(route, 200, {
+        filename: 'parts.csv',
+        file_sha256: 'mock-sha256',
+        delimiter: ';',
+        columns: ['name', 'code', 'quantity', 'unit', 'vat_rate', 'sale_price_without_vat'],
+        sample_rows: [{
+          name: 'Kabínový filtr',
+          code: 'KF1',
+          quantity: '2',
+          unit: 'ks',
+          vat_rate: '21',
+          sale_price_without_vat: '250',
+        }],
+        detected_mapping: {
+          name: 'name',
+          code: 'code',
+          quantity: 'quantity',
+          unit: 'unit',
+          vat_rate: 'vat_rate',
+          sale_price_without_vat: 'sale_price_without_vat',
+        },
+        validation: {
+          rows_count: 1,
+          importable_count: 1,
+          skipped_count: 0,
+          duplicate_count: 0,
+          errors_count: 0,
+          rows: [{
+            row_number: 2,
+            values: {
+              name: 'Kabínový filtr',
+              code: 'KF1',
+              quantity: 2,
+              unit: 'ks',
+              vat_rate: 21,
+              sale_price_without_vat: 250,
+              discount_percent: 0,
+            },
+            errors: [],
+            warnings: [],
+            duplicate: false,
+            importable: true,
+          }],
+          mapping_errors: [],
+        },
+      });
+    }
+    if (/^\/api\/v1\/services\/workspace\/work-orders\/\d+\/csv\/import$/.test(path) && method === 'POST') {
+      const workOrderId = Number(path.split('/').slice(-3, -2)[0]);
+      const exists = workOrders.some((entry) => entry.id === workOrderId);
+      if (!exists) return json(route, 404, { detail: 'Not Found' });
+      if (!workOrderItems[workOrderId]) workOrderItems[workOrderId] = [];
+      const item = {
+        id: nextWorkOrderItemId++,
+        work_order_id: workOrderId,
+        type: 'material' as const,
+        name: 'Kabínový filtr',
+        code: 'KF1',
+        quantity: 2,
+        unit: 'ks',
+        vat_rate: 21,
+        purchase_price_without_vat: null,
+        sale_price_without_vat: 250,
+        discount_percent: 0,
+        note: null,
+        source: 'csv',
+        deleted_at: null,
+        created_at: '2026-04-13T13:00:00Z',
+        updated_at: '2026-04-13T13:00:00Z',
+      };
+      workOrderItems[workOrderId].push(item);
+      return json(route, 200, {
+        import_result: {
+          id: 33,
+          filename: 'parts.csv',
+          delimiter: ';',
+          rows_count: 1,
+          imported_count: 1,
+          skipped_count: 0,
+          duplicate_count: 0,
+          error_rows: [],
+          created_items: [{ ...item, ...itemTotals(item) }],
+        },
+        summary: buildWorkOrderItemsSummary(workOrderId),
+      });
     }
     if (/^\/api\/v1\/services\/workspace\/vehicle-intakes\/\d+\/create-work-order$/.test(path) && method === 'POST') {
       const intakeId = Number(path.split('/').slice(-2, -1)[0]);

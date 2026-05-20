@@ -80,6 +80,27 @@ test.describe('Service shell work order flow', () => {
     await page.getByRole('button', { name: 'Zpět na zakázku' }).click();
     await expect(page.locator('.service-shell-modal-title')).toContainText('Detail zakázky');
 
+    await page.getByRole('button', { name: 'Import CSV dílů' }).click();
+    await expect(page.locator('.service-shell-modal-title')).toContainText('Import CSV dílů');
+    await page.setInputFiles('#serviceShellCsvFile', {
+      name: 'parts.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from('name;code;quantity;unit;vat_rate;sale_price_without_vat\nKabínový filtr;KF1;2;ks;21;250\n', 'utf-8'),
+    });
+    await expect(page.locator('.service-shell-modal')).toContainText('Kabínový filtr');
+    await page.selectOption('#serviceShellCsvMap_name', 'name');
+    await page.selectOption('#serviceShellCsvMap_quantity', 'quantity');
+    await page.selectOption('#serviceShellCsvMap_sale_price_without_vat', 'sale_price_without_vat');
+    const importResponse = page.waitForResponse((response) => (
+      response.url().includes('/api/v1/services/workspace/work-orders/777/csv/import')
+      && response.request().method() === 'POST'
+    ));
+    await page.getByRole('button', { name: 'Potvrdit import' }).click();
+    await importResponse;
+    await expect(page.locator('.service-shell-modal-title')).toContainText('Detail zakázky');
+    await expect(page.locator('.service-shell-modal')).toContainText('Kabínový filtr');
+    await expect(page.locator('.service-shell-modal')).toContainText('605 Kč');
+
     await page.selectOption('#serviceShellDetailStatus', 'approved');
     await page.fill('#serviceShellDetailDescription', 'Aktualizovaná zakázka');
     await page.evaluate(() => (window as any).serviceShell.submitWorkOrderDetailUpdate(777));

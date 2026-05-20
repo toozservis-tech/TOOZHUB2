@@ -41,6 +41,50 @@ Zmenene soubory v UI rezu:
 
 Backend, DB a migrace nebyly v tomto navazujicim UI rezu meneny.
 
+## Dodatek 2026-05-20: CSV import dilu do zakazky
+
+Navazujici staging-only rez doplnil CSV import dilu primo do existujicich polozek zakazky. Nevznikl novy modul zakazek ani druhy system polozek.
+
+Upraveno:
+
+- `service_work_order_items.source` podporuje hodnotu `csv`
+- `service_work_order_items.note` je nove nullable pole pro poznamku z CSV
+- nova auditni tabulka `service_work_order_csv_imports`
+- preview endpoint detekuje oddelovac `;`, `,`, tabulator
+- preview vraci sloupce, prvni radky, navrzene mapovani a validaci bez zapisu do DB
+- import endpoint prijima CSV + mapovani + `skip_duplicates`
+- validni radky se vkladaji jako `material` polozky do `service_work_order_items`
+- nevalidni radky se preskakuji a vraci konkretni chyby s cislem radku
+- duplicity ze starsich CSV importu se detekuji podle `work_order_id + code + name + quantity + sale_price_without_vat`
+- import zapisuje `service_work_order_csv_imports` a global audit log
+- service shell dostal tlacitko `Import CSV dilu`, preview modal, mapovani sloupcu a potvrzeni importu
+- po importu se znovu nacita server-side summary
+
+Zmenene soubory v CSV rezu:
+
+- `src/modules/vehicle_hub/models.py`
+- `src/modules/vehicle_hub/schema_management.py`
+- `src/modules/vehicle_hub/routers_v1/service_workspace_work_orders.py`
+- `alembic/versions/20260520_0042_service_work_order_csv_imports.py`
+- `web/service-shell.js`
+- `web/service-shell.css`
+- `tests/api/test_service_work_order_items.py`
+- `tests/e2e/service-shell-fallback.helpers.ts`
+- `tests/e2e/service-shell-work-order-flow.spec.ts`
+- `SERVICE_OFFICE_IMPLEMENTATION_REPORT.md`
+- `SERVICE_OFFICE_TEST_REPORT.md`
+
+Nove endpointy:
+
+- `POST /api/v1/services/workspace/work-orders/{id}/csv/preview`
+- `POST /api/v1/services/workspace/work-orders/{id}/csv/import`
+
+Nova migrace:
+
+- `20260520_0042_service_work_order_csv_imports`
+
+Poznamka k uploadu: staging runtime nema `python-multipart`, proto endpointy zpracovavaji multipart telo uzce lokalnim parserem pouze pro tento CSV import. Nevznikl obecny file manager.
+
 ## Staging potvrzeni
 
 - pracovni cesta: `/opt/toozhub2-staging/app`
@@ -105,6 +149,8 @@ Vsechny pod `/api/v1/services/workspace`:
 - `DELETE /work-orders/{id}/items/{item_id}`
 - `GET /work-orders/{id}/summary`
 - `POST /vehicle-intakes/{id}/create-work-order`
+- `POST /work-orders/{id}/csv/preview`
+- `POST /work-orders/{id}/csv/import`
 
 ## Upravené endpointy
 
@@ -119,6 +165,7 @@ Backendovy rez z 2026-05-19 runtime UI nemenil. Navazujici UI rez z 2026-05-20 d
 - modal pro pridani/upravu polozky
 - akce `Upravit` a `Odebrat`
 - server-side souhrn cen v detailu zakazky
+- modal `Import CSV dilu` s uploadem, nahledem, mapovanim sloupcu, validaci a potvrzenim importu
 
 ## Pouzite existujici funkce
 
@@ -150,10 +197,11 @@ Backendovy rez z 2026-05-19 runtime UI nemenil. Navazujici UI rez z 2026-05-20 d
 - Stavovy workflow zakazek zustava v existujicim rozsahu `awaiting_client_approval/approved/in_progress/completed/issue`.
 - `mechanic_id` je pripraveny nullable field, ale plne napojeni na service employees/payroll prijde v dalsim rezu.
 - Tlacitko `Vytvorit zakazku` z prijmu je pripraveno jako helper `createWorkOrderFromIntake(intakeId)`, ale nebylo vlozeno do konkretniho intake detailu, protoze v aktualnim service shellu nebyl nalezen samostatny existujici detail prijmu vozidla.
-- CSV import, fakturace ze zakazky a uzavreni do VIN historie nejsou soucasti tohoto rezu.
+- U CSV importu se zatim neukladaji opakovane mapovaci sablony; to je vedomy limit podle zadani.
+- Fakturace ze zakazky a uzavreni do VIN historie nejsou soucasti tohoto rezu.
 
 ## Dalsi doporuceny krok
 
 1. Doplnit viditelne intake detail UI, pokud bude v service shellu potvrzene jeho misto.
-2. Navazat CSV preview/import jako zdroj `material` polozek.
+2. Doplnit ulozene mapovaci sablony CSV, pokud se ukaze opakovany format dodavatelu.
 3. Potom pripravit fakturaci ze zakazky.

@@ -951,6 +951,7 @@ class ServiceWorkOrderItem(Base):
     purchase_price_without_vat = Column(Float, nullable=True)
     sale_price_without_vat = Column(Float, nullable=False, default=0)
     discount_percent = Column(Float, nullable=False, default=0)
+    note = Column(Text, nullable=True)
     mechanic_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     source = Column(String(32), nullable=False, default="manual", index=True)
     created_by = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
@@ -959,6 +960,29 @@ class ServiceWorkOrderItem(Base):
     deleted_by = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class ServiceWorkOrderCsvImport(Base):
+    """Auditní hlavička CSV importu dílů do servisní zakázky."""
+    __tablename__ = "service_work_order_csv_imports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    service_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    work_order_id = Column(Integer, ForeignKey("service_work_orders.id"), nullable=False, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)
+
+    filename = Column(String(255), nullable=True)
+    delimiter = Column(String(8), nullable=False)
+    rows_count = Column(Integer, nullable=False, default=0)
+    imported_count = Column(Integer, nullable=False, default=0)
+    skipped_count = Column(Integer, nullable=False, default=0)
+    duplicate_count = Column(Integer, nullable=False, default=0)
+    error_rows_json = Column(Text, nullable=True)
+    mapping_json = Column(Text, nullable=True)
+    file_sha256 = Column(String(64), nullable=False, index=True)
+    created_by = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 class ServiceQuote(Base):

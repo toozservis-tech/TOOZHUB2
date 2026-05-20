@@ -1,6 +1,7 @@
 """Targeted tests for service work-order items and intake -> work-order conversion."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from src.modules.vehicle_hub.models import (
     ServiceCustomerLink,
     ServiceIntake,
     ServiceWorkOrder,
+    ServiceWorkOrderCsvImport,
     ServiceWorkOrderItem,
     Tenant,
     Vehicle,
@@ -291,4 +293,151 @@ def test_non_service_user_gets_403(work_order_items_ctx):
     work_order_id = _create_order(ctx)
     ctx["set_user"](ctx["owner"])
     r = ctx["client"].get(f"/api/v1/services/workspace/work-orders/{work_order_id}/summary")
+    assert r.status_code == 403
+
+
+def test_csv_preview_detects_semicolon_and_does_not_write_items(work_order_items_ctx):
+    ctx = work_order_items_ctx
+    work_order_id = _create_order(ctx)
+    ctx["set_user"](ctx["service_a"])
+    csv_body = "název dílu;kód dílu;množství;prodej bez dph\nOlejový filtr;OF123;2;150\n"
+
+    r = ctx["client"].post(
+        f"/api/v1/services/workspace/work-orders/{work_order_id}/csv/preview",
+        files={"file": ("parts.csv", csv_body.encode("utf-8"), "text/csv")},
+    )
+
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    assert payload["delimiter"] == ";"
+    assert payload["detected_mapping"]["name"] == "název dílu"
+    assert payload["validation"]["importable_count"] == 1
+    assert ctx["db"].query(ServiceWorkOrderItem).filter(ServiceWorkOrderItem.work_order_id == work_order_id).count() == 0
+
+
+def test_csv_preview_detects_comma(work_order_items_ctx):
+    ctx = work_order_items_ctx
+    work_order_id = _create_order(ctx)
+    ctx["set_user"](ctx["service_a"])
+    csv_body = "name,code,quantity,sale_price_without_vat\nBrzdové destičky,BD1,1,900\n"
+
+    r = ctx["client"].post(
+        f"/api/v1/services/workspace/work-orders/{work_order_id}/csv/preview",
+        files={"file": ("parts.csv", csv_body.encode("utf-8"), "text/csv")},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["delimiter"] == ","
+
+
+def test_csv_import_inserts_valid_material_items_and_returns_summary(work_order_items_ctx):
+    ctx = work_order_items_ctx
+    work_order_id = _create_order(ctx)
+    ctx["set_user"](ctx["service_a"])
+    csv_body = "name;code;quantity;unit;vat_rate;purchase_price_without_vat;sale_price_without_vat;discount_percent;note\nOlej;OL1;2;ks;21;80;120;0;Poznámka\n"
+    mapping = {
+        "name": "name",
+        "code": "code",
+        "quantity": "quantity",
+        "unit": "unit",
+        "vat_rate": "vat_rate",
+        "purchase_price_without_vat": "purchase_price_without_vat",
+        "sale_price_without_vat": "sale_price_without_vat",
+        "discount_percent": "discount_percent",
+        "note": "note",
+    }
+
+    r = ctx["client"].post(
+        f"/api/v1/services/workspace/work-orders/{work_order_id}/csv/import",
+        files={"file": ("parts.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={"mapping_json": json.dumps(mapping), "skip_duplicates": "true"},
+    )
+
+    assert r.status_code == 200, r.text
+    result = r.json()["import_result"]
+    assert result["imported_count"] == 1
+    assert result["skipped_count"] == 0
+    assert r.json()["summary"]["groups"]["material"]["total_without_vat"] == 240
+    item = ctx["db"].query(ServiceWorkOrderItem).filter(ServiceWorkOrderItem.work_order_id == work_order_id).first()
+    assert item is not None
+    assert item.item_type == "material"
+    assert item.source == "csv"
+    assert item.note == "Poznámka"
+
+
+def test_csv_import_skips_invalid_rows(work_order_items_ctx):
+    ctx = work_order_items_ctx
+    work_order_id = _create_order(ctx)
+    ctx["set_user"](ctx["service_a"])
+    csv_body = "name;quantity;sale_price_without_vat;vat_rate\nValidní díl;1;100;21\nVadný díl;-2;50;21\nŠpatné DPH;1;30;15\n"
+    mapping = {"name": "name", "quantity": "quantity", "sale_price_without_vat": "sale_price_without_vat", "vat_rate": "vat_rate"}
+
+    r = ctx["client"].post(
+        f"/api/v1/services/workspace/work-orders/{work_order_id}/csv/import",
+        files={"file": ("parts.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={"mapping_json": json.dumps(mapping), "skip_duplicates": "true"},
+    )
+
+    assert r.status_code == 200, r.text
+    result = r.json()["import_result"]
+    assert result["imported_count"] == 1
+    assert result["skipped_count"] == 2
+    assert len(result["error_rows"]) == 2
+    assert {row["row_number"] for row in result["error_rows"]} == {3, 4}
+
+
+def test_csv_import_skips_duplicates_and_writes_import_audit(work_order_items_ctx):
+    ctx = work_order_items_ctx
+    work_order_id = _create_order(ctx)
+    ctx["set_user"](ctx["service_a"])
+    mapping = {"name": "name", "code": "code", "quantity": "quantity", "sale_price_without_vat": "sale_price_without_vat"}
+    csv_body = "name;code;quantity;sale_price_without_vat\nDuplicitní díl;DUP;1;100\n"
+
+    first = ctx["client"].post(
+        f"/api/v1/services/workspace/work-orders/{work_order_id}/csv/import",
+        files={"file": ("parts.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={"mapping_json": json.dumps(mapping), "skip_duplicates": "true"},
+    )
+    assert first.status_code == 200, first.text
+    second = ctx["client"].post(
+        f"/api/v1/services/workspace/work-orders/{work_order_id}/csv/import",
+        files={"file": ("parts.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={"mapping_json": json.dumps(mapping), "skip_duplicates": "true"},
+    )
+
+    assert second.status_code == 200, second.text
+    result = second.json()["import_result"]
+    assert result["imported_count"] == 0
+    assert result["duplicate_count"] == 1
+    assert result["skipped_count"] == 1
+    assert ctx["db"].query(ServiceWorkOrderItem).filter(ServiceWorkOrderItem.work_order_id == work_order_id, ServiceWorkOrderItem.source == "csv").count() == 1
+    import_record = ctx["db"].query(ServiceWorkOrderCsvImport).filter(ServiceWorkOrderCsvImport.work_order_id == work_order_id).order_by(ServiceWorkOrderCsvImport.id.desc()).first()
+    assert import_record is not None
+    assert import_record.duplicate_count == 1
+    audit = (
+        ctx["db"]
+        .query(GlobalAuditLog)
+        .filter(
+            GlobalAuditLog.entity_type == "service_work_order_csv_import",
+            GlobalAuditLog.entity_id == import_record.id,
+            GlobalAuditLog.action == "SERVICE_WORK_ORDER_CSV_IMPORTED",
+        )
+        .first()
+    )
+    assert audit is not None
+
+
+def test_csv_import_foreign_service_gets_403(work_order_items_ctx):
+    ctx = work_order_items_ctx
+    work_order_id = _create_order(ctx)
+    ctx["set_user"](ctx["service_b"])
+    csv_body = "name;quantity;sale_price_without_vat\nCizí díl;1;100\n"
+    mapping = {"name": "name", "quantity": "quantity", "sale_price_without_vat": "sale_price_without_vat"}
+
+    r = ctx["client"].post(
+        f"/api/v1/services/workspace/work-orders/{work_order_id}/csv/import",
+        files={"file": ("parts.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={"mapping_json": json.dumps(mapping), "skip_duplicates": "true"},
+    )
+
     assert r.status_code == 403
