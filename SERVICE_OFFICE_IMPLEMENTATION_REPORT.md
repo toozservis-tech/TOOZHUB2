@@ -85,6 +85,33 @@ Nova migrace:
 
 Poznamka k uploadu: staging runtime nema `python-multipart`, proto endpointy zpracovavaji multipart telo uzce lokalnim parserem pouze pro tento CSV import. Nevznikl obecny file manager.
 
+## Dodatek 2026-05-20: Viditelne vytvoreni zakazky z prijmu
+
+Navazujici staging-only rez doplnil viditelne UI napojeni hotoveho endpointu `create-work-order` do existujiciho service shellu. Nevznikl novy modul prijmu vozidla.
+
+Upraveno:
+
+- service shell nacita existujici `GET /api/v1/services/workspace/service-cases/`
+- v sekci `Prichozi rezervace` vznikl samostatny panel `Prijmy vozidel`
+- prijem bez navazane zakazky zobrazuje tlacitko `Vytvorit zakazku`
+- prijem s navazanou zakazkou zobrazuje `Otevrit zakazku`
+- klik vola existujici helper `createWorkOrderFromIntake(intakeId)`
+- helper vola `POST /api/v1/services/workspace/vehicle-intakes/{id}/create-work-order`
+- UI blokuje opakovane kliknuti pres `creatingWorkOrderFromIntake`
+- uspesne vytvoreni otevre existujici detail zakazky
+- chyby 403/404/409/422 se prekladaji do srozumitelnych hlasek pro servisni pracovniky
+
+Zmenene soubory v tomto rezu:
+
+- `web/service-shell.js`
+- `web/service-shell.css`
+- `tests/e2e/service-shell-fallback.helpers.ts`
+- `tests/e2e/service-shell-work-order-flow.spec.ts`
+- `SERVICE_OFFICE_IMPLEMENTATION_REPORT.md`
+- `SERVICE_OFFICE_TEST_REPORT.md`
+
+Backend, DB, migrace a produkce nebyly v tomto rezu meneny.
+
 ## Staging potvrzeni
 
 - pracovni cesta: `/opt/toozhub2-staging/app`

@@ -421,6 +421,13 @@ body.service-shell-app.service-shell-theme-light .service-shell-toolbar .workspa
   transform: translateY(-1px);
 }
 
+.service-shell-primary-btn:disabled,
+.service-shell-primary-btn[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.68;
+  transform: none;
+}
+
 .service-shell-page-head {
   margin-bottom: 24px;
 }

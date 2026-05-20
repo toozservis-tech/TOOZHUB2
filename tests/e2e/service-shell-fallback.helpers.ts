@@ -37,6 +37,8 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
   let linkedCustomer = false;
   let nextWorkOrderId = 777;
   let nextRecordId = 602;
+  const mockStats = { createFromIntakeCalls: {} as Record<string, number> };
+  await page.exposeFunction('__serviceShellMockStats', () => JSON.parse(JSON.stringify(mockStats)));
   const workOrders = [
     {
       id: 501,
@@ -49,6 +51,7 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
       due_date: '2026-04-12',
       status: 'approved',
       source_type: 'manual',
+      source_intake_id: 322,
       technician_id: 9901,
       technician_name: 'ToozServis',
       description: 'Detail zakázky',
@@ -110,6 +113,60 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
       record_status: 'submitted',
       attachments: '[]',
       created_by_service_customer_id: 9901,
+    },
+  ];
+  const serviceCases = [
+    {
+      id: 321,
+      vehicle_id: 301,
+      status: 'intake_started',
+      case_phase: 'intake_started',
+      customer_request: 'Klepe přední náprava',
+      intake_note: 'Převzato u recepce',
+      mileage_in: 145000,
+      created_at: '2026-04-13T09:00:00Z',
+      vehicle: {
+        id: 301,
+        plate: '1AB2345',
+        vin: 'VINLINKED123456789',
+        brand: 'Skoda',
+        model: 'Octavia',
+      },
+    },
+    {
+      id: 322,
+      vehicle_id: 301,
+      status: 'intake_completed',
+      case_phase: 'intake_completed',
+      customer_request: 'Už má navázanou zakázku',
+      intake_note: 'Zakázka založena',
+      mileage_in: 145100,
+      created_at: '2026-04-13T10:00:00Z',
+      work_order_id: 501,
+      vehicle: {
+        id: 301,
+        plate: '1AB2345',
+        vin: 'VINLINKED123456789',
+        brand: 'Skoda',
+        model: 'Octavia',
+      },
+    },
+    {
+      id: 403,
+      vehicle_id: 301,
+      status: 'intake_started',
+      case_phase: 'intake_started',
+      customer_request: 'Příjem bez oprávnění',
+      intake_note: 'Simulace 403',
+      mileage_in: 146000,
+      created_at: '2026-04-13T11:00:00Z',
+      vehicle: {
+        id: 301,
+        plate: '1AB2345',
+        vin: 'VINLINKED123456789',
+        brand: 'Skoda',
+        model: 'Octavia',
+      },
     },
   ];
    let nextQuoteId = 805;
@@ -388,6 +445,7 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
     vehicle_spz: item.vehicle_spz,
     vehicle_label: `${item.vehicle_vin} / ${item.vehicle_spz}`,
     source_label: 'Ruční zápis',
+    source_intake_id: item.source_intake_id || null,
     status: item.status,
     technician_id: item.technician_id,
     description: item.description,
@@ -658,6 +716,7 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
           due_date: item.due_date,
           status: item.status,
           source_type: item.source_type,
+          source_intake_id: item.source_intake_id || null,
           technician_name: item.technician_name,
         })),
       });
@@ -903,6 +962,19 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
     }
     if (/^\/api\/v1\/services\/workspace\/vehicle-intakes\/\d+\/create-work-order$/.test(path) && method === 'POST') {
       const intakeId = Number(path.split('/').slice(-2, -1)[0]);
+      mockStats.createFromIntakeCalls[String(intakeId)] = (mockStats.createFromIntakeCalls[String(intakeId)] || 0) + 1;
+      if (intakeId === 403) {
+        return json(route, 403, { detail: 'Servis nemá oprávnění vytvořit zakázku z tohoto příjmu.' });
+      }
+      const existing = workOrders.find((entry) => Number(entry.source_intake_id || 0) === intakeId);
+      if (existing) {
+        return json(route, 409, {
+          detail: {
+            message: 'Zakázka z tohoto příjmu už existuje.',
+            existing_work_order_id: existing.id,
+          },
+        });
+      }
       const created = {
         id: nextWorkOrderId++,
         title: `Zakázka z příjmu #${intakeId}`,
@@ -914,6 +986,7 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
         due_date: '2026-04-13',
         status: 'awaiting_client_approval',
         source_type: 'intake',
+        source_intake_id: intakeId,
         technician_id: 9901,
         technician_name: 'ToozServis',
         description: 'Zakázka vytvořená z příjmu',
@@ -921,6 +994,8 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
       };
       workOrders.unshift(created);
       workOrderItems[created.id] = [];
+      const serviceCase = serviceCases.find((item) => Number(item.id) === intakeId) as { work_order_id?: number | null } | undefined;
+      if (serviceCase) serviceCase.work_order_id = created.id;
       return json(route, 201, { work_order: serializeWorkOrderDetail(created) });
     }
 
@@ -1277,6 +1352,16 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
         last_access_at: null,
       };
       return json(route, 200, qrToken);
+    }
+    if (path === '/api/v1/services/workspace/service-cases/' && method === 'GET') {
+      return json(route, 200, {
+        items: serviceCases.map((item) => {
+          const existingOrder = workOrders.find((order) => Number(order.source_intake_id || 0) === Number(item.id));
+          const linkedOrderId = (item as { work_order_id?: number | null }).work_order_id;
+          return { ...item, work_order_id: linkedOrderId || existingOrder?.id || null };
+        }),
+        count: serviceCases.length,
+      });
     }
     if (path === '/api/v1/reservations/service') {
       return json(route, 200, [

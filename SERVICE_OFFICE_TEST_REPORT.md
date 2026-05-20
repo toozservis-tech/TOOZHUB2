@@ -110,6 +110,41 @@ Pokryte CSV scenare:
 - potvrzeni importu vola import endpoint
 - po importu se obnovi summary v UI
 
+## Dodatek 2026-05-20: UI vytvoreni zakazky z prijmu
+
+Runtime safety:
+
+- `pwd` => `/opt/toozhub2-staging/app`
+- branch => `feature/user-app-visual-reference-20260518`
+- staging service => `toozhub2-staging.service` active
+- health endpoint => OK, `environment=staging`
+- DB => `sqlite:////opt/toozhub2-staging/data/vehicles_staging.db`
+
+Testovaci prikazy:
+
+```bash
+node --check web/service-shell.js
+python3 -m pytest tests/api/test_service_work_order_items.py
+cd tests/e2e && BASE_URL=http://127.0.0.1:8010 npx playwright test service-shell-work-order-flow.spec.ts --workers=1 --retries=0 --reporter=line
+```
+
+Vysledky:
+
+- `node --check web/service-shell.js`: PASS
+- `tests/api/test_service_work_order_items.py`: PASS, 14 passed
+- `service-shell-work-order-flow.spec.ts`: PASS, 1 passed proti staging portu `8010`
+
+Pokryte scenare:
+
+- v existujici sekci rezervaci/prijmu je panel `Prijmy vozidel`
+- prijem bez `work_order_id` ukazuje `Vytvorit zakazku`
+- klik vola `POST /api/v1/services/workspace/vehicle-intakes/{id}/create-work-order`
+- dvojklik nevyvola druhe API volani
+- po uspechu se otevre existujici detail zakazky
+- prijem s navazanou zakazkou ukazuje `Otevrit zakazku`
+- 403 chyba z create-work-order zobrazi srozumitelnou hlasku
+- existujici flow polozek zakazky, CSV importu a duplicate guard zustal funkcni
+
 ## Pokryte scenare
 
 - vytvoreni work order z `ServiceIntake`

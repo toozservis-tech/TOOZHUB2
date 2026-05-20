@@ -298,6 +298,7 @@
     customers: [],
     vehicles: [],
     reservations: [],
+    serviceCases: [],
     reminders: [],
     documents: [],
     invoices: [],
@@ -340,6 +341,7 @@
     vehicleLookupLoading: false,
     vehicleLookupError: '',
     workOrderDraft: null,
+    creatingWorkOrderFromIntake: new Set(),
     addVehicleDraft: null,
     activeVehicle: null,
     modal: null,
@@ -1601,6 +1603,10 @@
         customers: window.apiCall('/api/v1/services/workspace/customers', 'GET'),
         vehicles: window.apiCall('/api/v1/services/workspace/approved-vehicles', 'GET'),
         reservations: window.apiCall('/api/v1/reservations/service', 'GET'),
+        serviceCases: window.apiCall('/api/v1/services/workspace/service-cases/', 'GET').catch((err) => {
+          console.warn('[SERVICE_SHELL] service-cases endpoint:', err?.message || err);
+          return { items: [] };
+        }),
         reminders: window.apiCall('/api/v1/services/workspace/reminders?include_completed=true&limit=500', 'GET'),
         documents: window.apiCall('/api/v1/services/workspace/documents?limit=50', 'GET'),
         invoices: window.apiCall('/api/service/invoices', 'GET').catch((err) => {
@@ -1632,6 +1638,7 @@
         if (key === 'customers') state.customers = Array.isArray(payload) ? payload : [];
         if (key === 'vehicles') state.vehicles = Array.isArray(payload?.items) ? payload.items : [];
         if (key === 'reservations') state.reservations = Array.isArray(payload) ? payload : [];
+        if (key === 'serviceCases') state.serviceCases = Array.isArray(payload?.items) ? payload.items : [];
         if (key === 'reminders') state.reminders = Array.isArray(payload) ? payload : [];
         if (key === 'documents') state.documents = Array.isArray(payload) ? payload : [];
         if (key === 'invoices') state.invoices = Array.isArray(payload?.items) ? payload.items : [];
@@ -3761,23 +3768,56 @@
     }
   }
 
+  function workOrderForIntake(intakeId) {
+    const id = Number(intakeId || 0);
+    if (!id) return null;
+    const orders = Array.isArray(state.workOrders) ? state.workOrders : [];
+    return orders.find((order) => Number(order?.source_intake_id || 0) === id) || null;
+  }
+
+  function serviceIntakeCreateErrorMessage(error) {
+    const raw = serviceShellApiErrorMessage(error, 'Zakázku z příjmu se nepodařilo vytvořit.');
+    const msg = String(raw || '').trim();
+    if (/oprávn|opravnen|403/i.test(msg)) {
+      return 'Servis nemá oprávnění vytvořit zakázku z tohoto příjmu.';
+    }
+    if (/nebyl nalezen|not found|404|endpoint nebyl nalezen/i.test(msg)) {
+      return 'Příjem vozidla nebyl nalezen.';
+    }
+    if (/už existuje|uz existuje|duplicate|409/i.test(msg)) {
+      return 'Zakázka z tohoto příjmu už existuje.';
+    }
+    return msg || 'Zakázku z příjmu se nepodařilo vytvořit.';
+  }
+
   async function createWorkOrderFromIntake(intakeId) {
     const id = Number(intakeId || 0);
     if (!id) {
-      showToast('Chybí ID příjmu vozidla.', 'warning');
+      showServiceToast('warning', 'Příjem vozidla', 'Chybí ID příjmu vozidla.');
       return null;
     }
+    if (!state.creatingWorkOrderFromIntake || typeof state.creatingWorkOrderFromIntake.has !== 'function') {
+      state.creatingWorkOrderFromIntake = new Set();
+    }
+    if (state.creatingWorkOrderFromIntake.has(id)) {
+      return null;
+    }
+    state.creatingWorkOrderFromIntake.add(id);
+    render();
     try {
       const result = await window.apiCall(`/api/v1/services/workspace/vehicle-intakes/${id}/create-work-order`, 'POST', {});
       const workOrderId = Number(result?.work_order?.id || result?.id || 0);
-      showToast(workOrderId ? `Zakázka #${workOrderId} byla vytvořena.` : 'Zakázka byla vytvořena.', 'success');
+      showServiceToast('success', 'Zakázka vytvořena', workOrderId ? `Zakázka #${workOrderId} byla vytvořena.` : 'Zakázka byla vytvořena.');
       if (workOrderId) {
         openWorkOrderDetailModal(workOrderId);
       }
       return result;
     } catch (error) {
-      showToast(serviceShellApiErrorMessage(error, 'Zakázku z příjmu se nepodařilo vytvořit.'), 'error');
+      showServiceToast('error', 'Příjem vozidla', serviceIntakeCreateErrorMessage(error));
       return null;
+    } finally {
+      state.creatingWorkOrderFromIntake.delete(id);
+      render();
     }
   }
 
@@ -7532,9 +7572,67 @@
     });
   }
 
+  function renderServiceIntakeAction(serviceCase) {
+    const intakeId = Number(serviceCase?.id || 0);
+    const existingWorkOrderId = Number(serviceCase?.work_order_id || serviceCase?.workOrderId || 0)
+      || Number(workOrderForIntake(intakeId)?.id || 0);
+    if (existingWorkOrderId) {
+      return `<button type="button" class="service-shell-primary-btn" onclick="event.stopPropagation(); window.serviceShell.openWorkOrderDetailModal(${existingWorkOrderId})">Otevřít zakázku</button>`;
+    }
+    const busy = Boolean(state.creatingWorkOrderFromIntake?.has?.(intakeId));
+    return `<button type="button" class="service-shell-primary-btn" ${busy ? 'disabled aria-busy="true"' : ''} onclick="event.stopPropagation(); window.serviceShell.createWorkOrderFromIntake(${intakeId})">${busy ? 'Vytvářím…' : 'Vytvořit zakázku'}</button>`;
+  }
+
+  function serviceCaseVehicle(serviceCase) {
+    const direct = serviceCase?.vehicle && typeof serviceCase.vehicle === 'object' ? serviceCase.vehicle : {};
+    const vehicleId = Number(serviceCase?.vehicle_id || direct?.id || 0);
+    const fromState = vehicleId && Array.isArray(state.vehicles)
+      ? state.vehicles.find((item) => Number(item?.id || item?.vehicle_id || 0) === vehicleId)
+      : null;
+    return { ...(fromState || {}), ...direct };
+  }
+
+  function serviceIntakeTitle(serviceCase) {
+    const vehicle = serviceCaseVehicle(serviceCase);
+    const brandModel = [vehicle?.brand || serviceCase?.vehicle_brand, vehicle?.model || serviceCase?.vehicle_model]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    return brandModel || vehicle?.plate || vehicle?.spz || serviceCase?.vehicle_plate || `Příjem #${serviceCase?.id || '-'}`;
+  }
+
+  function renderServiceIntakeCard(serviceCase) {
+    const intakeId = Number(serviceCase?.id || 0);
+    const vehicle = serviceCaseVehicle(serviceCase);
+    const status = String(serviceCase?.status || serviceCase?.case_phase || 'intake_started');
+    const existingWorkOrderId = Number(serviceCase?.work_order_id || serviceCase?.workOrderId || 0)
+      || Number(workOrderForIntake(intakeId)?.id || 0);
+    return `
+      <article class="service-shell-list-card service-shell-intake-card">
+        <div class="service-shell-list-card-top">
+          <div>
+            <p class="service-shell-mobile-kicker">${escape(vehicle?.plate || vehicle?.spz || serviceCase?.vehicle_plate || serviceCase?.vehicle_spz || 'Příjem vozidla')}</p>
+            <h3>${escape(serviceIntakeTitle(serviceCase))}</h3>
+          </div>
+          <span class="service-shell-badge ${existingWorkOrderId ? 'approved' : 'in_progress'}">${existingWorkOrderId ? 'Zakázka založena' : accessStatusLabel(status)}</span>
+        </div>
+        <div class="service-shell-list-card-meta">
+          <div class="service-shell-list-card-row"><span>Požadavek</span><strong>${escape(serviceCase?.customer_request || serviceCase?.intake_note || '-')}</strong></div>
+          <div class="service-shell-list-card-row"><span>Stav km</span><strong>${escape(serviceCase?.mileage_in != null ? `${serviceCase.mileage_in} km` : '-')}</strong></div>
+          <div class="service-shell-list-card-row"><span>VIN</span><strong>${escape(vehicle?.vin || serviceCase?.vehicle_vin || '-')}</strong></div>
+          <div class="service-shell-list-card-row"><span>Vytvořeno</span><strong>${escape(formatDate(serviceCase?.created_at || '-'))}</strong></div>
+        </div>
+        <div class="service-shell-list-card-actions">
+          ${renderServiceIntakeAction(serviceCase)}
+        </div>
+      </article>
+    `;
+  }
+
   function reservationsSection() {
     const reservations = filteredReservations();
     const allReservations = Array.isArray(state.reservations) ? state.reservations : [];
+    const serviceCases = Array.isArray(state.serviceCases) ? state.serviceCases : [];
     const archivedReservations = allReservations.filter((item) => isReservationArchived(item)).length;
     const cards = reservations.length ? reservations.map((reservation) => listCard({
       kicker: reservation?.vehicle_plate || reservation?.vehicle_label || 'Rezervace',
@@ -7551,10 +7649,12 @@
     })).join('') : '';
     const stats = `
       <article class="service-shell-mini-card summary-card"><h3>Aktivní rezervace</h3><div class="service-shell-stat-value">${reservations.length}</div><p class="service-shell-muted">Ve výchozím pohledu bez zrušených a dokončených</p></article>
+      <article class="service-shell-mini-card summary-card"><h3>Příjmy</h3><div class="service-shell-stat-value">${serviceCases.length}</div><p class="service-shell-muted">Servisní příjmy připravené pro zakázku</p></article>
       <article class="service-shell-mini-card summary-card"><h3>Dnes</h3><div class="service-shell-stat-value">${reservations.filter((item) => toDateKey(item?.scheduled_for || item?.reservation_date || item?.starts_at) === todayKey()).length}</div><p class="service-shell-muted">Příjezdy během dneška</p></article>
       <article class="service-shell-mini-card summary-card"><h3>Archiv</h3><div class="service-shell-stat-value">${archivedReservations}</div><p class="service-shell-muted">Zrušené nebo dokončené rezervace</p></article>
     `;
-    const main = renderCardList({
+    const main = `
+      ${renderCardList({
         head: `
           <div class="service-shell-card-head">
             <div><h3 class="service-shell-card-title">Příchozí rezervace</h3><p class="service-shell-subtitle">Příjezdy zákazníků, nepotvrzené termíny a navazující servisní požadavky.</p></div>
@@ -7566,7 +7666,20 @@
         `,
         cards,
         empty: 'Bez aktivních rezervací.',
-      });
+      })}
+      ${renderCardList({
+        head: `
+          <div class="service-shell-card-head">
+            <div><h3 class="service-shell-card-title">Příjmy vozidel</h3><p class="service-shell-subtitle">Převzatá vozidla lze jedním klikem převést na servisní zakázku.</p></div>
+            <div class="service-shell-card-head-actions">
+              <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.load(true)">↗</button>
+            </div>
+          </div>
+        `,
+        cards: serviceCases.map(renderServiceIntakeCard).join(''),
+        empty: 'Zatím není evidovaný příjem vozidla.',
+      })}
+    `;
     const side = `
       <aside class="service-shell-side">
         <section class="service-shell-side-card">

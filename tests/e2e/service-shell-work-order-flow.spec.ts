@@ -4,6 +4,7 @@ import { installServiceShellMocks } from './service-shell-fallback.helpers';
 
 test.describe('Service shell work order flow', () => {
   test('covers create, duplicate reject and update refresh flow', async ({ page }) => {
+    test.setTimeout(90_000);
     await installServiceShellMocks(page);
     await page.goto('/web/app/s/toozservis/dashboard');
     const forceServiceShell = async () => page.evaluate((user) => {
@@ -115,16 +116,6 @@ test.describe('Service shell work order flow', () => {
     await expect(page.getByRole('button', { name: /Nové zakázky\s+2/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /Čeká na schválení\s+0/ })).toBeVisible();
 
-    const intakeResponse = page.waitForResponse((response) => (
-      response.url().includes('/api/v1/services/workspace/vehicle-intakes/321/create-work-order')
-      && response.request().method() === 'POST'
-    ));
-    await page.evaluate(() => (window as any).serviceShell.createWorkOrderFromIntake(321));
-    await intakeResponse;
-    await expect(page.locator('.service-shell-modal-title')).toContainText('Detail zakázky');
-    await expect(page.locator('.service-shell-modal')).toContainText('Zakázka vytvořená z příjmu');
-    await closeModal();
-
     await page.getByRole('button', { name: '+ Nová zakázka' }).click();
     await page.fill('#serviceShellWorkOrderTitle', 'Duplicitní pokus');
     await page.fill('#serviceShellWorkOrderDueDate', '2026-04-14');
@@ -133,5 +124,34 @@ test.describe('Service shell work order flow', () => {
     await expect(page.locator('.service-shell-modal')).toContainText('Na stejné vozidlo už existuje rozpracovaná zakázka');
     await expect(page.getByRole('button', { name: 'Otevřít existující zakázku' })).toBeVisible();
     await closeModal();
+
+    await page.evaluate(() => (window as any).serviceShell.navigate('reservations'));
+    await expect(page.locator('[data-service-shell="root"]')).toContainText('Příjmy vozidel');
+    await expect(page.locator('.service-shell-intake-card').filter({ hasText: 'Klepe přední náprava' })).toContainText('Vytvořit zakázku');
+    await expect(page.locator('.service-shell-intake-card').filter({ hasText: 'Už má navázanou zakázku' })).toContainText('Otevřít zakázku');
+
+    const intakeResponse = page.waitForResponse((response) => (
+      response.url().includes('/api/v1/services/workspace/vehicle-intakes/321/create-work-order')
+      && response.request().method() === 'POST'
+    ));
+    const createFromIntakeButton = page.locator('.service-shell-intake-card').filter({ hasText: 'Klepe přední náprava' }).getByRole('button', { name: 'Vytvořit zakázku' });
+    await createFromIntakeButton.click();
+    await createFromIntakeButton.click({ timeout: 500 }).catch(() => undefined);
+    await intakeResponse;
+    const stats = await page.evaluate(() => (window as any).__serviceShellMockStats());
+    expect(stats.createFromIntakeCalls['321']).toBe(1);
+    await expect(page.locator('.service-shell-modal-title')).toContainText('Detail zakázky');
+    await expect(page.locator('.service-shell-modal')).toContainText('Zakázka vytvořená z příjmu');
+    await closeModal();
+
+    await page.evaluate(() => (window as any).serviceShell.navigate('reservations'));
+    await page.locator('.service-shell-intake-card').filter({ hasText: 'Už má navázanou zakázku' }).getByRole('button', { name: 'Otevřít zakázku' }).click();
+    await expect(page.locator('.service-shell-modal-title')).toContainText('Detail zakázky');
+    await expect(page.locator('.service-shell-modal')).toContainText('Zakázka #501');
+    await closeModal();
+
+    await page.evaluate(() => (window as any).serviceShell.navigate('reservations'));
+    await page.locator('.service-shell-intake-card').filter({ hasText: 'Příjem bez oprávnění' }).getByRole('button', { name: 'Vytvořit zakázku' }).click();
+    await expect(page.locator('.service-shell-toast--error')).toContainText('Servis nemá oprávnění vytvořit zakázku z tohoto příjmu.');
   });
 });
