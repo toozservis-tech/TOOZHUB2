@@ -17,9 +17,46 @@
     originalShowVehicleDetail: null,
     modalEscBound: false,
     viewOverride: null,
+    invoiceSubRoute: null,
     remindersTipHidden: false,
     serviceHistoryLimit: 8,
     serviceHistoryFilters: { vehicle: 'all', period: '2y', type: 'all', service: 'all', docStatus: 'all' },
+    documentsTipHidden: false,
+    documentsFiltersOpen: false,
+    documentsFilters: { search: '', category: 'all', type: 'all', vehicle: 'all' },
+    documentsPage: 1,
+    documentsPerPage: 10,
+    documentsSort: { key: 'uploadedAt', dir: 'desc' },
+    documentsMenuOpenId: null,
+    documentsUploadPickerOpen: false,
+    servicesDirectoryView: 'map',
+    servicesDirectoryRadius: 50,
+    servicesDirectoryUseLocation: true,
+    servicesDirectorySort: 'distance',
+    servicesDirectoryLimit: 30,
+    servicesDirectoryTipHidden: false,
+    servicesDirectoryFilters: { type: 'all', service: 'all', rating: '0', inAppOnly: false, authorizedOnly: false },
+    servicesMapRows: [],
+    servicesMapCategory: 'all',
+    servicesMapSearchQ: '',
+    servicesMapVerifiedOnly: false,
+    servicesMapBounds: null,
+    servicesMapBoundsKey: '',
+    servicesMapHint: '',
+    servicesMapTotal: 0,
+    servicesMapBoundsDebounce: null,
+    servicesOsmRows: [],
+    servicesOsmLoading: false,
+    servicesOsmError: null,
+    servicesOsmLoadToken: 0,
+    lastRenderedView: null,
+    mapsConfig: undefined,
+    leafletLoadPromise: null,
+    leafletClusterLoadPromise: null,
+    googleMapsLoadPromise: null,
+    servicesMapRuntime: null,
+    servicesLocationLabel: '',
+    servicesSearchDebounce: null,
   };
 
   const DETAIL_MODAL_ID = 'uappNextVehicleDetail';
@@ -44,6 +81,10 @@
     detail: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>',
     edit: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>',
     upload: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>',
+    folder: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>',
+    filter: '<svg class="uapp-doc-filter-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>',
+    download: '<svg class="uapp-doc-action-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>',
+    more: '<svg class="uapp-doc-action-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>',
     odometer: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/></svg>',
     pdf: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>',
     qr: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm13-2h3v2h-3v-2zM14 13h2v3h-2v-3zm3 3h2v2h-2v-2zm-3 0h2v2h-2v-2zm3 3h2v3h-2v-3zm-3 0h2v2h-2v-2z"/></svg>',
@@ -111,8 +152,6 @@
   }
 
   const LEGACY_SECTION_META = {
-    documents: { tabId: 'documentsTab', testId: 'user-app-next-documents' },
-    servicesDirectory: { tabId: 'servicesDirectoryTab', testId: 'user-app-next-services' },
     account: { tabId: 'accountTab', testId: 'user-app-next-account' },
     support: { tabId: 'supportTab', testId: 'user-app-next-support' },
     reservations: { tabId: 'reservationsTab', testId: 'user-app-next-reservations' },
@@ -525,10 +564,12 @@
     );
   }
 
-  async function safeApi(url, fallback) {
+  async function safeApi(url, fallback, timeoutMs) {
     if (!apiReady()) return fallback;
     try {
-      const result = await apiCall(url, 'GET');
+      const result = typeof timeoutMs === 'number'
+        ? await apiCall(url, 'GET', null, timeoutMs)
+        : await apiCall(url, 'GET');
       return result == null ? fallback : result;
     } catch (error) {
       console.warn('[USER_APP_NEXT] API skipped:', url, error?.message || error);
@@ -559,11 +600,68 @@
       return acc;
     }, {});
     STATE.lastVehicles = vehicleList;
-    const recordEntries = await loadRecordsForVehicles(vehicleList);
-    const recordMap = recordEntries.reduce((acc, entry) => {
-      acc[Number(entry.vehicle.id)] = entry.records;
-      return acc;
-    }, {});
+    const activeView = getActiveView();
+    const needsVehicleRecords = activeView !== 'servicesDirectory' && activeView !== 'documents';
+    let recordEntries = [];
+    let recordMap = {};
+    if (needsVehicleRecords) {
+      recordEntries = await loadRecordsForVehicles(vehicleList);
+      recordMap = recordEntries.reduce((acc, entry) => {
+        acc[Number(entry.vehicle.id)] = entry.records;
+        return acc;
+      }, {});
+    }
+    let documentsHub = null;
+    if (activeView === 'documents' && apiReady()) {
+      documentsHub = await safeApi('/api/v1/vehicles/documents/hub?attachments_limit=100&reports_limit=100&tachometer_limit=100', null);
+    }
+    let servicesDiscovery = null;
+    if (activeView === 'servicesDirectory' && apiReady()) {
+      let clientRef = null;
+      if (STATE.servicesDirectoryUseLocation !== false) {
+        if (hasFn('waitForClientGeolocation')) {
+          try {
+            const geo = await window.waitForClientGeolocation(8000);
+            if (geo && Number.isFinite(Number(geo.lat)) && Number.isFinite(Number(geo.lon))) {
+              clientRef = { lat: Number(geo.lat), lon: Number(geo.lon) };
+              STATE.servicesRefCoords = clientRef;
+              STATE.servicesLocationLabel = '';
+            }
+          } catch (_) {}
+        } else if (hasFn('captureClientGeolocation')) {
+          try { window.captureClientGeolocation(true); } catch (_) {}
+          await new Promise((resolve) => { window.setTimeout(resolve, 1500); });
+          if (hasFn('getClientGeoTelemetryForHeaders')) {
+            try {
+              const geo = window.getClientGeoTelemetryForHeaders();
+              if (geo && Number.isFinite(Number(geo.lat)) && Number.isFinite(Number(geo.lon))) {
+                clientRef = { lat: Number(geo.lat), lon: Number(geo.lon) };
+                STATE.servicesRefCoords = clientRef;
+                STATE.servicesLocationLabel = '';
+              }
+            } catch (_) {}
+          }
+        }
+      }
+      const ref = clientRef || STATE.servicesRefCoords || null;
+      let discoveryUrl = '/api/v1/services/discovery?radius_km=0';
+      if (ref && Number.isFinite(Number(ref.lat)) && Number.isFinite(Number(ref.lon))) {
+        discoveryUrl += `&ref_lat=${encodeURIComponent(String(ref.lat))}&ref_lon=${encodeURIComponent(String(ref.lon))}`;
+      }
+      servicesDiscovery = await safeApi(discoveryUrl, null);
+      const discoveryMeta = servicesDiscovery?.meta || {};
+      const discoverySource = String(discoveryMeta.reference_source || 'none');
+      if (clientRef) {
+        STATE.servicesRefCoords = clientRef;
+      } else if (discoveryMeta.reference_coordinates && discoverySource !== 'profile_address') {
+        STATE.servicesRefCoords = discoveryMeta.reference_coordinates;
+      } else if (discoveryMeta.reference_coordinates && STATE.servicesDirectoryUseLocation === false) {
+        STATE.servicesRefCoords = discoveryMeta.reference_coordinates;
+      }
+      if (discoveryMeta.reference_label) {
+        STATE.servicesLocationLabel = String(discoveryMeta.reference_label);
+      }
+    }
     const data = {
       summary: summary && typeof summary === 'object' ? summary : {},
       vehicles: vehicleList,
@@ -572,9 +670,126 @@
       services: Array.isArray(contactsPayload?.services) ? contactsPayload.services : [],
       recordEntries,
       recordMap,
+      documentsHub,
+      servicesDiscovery,
     };
     STATE.latestData = data;
     return data;
+  }
+
+  async function loadServicesOsmData(options) {
+    const silent = Boolean(options && options.silent);
+    if (!apiReady() || getActiveView() !== 'servicesDirectory') return;
+    const osmToken = ++STATE.servicesOsmLoadToken;
+    const ref = STATE.servicesRefCoords
+      || STATE.latestData?.servicesDiscovery?.meta?.reference_coordinates
+      || {};
+    const lat = Number(ref.lat) || 49.7559;
+    const lon = Number(ref.lon) || 16.4683;
+    const radius = Number(STATE.servicesDirectoryRadius) || 50;
+    const category = STATE.servicesMapCategory && STATE.servicesMapCategory !== 'all' && STATE.servicesMapCategory !== 'verified'
+      ? STATE.servicesMapCategory
+      : '';
+    const q = String(STATE.servicesMapSearchQ || '').trim();
+    const bounds = STATE.servicesMapBounds;
+
+    if (!silent) {
+      STATE.servicesOsmLoading = true;
+      STATE.servicesOsmError = null;
+      if (STATE.latestData && getActiveView() === 'servicesDirectory') {
+        renderShell(STATE.latestData);
+      }
+    }
+
+    try {
+      let url;
+      if (bounds && Number.isFinite(bounds.north) && Number.isFinite(bounds.south) && Number.isFinite(bounds.east) && Number.isFinite(bounds.west)) {
+        url = `/api/v1/service-map/search?north=${encodeURIComponent(String(bounds.north))}&south=${encodeURIComponent(String(bounds.south))}&east=${encodeURIComponent(String(bounds.east))}&west=${encodeURIComponent(String(bounds.west))}&limit=100`;
+        url += `&lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lon))}`;
+      } else {
+        url = `/api/v1/service-map/search?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lon))}&radius_km=${encodeURIComponent(String(radius))}&limit=100`;
+      }
+      if (category) url += `&category=${encodeURIComponent(category)}`;
+      if (q) url += `&q=${encodeURIComponent(q)}`;
+      if (STATE.servicesMapVerifiedOnly || STATE.servicesMapCategory === 'verified') {
+        url += '&verified_only=true';
+      }
+      const payload = await safeApi(url, { items: [], total: 0, radius_km: radius }, 90000);
+      if (osmToken !== STATE.servicesOsmLoadToken || getActiveView() !== 'servicesDirectory') return;
+      STATE.servicesMapRows = Array.isArray(payload?.items) ? payload.items : [];
+      STATE.servicesMapTotal = Number(payload?.total) || STATE.servicesMapRows.length;
+      STATE.servicesMapHint = String(payload?.hint || '');
+      STATE.servicesOsmRows = STATE.servicesMapRows.map(mapApiItemToCatalogRow);
+      if (silent && STATE.servicesMapRuntime?.map) {
+        updateServicesMapMarkers(STATE.latestData || {});
+        refreshServicesDirectoryList(STATE.latestData || {});
+        return;
+      }
+    } catch (err) {
+      if (osmToken !== STATE.servicesOsmLoadToken) return;
+      STATE.servicesMapRows = [];
+      STATE.servicesOsmRows = [];
+      STATE.servicesMapHint = '';
+      STATE.servicesOsmError = String(err?.message || err || 'Nepodařilo se načíst servisy z katalogu.');
+      console.warn('[USER_APP_NEXT] service-map load failed', err);
+    } finally {
+      if (osmToken !== STATE.servicesOsmLoadToken) return;
+      STATE.servicesOsmLoading = false;
+      if (!silent && STATE.latestData && getActiveView() === 'servicesDirectory') {
+        renderShell(STATE.latestData);
+      }
+    }
+  }
+
+  function mapApiCategoryToShopType(category) {
+    const map = {
+      autoservis: 'auto',
+      pneuservis: 'pneu',
+      stk: 'stk',
+      sme: 'emis',
+      truck_service: 'truck',
+      karosarna: 'auto',
+      autoskla: 'auto',
+      odtah: 'truck',
+      diagnostika: 'auto',
+      other: 'auto',
+    };
+    return map[String(category || '').toLowerCase()] || 'auto';
+  }
+
+  function mapApiItemToCatalogRow(item) {
+    const lat = Number(item?.lat);
+    const lng = Number(item?.lng);
+    const category = String(item?.category || 'other');
+    const services = Array.isArray(item?.services) ? item.services : [];
+    return {
+      id: null,
+      location_id: Number(item?.id) || null,
+      lat: Number.isFinite(lat) ? lat : null,
+      lon: Number.isFinite(lng) ? lng : null,
+      shop_type: mapApiCategoryToShopType(category),
+      category,
+      name: item?.name || 'Servis',
+      street: '',
+      city: item?.city || '',
+      zip: '',
+      phone: item?.phone || '',
+      email: '',
+      website: item?.website || '',
+      address: item?.address_text || item?.city || '',
+      coordinates: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lon: lng } : null,
+      distance_km: item?.distance_km,
+      in_app: false,
+      is_linked: false,
+      source: item?.source_type || 'catalog',
+      source_type: item?.source_type || 'catalog',
+      verification_status: item?.verification_status || 'imported',
+      is_verified: Boolean(item?.is_verified),
+      opening_hours: item?.opening_hours || '',
+      vehicle_scope: Array.isArray(item?.vehicle_scope) ? item.vehicle_scope : [],
+      partner_public_profile: { services_offered: services.length ? services : [category] },
+      row_key: `map-${item?.id}`,
+    };
   }
 
   function recordsFor(data, vehicleId) {
@@ -1572,6 +1787,1649 @@
     });
   }
 
+  function formatDocumentSize(bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    if (typeof formatAttachmentSize === 'function') return formatAttachmentSize(value);
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function resolveAttachmentFileSize(data, recordId, fileName) {
+    const id = Number(recordId);
+    if (!Number.isFinite(id) || id <= 0) return null;
+    const records = (data?.recordEntries || []).flatMap((entry) => entry.records || []);
+    const record = records.find((item) => Number(item?.id) === id);
+    if (!record?.attachments) return null;
+    let attachments = record.attachments;
+    if (typeof attachments === 'string') {
+      try { attachments = JSON.parse(attachments); } catch (_) { return null; }
+    }
+    if (!Array.isArray(attachments)) return null;
+    const hit = attachments.find((item) => String(item?.file_name || '').trim() === String(fileName || '').trim());
+    const size = Number(hit?.file_size);
+    return Number.isFinite(size) && size > 0 ? size : null;
+  }
+
+  function estimateDocumentSizeBytes(row) {
+    if (row.fileSizeBytes) return row.fileSizeBytes;
+    if (row.fileType === 'PDF') return 850000;
+    if (row.fileType === 'XLSX') return 420000;
+    if (row.fileType === 'DOCX') return 310000;
+    if (row.fileType === 'JPG' || row.fileType === 'PNG') return 1800000;
+    return 240000;
+  }
+
+  function computeDocumentsStorage(data, rows) {
+    const usedBytes = rows.reduce((sum, row) => sum + estimateDocumentSizeBytes(row), 0);
+    const quotaBytes = 10 * 1024 * 1024 * 1024;
+    const pct = quotaBytes > 0 ? Math.min(100, Math.round((usedBytes / quotaBytes) * 100)) : 0;
+    const usedGb = usedBytes / (1024 * 1024 * 1024);
+    const usedLabel = usedGb >= 0.1 ? `${usedGb.toFixed(1)} GB` : `${(usedBytes / (1024 * 1024)).toFixed(1)} MB`;
+    return { usedBytes, quotaBytes, pct, usedLabel };
+  }
+
+  const DOC_CATEGORY_META = {
+    pojisteni: { label: 'Pojištění', tone: 'insurance' },
+    technicke: { label: 'Technické kontroly', tone: 'technical' },
+    servis: { label: 'Servis', tone: 'service' },
+    faktury: { label: 'Faktury', tone: 'invoice' },
+    ostatni: { label: 'Ostatní', tone: 'other' },
+  };
+
+  function fileTypeFromDocument(name, mimeType) {
+    const mime = String(mimeType || '').toLowerCase();
+    const ext = String(name || '').split('.').pop().toLowerCase();
+    if (mime.includes('pdf') || ext === 'pdf') return 'PDF';
+    if (['xlsx', 'xls'].includes(ext) || mime.includes('spreadsheet') || mime.includes('excel')) return 'XLSX';
+    if (['docx', 'doc'].includes(ext) || mime.includes('word')) return 'DOCX';
+    if (['jpg', 'jpeg'].includes(ext) || mime.includes('jpeg')) return 'JPG';
+    if (ext === 'png' || mime.includes('png')) return 'PNG';
+    return ext ? ext.toUpperCase() : 'SOUBOR';
+  }
+
+  function resolveDocumentCategoryKey(rawCategory, kind, fileName) {
+    const hay = `${rawCategory || ''} ${fileName || ''} ${kind || ''}`.toLowerCase();
+    if (hay.includes('poji') || hay.includes('insur')) return 'pojisteni';
+    if (hay.includes('fakt') || hay.includes('invoice')) return 'faktury';
+    if (kind === 'technical_cert' || kind === 'tachometer' || hay.includes('stk') || hay.includes('sme') || hay.includes('technick') || hay.includes('tachomet')) {
+      return 'technicke';
+    }
+    if (kind === 'report' || kind === 'attachment' || hay.includes('servis')) return 'servis';
+    return 'ostatni';
+  }
+
+  function vehicleById(data, vehicleId) {
+    const id = Number(vehicleId);
+    if (window._lastVehiclesById && window._lastVehiclesById[id]) return window._lastVehiclesById[id];
+    return (data?.vehicles || []).find((item) => Number(item?.id) === id) || null;
+  }
+
+  function vehicleSubtitle(vehicle) {
+    if (!vehicle) return '';
+    const parts = [vehicle.brand, vehicle.model].filter(Boolean);
+    if (parts.length) return parts.join(' ');
+    return getVehicleName(vehicle);
+  }
+
+  function resolveDocumentExpiry(vehicle, categoryKey, item, kind) {
+    if (categoryKey === 'pojisteni' && vehicle?.insurance_valid_until) return vehicle.insurance_valid_until;
+    if (categoryKey === 'technicke') {
+      if (kind === 'tachometer' && item?.check_date) return item.check_date;
+      if (vehicle?.stk_valid_until) return vehicle.stk_valid_until;
+    }
+    return null;
+  }
+
+  function renderExpiryCell(expiryAt) {
+    if (!expiryAt) return '<span class="uapp-doc-expiry is-muted">—</span>';
+    const diff = daysUntil(expiryAt);
+    const dateLabel = formatDate(expiryAt);
+    if (diff == null) return `<span class="uapp-doc-expiry">${esc(dateLabel)}</span>`;
+    let tone = 'ok';
+    if (diff < 0) tone = 'danger';
+    else if (diff <= 60) tone = 'warn';
+    const countdown = diff === 0
+      ? 'dnes'
+      : (diff > 0 ? `za ${diff} ${diff === 1 ? 'den' : (diff < 5 ? 'dny' : 'dní')}` : `po ${Math.abs(diff)} ${Math.abs(diff) === 1 ? 'dni' : 'dnech'}`);
+    return `<span class="uapp-doc-expiry is-${tone}">${esc(dateLabel)} <small>(${esc(countdown)})</small></span>`;
+  }
+
+  function buildDocumentsRows(data) {
+    const hub = data?.documentsHub;
+    if (!hub || typeof hub !== 'object') return [];
+    const uploader = profileName();
+    const rows = [];
+
+    (hub.attachments || []).forEach((item, index) => {
+      const vehicle = vehicleById(data, item.vehicle_id);
+      const categoryKey = resolveDocumentCategoryKey(item.category, 'attachment', item.file_name);
+      const category = DOC_CATEGORY_META[categoryKey] || DOC_CATEGORY_META.ostatni;
+      const fileType = fileTypeFromDocument(item.file_name, item.mime_type);
+      const uploadedAt = item.performed_at || null;
+      rows.push({
+        id: `att-${item.vehicle_id}-${item.record_id}-${index}`,
+        kind: 'attachment',
+        name: item.file_name || 'Doklad',
+        fileType,
+        fileSizeBytes: resolveAttachmentFileSize(data, item.record_id, item.file_name),
+        vehicleId: Number(item.vehicle_id),
+        vehiclePlate: vehicle?.plate || item.vehicle_name || '—',
+        vehicleModel: vehicleSubtitle(vehicle),
+        categoryKey,
+        category,
+        uploadedAt,
+        uploadedBy: uploader,
+        expiryAt: resolveDocumentExpiry(vehicle, categoryKey, item, 'attachment'),
+        downloadUrl: item.download_url || '',
+        recordId: item.record_id,
+      });
+    });
+
+    (hub.reports || []).forEach((item) => {
+      const vehicle = vehicleById(data, item.vehicle_id);
+      const category = DOC_CATEGORY_META.servis;
+      const uploadedAt = item.finalized_at || null;
+      rows.push({
+        id: `rep-${item.vehicle_id}`,
+        kind: 'report',
+        name: `Servisní historie — ${item.vehicle_name || getVehicleName(vehicle)}`,
+        fileType: 'PDF',
+        vehicleId: Number(item.vehicle_id),
+        vehiclePlate: vehicle?.plate || item.vehicle_name || '—',
+        vehicleModel: vehicleSubtitle(vehicle),
+        categoryKey: 'servis',
+        category,
+        uploadedAt,
+        uploadedBy: uploader,
+        expiryAt: null,
+        hasVerified: Boolean(item.has_verified_report),
+        verifyUrl: item.verify_url || '',
+      });
+      if (item.has_verified_report) {
+        rows.push({
+          id: `repv-${item.vehicle_id}`,
+          kind: 'verified_report',
+          name: `Digitální výpis — ${item.vehicle_name || getVehicleName(vehicle)}`,
+          fileType: 'PDF',
+          vehicleId: Number(item.vehicle_id),
+          vehiclePlate: vehicle?.plate || item.vehicle_name || '—',
+          vehicleModel: vehicleSubtitle(vehicle),
+          categoryKey: 'servis',
+          category,
+          uploadedAt,
+          uploadedBy: uploader,
+          expiryAt: null,
+          verifyUrl: item.verify_url || '',
+        });
+      }
+    });
+
+    (hub.technical_certificates || []).forEach((item) => {
+      const vehicle = vehicleById(data, item.vehicle_id);
+      const category = DOC_CATEGORY_META.technicke;
+      rows.push({
+        id: `vtp-${item.vehicle_id}`,
+        kind: 'technical_cert',
+        name: item.document_title || 'Velký technický průkaz',
+        fileType: 'PDF',
+        vehicleId: Number(item.vehicle_id),
+        vehiclePlate: vehicle?.plate || item.vehicle_name || '—',
+        vehicleModel: vehicleSubtitle(vehicle),
+        categoryKey: 'technicke',
+        category,
+        uploadedAt: item.generated_at || null,
+        uploadedBy: uploader,
+        expiryAt: resolveDocumentExpiry(vehicle, 'technicke', item, 'technical_cert'),
+        downloadUrl: item.download_url || '',
+      });
+    });
+
+    (hub.tachometer_documents || []).forEach((item) => {
+      const vehicle = vehicleById(data, item.vehicle_id);
+      const category = DOC_CATEGORY_META.technicke;
+      const label = item.protocol_number
+        ? `Protokol tachometru ${item.protocol_number}`
+        : 'Protokol tachometru';
+      rows.push({
+        id: `tach-${item.vehicle_id}-${item.history_entry_id}`,
+        kind: 'tachometer',
+        name: label,
+        fileType: 'PDF',
+        vehicleId: Number(item.vehicle_id),
+        vehiclePlate: vehicle?.plate || item.vehicle_name || '—',
+        vehicleModel: vehicleSubtitle(vehicle),
+        categoryKey: 'technicke',
+        category,
+        uploadedAt: item.check_date || null,
+        uploadedBy: uploader,
+        expiryAt: resolveDocumentExpiry(vehicle, 'technicke', item, 'tachometer'),
+        detailUrl: item.detail_url || '',
+      });
+    });
+
+    return rows;
+  }
+
+  function filterDocumentsRows(rows, data) {
+    const filters = STATE.documentsFilters || {};
+    const search = String(filters.search || '').trim().toLowerCase();
+    return rows.filter((row) => {
+      if (filters.category && filters.category !== 'all' && row.categoryKey !== filters.category) return false;
+      if (filters.type && filters.type !== 'all' && row.fileType !== filters.type) return false;
+      if (filters.vehicle && filters.vehicle !== 'all' && Number(filters.vehicle) !== Number(row.vehicleId)) return false;
+      if (!search) return true;
+      const hay = `${row.name} ${row.vehiclePlate} ${row.vehicleModel} ${row.category.label} ${row.fileType}`.toLowerCase();
+      return hay.includes(search);
+    });
+  }
+
+  function sortDocumentsRows(rows) {
+    const sort = STATE.documentsSort || { key: 'uploadedAt', dir: 'desc' };
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    return rows.slice().sort((a, b) => {
+      if (sort.key === 'name') {
+        return dir * String(a.name).localeCompare(String(b.name), 'cs');
+      }
+      const av = Date.parse(a.uploadedAt || 0) || 0;
+      const bv = Date.parse(b.uploadedAt || 0) || 0;
+      if (av === bv) return dir * String(a.name).localeCompare(String(b.name), 'cs');
+      return dir * (av - bv);
+    });
+  }
+
+  function documentsCategoryStats(rows) {
+    const stats = Object.keys(DOC_CATEGORY_META).reduce((acc, key) => {
+      acc[key] = 0;
+      return acc;
+    }, {});
+    rows.forEach((row) => {
+      if (stats[row.categoryKey] != null) stats[row.categoryKey] += 1;
+    });
+    return stats;
+  }
+
+  function renderDocumentsFileIcon(fileType) {
+    const type = String(fileType || '').toUpperCase();
+    const cls = type === 'PDF' ? 'is-pdf' : (type === 'XLSX' ? 'is-xlsx' : (type === 'DOCX' ? 'is-docx' : 'is-other'));
+    const label = type === 'PDF' ? 'PDF' : (type === 'XLSX' ? 'XLS' : (type === 'DOCX' ? 'DOC' : type.slice(0, 3)));
+    return `<span class="uapp-doc-file-ico ${cls}" aria-hidden="true">${esc(label)}</span>`;
+  }
+
+  function renderDocumentsDownloadBtn(row) {
+    return `<button type="button" class="uapp-doc-icon-btn" data-uapp-action="docDownload:${row.kind}:${row.vehicleId}:${encodeURIComponent(row.downloadUrl || '')}" aria-label="Stáhnout">${ICO.download}</button>`;
+  }
+
+  function renderDocumentsRowMenu(row) {
+    const open = STATE.documentsMenuOpenId === row.id;
+    const items = [];
+    if (row.kind === 'attachment' && row.downloadUrl) {
+      items.push(`<button type="button" data-uapp-action="docPreview:${encodeURIComponent(row.downloadUrl)}:${encodeURIComponent(row.name)}">Náhled</button>`);
+    }
+    items.push(`<button type="button" data-uapp-action="docDownload:${row.kind}:${row.vehicleId}:${encodeURIComponent(row.downloadUrl || '')}">Stáhnout</button>`);
+    items.push(`<button type="button" data-uapp-action="documentsVehicle:${row.vehicleId}">Otevřít vozidlo</button>`);
+    if (row.verifyUrl) {
+      items.push(`<button type="button" data-uapp-action="docVerify:${encodeURIComponent(row.verifyUrl)}">Veřejné ověření</button>`);
+    }
+    if (row.kind === 'tachometer' && row.detailUrl) {
+      items.push(`<button type="button" data-uapp-action="docTachometerDetail:${encodeURIComponent(row.detailUrl)}:${row.vehicleId}">Detail protokolu</button>`);
+    }
+    return `
+      <div class="uapp-doc-row-menu${open ? ' is-open' : ''}">
+        <button type="button" class="uapp-doc-icon-btn" data-uapp-action="docMenuToggle:${encodeURIComponent(row.id)}" aria-label="Další akce">${ICO.more}</button>
+        ${open ? `<div class="uapp-doc-row-menu-pop">${items.join('')}</div>` : ''}
+      </div>`;
+  }
+
+  function renderDocumentsTableRow(row) {
+    const sizeLabel = formatDocumentSize(row.fileSizeBytes) || formatDocumentSize(estimateDocumentSizeBytes(row));
+    return `
+      <tr data-doc-row-id="${esc(row.id)}">
+        <td class="uapp-doc-col-name">
+          <div class="uapp-doc-name-cell">
+            ${renderDocumentsFileIcon(row.fileType)}
+            <div>
+              <strong>${esc(row.name)}</strong>
+              <span class="uapp-doc-file-meta">${esc(sizeLabel)}</span>
+            </div>
+          </div>
+        </td>
+        <td class="uapp-doc-col-vehicle">
+          <strong>${esc(row.vehiclePlate)}</strong>
+          <span>${esc(row.vehicleModel)}</span>
+        </td>
+        <td><span class="uapp-doc-cat is-${row.category.tone}">${esc(row.category.label)}</span></td>
+        <td class="uapp-doc-col-type">${esc(row.fileType)}</td>
+        <td class="uapp-doc-col-uploaded">
+          <strong>${esc(formatDate(row.uploadedAt))}</strong>
+          <span>${esc(row.uploadedBy)}</span>
+        </td>
+        <td>${renderExpiryCell(row.expiryAt)}</td>
+        <td class="uapp-doc-col-actions">
+          ${renderDocumentsDownloadBtn(row)}
+          ${renderDocumentsRowMenu(row)}
+        </td>
+      </tr>`;
+  }
+
+  function renderDocumentsPagination(total, page, perPage) {
+    const totalPages = Math.max(1, Math.ceil(total / perPage));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const start = total === 0 ? 0 : ((safePage - 1) * perPage) + 1;
+    const end = Math.min(total, safePage * perPage);
+    const pages = [];
+    for (let i = 1; i <= totalPages; i += 1) {
+      if (totalPages > 7 && i > 2 && i < totalPages - 1 && Math.abs(i - safePage) > 1) {
+        if (pages[pages.length - 1] !== '…') pages.push('…');
+        continue;
+      }
+      pages.push(i);
+    }
+    const pageButtons = pages.map((item) => {
+      if (item === '…') return '<span class="uapp-doc-page-ellipsis">…</span>';
+      return `<button type="button" class="uapp-doc-page-btn${item === safePage ? ' is-active' : ''}" data-uapp-action="documentsPage:${item}">${item}</button>`;
+    }).join('');
+    return `
+      <div class="uapp-doc-pagination">
+        <span class="uapp-doc-pagination-info">Zobrazeno ${esc(String(start))}-${esc(String(end))} z ${esc(String(total))}</span>
+        <div class="uapp-doc-pagination-pages">
+          <button type="button" class="uapp-doc-page-nav" data-uapp-action="documentsPagePrev" aria-label="Předchozí stránka"${safePage <= 1 ? ' disabled' : ''}>&lt;</button>
+          ${pageButtons}
+          <button type="button" class="uapp-doc-page-nav" data-uapp-action="documentsPageNext" aria-label="Další stránka"${safePage >= totalPages ? ' disabled' : ''}>&gt;</button>
+        </div>
+        <label class="uapp-doc-per-page">
+          <select data-uapp-doc-filter="perPage">
+            ${[10, 20, 50].map((n) => `<option value="${n}"${Number(perPage) === n ? ' selected' : ''}>${n} na stránku</option>`).join('')}
+          </select>
+        </label>
+      </div>`;
+  }
+
+  function renderDocumentsUploadPicker(data) {
+    if (!STATE.documentsUploadPickerOpen) return '';
+    const vehicles = data?.vehicles || [];
+    return `
+      <div class="uapp-doc-picker-backdrop">
+        <button type="button" class="uapp-doc-picker-scrim" data-uapp-action="documentsUploadPickerClose" aria-label="Zavřít"></button>
+        <div class="uapp-doc-picker" role="dialog" aria-modal="true" aria-label="Vyberte vozidlo">
+          <header>
+            <h3>Nahrát dokument</h3>
+            <button type="button" class="uapp-doc-picker-close" data-uapp-action="documentsUploadPickerClose" aria-label="Zavřít">×</button>
+          </header>
+          <p>Vyberte vozidlo, ke kterému chcete nahrát dokument.</p>
+          <ul class="uapp-doc-picker-list">
+            ${vehicles.map((vehicle) => `
+              <li>
+                <button type="button" data-uapp-action="documentsUploadTo:${Number(vehicle.id)}">
+                  <strong>${esc(vehicle.plate || getVehicleName(vehicle))}</strong>
+                  <span>${esc(vehicleSubtitle(vehicle))}</span>
+                </button>
+              </li>`).join('') || '<li class="uapp-doc-picker-empty">Nejdříve přidejte vozidlo.</li>'}
+          </ul>
+        </div>
+      </div>`;
+  }
+
+  function renderDocumentsPage(data) {
+    const hub = data?.documentsHub;
+    const allRows = sortDocumentsRows(buildDocumentsRows(data));
+    const filtered = filterDocumentsRows(allRows, data);
+    const perPage = Number(STATE.documentsPerPage) || 10;
+    const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+    if ((STATE.documentsPage || 1) > totalPages) STATE.documentsPage = totalPages;
+    const page = Number(STATE.documentsPage) || 1;
+    const pageRows = filtered.slice((page - 1) * perPage, page * perPage);
+    const stats = documentsCategoryStats(allRows);
+    const filters = STATE.documentsFilters || {};
+    const sort = STATE.documentsSort || { key: 'uploadedAt', dir: 'desc' };
+    const hubMissing = hub == null;
+    const vehicleOptions = (data?.vehicles || []).map((vehicle) =>
+      `<option value="${Number(vehicle.id)}"${String(filters.vehicle) === String(vehicle.id) ? ' selected' : ''}>${esc(vehicle.plate || getVehicleName(vehicle))}</option>`,
+    ).join('');
+    const typeOptions = [...new Set(allRows.map((row) => row.fileType))].sort();
+    const activeFilterCount = ['category', 'type', 'vehicle'].filter((key) => filters[key] && filters[key] !== 'all').length;
+
+    const categoryWidget = Object.entries(DOC_CATEGORY_META).map(([key, meta]) => `
+      <li>
+        <span class="uapp-doc-cat-ico is-${meta.tone}" aria-hidden="true">${ICO.folder.replace('class="uapp-next-svg"', 'class="uapp-doc-cat-folder"')}</span>
+        <span>${esc(meta.label)}</span>
+        <strong>${esc(String(stats[key] || 0))}</strong>
+      </li>`).join('');
+
+    const storage = computeDocumentsStorage(data, allRows);
+
+    const tipBanner = STATE.documentsTipHidden ? '' : `
+      <div class="uapp-doc-tip" role="note">
+        <span class="uapp-doc-tip-ico" aria-hidden="true">💡</span>
+        <p>Nahrajte dokumenty jako PDF, JPG, PNG nebo DOCX. Maximální velikost souboru je 20 MB.</p>
+        <button type="button" class="uapp-doc-tip-close" data-uapp-action="documentsTipClose" aria-label="Zavřít tip">×</button>
+      </div>`;
+
+    return `
+      <div class="uapp-doc-page" data-testid="user-app-next-documents">
+        <nav class="uapp-doc-breadcrumbs" aria-label="Drobečková navigace">
+          <button type="button" data-uapp-action="home">Přehled</button>
+          <span aria-hidden="true">/</span>
+          <span aria-current="page">Dokumenty</span>
+        </nav>
+        <header class="uapp-doc-page-head">
+          <div>
+            <div class="uapp-doc-title-row">
+              <h1 class="uapp-doc-page-title">Dokumenty</h1>
+              <span class="uapp-doc-count-badge">${esc(String(allRows.length))}</span>
+            </div>
+            <p class="uapp-doc-page-sub">Spravujte všechny dokumenty související s vašimi vozidly na jednom místě.</p>
+          </div>
+          <button type="button" class="uapp-next-btn uapp-next-btn-primary uapp-doc-upload-btn" data-uapp-action="documentsUpload">↑ Nahrát dokument</button>
+        </header>
+        <div class="uapp-doc-toolbar">
+          <label class="uapp-doc-search">
+            <span class="uapp-next-search-icon" aria-hidden="true">${ICO.search}</span>
+            <input type="search" data-uapp-doc-filter="search" placeholder="Hledat dokument" value="${esc(filters.search || '')}" autocomplete="off">
+          </label>
+          <label class="uapp-doc-filter-field">
+            <select data-uapp-doc-filter="category">
+              <option value="all"${filters.category === 'all' ? ' selected' : ''}>Všechny kategorie</option>
+              ${Object.entries(DOC_CATEGORY_META).map(([key, meta]) => `<option value="${key}"${filters.category === key ? ' selected' : ''}>${esc(meta.label)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="uapp-doc-filter-field">
+            <select data-uapp-doc-filter="type">
+              <option value="all"${filters.type === 'all' ? ' selected' : ''}>Všechny typy</option>
+              ${typeOptions.map((type) => `<option value="${esc(type)}"${filters.type === type ? ' selected' : ''}>${esc(type)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="uapp-doc-filter-field">
+            <select data-uapp-doc-filter="vehicle">
+              <option value="all"${filters.vehicle === 'all' ? ' selected' : ''}>Všechna vozidla</option>
+              ${vehicleOptions}
+            </select>
+          </label>
+          <button type="button" class="uapp-doc-filters-btn${activeFilterCount ? ' is-active' : ''}" data-uapp-action="documentsFiltersToggle">
+            ${ICO.filter}
+            Filtry
+          </button>
+        </div>
+        <div class="uapp-doc-layout">
+          <div class="uapp-doc-main">
+            ${hubMissing ? '<div class="uapp-doc-empty-state">Nepodařilo se načíst dokumenty. Zkuste stránku obnovit.</div>' : ''}
+            ${!hubMissing && filtered.length === 0 ? '<div class="uapp-doc-empty-state">Žádné dokumenty neodpovídají zvoleným filtrům.</div>' : ''}
+            ${filtered.length ? `
+              <div class="uapp-doc-table-wrap">
+                <table class="uapp-doc-table">
+                  <thead>
+                    <tr>
+                      <th>Název dokumentu</th>
+                      <th>Vozidlo</th>
+                      <th>Kategorie</th>
+                      <th>Typ</th>
+                      <th>
+                        <button type="button" class="uapp-doc-sort-btn${sort.key === 'uploadedAt' ? ' is-active' : ''}" data-uapp-action="documentsSortToggle">
+                          Nahráno dne ${sort.key === 'uploadedAt' ? (sort.dir === 'desc' ? '↓' : '↑') : ''}
+                        </button>
+                      </th>
+                      <th>Platnost do</th>
+                      <th>Akce</th>
+                    </tr>
+                  </thead>
+                  <tbody>${pageRows.map((row) => renderDocumentsTableRow(row)).join('')}</tbody>
+                </table>
+              </div>
+              ${renderDocumentsPagination(filtered.length, page, perPage)}` : ''}
+          </div>
+          <aside class="uapp-doc-aside" aria-label="Postranní panel dokumentů">
+            <section class="uapp-doc-widget">
+              <h3>Kategorie dokumentů</h3>
+              <ul class="uapp-doc-cat-list">${categoryWidget}</ul>
+            </section>
+            <section class="uapp-doc-widget">
+              <h3>Rychlé akce</h3>
+              <div class="uapp-doc-quick-actions">
+                <button type="button" class="uapp-doc-quick-btn" data-uapp-action="documentsUpload">↑ Nahrát dokument</button>
+                <button type="button" class="uapp-doc-quick-btn" data-uapp-action="documentsOrganize">📁 Vytvořit složku</button>
+                <button type="button" class="uapp-doc-quick-btn" data-uapp-action="documentsExport">📄 Exportovat seznam</button>
+              </div>
+            </section>
+            <section class="uapp-doc-widget">
+              <div class="uapp-doc-storage-head">
+                <h3>Úložiště</h3>
+                <span class="uapp-doc-storage-pct">${esc(String(storage.pct))} %</span>
+              </div>
+              <p class="uapp-doc-storage-label">Využito ${esc(storage.usedLabel)} z 10 GB</p>
+              <div class="uapp-doc-storage-bar" aria-hidden="true"><span style="width:${storage.pct}%"></span></div>
+              <button type="button" class="uapp-doc-storage-link" data-uapp-action="documentsManageStorage">Spravovat úložiště</button>
+            </section>
+            ${tipBanner}
+          </aside>
+        </div>
+        ${renderDocumentsUploadPicker(data)}
+      </div>`;
+  }
+
+  function bindDocumentsFilters() {
+    document.querySelectorAll('[data-uapp-doc-filter]').forEach((el) => {
+      if (el.dataset.uappDocBound === '1') return;
+      el.dataset.uappDocBound = '1';
+      const key = el.getAttribute('data-uapp-doc-filter');
+      const handler = () => {
+        STATE.documentsFilters = STATE.documentsFilters || {};
+        if (key === 'search') {
+          STATE.documentsFilters.search = el.value;
+        } else if (key === 'perPage') {
+          STATE.documentsPerPage = Number(el.value) || 10;
+          STATE.documentsPage = 1;
+        } else {
+          STATE.documentsFilters[key] = el.value;
+          STATE.documentsPage = 1;
+        }
+        render();
+      };
+      if (el.tagName === 'INPUT') {
+        el.addEventListener('input', handler);
+      } else {
+        el.addEventListener('change', handler);
+      }
+    });
+  }
+
+  function exportDocumentsCsv(rows) {
+    const header = ['Název', 'Vozidlo SPZ', 'Vozidlo', 'Kategorie', 'Typ', 'Nahráno dne', 'Nahrál', 'Platnost do'];
+    const lines = [header.join(';')];
+    rows.forEach((row) => {
+      lines.push([
+        row.name,
+        row.vehiclePlate,
+        row.vehicleModel,
+        row.category.label,
+        row.fileType,
+        formatDate(row.uploadedAt),
+        row.uploadedBy,
+        row.expiryAt ? formatDate(row.expiryAt) : '',
+      ].map((cell) => `"${String(cell || '').replace(/"/g, '""')}"`).join(';'));
+    });
+    const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `dokumenty-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function openDocumentsUploadFlow(data) {
+    const vehicles = data?.vehicles || [];
+    if (!vehicles.length) {
+      if (hasFn('openAddVehicleModal')) return window.openAddVehicleModal();
+      return;
+    }
+    if (vehicles.length === 1) return openVehicleDocuments(Number(vehicles[0].id));
+    STATE.documentsUploadPickerOpen = true;
+    render();
+  }
+
+  function buildServiceAddressLine(service) {
+    if (hasFn('buildServiceAddressLine')) {
+      try { return window.buildServiceAddressLine(service); } catch (_) {}
+    }
+    const directAddress = String(service?.address || '').trim();
+    if (directAddress) return directAddress;
+    const street = [service?.street, service?.street_number].filter(Boolean).join(' ').trim();
+    const cityZip = [service?.zip, service?.city].filter(Boolean).join(' ').trim();
+    return [street, cityZip].filter(Boolean).join(', ') || 'Adresa není uvedena';
+  }
+
+  function formatServiceAddressDisplay(service) {
+    const line = buildServiceAddressLine(service);
+    if (line && line !== 'Adresa není uvedena') return line;
+    const coords = service?.coordinates;
+    if (coords && Number.isFinite(Number(coords.lat)) && Number.isFinite(Number(coords.lon))) {
+      return `${Number(coords.lat).toFixed(5)}, ${Number(coords.lon).toFixed(5)}`;
+    }
+    return 'Adresa neuvedena';
+  }
+
+  function formatServiceOfferedLine(service) {
+    const profile = service?.partner_public_profile || {};
+    const items = (Array.isArray(profile.services_offered) ? profile.services_offered : [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    return items.join(' • ');
+  }
+
+  function formatServiceContactRows(service) {
+    const rows = [];
+    const phone = String(service?.phone || '').trim();
+    const email = String(service?.email || '').trim();
+    const website = String(service?.website || '').trim();
+    const ico = String(service?.ico || '').trim();
+    if (phone) rows.push({ label: 'Telefon', value: phone, href: `tel:${phone.replace(/[^\d+]/g, '')}` });
+    if (email) rows.push({ label: 'E-mail', value: email, href: `mailto:${email}` });
+    if (website) {
+      const href = /^https?:\/\//i.test(website) ? website : `https://${website}`;
+      rows.push({ label: 'Web', value: website.replace(/^https?:\/\//i, ''), href });
+    }
+    if (ico) rows.push({ label: 'IČO', value: ico, href: null });
+    return rows;
+  }
+
+  function servicesMapZoomForRadius(radiusKm) {
+    const radius = Number(radiusKm) || 50;
+    if (radius <= 10) return 12;
+    if (radius <= 25) return 11;
+    if (radius <= 50) return 10;
+    if (radius <= 75) return 9;
+    return 8;
+  }
+
+  function servicesMapProject(lon, lat, zoom) {
+    const scale = 256 * (2 ** zoom);
+    const x = ((lon + 180) / 360) * scale;
+    const sinLat = Math.sin((lat * Math.PI) / 180);
+    const y = ((0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * scale);
+    return { x, y };
+  }
+
+  function servicesMapTileXY(lon, lat, zoom) {
+    const n = 2 ** zoom;
+    const x = Math.floor(((lon + 180) / 360) * n);
+    const latRad = (lat * Math.PI) / 180;
+    const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+    return { x, y };
+  }
+
+  function servicesMapBBoxDelta(radiusKm) {
+    const radius = Number(radiusKm) || 50;
+    return Math.min(0.42, Math.max(0.08, (radius / 50) * 0.12));
+  }
+
+  function servicePinPosition(serviceLat, serviceLon, centerLat, centerLon, delta) {
+    const x = ((serviceLon - (centerLon - delta)) / (2 * delta)) * 100;
+    const y = (1 - ((serviceLat - (centerLat - delta * 0.7)) / (2 * delta * 0.7))) * 100;
+    return {
+      x: Math.min(96, Math.max(4, x)),
+      y: Math.min(92, Math.max(8, y)),
+    };
+  }
+
+  function serviceMapPinColor(typeMeta, inApp) {
+    if (inApp) return '#1a73e8';
+    const key = typeMeta?.key || typeMeta?.tone || 'auto';
+    const colors = {
+      auto: '#4285F4',
+      indep: '#4285F4',
+      auth: '#1967D2',
+      pneu: '#FBBC04',
+      tire: '#FBBC04',
+      stk: '#34A853',
+      emis: '#0F9D58',
+      moto: '#9334E6',
+      truck: '#EA4335',
+    };
+    return colors[key] || '#4285F4';
+  }
+
+  function serviceMapLegendItems() {
+    return [
+      { key: 'auto', label: 'Autoservis', tone: 'auto' },
+      { key: 'pneu', label: 'Pneuservis', tone: 'tire' },
+      { key: 'stk', label: 'STK / emise', tone: 'stk' },
+      { key: 'moto', label: 'Motocykly', tone: 'moto' },
+      { key: 'truck', label: 'Nákladní vozidla', tone: 'truck' },
+      { key: 'inapp', label: 'V aplikaci', tone: 'inapp' },
+    ];
+  }
+
+  async function ensureMapsConfig() {
+    if (STATE.mapsConfig !== undefined) return STATE.mapsConfig;
+    const defaultCfg = {
+      provider: 'osm_tiles',
+      configured: true,
+      tile_url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '© OpenStreetMap contributors',
+      fallback_message: null,
+    };
+    const payload = await safeApi('/api/v1/system/maps-config', defaultCfg);
+    STATE.mapsConfig = payload && payload.configured === true && payload.tile_url ? payload : defaultCfg;
+    return STATE.mapsConfig;
+  }
+
+  function loadLeafletAssets() {
+    if (window.L) return Promise.resolve();
+    if (STATE.leafletLoadPromise) return STATE.leafletLoadPromise;
+    STATE.leafletLoadPromise = new Promise((resolve, reject) => {
+      if (!document.getElementById('uappLeafletCss')) {
+        const link = document.createElement('link');
+        link.id = 'uappLeafletCss';
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(link);
+      }
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Leaflet se nepodařilo načíst'));
+      document.head.appendChild(script);
+    });
+    return STATE.leafletLoadPromise;
+  }
+
+  function loadLeafletClusterAssets() {
+    return loadLeafletAssets().then(() => {
+      if (window.L && window.L.markerClusterGroup) return;
+      if (STATE.leafletClusterLoadPromise) return STATE.leafletClusterLoadPromise;
+      STATE.leafletClusterLoadPromise = new Promise((resolve, reject) => {
+        if (!document.getElementById('uappLeafletClusterCss')) {
+          const link = document.createElement('link');
+          link.id = 'uappLeafletClusterCss';
+          link.rel = 'stylesheet';
+          link.href = 'https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css';
+          document.head.appendChild(link);
+          const link2 = document.createElement('link');
+          link2.rel = 'stylesheet';
+          link2.href = 'https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css';
+          document.head.appendChild(link2);
+        }
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js';
+        script.async = true;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('Leaflet cluster se nepodařilo načíst'));
+        document.head.appendChild(script);
+      });
+      return STATE.leafletClusterLoadPromise;
+    });
+  }
+
+  function servicesMapBoundsKey(bounds) {
+    if (!bounds) return '';
+    const round = (value) => Math.round(Number(value) * 1000) / 1000;
+    return [round(bounds.north), round(bounds.south), round(bounds.east), round(bounds.west)].join(',');
+  }
+
+  function scheduleServicesMapBoundsLoad() {
+    if (STATE.servicesMapBoundsDebounce) clearTimeout(STATE.servicesMapBoundsDebounce);
+    STATE.servicesMapBoundsDebounce = setTimeout(() => {
+      const runtime = STATE.servicesMapRuntime;
+      if (!runtime?.map || getActiveView() !== 'servicesDirectory') return;
+      const b = runtime.map.getBounds();
+      const nextBounds = {
+        north: b.getNorth(),
+        south: b.getSouth(),
+        east: b.getEast(),
+        west: b.getWest(),
+      };
+      const nextKey = servicesMapBoundsKey(nextBounds);
+      if (nextKey && nextKey === STATE.servicesMapBoundsKey) return;
+      STATE.servicesMapBoundsKey = nextKey;
+      STATE.servicesMapBounds = nextBounds;
+      void loadServicesOsmData({ silent: true });
+    }, 400);
+  }
+
+
+  function refreshServicesDirectoryList(data) {
+    if (getActiveView() !== 'servicesDirectory') return;
+    const source = data || STATE.latestData || {};
+    const allRows = buildMergedServiceCatalog(source);
+    let filtered = filterServicesRows(allRows);
+    if (STATE.servicesDirectorySort === 'name') {
+      filtered = filtered.slice().sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'cs'));
+    }
+    const limit = Number(STATE.servicesDirectoryLimit) || 30;
+    const visible = filtered.slice(0, limit);
+    const hasMore = filtered.length > limit;
+    const radius = Number(STATE.servicesDirectoryRadius) || 50;
+    const nearbyCount = filtered.filter((row) => {
+      const dist = Number(row.distance_km);
+      return Number.isFinite(dist) && dist <= radius;
+    }).length;
+    const head = document.querySelector('.uapp-svc-list-head h2');
+    if (head) head.textContent = `Nalezeno ${nearbyCount || filtered.length} servisů do ${radius} km`;
+    const list = document.querySelector('.uapp-svc-list');
+    if (list) {
+      list.innerHTML = visible.length
+        ? visible.map((service) => renderServicesCard(service)).join('')
+        : '<div class="uapp-svc-empty">V okolí nejsou servisy odpovídající filtrům.</div>';
+    }
+    const section = document.querySelector('.uapp-svc-list-section');
+    const loadMore = section?.querySelector('.uapp-svc-load-more');
+    if (hasMore) {
+      if (!loadMore && section) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'uapp-svc-load-more';
+        btn.setAttribute('data-uapp-action', 'servicesLoadMore');
+        btn.textContent = 'Zobrazit další servisy ▾';
+        section.appendChild(btn);
+      }
+    } else if (loadMore) {
+      loadMore.remove();
+    }
+  }
+
+  function updateServicesMapMarkers(data) {
+    const runtime = STATE.servicesMapRuntime;
+    if (!runtime?.map || !window.L) return;
+    const L = window.L;
+    const rows = servicesMapRowsForDisplay(data);
+    if (runtime.cluster && runtime.cluster.clearLayers) {
+      runtime.cluster.clearLayers();
+    } else {
+      runtime.cluster = L.markerClusterGroup({ maxClusterRadius: 50, showCoverageOnHover: false });
+      runtime.map.addLayer(runtime.cluster);
+    }
+    rows.forEach((service) => {
+      const plat = Number(service?.coordinates?.lat);
+      const plon = Number(service?.coordinates?.lon);
+      if (!Number.isFinite(plat) || !Number.isFinite(plon)) return;
+      const type = resolveServiceTypeMeta(service);
+      const marker = L.circleMarker([plat, plon], {
+        radius: service.in_app ? 10 : 8,
+        color: '#ffffff',
+        weight: 2,
+        fillColor: serviceMapPinColor(type, service.in_app),
+        fillOpacity: 1,
+      });
+      marker.on('click', () => openServiceLocationSheet(service));
+      runtime.cluster.addLayer(marker);
+    });
+    runtime.markers = rows;
+  }
+
+  function destroyServicesMap() {
+    const runtime = STATE.servicesMapRuntime;
+    if (!runtime) return;
+    if (runtime.provider === 'leaflet' && runtime.map && runtime.map.remove) {
+      runtime.map.remove();
+    }
+    STATE.servicesMapRuntime = null;
+  }
+
+  function servicesMapRowsForDisplay(data) {
+    const source = data || STATE.latestData || {};
+    return filterServicesRows(buildMergedServiceCatalog(source))
+      .filter((row) => row?.coordinates?.lat != null && row?.coordinates?.lon != null);
+  }
+
+  function bindLeafletServicesMap(host, ref, radius, rows, mapsConfig) {
+    const L = window.L;
+    if (!L) throw new Error('Leaflet není k dispozici');
+    if (!mapsConfig?.configured || !mapsConfig?.tile_url) {
+      host.innerHTML = `<div class="uapp-svc-map-fallback" role="alert">${esc(mapsConfig?.fallback_message || 'Mapa není nakonfigurovaná. Servisy lze zobrazit v seznamu.')}</div>`;
+      STATE.servicesMapRuntime = { provider: 'fallback' };
+      return;
+    }
+    const map = L.map(host, { zoomControl: true, attributionControl: true }).setView([ref.lat, ref.lon], servicesMapZoomForRadius(radius));
+    L.tileLayer(mapsConfig.tile_url, {
+      attribution: mapsConfig.attribution || '',
+      maxZoom: 19,
+    }).addTo(map);
+    L.circleMarker([ref.lat, ref.lon], {
+      radius: 7,
+      color: '#111827',
+      fillColor: '#111827',
+      fillOpacity: 1,
+      weight: 2,
+    }).addTo(map).bindTooltip('Vaše poloha', { permanent: false });
+
+    const cluster = L.markerClusterGroup ? L.markerClusterGroup({ maxClusterRadius: 50, showCoverageOnHover: false }) : null;
+    const targetLayer = cluster || map;
+    rows.slice(0, 500).forEach((service) => {
+      const plat = Number(service?.coordinates?.lat);
+      const plon = Number(service?.coordinates?.lon);
+      if (!Number.isFinite(plat) || !Number.isFinite(plon)) return;
+      const type = resolveServiceTypeMeta(service);
+      const marker = L.circleMarker([plat, plon], {
+        radius: service.in_app ? 10 : 8,
+        color: '#ffffff',
+        weight: 2,
+        fillColor: serviceMapPinColor(type, service.in_app),
+        fillOpacity: 1,
+      });
+      marker.on('click', () => openServiceLocationSheet(service));
+      targetLayer.addLayer(marker);
+    });
+    if (cluster) map.addLayer(cluster);
+
+    STATE.servicesMapRuntime = { provider: 'leaflet', map, cluster, markers: rows };
+
+    const b = map.getBounds();
+    const initialBounds = {
+      north: b.getNorth(),
+      south: b.getSouth(),
+      east: b.getEast(),
+      west: b.getWest(),
+    };
+    STATE.servicesMapBounds = initialBounds;
+    STATE.servicesMapBoundsKey = servicesMapBoundsKey(initialBounds);
+    map.on('moveend', scheduleServicesMapBoundsLoad);
+    void loadServicesOsmData({ silent: true });
+  }
+
+  async function bindServicesMap(data) {
+    const host = document.getElementById('uappSvcMapCanvas');
+    if (!host || (STATE.servicesDirectoryView || 'map') === 'list') return;
+    destroyServicesMap();
+    host.replaceChildren();
+
+    const ref = getServicesRefCoords(data || STATE.latestData || {}) || { lat: 49.7559, lon: 16.4683 };
+    const radius = Number(STATE.servicesDirectoryRadius) || 50;
+    const rows = servicesMapRowsForDisplay(data);
+    const loading = document.createElement('div');
+    loading.className = 'uapp-svc-map-loading';
+    loading.textContent = 'Načítám mapu servisů…';
+    host.appendChild(loading);
+
+    try {
+      const mapsConfig = await ensureMapsConfig();
+      await loadLeafletClusterAssets();
+      host.replaceChildren();
+      bindLeafletServicesMap(host, ref, radius, rows, mapsConfig);
+    } catch (err) {
+      console.warn('[USER_APP_NEXT] map init failed', err);
+      host.replaceChildren();
+      host.innerHTML = '<div class="uapp-svc-map-fallback" role="alert">Mapa není nakonfigurovaná. Servisy lze zobrazit v seznamu.</div>';
+      STATE.servicesMapRuntime = { provider: 'fallback' };
+    }
+  }
+
+  function formatServicesDistanceKm(value) {
+    if (hasFn('formatServicesDistance')) {
+      try {
+        const label = window.formatServicesDistance(value);
+        if (label) return label;
+      } catch (_) {}
+    }
+    const km = Number(value);
+    if (!Number.isFinite(km) || km < 0) return null;
+    const decimals = km < 10 ? 1 : 0;
+    return `${km.toLocaleString('cs-CZ', { minimumFractionDigits: 0, maximumFractionDigits: decimals })} km`;
+  }
+
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    const r = 6371;
+    const toRad = (deg) => deg * (Math.PI / 180);
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2
+      + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return r * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(1 - a, 0)));
+  }
+
+  function getServicesRefCoords(data) {
+    const stateRef = STATE.servicesRefCoords || {};
+    const stateLat = Number(stateRef.lat);
+    const stateLon = Number(stateRef.lon);
+    if (Number.isFinite(stateLat) && Number.isFinite(stateLon)) {
+      return { lat: stateLat, lon: stateLon };
+    }
+    const meta = data?.servicesDiscovery?.meta || {};
+    const ref = meta.reference_coordinates || {};
+    const lat = Number(ref.lat);
+    const lon = Number(ref.lon);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
+    return null;
+  }
+
+  function normalizeServicesFromData(data) {
+    const base = Array.isArray(data?.servicesDiscovery?.services) ? data.servicesDiscovery.services : [];
+    const contacts = Array.isArray(data?.services) ? data.services : [];
+    const map = new Map();
+    base.forEach((item) => {
+      const id = Number(item?.id);
+      if (!id) return;
+      map.set(id, { ...item, is_linked: Boolean(item?.is_linked) });
+    });
+    contacts.forEach((contact) => {
+      const id = Number(contact?.id);
+      if (!id) return;
+      const existing = map.get(id);
+      if (existing) {
+        map.set(id, {
+          ...existing,
+          is_linked: true,
+          name: existing?.name || contact?.name || contact?.email || existing?.email || 'Servis',
+          phone: existing?.phone || contact?.phone || '',
+          email: existing?.email || contact?.email || '',
+          ico: existing?.ico || contact?.ico || '',
+          city: existing?.city || contact?.city || '',
+          street: existing?.street || contact?.street || '',
+          street_number: existing?.street_number || contact?.street_number || '',
+          zip: existing?.zip || contact?.zip || '',
+          address: existing?.address || contact?.address || '',
+        });
+        return;
+      }
+      map.set(id, {
+        id,
+        name: contact?.name || contact?.email || `Servis #${id}`,
+        email: contact?.email || '',
+        phone: contact?.phone || '',
+        ico: contact?.ico || '',
+        city: contact?.city || '',
+        street: contact?.street || '',
+        street_number: contact?.street_number || '',
+        zip: contact?.zip || '',
+        address: contact?.address || '',
+        is_linked: true,
+        distance_km: null,
+        coordinates: null,
+        partner_public_profile: {},
+      });
+    });
+    let list = Array.from(map.values());
+    if (hasFn('dedupePartnerDirectoryRows')) {
+      try { list = window.dedupePartnerDirectoryRows(list); } catch (_) {}
+    }
+    return list.sort((a, b) => {
+      const da = Number.isFinite(Number(a?.distance_km)) ? Number(a.distance_km) : Infinity;
+      const db = Number.isFinite(Number(b?.distance_km)) ? Number(b.distance_km) : Infinity;
+      if (da !== db) return da - db;
+      return String(a?.name || '').localeCompare(String(b?.name || ''), 'cs');
+    });
+  }
+
+  function buildMergedServiceCatalog(data) {
+    const ref = getServicesRefCoords(data);
+    const radius = Number(STATE.servicesDirectoryRadius) || 50;
+    const osmRows = Array.isArray(STATE.servicesOsmRows) ? STATE.servicesOsmRows : [];
+
+    const appRows = normalizeServicesFromData(data).map((row) => {
+      const coords = row?.coordinates
+        && Number.isFinite(Number(row.coordinates.lat))
+        && Number.isFinite(Number(row.coordinates.lon))
+        ? { lat: Number(row.coordinates.lat), lon: Number(row.coordinates.lon) }
+        : null;
+      let distanceKm = row.distance_km;
+      if (ref && coords) {
+        distanceKm = Math.round(haversineKm(ref.lat, ref.lon, coords.lat, coords.lon) * 10) / 10;
+      }
+      return {
+        ...row,
+        in_app: true,
+        source: 'app',
+        row_key: `app-${row.id}`,
+        coordinates: coords || row.coordinates,
+        distance_km: distanceKm,
+      };
+    });
+
+    const matchedOsmIds = new Set();
+    const merged = [];
+
+    appRows.forEach((appRow) => {
+      let matchedOsmId = null;
+      let matchedOsmRow = null;
+      const appCoords = appRow.coordinates;
+      if (appCoords && Number.isFinite(Number(appCoords.lat)) && Number.isFinite(Number(appCoords.lon))) {
+        osmRows.forEach((osmRow) => {
+          if (matchedOsmIds.has(osmRow.osm_id)) return;
+          const olat = Number(osmRow.lat);
+          const olon = Number(osmRow.lon);
+          if (!Number.isFinite(olat) || !Number.isFinite(olon)) return;
+          const dist = haversineKm(Number(appCoords.lat), Number(appCoords.lon), olat, olon);
+          if (dist <= 0.25) {
+            matchedOsmId = osmRow.osm_id;
+            matchedOsmRow = osmRow;
+            matchedOsmIds.add(osmRow.osm_id);
+          }
+        });
+      }
+      const enriched = { ...appRow, matched_osm_id: matchedOsmId };
+      if (matchedOsmRow) {
+        if (!enriched.street && matchedOsmRow.street) enriched.street = matchedOsmRow.street;
+        if (!enriched.city && matchedOsmRow.city) enriched.city = matchedOsmRow.city;
+        if (!enriched.zip && matchedOsmRow.postcode) enriched.zip = matchedOsmRow.postcode;
+        if (!enriched.address && matchedOsmRow.address) enriched.address = matchedOsmRow.address;
+        if (!enriched.phone && matchedOsmRow.phone) enriched.phone = matchedOsmRow.phone;
+        if (!enriched.email && matchedOsmRow.email) enriched.email = matchedOsmRow.email;
+        if (!enriched.website && matchedOsmRow.website) enriched.website = matchedOsmRow.website;
+      }
+      merged.push(enriched);
+    });
+
+    osmRows.forEach((osmRow) => {
+      const osmKey = osmRow.osm_id ?? osmRow.location_id;
+      if (osmKey != null && matchedOsmIds.has(osmKey)) return;
+      const olat = Number(osmRow.lat ?? osmRow.coordinates?.lat);
+      const olon = Number(osmRow.lon ?? osmRow.coordinates?.lon);
+      if (!Number.isFinite(olat) || !Number.isFinite(olon)) return;
+      const dist = ref
+        ? Math.round(haversineKm(ref.lat, ref.lon, olat, olon) * 10) / 10
+        : Number(osmRow.distance_km);
+      const street = String(osmRow.street || osmRow.address || '').trim();
+      const city = String(osmRow.city || '').trim();
+      const zip = String(osmRow.postcode || '').trim();
+      const shopType = String(osmRow.shop_type || 'auto');
+      const servicesOffered = shopType === 'pneu'
+        ? ['Pneuservis']
+        : shopType === 'stk' || shopType === 'emis'
+          ? ['STK / emise']
+          : shopType === 'moto'
+            ? ['Servis motocyklů']
+            : shopType === 'truck'
+              ? ['Servis nákladních vozidel']
+              : ['Autoservis'];
+      merged.push({
+        id: null,
+        osm_id: osmRow.osm_id ?? osmRow.location_id ?? null,
+        location_id: osmRow.location_id ?? null,
+        category: osmRow.category || '',
+        shop_type: shopType,
+        name: osmRow.name || 'Servis',
+        street,
+        city,
+        zip,
+        phone: osmRow.phone || '',
+        email: osmRow.email || '',
+        website: osmRow.website || '',
+        address: String(osmRow.address || [street, [zip, city].filter(Boolean).join(' ')].filter(Boolean).join(', ')),
+        coordinates: { lat: olat, lon: olon },
+        distance_km: dist,
+        in_app: false,
+        is_linked: false,
+        source: 'osm',
+        osm_tags: osmRow.tags || {},
+        partner_public_profile: { services_offered: servicesOffered },
+        row_key: osmRow.row_key || (osmRow.location_id ? `map-${osmRow.location_id}` : `osm-${osmRow.osm_id || 'x'}`),
+      });
+    });
+
+    return merged
+      .filter((row) => {
+        if (row.is_linked) return true;
+        if (row.location_id || String(row.row_key || '').startsWith('map-')) return true;
+        const dist = Number(row.distance_km);
+        if (!Number.isFinite(dist)) return Boolean(row.in_app);
+        return dist <= radius;
+      })
+      .sort((a, b) => {
+        const da = Number.isFinite(Number(a.distance_km)) ? Number(a.distance_km) : 9999;
+        const db = Number.isFinite(Number(b.distance_km)) ? Number(b.distance_km) : 9999;
+        if (da !== db) return da - db;
+        if (Boolean(a.in_app) !== Boolean(b.in_app)) return a.in_app ? -1 : 1;
+        return String(a.name || '').localeCompare(String(b.name || ''), 'cs');
+      });
+  }
+
+  function resolveServicesLocationLabel(data) {
+    if (STATE.servicesLocationLabel) return STATE.servicesLocationLabel;
+    const meta = data?.servicesDiscovery?.meta || {};
+    const refSource = String(meta.reference_source || 'none');
+    if (meta.reference_label) return String(meta.reference_label);
+    if (refSource === 'browser' || refSource === 'explore_place') {
+      const ref = getServicesRefCoords(data);
+      if (ref) return `GPS poloha (${ref.lat.toFixed(5)}, ${ref.lon.toFixed(5)})`;
+      return 'Vaše aktuální poloha (GPS)';
+    }
+    if (refSource === 'profile_address') {
+      const profile = window.currentUser || {};
+      const parts = [
+        [profile.street, profile.street_number].filter(Boolean).join(' ').trim(),
+        [profile.zip, profile.city].filter(Boolean).join(' ').trim(),
+      ].filter(Boolean);
+      if (parts.length) return `Adresa v profilu: ${parts.join(', ')}`;
+      return 'Podle adresy v profilu';
+    }
+    const ref = meta.reference_coordinates || {};
+    if (ref.lat != null && ref.lon != null) return 'Vaše poloha';
+    return 'Poloha není určena';
+  }
+
+  function resolveServiceTypeMeta(service) {
+    const apiCategory = String(service?.category || '').toLowerCase();
+    if (apiCategory === 'pneuservis') return { key: 'pneu', label: 'Pneuservis', tone: 'tire' };
+    if (apiCategory === 'stk') return { key: 'stk', label: 'STK', tone: 'stk' };
+    if (apiCategory === 'sme') return { key: 'stk', label: 'Emise (SME)', tone: 'stk' };
+    if (apiCategory === 'truck_service') return { key: 'truck', label: 'Nákladní vozidla', tone: 'truck' };
+    if (apiCategory === 'autoservis') return { key: 'indep', label: 'Autoservis', tone: 'indep' };
+    const directType = String(service?.shop_type || '').toLowerCase();
+    if (directType === 'pneu') return { key: 'pneu', label: 'Pneuservis', tone: 'tire' };
+    if (directType === 'stk') return { key: 'stk', label: 'STK', tone: 'stk' };
+    if (directType === 'emis') return { key: 'stk', label: 'Emise', tone: 'stk' };
+    if (directType === 'moto') return { key: 'moto', label: 'Motocykly', tone: 'moto' };
+    if (directType === 'truck') return { key: 'truck', label: 'Nákladní vozidla', tone: 'truck' };
+    if (directType === 'auto') return { key: 'indep', label: 'Autoservis', tone: 'indep' };
+    const osmTags = service?.osm_tags && typeof service.osm_tags === 'object' ? service.osm_tags : null;
+    if (osmTags) {
+      const shop = String(osmTags.shop || '').toLowerCase();
+      const amenity = String(osmTags.amenity || '').toLowerCase();
+      const name = String(osmTags.name || service?.name || '').toLowerCase();
+      if (amenity === 'vehicle_inspection' || name.includes('stk') || name.includes('technick')) return { key: 'stk', label: 'STK', tone: 'stk' };
+      if (name.includes('emis')) return { key: 'stk', label: 'Emise', tone: 'stk' };
+      if (shop === 'tyres' || name.includes('pneu')) return { key: 'pneu', label: 'Pneuservis', tone: 'tire' };
+      if (shop === 'motorcycle_repair' || shop === 'motorcycle' || name.includes('moto')) return { key: 'moto', label: 'Motocykly', tone: 'moto' };
+      if (name.includes('kamion') || name.includes('náklad') || name.includes('tir')) return { key: 'truck', label: 'Nákladní vozidla', tone: 'truck' };
+      return { key: 'indep', label: 'Autoservis', tone: 'indep' };
+    }
+    const profile = service?.partner_public_profile && typeof service.partner_public_profile === 'object'
+      ? service.partner_public_profile
+      : {};
+    const offered = (profile.services_offered || []).join(' ').toLowerCase();
+    const brands = (profile.brands || []).join(' ').toLowerCase();
+    const name = String(service?.name || '').toLowerCase();
+    const hay = `${offered} ${brands} ${name}`;
+    if (hay.includes('stk') || hay.includes('emis')) return { key: 'stk', label: 'STK', tone: 'stk' };
+    if (hay.includes('pneu')) return { key: 'pneu', label: 'Pneuservis', tone: 'tire' };
+    if (hay.includes('moto')) return { key: 'moto', label: 'Motocykly', tone: 'moto' };
+    if (hay.includes('kamion') || hay.includes('náklad')) return { key: 'truck', label: 'Nákladní vozidla', tone: 'truck' };
+    if ((profile.brands || []).length > 0 || hay.includes('autoriz')) return { key: 'auth', label: 'Autorizovaný servis', tone: 'auth' };
+    return { key: 'indep', label: 'Nezávislý servis', tone: 'indep' };
+  }
+
+  function serviceLogoLabel(service) {
+    const profile = service?.partner_public_profile || {};
+    const brand = Array.isArray(profile.brands) && profile.brands[0] ? String(profile.brands[0]) : '';
+    const source = brand || service?.name || service?.email || 'S';
+    return source.trim().slice(0, 3).toUpperCase();
+  }
+
+  function filterServicesRows(rows) {
+    const filters = STATE.servicesDirectoryFilters || {};
+    return rows.filter((service) => {
+      if (filters.inAppOnly && !service.in_app) return false;
+      if (STATE.servicesMapVerifiedOnly && !service.is_verified) return false;
+      const type = resolveServiceTypeMeta(service);
+      const mapCat = STATE.servicesMapCategory || 'all';
+      if (mapCat === 'verified' && !service.is_verified) return false;
+      if (mapCat === 'autoservis' && type.key !== 'indep' && service.category !== 'autoservis') return false;
+      if (mapCat === 'pneuservis' && type.key !== 'pneu') return false;
+      if (mapCat === 'stk' && service.category !== 'stk') return false;
+      if (mapCat === 'sme' && service.category !== 'sme') return false;
+      if (mapCat === 'truck_service' && type.key !== 'truck') return false;
+      if (filters.type && filters.type !== 'all' && type.key !== filters.type) return false;
+      if (filters.authorizedOnly && type.key !== 'auth') return false;
+      if (filters.service && filters.service !== 'all') {
+        const profile = service?.partner_public_profile || {};
+        const offered = Array.isArray(profile.services_offered) ? profile.services_offered : [];
+        if (!offered.some((item) => String(item).toLowerCase().includes(String(filters.service).toLowerCase()))) return false;
+      }
+      const minRating = Number(filters.rating || 0);
+      if (minRating > 0) {
+        const profile = service?.partner_public_profile || {};
+        const rating = Number(profile.average_rating || profile.rating);
+        if (!Number.isFinite(rating) || rating < minRating) return false;
+      }
+      return true;
+    });
+  }
+
+  function servicesOfferedOptions(rows) {
+    const set = new Set();
+    rows.forEach((service) => {
+      const profile = service?.partner_public_profile || {};
+      (profile.services_offered || []).forEach((item) => {
+        const label = String(item || '').trim();
+        if (label) set.add(label);
+      });
+    });
+    return [...set].sort((a, b) => a.localeCompare(b, 'cs')).slice(0, 20);
+  }
+
+  function serviceSourceLabel(service) {
+    const map = {
+      osm: 'OpenStreetMap',
+      mdcr: 'MDČR',
+      manual: 'Ručně doplněno',
+      staging_seed: 'Staging seed',
+      verified_service: 'Ověřený servis',
+      catalog: 'Katalog',
+    };
+    return map[String(service?.source_type || service?.source || '').toLowerCase()] || String(service?.source_type || service?.source || 'Katalog');
+  }
+
+  function serviceNavigateUrl(service) {
+    const coords = service?.coordinates;
+    if (coords && Number.isFinite(Number(coords.lat)) && Number.isFinite(Number(coords.lon))) {
+      const lat = Number(coords.lat);
+      const lon = Number(coords.lon);
+      return `https://mapy.cz/zakladni?planovani-trasy&x=${encodeURIComponent(String(lon))}&y=${encodeURIComponent(String(lat))}&z=16`;
+    }
+    const query = encodeURIComponent(buildServiceAddressLine(service));
+    return `https://mapy.cz/hledani?q=${query}`;
+  }
+
+  function serviceNavigateFallbackUrl(service) {
+    const coords = service?.coordinates;
+    if (coords && Number.isFinite(Number(coords.lat)) && Number.isFinite(Number(coords.lon))) {
+      return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(String(coords.lat))},${encodeURIComponent(String(coords.lon))}`;
+    }
+    return serviceNavigateUrl(service);
+  }
+
+  function serviceMapsUrl(service) {
+    return serviceNavigateUrl(service);
+  }
+
+  function openServiceLocationSheet(service) {
+    if (!service) return;
+    if (service.in_app && service.id) {
+      return runAction(`serviceDetail:${service.id}`);
+    }
+    return openExternalServiceDetailModal(service);
+  }
+
+  function renderServiceMapQuickFilters() {
+    const active = STATE.servicesMapCategory || 'all';
+    const chips = [
+      ['all', 'Vše'],
+      ['autoservis', 'Autoservis'],
+      ['pneuservis', 'Pneuservis'],
+      ['stk', 'STK'],
+      ['sme', 'Emise'],
+      ['truck_service', 'Nákladní'],
+      ['verified', 'Ověřené'],
+    ];
+    return `<div class="uapp-svc-quick-filters" role="group" aria-label="Rychlé filtry">${chips.map(([key, label]) => `<button type="button" class="uapp-svc-chip${active === key ? ' is-active' : ''}" data-uapp-action="servicesMapCategory:${key}">${esc(label)}</button>`).join('')}</div>`;
+  }
+
+  function renderServicesMapEmbed(data, rows) {
+    const ref = getServicesRefCoords(data) || {};
+    const lat = Number(ref.lat) || 50.0755;
+    const lon = Number(ref.lon) || 14.4378;
+    const radius = Number(STATE.servicesDirectoryRadius) || 50;
+    const legend = serviceMapLegendItems().map((item) => {
+      const color = item.key === 'inapp' ? '#1a73e8' : serviceMapPinColor({ key: item.key, tone: item.tone }, item.key === 'inapp');
+      return `<span class="uapp-svc-map-legend-item"><i style="background:${color}"></i>${esc(item.label)}</span>`;
+    }).join('');
+    return `
+      <div class="uapp-svc-map-wrap" id="uappSvcMapHost" data-map-lat="${esc(String(lat))}" data-map-lon="${esc(String(lon))}" data-map-radius="${esc(String(radius))}">
+        <div class="uapp-svc-map-canvas" id="uappSvcMapCanvas" role="region" aria-label="Mapa servisů"></div>
+        <div class="uapp-svc-map-legend" aria-label="Legenda mapy">${legend}</div>
+        <div class="uapp-svc-map-controls">
+          <h3>Vzdálenost od polohy</h3>
+          <label class="uapp-svc-map-slider">
+            <input type="range" min="5" max="100" step="5" value="${esc(String(radius))}" data-uapp-svc-filter="radius">
+            <span>${esc(String(radius))} km</span>
+          </label>
+          <label class="uapp-svc-map-toggle">
+            <input type="checkbox"${STATE.servicesDirectoryUseLocation !== false ? ' checked' : ''} data-uapp-svc-filter="useLocation">
+            <span>Použít aktuální polohu</span>
+          </label>
+          <button type="button" class="uapp-svc-map-refresh" data-uapp-action="servicesRefreshLocation">⟳ Aktualizovat polohu</button>
+        </div>
+      </div>`;
+  }
+
+  function renderServicesCard(service) {
+    const id = Number(service?.id);
+    const rowKey = esc(service.row_key || (id ? `app-${id}` : `osm-${service.osm_id || 'unknown'}`));
+    const type = resolveServiceTypeMeta(service);
+    const offeredLine = formatServiceOfferedLine(service);
+    const distance = formatServicesDistanceKm(service?.distance_km);
+    const address = formatServiceAddressDisplay(service);
+    const detailAction = service.in_app && id
+      ? `serviceDetail:${id}`
+      : `serviceOsmDetail:${encodeURIComponent(String(service.row_key || service.osm_id || ''))}`;
+    const statusBits = [
+      service?.is_linked ? '<span class="uapp-svc-linked">Propojeno</span>' : '',
+      service.in_app
+        ? '<span class="uapp-svc-inapp is-yes">V aplikaci</span>'
+        : '<span class="uapp-svc-inapp is-no">Mimo aplikaci</span>',
+    ].filter(Boolean).join('');
+    return `
+      <article class="uapp-svc-card" data-service-row="${rowKey}"${id ? ` data-service-id="${id}"` : ''}>
+        <div class="uapp-svc-card-logo is-${type.tone}" aria-hidden="true">${esc(serviceLogoLabel(service))}</div>
+        <div class="uapp-svc-card-info">
+          <div class="uapp-svc-card-title-row">
+            <h3>${esc(service?.name || service?.email || 'Servis')}</h3>
+            <span class="uapp-svc-badge is-${type.tone}">${esc(type.label)}</span>
+          </div>
+          ${statusBits ? `<div class="uapp-svc-card-status">${statusBits}</div>` : ''}
+          ${offeredLine ? `<p class="uapp-svc-offered">${esc(offeredLine)}</p>` : ''}
+        </div>
+        <div class="uapp-svc-card-address-col">
+          <p class="uapp-svc-address">${esc(address)}</p>
+        </div>
+        <div class="uapp-svc-distance-col">
+          ${distance ? `<span class="uapp-svc-distance"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>${esc(distance)}</span>` : ''}
+        </div>
+        <div class="uapp-svc-card-actions">
+          <button type="button" class="uapp-svc-outline-btn" data-uapp-action="${detailAction}">Zobrazit detail</button>
+          <a class="uapp-next-btn uapp-next-btn-primary uapp-svc-nav-btn" href="${esc(serviceMapsUrl(service))}" target="_blank" rel="noopener noreferrer">Navigovat</a>
+        </div>
+      </article>`;
+  }
+
+  function openExternalServiceDetailModal(service) {
+    if (!service) return;
+    const existing = document.getElementById('uappSvcExternalModal');
+    if (existing) existing.remove();
+    const type = resolveServiceTypeMeta(service);
+    const overlay = document.createElement('div');
+    overlay.id = 'uappSvcExternalModal';
+    overlay.className = 'uapp-svc-modal-overlay uapp-svc-bottom-sheet-host';
+    overlay.innerHTML = `
+      <div class="uapp-svc-modal uapp-svc-bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="uappSvcExternalTitle">
+        <div class="uapp-svc-sheet-handle" aria-hidden="true"></div>
+        <div class="uapp-svc-modal-head">
+          <div>
+            <p class="uapp-svc-modal-kicker">${esc(type.label)} · ${esc(serviceSourceLabel(service))}</p>
+            <h2 id="uappSvcExternalTitle">${esc(service.name || 'Servis')}</h2>
+          </div>
+          <button type="button" class="uapp-svc-modal-close" data-uapp-action="serviceOsmClose" aria-label="Zavřít">×</button>
+        </div>
+        <p class="uapp-svc-modal-note">${service.is_verified ? 'Ověřený servis v katalogu ToozHub.' : 'Neověřený záznam – údaje se mohou lišit.'}</p>
+        <dl class="uapp-svc-modal-meta">
+          <div><dt>Stav</dt><dd>${service.is_verified ? 'Ověřený' : 'Neověřený'}</dd></div>
+          <div><dt>Zdroj</dt><dd>${esc(serviceSourceLabel(service))}</dd></div>
+          <div><dt>Adresa</dt><dd>${esc(formatServiceAddressDisplay(service))}</dd></div>
+          ${service.opening_hours ? `<div><dt>Otevírací doba</dt><dd>${esc(service.opening_hours)}</dd></div>` : ''}
+          ${formatServiceContactRows(service).map((row) => `<div><dt>${esc(row.label)}</dt><dd>${row.href ? `<a href="${esc(row.href)}">${esc(row.value)}</a>` : esc(row.value)}</dd></div>`).join('')}
+          ${service.distance_km != null ? `<div><dt>Vzdálenost</dt><dd>${esc(formatServicesDistanceKm(service.distance_km) || '')}</dd></div>` : ''}
+        </dl>
+        <div class="uapp-svc-modal-actions">
+          ${service.phone ? `<a class="uapp-next-btn uapp-next-btn-secondary" href="tel:${esc(String(service.phone).replace(/[^\d+]/g, ''))}">Zavolat</a>` : ''}
+          <a class="uapp-next-btn uapp-next-btn-primary" href="${esc(serviceNavigateUrl(service))}" target="_blank" rel="noopener noreferrer">Navigovat</a>
+          <a class="uapp-next-btn uapp-next-btn-secondary" href="${esc(serviceNavigateFallbackUrl(service))}" target="_blank" rel="noopener noreferrer">Google Maps</a>
+          ${service.location_id ? `<button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="serviceMapReport:${service.location_id}">Nahlásit chybu</button>` : ''}
+          <button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="servicesConnect">Pozvat servis</button>
+          <button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="serviceOsmClose">Zavřít</button>
+        </div>
+      </div>`;
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) overlay.remove();
+    });
+    document.body.appendChild(overlay);
+  }
+
+  function renderServicesDirectoryPage(data) {
+    const allRows = buildMergedServiceCatalog(data);
+    let filtered = filterServicesRows(allRows);
+    if (STATE.servicesDirectorySort === 'name') {
+      filtered = filtered.slice().sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'cs'));
+    }
+    const limit = Number(STATE.servicesDirectoryLimit) || 10;
+    const visible = filtered.slice(0, limit);
+    const hasMore = filtered.length > limit;
+    const filters = STATE.servicesDirectoryFilters || {};
+    const radius = Number(STATE.servicesDirectoryRadius) || 50;
+    const ref = getServicesRefCoords(data) || {};
+    const locationLabel = resolveServicesLocationLabel(data);
+    const nearbyCount = filtered.filter((row) => {
+      const dist = Number(row.distance_km);
+      return Number.isFinite(dist) && dist <= radius;
+    }).length;
+    const serviceOptions = servicesOfferedOptions(allRows);
+    const view = STATE.servicesDirectoryView || 'map';
+    const loadingBanner = STATE.servicesOsmLoading
+      ? '<div class="uapp-svc-loading">Načítám servisy z mapy (autoservisy, pneuservisy, STK, motocykly, kamiony)…</div>'
+      : '';
+    const errorBanner = STATE.servicesOsmError
+      ? `<div class="uapp-svc-osm-error" role="alert">${esc(STATE.servicesOsmError)}</div>`
+      : '';
+    const mapHintBanner = STATE.servicesMapHint
+      ? `<div class="uapp-svc-map-hint" role="status">${esc(STATE.servicesMapHint)}</div>`
+      : '';
+    const tipBanner = STATE.servicesDirectoryTipHidden ? '' : `
+      <div class="uapp-svc-tip" role="note">
+        <span aria-hidden="true">💡</span>
+        <p>Tip: Zobrazujeme servisy do ${esc(String(radius))} km od vaší polohy. Poloměr hledání můžete kdykoliv upravit posuvníkem na mapě.</p>
+        <button type="button" class="uapp-svc-tip-close" data-uapp-action="servicesTipClose" aria-label="Zavřít tip">×</button>
+      </div>`;
+
+    return `
+      <div class="uapp-svc-page" data-testid="user-app-next-services">
+        <nav class="uapp-doc-breadcrumbs" aria-label="Drobečková navigace">
+          <button type="button" data-uapp-action="home">Přehled</button>
+          <span aria-hidden="true">/</span>
+          <span aria-current="page">Servisy</span>
+        </nav>
+        <header class="uapp-svc-page-head">
+          <div>
+            <h1 class="uapp-svc-page-title">Mapa servisů</h1>
+            <p class="uapp-svc-page-sub">Autoservisy, pneuservisy, STK a emise ve vašem okolí – data z vlastního katalogu.</p>
+          </div>
+          <div class="uapp-svc-view-toggle" role="group" aria-label="Zobrazení servisů">
+            <button type="button" class="${view === 'list' ? 'is-active' : ''}" data-uapp-action="servicesView:list">Seznam</button>
+            <button type="button" class="${view === 'map' ? 'is-active' : ''}" data-uapp-action="servicesView:map">Mapa</button>
+          </div>
+        </header>
+        <div class="uapp-svc-search-bar">
+          <input type="search" class="uapp-svc-search-input" placeholder="Město, adresa nebo servis" value="${esc(STATE.servicesMapSearchQ || '')}" data-uapp-svc-filter="searchQ">
+          <button type="button" class="uapp-next-btn uapp-next-btn-secondary" data-uapp-action="servicesRefreshLocation">Použít moji polohu</button>
+        </div>
+        ${renderServiceMapQuickFilters()}
+        <div class="uapp-svc-layout">
+          <div class="uapp-svc-main">
+            ${loadingBanner}
+            ${errorBanner}
+            ${mapHintBanner}
+            ${view !== 'list' ? renderServicesMapEmbed(data, filtered) : ''}
+            <section class="uapp-svc-list-section">
+              <div class="uapp-svc-list-head">
+                <h2>Nalezeno ${esc(String(nearbyCount || filtered.length))} servisů do ${esc(String(radius))} km</h2>
+                <label class="uapp-svc-sort">
+                  <span>Seřadit podle:</span>
+                  <select data-uapp-svc-filter="sort">
+                    <option value="distance"${STATE.servicesDirectorySort === 'distance' ? ' selected' : ''}>Vzdálenosti</option>
+                    <option value="name"${STATE.servicesDirectorySort === 'name' ? ' selected' : ''}>Názvu</option>
+                  </select>
+                </label>
+              </div>
+              <div class="uapp-svc-list">
+                ${visible.length
+                  ? visible.map((service) => renderServicesCard(service)).join('')
+                  : '<div class="uapp-svc-empty">V okolí nejsou servisy odpovídající filtrům.</div>'}
+              </div>
+              ${hasMore ? '<button type="button" class="uapp-svc-load-more" data-uapp-action="servicesLoadMore">Zobrazit další servisy ▾</button>' : ''}
+            </section>
+          </div>
+          <aside class="uapp-svc-aside" aria-label="Filtry servisů">
+            <section class="uapp-svc-widget">
+              <h3>Filtry</h3>
+              <label class="uapp-svc-filter-field">
+                <span>Typ servisu</span>
+                <select data-uapp-svc-filter="type">
+                  <option value="all"${filters.type === 'all' ? ' selected' : ''}>Všechny typy</option>
+                  <option value="auth"${filters.type === 'auth' ? ' selected' : ''}>Autorizovaný servis</option>
+                  <option value="indep"${filters.type === 'indep' ? ' selected' : ''}>Nezávislý servis</option>
+                  <option value="pneu"${filters.type === 'pneu' ? ' selected' : ''}>Pneuservis</option>
+                  <option value="stk"${filters.type === 'stk' ? ' selected' : ''}>STK / emise</option>
+                  <option value="moto"${filters.type === 'moto' ? ' selected' : ''}>Motocykly</option>
+                  <option value="truck"${filters.type === 'truck' ? ' selected' : ''}>Nákladní vozidla</option>
+                </select>
+              </label>
+              <label class="uapp-svc-filter-field">
+                <span>Služby</span>
+                <select data-uapp-svc-filter="service">
+                  <option value="all"${filters.service === 'all' ? ' selected' : ''}>Vyberte službu</option>
+                  ${serviceOptions.map((opt) => `<option value="${esc(opt)}"${filters.service === opt ? ' selected' : ''}>${esc(opt)}</option>`).join('')}
+                </select>
+              </label>
+              <div class="uapp-svc-rating-filter">
+                <span>Hodnocení</span>
+                <div class="uapp-svc-rating-btns">
+                  ${[1, 2, 3, 4].map((n) => `<button type="button" class="${Number(filters.rating) === n ? 'is-active' : ''}" data-uapp-action="servicesRating:${n}">${n}+</button>`).join('')}
+                </div>
+              </div>
+              <label class="uapp-svc-check">
+                <input type="checkbox" data-uapp-svc-filter="authorizedOnly"${filters.authorizedOnly ? ' checked' : ''}>
+                <span>Pouze autorizované servisy</span>
+              </label>
+            </section>
+            <section class="uapp-svc-widget">
+              <h3>Moje poloha</h3>
+              <p class="uapp-svc-location">${esc(locationLabel)}</p>
+              <p class="uapp-svc-location-meta">${ref.lat != null && ref.lon != null ? `Přesnost: ± 20 m` : 'Poloha se načte z prohlížeče nebo profilu.'}</p>
+              <button type="button" class="uapp-svc-location-btn" data-uapp-action="servicesRefreshLocation">Změnit polohu</button>
+            </section>
+            ${tipBanner}
+            <section class="uapp-svc-widget">
+              <h3>Rychlé akce</h3>
+              <div class="uapp-svc-quick">
+                <button type="button" data-uapp-action="servicesConnect">+ Přidat nový servis</button>
+                <button type="button" data-uapp-action="servicesView:map">🗺 Zobrazit mapu všech servisů</button>
+                <button type="button" data-uapp-action="serviceHistory">🔧 Servisní historie</button>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </div>`;
+  }
+
+  function bindServicesFilters() {
+    document.querySelectorAll('[data-uapp-svc-filter]').forEach((el) => {
+      if (el.dataset.uappSvcBound === '1') return;
+      el.dataset.uappSvcBound = '1';
+      const key = el.getAttribute('data-uapp-svc-filter');
+      const apply = () => {
+        if (key === 'radius') {
+          STATE.servicesDirectoryRadius = Number(el.value) || 50;
+          STATE.servicesDirectoryLimit = 30;
+          STATE.servicesOsmRows = [];
+          STATE.servicesMapRows = [];
+          STATE.servicesMapBoundsKey = '';
+          return render();
+        }
+        if (key === 'useLocation') {
+          STATE.servicesDirectoryUseLocation = Boolean(el.checked);
+          STATE.servicesRefCoords = null;
+          STATE.servicesLocationLabel = '';
+          STATE.servicesOsmRows = [];
+          STATE.servicesMapRows = [];
+          if (STATE.servicesDirectoryUseLocation && hasFn('clearClientGeoTelemetry')) {
+            try { window.clearClientGeoTelemetry(); } catch (_) {}
+          }
+          return render();
+        }
+        if (key === 'searchQ') {
+          STATE.servicesMapSearchQ = String(el.value || '');
+          STATE.servicesOsmRows = [];
+          STATE.servicesMapRows = [];
+          if (STATE.servicesSearchDebounce) clearTimeout(STATE.servicesSearchDebounce);
+          STATE.servicesSearchDebounce = setTimeout(() => { void loadServicesOsmData({ silent: true }); }, 450);
+          return;
+        }
+        if (key === 'sort') {
+          STATE.servicesDirectorySort = el.value;
+          return render();
+        }
+        if (key === 'inAppOnly' || key === 'authorizedOnly') {
+          STATE.servicesDirectoryFilters = STATE.servicesDirectoryFilters || {};
+          STATE.servicesDirectoryFilters[key] = Boolean(el.checked);
+          STATE.servicesDirectoryLimit = 30;
+          return render();
+        }
+        STATE.servicesDirectoryFilters = STATE.servicesDirectoryFilters || {};
+        STATE.servicesDirectoryFilters[key] = el.value;
+        STATE.servicesDirectoryLimit = 30;
+        render();
+      };
+      if (el.type === 'range' || el.type === 'checkbox') {
+        el.addEventListener('change', apply);
+        if (el.type === 'range') el.addEventListener('input', apply);
+      } else {
+        el.addEventListener('change', apply);
+      }
+    });
+  }
+
   function renderMobileChrome() {
     const badge = document.getElementById('desktopNotificationsBadge') || document.getElementById('mobileNotificationsBadge');
     const count = badge ? String(badge.getAttribute('data-count') || badge.textContent || '0').trim() : '0';
@@ -1619,16 +3477,16 @@
           ${navButton('Moje vozidla', ICO.car, 'vehicles', nav === 'vehicles', 0)}
           ${navButton('Servisní historie', ICO.wrench, 'serviceHistory', nav === 'serviceHistory', 0)}
           ${navButton('Připomínky', ICO.bell, 'reminders', nav === 'reminders', reminderBadge)}
-          ${navButton('Dokumenty', ICO.doc, 'documents', nav === 'documents', 0)}
+          ${navButton('Dokumenty', ICO.folder, 'documents', nav === 'documents' && STATE.documentsFilters?.category !== 'faktury', 0)}
           ${navButton('Servisy', ICO.building, 'servicesDirectory', nav === 'servicesDirectory', 0)}
-          ${navButton('Faktury', ICO.invoice, 'invoices', nav === 'documents', 0)}
+          ${navButton('Faktury', ICO.invoice, 'invoices', nav === 'invoices', 0)}
           ${navButton('Nastavení', ICO.gear, 'account', nav === 'account', 0)}
         </nav>
         <div class="uapp-next-sidebar-bottom">
-          <p class="uapp-next-help-label">Potřebujete pomoc?</p>
-          <button type="button" class="uapp-next-help-btn" data-uapp-action="help">
-            <span aria-hidden="true">?</span>
-            <span>Nápověda</span>
+          <button type="button" class="uapp-next-help-card" data-uapp-action="help">
+            <span class="uapp-next-help-card-ico" aria-hidden="true">🎧</span>
+            <span class="uapp-next-help-card-text">Potřebujete pomoc?</span>
+            <span class="uapp-next-help-card-chevron" aria-hidden="true">›</span>
           </button>
           <button type="button" class="uapp-next-side-action" data-uapp-action="collapse"><span aria-hidden="true">⇤</span><span>Sbalit menu</span></button>
         </div>
@@ -1643,7 +3501,7 @@
       <header class="uapp-next-topbar" aria-label="Horní lišta">
         <label class="uapp-next-search">
           <span class="uapp-next-search-icon" aria-hidden="true">${ICO.search}</span>
-          <input id="uappNextSearch" type="search" autocomplete="off" placeholder="Hledejte podle SPZ, VIN, názvu vozidla…">
+          <input id="uappNextSearch" type="search" autocomplete="off" placeholder="Hledat podle SPZ, VIN, značky nebo modelu…">
           <kbd class="uapp-next-search-kbd" aria-hidden="true">⌘ K</kbd>
         </label>
         <button type="button" class="uapp-next-btn uapp-next-btn-primary" data-uapp-action="addVehicle">+ Přidat vozidlo</button>
@@ -2123,6 +3981,24 @@
         ${renderServiceHistoryPage(data)}
       `;
     }
+    if (view === 'documents') {
+      return `
+        ${renderTopbar()}
+        ${renderDocumentsPage(data)}
+      `;
+    }
+    if (view === 'servicesDirectory') {
+      return `
+        ${renderTopbar()}
+        ${renderServicesDirectoryPage(data)}
+      `;
+    }
+    if (view === 'invoices' || view === 'invoiceNew' || view === 'invoiceSettings') {
+      return `
+        ${renderTopbar()}
+        <div id="userInvoicesMount" class="uapp-next-invoices-mount uapp-next-invoices-page" data-testid="user-invoices-mount"></div>
+      `;
+    }
     if (view === 'home') {
       return `
         ${renderTopbar()}
@@ -2154,6 +4030,9 @@
     else if (activeView === 'vehicles') testId = 'user-app-next-vehicles';
     else if (activeView === 'reminders') testId = 'user-app-next-reminders';
     else if (activeView === 'serviceHistory') testId = 'user-app-next-service-history';
+    else if (activeView === 'documents') testId = 'user-app-next-documents';
+    else if (activeView === 'servicesDirectory') testId = 'user-app-next-services';
+    else if (activeView === 'invoices' || activeView === 'invoiceNew' || activeView === 'invoiceSettings') testId = 'user-app-next-invoices';
 
     root.replaceChildren();
     root.innerHTML = `
@@ -2172,6 +4051,22 @@
     document.body.classList.toggle('user-app-next-view-legacy', isLegacySection);
     document.body.classList.toggle('user-app-next-view-reminders', activeView === 'reminders');
     document.body.classList.toggle('user-app-next-view-service-history', activeView === 'serviceHistory');
+    document.body.classList.toggle('user-app-next-view-documents', activeView === 'documents');
+    document.body.classList.toggle('user-app-next-view-services', activeView === 'servicesDirectory');
+    document.body.classList.toggle('user-app-next-view-invoices', activeView === 'invoices' || activeView === 'invoiceNew' || activeView === 'invoiceSettings');
+    if (activeView === 'invoices' || activeView === 'invoiceNew' || activeView === 'invoiceSettings') {
+      const invMount = document.getElementById('userInvoicesMount');
+      if (invMount && typeof window.UserInvoicesDashboard?.mountInto === 'function') {
+        if (activeView === 'invoiceNew') {
+          invMount.dataset.invSubRoute = 'new';
+        } else if (activeView === 'invoiceSettings') {
+          invMount.dataset.invSubRoute = 'settings';
+        } else {
+          delete invMount.dataset.invSubRoute;
+        }
+        window.UserInvoicesDashboard.mountInto(invMount);
+      }
+    }
     if (isLegacySection) {
       mountLegacyTabContent(activeView);
     }
@@ -2183,6 +4078,11 @@
       hydrateImages(data);
     } else if (activeView === 'serviceHistory') {
       bindServiceHistoryFilters();
+    } else if (activeView === 'documents') {
+      bindDocumentsFilters();
+    } else if (activeView === 'servicesDirectory') {
+      bindServicesFilters();
+      void bindServicesMap(data);
     }
   }
 
@@ -2733,11 +4633,220 @@
     if (name === 'home' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('home'); }
     if (name === 'vehicles' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('vehicles'); }
     if (name === 'reminders' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('reminders'); }
-    if (name === 'documents' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('documents'); }
-    if (name === 'servicesDirectory' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('servicesDirectory'); }
+    if (name === 'documents') { closeMobileNav(); STATE.viewOverride = 'documents'; return render(); }
+    if (name === 'servicesDirectory') {
+      closeMobileNav();
+      STATE.viewOverride = 'servicesDirectory';
+      if (hasFn('switchTab')) return window.switchTab('servicesDirectory');
+      return render();
+    }
     if (name === 'account' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('account'); }
-    if (name === 'invoices' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('documents'); }
+    if (name === 'invoices') { closeMobileNav(); STATE.viewOverride = 'invoices'; STATE.documentsFilters = { ...STATE.documentsFilters, category: 'all' }; return render(); }
+    if (name === 'invoiceNew') { closeMobileNav(); STATE.viewOverride = 'invoiceNew'; return render(); }
+    if (name === 'invoiceSettings') { closeMobileNav(); STATE.viewOverride = 'invoiceSettings'; return render(); }
     if (name === 'serviceHistory') { closeMobileNav(); STATE.viewOverride = 'serviceHistory'; return render(); }
+    if (name === 'documentsUpload') return openDocumentsUploadFlow(STATE.latestData || {});
+    if (name === 'documentsUploadPickerClose') { STATE.documentsUploadPickerOpen = false; return render(); }
+    if (name === 'documentsUploadTo' && id) {
+      STATE.documentsUploadPickerOpen = false;
+      return openVehicleDocuments(id);
+    }
+    if (name === 'documentsTipClose') { STATE.documentsTipHidden = true; return render(); }
+    if (name === 'documentsFiltersToggle') {
+      const input = document.querySelector('[data-uapp-doc-filter="search"]');
+      if (input) input.focus();
+      return;
+    }
+    if (name === 'documentsResetFilters') {
+      STATE.documentsFilters = { search: '', category: 'all', type: 'all', vehicle: 'all' };
+      STATE.documentsPage = 1;
+      return render();
+    }
+    if (name === 'documentsSortToggle') {
+      const sort = STATE.documentsSort || { key: 'uploadedAt', dir: 'desc' };
+      STATE.documentsSort = { key: 'uploadedAt', dir: sort.dir === 'desc' ? 'asc' : 'desc' };
+      return render();
+    }
+    if (name === 'documentsPage' && rawId) {
+      STATE.documentsPage = Number(rawId) || 1;
+      STATE.documentsMenuOpenId = null;
+      return render();
+    }
+    if (name === 'documentsPagePrev') {
+      STATE.documentsPage = Math.max(1, (Number(STATE.documentsPage) || 1) - 1);
+      STATE.documentsMenuOpenId = null;
+      return render();
+    }
+    if (name === 'documentsPageNext') {
+      STATE.documentsPage = (Number(STATE.documentsPage) || 1) + 1;
+      STATE.documentsMenuOpenId = null;
+      return render();
+    }
+    if (name === 'docMenuToggle') {
+      const rowId = decodeURIComponent(String(rawId || ''));
+      STATE.documentsMenuOpenId = STATE.documentsMenuOpenId === rowId ? null : rowId;
+      return render();
+    }
+    if (name === 'docPreview') {
+      const parts = String(action || '').split(':');
+      const url = decodeURIComponent(parts[1] || '');
+      const fileName = decodeURIComponent(parts.slice(2).join(':') || 'doklad');
+      if (hasFn('openServiceRecordAttachmentPreview')) {
+        return window.openServiceRecordAttachmentPreview(encodeURIComponent(url), encodeURIComponent(fileName));
+      }
+      return;
+    }
+    if (name === 'docDownload') {
+      const parts = String(action || '').split(':');
+      const kind = parts[1];
+      const vehicleId = Number(parts[2] || 0);
+      const downloadUrl = decodeURIComponent(parts.slice(3).join(':') || '');
+      if (kind === 'attachment' && downloadUrl && hasFn('openServiceRecordAttachmentPreview')) {
+        return window.openServiceRecordAttachmentPreview(encodeURIComponent(downloadUrl), encodeURIComponent('doklad'));
+      }
+      if (kind === 'report' && vehicleId && hasFn('downloadVehicleReportFromHub')) {
+        return window.downloadVehicleReportFromHub(vehicleId);
+      }
+      if (kind === 'verified_report' && vehicleId && hasFn('downloadVehicleVerifiedReportFromHub')) {
+        return window.downloadVehicleVerifiedReportFromHub(vehicleId);
+      }
+      if (kind === 'technical_cert' && vehicleId && hasFn('downloadLargeTechnicalCertificateFromHub')) {
+        return window.downloadLargeTechnicalCertificateFromHub(vehicleId);
+      }
+      if (kind === 'tachometer' && vehicleId) return openVehicleDocuments(vehicleId);
+      return;
+    }
+    if (name === 'docVerify') {
+      const verifyUrl = decodeURIComponent(String(action || '').split(':').slice(1).join(':') || '');
+      if (verifyUrl && hasFn('openDocumentsVerifyPage')) return window.openDocumentsVerifyPage(verifyUrl);
+      return;
+    }
+    if (name === 'docTachometerDetail') {
+      const parts = String(action || '').split(':');
+      const detailUrl = decodeURIComponent(parts[1] || '');
+      const vehicleId = Number(parts[2] || 0);
+      if (detailUrl && detailUrl.startsWith('/')) {
+        window.location.href = detailUrl;
+        return;
+      }
+      if (vehicleId) return openVehicleDocuments(vehicleId);
+      return;
+    }
+    if (name === 'documentsExport') {
+      const rows = sortDocumentsRows(filterDocumentsRows(buildDocumentsRows(STATE.latestData || {}), STATE.latestData || {}));
+      return exportDocumentsCsv(rows);
+    }
+    if (name === 'documentsOrganize') {
+      const vehicles = STATE.latestData?.vehicles || [];
+      if (vehicles.length === 1) return openVehicleDocuments(Number(vehicles[0].id));
+      if (vehicles.length > 1) {
+        STATE.documentsUploadPickerOpen = true;
+        return render();
+      }
+      if (hasFn('openAddVehicleModal')) return window.openAddVehicleModal();
+      return;
+    }
+    if (name === 'documentsManageStorage') {
+      if (hasFn('switchTab')) {
+        STATE.viewOverride = null;
+        window.switchTab('account');
+        window.setTimeout(() => {
+          if (hasFn('setSettingsPanel')) window.setSettingsPanel('data');
+        }, 120);
+      }
+      return;
+    }
+    if (name === 'servicesView') {
+      STATE.servicesDirectoryView = rawId === 'list' ? 'list' : 'map';
+      return render();
+    }
+    if (name === 'servicesLoadMore') {
+      STATE.servicesDirectoryLimit = (Number(STATE.servicesDirectoryLimit) || 10) + 10;
+      return render();
+    }
+    if (name === 'servicesTipClose') {
+      STATE.servicesDirectoryTipHidden = true;
+      return render();
+    }
+    if (name === 'servicesRefreshLocation') {
+      STATE.servicesLocationLabel = '';
+      STATE.servicesRefCoords = null;
+      STATE.servicesOsmRows = [];
+      STATE.servicesMapRows = [];
+      STATE.servicesDirectoryLimit = 30;
+      if (hasFn('clearClientGeoTelemetry')) {
+        try { window.clearClientGeoTelemetry(); } catch (_) {}
+      }
+      return render();
+    }
+    if (name === 'servicesMapCategory') {
+      STATE.servicesMapCategory = rawId || 'all';
+      STATE.servicesMapVerifiedOnly = rawId === 'verified';
+      STATE.servicesOsmRows = [];
+      STATE.servicesMapRows = [];
+      STATE.servicesMapBoundsKey = '';
+      return render();
+    }
+    if (name === 'serviceMapReport' && id) {
+      const reportType = window.prompt('Typ hlášení: wrong_phone, closed, duplicate, fake, wrong_category, wrong_location', 'wrong_category');
+      if (!reportType) return;
+      const reportText = window.prompt('Popis problému (volitelné):', '') || '';
+      if (!apiReady()) return window.alert('Nejste přihlášeni.');
+      void apiCall(`/api/v1/service-map/locations/${encodeURIComponent(String(id))}/report`, 'POST', {
+        report_type: reportType,
+        report_text: reportText,
+      }).then(() => {
+        if (hasFn('showToast')) window.showToast('Hlášení odesláno. Děkujeme.', 'success');
+        else window.alert('Hlášení odesláno. Děkujeme.');
+      }).catch((err) => {
+        window.alert(String(err?.message || err || 'Hlášení se nepodařilo odeslat.'));
+      });
+      return;
+    }
+    if (name === 'servicesRating' && rawId) {
+      STATE.servicesDirectoryFilters = STATE.servicesDirectoryFilters || {};
+      const current = Number(STATE.servicesDirectoryFilters.rating || 0);
+      const next = Number(rawId);
+      STATE.servicesDirectoryFilters.rating = current === next ? '0' : String(next);
+      STATE.servicesDirectoryLimit = 30;
+      return render();
+    }
+    if (name === 'serviceOsmClose') {
+      const modal = document.getElementById('uappSvcExternalModal');
+      if (modal) modal.remove();
+      return;
+    }
+    if (name === 'serviceOsmDetail' && rawId) {
+      const latest = STATE.latestData || {};
+      const key = decodeURIComponent(String(rawId));
+      const service = buildMergedServiceCatalog(latest).find((row) => row.row_key === key || String(row.osm_id) === key || String(row.location_id) === key.replace(/^map-/, ''));
+      if (service) return openExternalServiceDetailModal(service);
+      return;
+    }
+    if (name === 'serviceDetail' && id) {
+      if (hasFn('openServicePartnerDetailModal')) {
+        const latest = STATE.latestData || {};
+        if (window.servicesDirectoryState && latest.servicesDiscovery) {
+          window.servicesDirectoryState.payload = {
+            services: buildMergedServiceCatalog(latest).filter((row) => row.in_app),
+            meta: latest.servicesDiscovery.meta || {},
+            userVehicles: latest.vehicles || [],
+            vehicleAccessGrants: latest.accessGrants || [],
+            vehicleAccessApiAvailable: true,
+          };
+        }
+        return window.openServicePartnerDetailModal(id);
+      }
+      return;
+    }
+    if (name === 'servicesConnect') {
+      const email = window.prompt('Zadejte e-mail servisu pro propojení účtů:');
+      if (!email) return;
+      if (!apiReady()) return;
+      return apiCall('/api/v1/services/connect-by-email', 'POST', { service_email: String(email).trim() })
+        .then(() => render())
+        .catch((err) => console.warn('[USER_APP_NEXT] connect service failed', err));
+    }
     if (name === 'serviceHistoryAdd') {
       if (hasFn('openAddServiceRecordModal')) return window.openAddServiceRecordModal();
       return;
@@ -2865,16 +4974,30 @@
     preserveLegacyOverlays();
     const view = getActiveView() || 'home';
     const root = ensureUserAppScreenRoot();
-    if (root && !root.querySelector('.uapp-next-shell')) {
+    const needsLoadingShell = root && (!root.querySelector('.uapp-next-shell') || STATE.lastRenderedView !== view);
+    if (needsLoadingShell) {
       root.replaceChildren();
       const loading = document.createElement('div');
       loading.className = 'uapp-next-loading';
-      loading.textContent = 'Načítám...';
+      loading.textContent = view === 'servicesDirectory' ? 'Načítám servisy…' : 'Načítám…';
       root.appendChild(loading);
     }
-    const data = await loadData();
-    if (token !== STATE.renderToken || !shouldActivate()) return;
-    renderShell(data);
+    STATE.lastRenderedView = view;
+    try {
+      const data = await loadData();
+      if (token !== STATE.renderToken || !shouldActivate()) return;
+      renderShell(data);
+    } catch (err) {
+      console.error('[USER_APP_NEXT] render failed', err);
+      if (token !== STATE.renderToken || !shouldActivate()) return;
+      if (root) {
+        root.replaceChildren();
+        const errEl = document.createElement('div');
+        errEl.className = 'uapp-next-loading';
+        errEl.textContent = 'Nepodařilo se načíst sekci. Zkuste obnovit stránku.';
+        root.appendChild(errEl);
+      }
+    }
   }
 
   function installHooks() {
@@ -2911,7 +5034,13 @@
     if (typeof originalSwitchTab === 'function') {
       window.switchTab = function () {
         const tabName = arguments[0];
-        if (tabName !== 'serviceHistory') STATE.viewOverride = null;
+        if (tabName === 'serviceHistory') STATE.viewOverride = 'serviceHistory';
+        else if (tabName === 'documents') STATE.viewOverride = 'documents';
+        else if (tabName === 'servicesDirectory') STATE.viewOverride = 'servicesDirectory';
+        else if (tabName === 'invoices') STATE.viewOverride = 'invoices';
+        else if (tabName === 'invoiceNew') STATE.viewOverride = 'invoiceNew';
+        else if (tabName === 'invoiceSettings') STATE.viewOverride = 'invoiceSettings';
+        else STATE.viewOverride = null;
         const result = originalSwitchTab.apply(this, arguments);
         window.setTimeout(() => {
           if (shouldActivate()) {

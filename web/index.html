@@ -10,6 +10,8 @@
     <link rel="stylesheet" href="/web/app.css" />
     <link rel="stylesheet" href="/web/inline-styles.css" />
     <link rel="stylesheet" href="/web/service-shell.css?v=2026050720" />
+    <link rel="stylesheet" href="/web/service-shell-invoices-dashboard.css?v=202605205" />
+    <link rel="stylesheet" href="/web/user-app-next.css?v=20260520" />
     <style>
         * {
             margin: 0;
@@ -21817,36 +21819,6 @@
             line-height: 1.35;
         }
 
-        #profileContainer .demo-readonly-banner {
-            display: grid;
-            gap: 6px;
-            margin: 0 0 18px;
-            padding: 14px 16px;
-            border: 1px solid #fed7aa;
-            border-radius: 16px;
-            background: #fff7ed;
-            color: #7c2d12;
-            font-size: 0.92rem;
-            line-height: 1.45;
-        }
-
-        #profileContainer .demo-readonly-banner strong {
-            color: #9a3412;
-            font-size: 0.98rem;
-        }
-
-        #profileContainer.is-demo-readonly input,
-        #profileContainer.is-demo-readonly select,
-        #profileContainer.is-demo-readonly textarea {
-            cursor: not-allowed;
-        }
-
-        #profileContainer.is-demo-readonly button.is-disabled,
-        #accountHeroSaveButton.is-disabled {
-            cursor: not-allowed;
-            opacity: 0.58;
-        }
-
         #profileContainer .profile-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -33113,7 +33085,6 @@
 
     </style>
     <link rel="stylesheet" href="/web/public-auth.css?v=2026051904" />
-    <link rel="stylesheet" href="/web/user-app-next.css?v=2026051911" />
     
     <!-- Security Protection - Anti-debugging a ochrana kódu -->
     <!-- DOČASNĚ ÚPLNĚ ZAKÁZÁNO - způsobovalo zmizení aplikace -->
@@ -33606,7 +33577,7 @@
             <div id="authSection" class="auth-shell auth-shell-root" data-view-context="auth" hidden aria-hidden="true" inert>
                 <header class="sv-auth-header" aria-label="Navigace přihlášení">
                     <a href="/" class="sv-auth-brand" onclick="goToPublicRoute('home'); return false;">
-                        <img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo.jpeg" alt="" />
+                        <img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" />
                         <span>Správa vozidel</span>
                     </a>
                     <nav class="sv-auth-header-actions" aria-label="Auth akce">
@@ -33625,7 +33596,7 @@
                     </div>
                     <aside class="auth-promo" id="authPromoAside" aria-label="Představení aplikace Správa vozidel">
                         <div class="auth-promo-brand">
-                            <img src="/web/assets/landing/sprava-vozidel-logo.jpeg" alt="" class="auth-promo-logo">
+                            <img src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" class="auth-promo-logo">
                             <div class="auth-promo-brand-text">
                                 <strong data-app-display-name></strong>
                             </div>
@@ -33928,15 +33899,15 @@
                 <header class="public-site-header" aria-label="Veřejná navigace">
                     <div class="public-site-shell public-site-bar">
                         <a href="/" class="public-site-brand" onclick="goToPublicRoute('home'); return false;">
-                            <img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo.jpeg" alt="" />
+                            <img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" />
                             <span data-app-display-name></span>
                         </a>
                         <nav class="public-site-nav" aria-label="Sekce veřejného webu">
-                            <a href="#funkce" data-public-nav="features" onclick="return scrollToPublicSection('funkce');">Funkce</a>
-                            <a href="#pro-majitele" data-public-nav="audiences" onclick="return scrollToPublicSection('pro-majitele');">Pro majitele</a>
-                            <a href="#pro-servisy" data-public-nav="audiences" onclick="return scrollToPublicSection('pro-servisy');">Pro servisy</a>
-                            <a href="#cenik" data-public-nav="contact" onclick="return scrollToPublicSection('cenik');">Ceník</a>
-                            <a href="#jak-to-funguje" data-public-nav="features" onclick="return scrollToPublicSection('jak-to-funguje');">Jak to funguje</a>
+                            <a href="#funkce" data-public-nav="features" onclick="document.getElementById('funkce')?.scrollIntoView({behavior:'smooth'}); return false;">Funkce</a>
+                            <a href="#pro-majitele" data-public-nav="audiences" onclick="document.getElementById('pro-majitele')?.scrollIntoView({behavior:'smooth'}); return false;">Pro majitele</a>
+                            <a href="#pro-servisy" data-public-nav="audiences" onclick="document.getElementById('pro-servisy')?.scrollIntoView({behavior:'smooth'}); return false;">Pro servisy</a>
+                            <a href="#cenik" data-public-nav="contact" onclick="document.getElementById('cenik')?.scrollIntoView({behavior:'smooth'}); return false;">Ceník</a>
+                            <a href="#jak-to-funguje" data-public-nav="features" onclick="document.getElementById('jak-to-funguje')?.scrollIntoView({behavior:'smooth'}); return false;">Jak to funguje</a>
                         </nav>
                         <div class="public-site-actions">
                             <button type="button" class="btn btn-secondary public-site-btn hidden" data-public-demo-visible="1" onclick="openPublicDemoEntry(); return false;">Vyzkoušet ukázku</button>
@@ -33958,11 +33929,11 @@
                             <button type="button" class="public-site-drawer-close" onclick="closePublicSiteMobileMenu(); return false;" aria-label="Zavřít menu">×</button>
                         </div>
                         <nav class="public-site-drawer-nav" aria-label="Sekce webu">
-                            <a href="#funkce" onclick="return scrollToPublicSection('funkce');">Funkce</a>
-                            <a href="#pro-majitele" onclick="return scrollToPublicSection('pro-majitele');">Pro majitele</a>
-                            <a href="#pro-servisy" onclick="return scrollToPublicSection('pro-servisy');">Pro servisy</a>
-                            <a href="#cenik" onclick="return scrollToPublicSection('cenik');">Ceník</a>
-                            <a href="#jak-to-funguje" onclick="return scrollToPublicSection('jak-to-funguje');">Jak to funguje</a>
+                            <a href="#funkce" onclick="closePublicSiteMobileMenu(); document.getElementById('funkce')?.scrollIntoView({behavior:'smooth'}); return false;">Funkce</a>
+                            <a href="#pro-majitele" onclick="closePublicSiteMobileMenu(); document.getElementById('pro-majitele')?.scrollIntoView({behavior:'smooth'}); return false;">Pro majitele</a>
+                            <a href="#pro-servisy" onclick="closePublicSiteMobileMenu(); document.getElementById('pro-servisy')?.scrollIntoView({behavior:'smooth'}); return false;">Pro servisy</a>
+                            <a href="#cenik" onclick="closePublicSiteMobileMenu(); document.getElementById('cenik')?.scrollIntoView({behavior:'smooth'}); return false;">Ceník</a>
+                            <a href="#jak-to-funguje" onclick="closePublicSiteMobileMenu(); document.getElementById('jak-to-funguje')?.scrollIntoView({behavior:'smooth'}); return false;">Jak to funguje</a>
                         </nav>
                         <div class="public-site-drawer-footer">
                             <button type="button" class="btn btn-secondary public-site-btn public-site-drawer-btn hidden" data-public-demo-visible="1" onclick="openPublicDemoEntry(); return false;">Vyzkoušet ukázku</button>
@@ -33980,7 +33951,7 @@
                             <p class="sv-public-lead">Správa vozidel spojuje servisní historii, STK, připomínky, faktury, dokumenty a propojení se servisy na jednom bezpečném místě.</p>
                             <div class="sv-public-actions">
                                 <button type="button" class="sv-btn sv-btn-primary" onclick="showRegister()">Začít zdarma <span aria-hidden="true">›</span></button>
-                                <button type="button" class="sv-btn sv-btn-secondary" onclick="openPublicDemoEntry(); return false;"><span class="sv-btn-play" aria-hidden="true"></span>Zobrazit ukázku</button>
+                                <button type="button" class="sv-btn sv-btn-secondary" onclick="document.getElementById('funkce')?.scrollIntoView({behavior:'smooth'}); return false;"><span class="sv-btn-play" aria-hidden="true"></span>Zobrazit ukázku</button>
                             </div>
                             <ul class="sv-public-trust" aria-label="Výhody">
                                 <li>Bez papírování</li>
@@ -34110,7 +34081,7 @@
                         <div class="sv-public-section-head">
                             <p>Ceník</p>
                             <h2 id="svPublicPricingTitle">Jednoduchý ceník</h2>
-                            <span>Začněte zdarma a rozšiřte možnosti podle toho, kolik vozidel a funkcí potřebujete. Veřejný přehled vychází z aktuálních licenčních plánů.</span>
+                            <span>Začněte zdarma a rozšiřte možnosti podle toho, kolik vozidel a funkcí potřebujete. Ceny odpovídají aktuálním licenčním plánům.</span>
                         </div>
                         <div class="sv-public-pricing-grid">
                             <article class="sv-price-card">
@@ -34136,7 +34107,6 @@
                                 <button type="button" class="sv-btn sv-btn-light" onclick="showRegister(); setRegistrationMode('service'); return false;">Vytvořit servisní účet</button>
                             </article>
                         </div>
-                        <p class="sv-public-pricing-note">Ceník je připravený pro veřejnou orientaci; finální dostupnost funkcí se řídí aktivním licenčním nastavením v aplikaci.</p>
                     </section>
 
                     <section id="jak-to-funguje" class="sv-public-section sv-public-how sv-public-how-deep" aria-labelledby="svPublicHowTitle">
@@ -34171,9 +34141,9 @@
                     </section>
 
                     <footer class="sv-public-footer">
-                        <strong><img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo.jpeg" alt="" /> Správa vozidel</strong>
+                        <strong><img class="sv-logo-mark" src="/web/assets/landing/sprava-vozidel-logo-mark.svg" alt="" /> Správa vozidel</strong>
                         <span>Digitální správa vozidel pro majitele, firmy a autoservisy.</span>
-                        <nav aria-label="Footer odkazy"><a href="#funkce" onclick="return scrollToPublicSection('funkce');">Funkce</a><a href="#cenik" onclick="return scrollToPublicSection('cenik');">Ceník</a><a href="#jak-to-funguje" onclick="return scrollToPublicSection('jak-to-funguje');">Jak to funguje</a><a href="#pro-majitele" onclick="return scrollToPublicSection('pro-majitele');">Pro majitele</a><a href="#pro-servisy" onclick="return scrollToPublicSection('pro-servisy');">Pro servisy</a><a href="https://www.toozservis.cz/#kontakt" target="_blank" rel="noopener noreferrer">Kontakt</a></nav>
+                        <nav aria-label="Footer odkazy"><a href="#funkce">Funkce</a><a href="#cenik">Ceník</a><a href="#jak-to-funguje">Jak to funguje</a><a href="#pro-majitele">Pro majitele</a><a href="#pro-servisy">Pro servisy</a><a href="https://www.toozservis.cz/#kontakt" target="_blank" rel="noopener noreferrer">Kontakt</a></nav>
                         <small>© 2026 Správa vozidel. Všechna práva vyhrazena.</small>
                     </footer>
                 </main>
@@ -34911,6 +34881,9 @@
                     </div>
                     <div class="app-shell-nav-group app-shell-nav-group--single">
                         <button type="button" class="tab" data-tab-key="documents" data-base-label="Dokumenty" onclick="switchTab('documents')" data-testid="tab-documents"><span class="tab-label-desktop">Dokumenty</span><span class="tab-label-mobile">Doklady</span></button>
+                    </div>
+                    <div class="app-shell-nav-group app-shell-nav-group--single">
+                        <button type="button" class="tab" data-tab-key="invoices" data-base-label="Faktury" onclick="switchTab('invoices')" data-testid="tab-invoices"><span class="tab-label-desktop">Faktury</span><span class="tab-label-mobile">Faktury</span></button>
                     </div>
                     <div class="app-shell-nav-group app-shell-nav-group--single">
                         <button type="button" class="tab" data-tab-key="support" data-base-label="Podpora" onclick="switchTab('support')" data-testid="tab-support"><span class="tab-label-desktop">Podpora</span><span class="tab-label-mobile">Podpora</span></button>
@@ -35682,7 +35655,7 @@
                                     <span class="public-site-sr-only">Zobrazit nebo skrýt popis sekce Nastavení</span>
                                 </button>
                                 <div class="app-section-hero-actions">
-                                    <button type="button" class="btn btn-primary" id="accountHeroSaveButton" onclick="scrollToProfileSaveButton()">Uložit změny</button>
+                                    <button type="button" class="btn btn-primary" onclick="scrollToProfileSaveButton()">Uložit změny</button>
                                     <button type="button" class="btn btn-secondary" onclick="setSettingsPanel('security')">Zabezpečení</button>
                                 </div>
                             </div>
@@ -35702,6 +35675,10 @@
                             </section>
                         </div>
                     </section>
+                </div>
+
+                <div id="invoicesTab" class="tab-content" data-testid="invoices-tab">
+                    <div id="invoicesTabMount" class="invoices-tab-mount"></div>
                 </div>
 
                 <div id="supportTab" class="tab-content" data-testid="support-tab">
@@ -36110,7 +36087,6 @@
             staySignedIn: 'staySignedIn',
             loginMode: 'loginMode'
         };
-        var DEMO_SESSION_STORAGE_KEY = 'sv_demo_session_v1';
         var reservationsUiState = {
             isServiceView: false,
             all: [],
@@ -37086,7 +37062,7 @@
             }
             if (emailEl) {
                 const desktopEmail = document.getElementById('userEmail')?.textContent?.trim();
-                const email = (currentUser && currentUser.email) ? getVisibleUserEmail(currentUser) : desktopEmail;
+                const email = (currentUser && currentUser.email) ? currentUser.email : desktopEmail;
                 emailEl.textContent = email || '-';
                 emailEl.title = email || '';
             }
@@ -37824,18 +37800,6 @@
             }
         }
 
-        function isDemoProtectedMutationEndpoint(endpoint, method) {
-            const normalizedMethod = String(method || 'GET').toUpperCase();
-            if (normalizedMethod === 'GET') return false;
-            const path = String(endpoint || '').split('?')[0];
-            return path === '/user/me'
-                || path === '/user/change-password'
-                || path === '/user/security/totp/setup'
-                || path === '/user/security/totp/enable'
-                || path === '/user/security/totp/disable'
-                || path === '/user/security/biometric';
-        }
-
         // API volání s timeout a jednotným error handlingem
         async function apiCall(endpoint, method = 'GET', data = null, timeoutOrSignal = 30000) {
             // Aktualizovat API_URL při každém volání (pro případ změny)
@@ -37848,10 +37812,6 @@
                     showApiUrlConfig();
                 }
                 throw new Error('API URL není nastavena. Kontaktujte administrátora.');
-            }
-
-            if (isPublicDemoSession() && isDemoProtectedMutationEndpoint(endpoint, method)) {
-                throw new Error('Demo účet je jen pro ukázku. Nastavení účtu, e-mail ani heslo nelze měnit.');
             }
             
             const headers = {
@@ -40915,59 +40875,6 @@
                 localStorage.removeItem(key);
                 sessionStorage.removeItem(key);
             });
-            sessionStorage.removeItem(DEMO_SESSION_STORAGE_KEY);
-        }
-
-        function markPublicDemoSession(active) {
-            try {
-                if (active) {
-                    sessionStorage.setItem(DEMO_SESSION_STORAGE_KEY, 'true');
-                } else {
-                    sessionStorage.removeItem(DEMO_SESSION_STORAGE_KEY);
-                }
-            } catch (e) {
-                /* ignore sessionStorage errors */
-            }
-        }
-
-        function isPublicDemoSession() {
-            if (isDemoAccountUser(currentUser)) {
-                return true;
-            }
-            try {
-                return sessionStorage.getItem(DEMO_SESSION_STORAGE_KEY) === 'true';
-            } catch (e) {
-                return false;
-            }
-        }
-
-        function isDemoAccountUser(user) {
-            return !!(user && typeof user === 'object' && (
-                user.is_demo_account === true
-                || user.demo_session === true
-                || user.account_readonly === true
-            ));
-        }
-
-        function withDemoReadonlyFlags(user) {
-            if (!user || typeof user !== 'object') return user;
-            return {
-                ...user,
-                is_demo_account: true,
-                demo_session: true,
-                account_readonly: true
-            };
-        }
-
-        function getDemoHiddenEmailLabel() {
-            return 'E-mail je v demo režimu skrytý';
-        }
-
-        function getVisibleUserEmail(user = currentUser) {
-            if (isPublicDemoSession() || isDemoAccountUser(user)) {
-                return getDemoHiddenEmailLabel();
-            }
-            return String(user?.email || '').trim();
         }
 
         function markAuthSessionEstablished() {
@@ -40997,11 +40904,6 @@
                 target.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
             }
             target.setItem(AUTH_STORAGE_KEYS.loggedIn, 'true');
-            markPublicDemoSession(Boolean(user && (
-                user.is_demo_account === true
-                || user.demo_session === true
-                || user.account_readonly === true
-            )));
             if (token && user) {
                 markAuthSessionEstablished();
             } else {
@@ -41031,15 +40933,10 @@
             if (!accessToken) return false;
             if (!force && currentUser && currentUser.email) return true;
             try {
-                const keepDemoReadonly = isPublicDemoSession();
                 const me = await apiCall('/user/me', 'GET');
                 if (me && typeof me === 'object' && me.email) {
-                    const isDemoMe = keepDemoReadonly || isDemoAccountUser(me);
-                    currentUser = isDemoMe ? withDemoReadonlyFlags(me) : me;
-                    if (isDemoMe) {
-                        markPublicDemoSession(true);
-                    }
-                    persistCurrentUserToActiveStorage(currentUser);
+                    currentUser = me;
+                    persistCurrentUserToActiveStorage(me);
                 }
             } catch (error) {
                 console.warn('[AUTH] Nelze načíst /user/me po loginu:', error?.message || error);
@@ -41050,10 +40947,6 @@
                     lastWorkspaceMePayload = ctx;
                     updateWorkspaceContextBadge(ctx);
                     currentUser = { ...(currentUser || {}), ...ctx };
-                    if (isPublicDemoSession() || isDemoAccountUser(currentUser)) {
-                        currentUser = withDemoReadonlyFlags(currentUser);
-                        markPublicDemoSession(true);
-                    }
                     persistCurrentUserToActiveStorage(currentUser);
                     syncAppDisplayNameFromMe(ctx);
                 }
@@ -41194,68 +41087,6 @@
             return 'Běžný zákaznický účet pro správu vlastních vozidel. Pro servis použijte samostatný servisní účet.';
         }
 
-        function getPublicDemoTokenFromUrl() {
-            const path = normalizePublicPathname(window.location.pathname);
-            if (path !== '/demo.html') {
-                return '';
-            }
-            try {
-                return String(new URLSearchParams(window.location.search || '').get('token') || '').trim();
-            } catch (e) {
-                return '';
-            }
-        }
-
-        async function redeemPublicDemoTokenFromUrl() {
-            const token = getPublicDemoTokenFromUrl();
-            if (!token) {
-                return false;
-            }
-
-            try {
-                const response = await fetch(`${getApiBaseUrl()}/api/public/demo-account/redeem`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8'
-                    },
-                    credentials: 'omit',
-                    body: JSON.stringify({ token })
-                });
-                const payload = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    const detail = payload && payload.detail ? String(payload.detail) : 'Odkaz na ukázku už není platný. Požádejte si o nový odkaz.';
-                    throw new Error(detail);
-                }
-                const redeemToken = payload && payload.access_token ? String(payload.access_token) : '';
-                const redeemUser = payload && payload.user && typeof payload.user === 'object' ? payload.user : null;
-                if (!redeemToken || !redeemUser || !redeemUser.email) {
-                    throw new Error('Ukázkový odkaz nevrátil platnou relaci.');
-                }
-                sessionStorage.setItem('sv_public_demo_redeem_v1', JSON.stringify({
-                    access_token: redeemToken,
-                    user: withDemoReadonlyFlags(redeemUser),
-                    demo_session: true,
-                    account_readonly: true,
-                    disclaimer: payload.disclaimer || ''
-                }));
-                window.history.replaceState({}, document.title, toBrowserAppPath('/'));
-                return true;
-            } catch (error) {
-                console.warn('[DEMO] Redeem odkazu z URL selhal:', error);
-                try {
-                    window.history.replaceState({}, document.title, toBrowserAppPath('/'));
-                } catch (e) {
-                    /* ignore */
-                }
-                if (typeof showAlert === 'function') {
-                    showAlert(error?.message || 'Odkaz na ukázku už není platný. Požádejte si o nový odkaz.', 'error');
-                }
-                return false;
-            }
-        }
-
         async function applyPublicDemoRedeemFromSession() {
             let redeemToken = '';
             let redeemUser = null;
@@ -41270,9 +41101,6 @@
                 redeemUser = data && data.user && typeof data.user === 'object' ? data.user : null;
                 if (!redeemToken || !redeemUser || !redeemUser.email) {
                     return;
-                }
-                if (data.demo_session === true || data.account_readonly === true || redeemUser.demo_session === true) {
-                    redeemUser = withDemoReadonlyFlags(redeemUser);
                 }
             } catch (e) {
                 try {
@@ -43527,6 +43355,9 @@
             if (s === 'reservations') return 'reservations';
             if (s === 'services') return 'servicesDirectory';
             if (s === 'documents') return 'documents';
+            if (s === 'invoices') return 'invoices';
+            if (s === 'invoice-new') return 'invoiceNew';
+            if (s === 'invoice-settings') return 'invoiceSettings';
             if (s === 'settings') return 'account';
             if (s === 'support') return 'support';
             return 'home';
@@ -43540,6 +43371,9 @@
             if (t === 'reservations') return 'reservations';
             if (t === 'servicesdirectory') return 'services';
             if (t === 'documents') return 'documents';
+            if (t === 'invoices') return 'invoices';
+            if (t === 'invoicenew') return 'invoice-new';
+            if (t === 'invoicesettings') return 'invoice-settings';
             if (t === 'account') return 'settings';
             if (t === 'support') return 'support';
             if (t === 'serviceworkspace') return 'dashboard';
@@ -43548,7 +43382,7 @@
 
         function serviceShellSectionFromUrlSection(section) {
             const s = String(section || '').toLowerCase();
-            const allowed = new Set(['dashboard', 'clients', 'vehicles', 'work-orders', 'reservations', 'reminders', 'documents', 'settings', 'support']);
+            const allowed = new Set(['dashboard', 'clients', 'vehicles', 'work-orders', 'reservations', 'reminders', 'documents', 'invoices', 'invoice-new', 'settings', 'support']);
             if (allowed.has(s)) {
                 return s === 'settings' ? 'team' : (s === 'support' ? 'dashboard' : s);
             }
@@ -44196,21 +44030,6 @@
             }
         }
 
-        function scrollToPublicSection(sectionId) {
-            closePublicSiteMobileMenu();
-            const target = document.getElementById(sectionId);
-            if (!target || typeof target.scrollIntoView !== 'function') {
-                return false;
-            }
-            target.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
-            try {
-                window.history.replaceState(window.history.state, document.title, `#${sectionId}`);
-            } catch (error) {
-                // Hash update is a visual navigation aid; scrolling should still work without it.
-            }
-            return false;
-        }
-
         function openPublicSiteMobileMenu() {
             const root = document.getElementById('publicSiteDrawer');
             if (!root) return;
@@ -44477,123 +44296,16 @@
             }, 0);
         }
 
-        function ensurePublicDemoModal() {
-            let modal = document.getElementById('publicDemoModal');
-            if (modal) {
-                return modal;
-            }
-            modal = document.createElement('div');
-            modal.id = 'publicDemoModal';
-            modal.className = 'sv-public-demo-modal hidden';
-            modal.setAttribute('role', 'dialog');
-            modal.setAttribute('aria-modal', 'true');
-            modal.setAttribute('aria-labelledby', 'publicDemoModalTitle');
-            modal.innerHTML = `
-                <div class="sv-public-demo-modal__backdrop" onclick="closePublicDemoModal()"></div>
-                <div class="sv-public-demo-modal__panel" role="document">
-                    <button type="button" class="sv-public-demo-modal__close" aria-label="Zavřít ukázku" onclick="closePublicDemoModal()">×</button>
-                    <p class="sv-public-demo-modal__kicker">Interaktivní ukázka</p>
-                    <h2 id="publicDemoModalTitle">Pošleme vám bezpečný odkaz do ukázky</h2>
-                    <p>Ukázkový účet je chráněný jednorázovým odkazem. Otevřete ho ze stejného připojení, ze kterého o něj požádáte.</p>
-                    <form id="publicDemoAccessForm" class="sv-public-demo-form" onsubmit="handlePublicDemoAccessSubmit(event)">
-                        <label for="publicDemoEmail">E-mail pro zaslání odkazu</label>
-                        <input id="publicDemoEmail" type="email" autocomplete="email" placeholder="vas@email.cz" required>
-                        <label class="sv-public-demo-consent">
-                            <input id="publicDemoConsent" type="checkbox" required>
-                            <span>Souhlasím se zasláním informací v souvislosti s nabídkou a ukázkou aplikace.</span>
-                        </label>
-                        <div id="publicDemoMessage" class="sv-public-demo-message" aria-live="polite"></div>
-                        <button type="submit" id="publicDemoSubmitBtn" class="sv-btn sv-btn-primary">Poslat odkaz do ukázky</button>
-                    </form>
-                </div>
-            `;
-            document.body.appendChild(modal);
-            modal.addEventListener('keydown', (event) => {
-                if (event.key === 'Escape') {
-                    closePublicDemoModal();
-                }
-            });
-            return modal;
-        }
-
-        function setPublicDemoMessage(message = '', type = 'info') {
-            const el = document.getElementById('publicDemoMessage');
-            if (!el) return;
-            el.textContent = message;
-            el.dataset.type = type;
-        }
-
-        function closePublicDemoModal() {
-            const modal = document.getElementById('publicDemoModal');
-            if (!modal) return;
-            modal.classList.add('hidden');
-            modal.setAttribute('aria-hidden', 'true');
-        }
-
-        async function handlePublicDemoAccessSubmit(event) {
-            event.preventDefault();
-            const emailInput = document.getElementById('publicDemoEmail');
-            const consentInput = document.getElementById('publicDemoConsent');
-            const submitBtn = document.getElementById('publicDemoSubmitBtn');
-            const visitorEmail = String(emailInput?.value || '').trim();
-            const contactConsent = !!consentInput?.checked;
-            if (!visitorEmail) {
-                setPublicDemoMessage('Zadejte prosím e-mail.', 'error');
-                emailInput?.focus();
-                return;
-            }
-            if (!contactConsent) {
-                setPublicDemoMessage('Pro odeslání odkazu je potřeba potvrdit souhlas.', 'error');
-                consentInput?.focus();
-                return;
-            }
-            try {
-                if (submitBtn) {
-                    submitBtn.disabled = true;
-                    submitBtn.textContent = 'Odesílám odkaz…';
-                }
-                setPublicDemoMessage('', 'info');
-                const base = getApiBaseUrl();
-                const response = await fetch(`${base}/api/public/demo-account/access`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                    credentials: 'omit',
-                    body: JSON.stringify({ visitor_email: visitorEmail, contact_consent: contactConsent }),
-                });
-                const payload = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    throw new Error(payload?.detail || payload?.message || 'Odkaz se nepodařilo odeslat.');
-                }
-                setPublicDemoMessage(payload?.message || 'Odkaz do ukázky jsme odeslali na váš e-mail.', 'success');
-            } catch (error) {
-                setPublicDemoMessage(error?.message || 'Odkaz se nepodařilo odeslat.', 'error');
-            } finally {
-                if (submitBtn) {
-                    submitBtn.disabled = false;
-                    submitBtn.textContent = 'Poslat odkaz do ukázky';
-                }
-            }
-        }
-
         function openPublicDemoEntry() {
             try {
                 closePublicSiteMobileMenu();
             } catch (e2) {
                 /* ignore */
             }
-            const modal = ensurePublicDemoModal();
-            modal.classList.remove('hidden');
-            modal.removeAttribute('aria-hidden');
-            setPublicDemoMessage('', 'info');
-            setTimeout(() => {
-                const emailInput = document.getElementById('publicDemoEmail');
-                if (emailInput) emailInput.focus();
-            }, 60);
+            window.location.href = '/web/demo.html';
         }
         window.openPublicDemoEntry = openPublicDemoEntry;
         window.openPublicDemoLogin = openPublicDemoEntry;
-        window.closePublicDemoModal = closePublicDemoModal;
-        window.handlePublicDemoAccessSubmit = handlePublicDemoAccessSubmit;
 
         // Zobrazení dashboardu (skrýt login)
         function showDashboard() {
@@ -44653,7 +44365,7 @@
             
             // Zobrazit badge uživatele a logout button
             if (userEmailEl && currentUser) {
-                userEmailEl.textContent = getVisibleUserEmail(currentUser);
+                userEmailEl.textContent = currentUser.email;
                 if (userBadge) {
                     userBadge.classList.remove('hidden');
                 }
@@ -57125,6 +56837,9 @@
                 servicesDirectory: 'servicesDirectoryTab',
                 serviceWorkspace: 'serviceWorkspaceTab',
                 documents: 'documentsTab',
+                invoices: 'invoicesTab',
+                invoiceNew: 'invoicesTab',
+                invoiceSettings: 'invoicesTab',
                 account: 'accountTab',
                 support: 'supportTab'
             };
@@ -57167,6 +56882,10 @@
                 loadServiceWorkspace();
             } else if (resolvedTab === 'documents') {
                 loadDocumentsHub(false);
+            } else if (resolvedTab === 'invoices' || resolvedTab === 'invoiceNew' || resolvedTab === 'invoiceSettings') {
+                if (typeof window.loadUserInvoices === 'function') {
+                    window.loadUserInvoices(true);
+                }
             } else if (resolvedTab === 'account') {
                 loadProfile(false);
             } else if (resolvedTab === 'support') {
@@ -57436,12 +57155,8 @@
             serverStatusCheckInterval = setInterval(checkServerStatus, 30000);
             
             // Načíst uložený JWT token a uživatele
-            const hasPublicDemoUrlToken = Boolean(getPublicDemoTokenFromUrl());
-            if (hasPublicDemoUrlToken) {
-                clearAuthStorage();
-            }
-            const savedToken = hasPublicDemoUrlToken ? null : getAuthStorageItem(AUTH_STORAGE_KEYS.token);
-            const savedUser = hasPublicDemoUrlToken ? null : getAuthStorageItem(AUTH_STORAGE_KEYS.user);
+            const savedToken = getAuthStorageItem(AUTH_STORAGE_KEYS.token);
+            const savedUser = getAuthStorageItem(AUTH_STORAGE_KEYS.user);
             
             // DIAGNOSTIKA PŘI STARTU
             console.log('[APP] ===== DIAGNOSTIKA STARTU =====');
@@ -57505,11 +57220,7 @@
             void (async () => {
                 let hadDemoRedeemPayload = false;
                 try {
-                    const redeemedDemoUrl = await redeemPublicDemoTokenFromUrl();
                     hadDemoRedeemPayload = Boolean(sessionStorage.getItem('sv_public_demo_redeem_v1'));
-                    if (redeemedDemoUrl) {
-                        hadDemoRedeemPayload = true;
-                    }
                 } catch (eDemo) {
                     /* ignore */
                 }
@@ -65164,27 +64875,13 @@
                 container.classList.add('loading');
                 container.innerHTML = '<div class="loading">Načítám profil...</div>';
                 const profile = await apiCall('/user/me');
-                const isDemoProfile = isPublicDemoSession() || isDemoAccountUser(profile);
-                if (isDemoProfile) {
-                    markPublicDemoSession(true);
-                    currentUser = withDemoReadonlyFlags({ ...(currentUser || {}), ...(profile || {}) });
-                    persistCurrentUserToActiveStorage(currentUser);
-                }
-                const visibleProfileEmail = isDemoProfile ? getDemoHiddenEmailLabel() : String(profile.email || '');
-                const sidebarAccountLabel = isDemoProfile ? 'Ukázkový účet' : (profile.email || '-');
-                const demoReadonlyBanner = isDemoProfile ? `
-                    <div class="demo-readonly-banner" role="note">
-                        <strong>Ukázkový režim</strong>
-                        <span>${getDemoReadonlyMessage()}</span>
-                    </div>
-                ` : '';
                 
                 container.innerHTML = `
                     <div class="settings-shell">
                         <aside class="settings-sidebar">
                             <div class="settings-sidebar-head">
                                 <h3>Nastavení</h3>
-                                <p>Účet: ${escapeHtml(sidebarAccountLabel)}</p>
+                                <p>Účet: ${profile.email || '-'}</p>
                             </div>
                             <button type="button" class="settings-nav-item active" data-settings-panel-btn="account" onclick="setSettingsPanel('account')">
                                 Osobní údaje
@@ -65206,7 +64903,6 @@
                                 <button type="button" id="settingsSaveButton" class="btn-primary" onclick="handleSaveProfile()">Uložit změny</button>
                             </div>
                             <div id="profileErrorContainer" class="profile-form-status"></div>
-                            ${demoReadonlyBanner}
 
                             <section class="settings-panel active" data-settings-panel="account">
                                 <div class="card profile-panel">
@@ -65218,8 +64914,8 @@
                                         <div class="profile-grid">
                                             <div class="form-group">
                                                 <label for="profileEmail">Přihlašovací e-mail</label>
-                                                <input type="text" id="profileEmail" value="${escapeHtml(visibleProfileEmail)}" disabled class="input-disabled">
-                                                <small class="form-hint">${isDemoProfile ? 'Skutečný e-mail demo účtu se v ukázce nezobrazuje.' : 'E-mail slouží jako přihlašovací jméno a nelze jej změnit'}</small>
+                                                <input type="email" id="profileEmail" value="${profile.email || ''}" disabled class="input-disabled">
+                                                <small class="form-hint">E-mail slouží jako přihlašovací jméno a nelze jej změnit</small>
                                             </div>
                                             <div class="form-group">
                                                 <label for="profileName">Jméno a příjmení / Název firmy *</label>
@@ -65496,7 +65192,6 @@
                 setSettingsPanel('account');
                 initProfileAresAutofill();
                 refreshProfileSecuritySettings();
-                applyDemoAccountSettingsLock();
             } catch (error) {
                 profileUiState.loadedAt = 0;
                 console.error('[PROFILE] Chyba při načítání profilu:', error);
@@ -65531,14 +65226,10 @@
                 titleEl.textContent = panelTitles[normalized] || 'Nastavení';
             }
 
-            const showProfileSave = normalized !== 'security' && normalized !== 'data' && !isPublicDemoSession();
+            const showProfileSave = normalized !== 'security' && normalized !== 'data';
             const saveButton = document.getElementById('settingsSaveButton');
             if (saveButton) {
                 saveButton.classList.toggle('hidden', !showProfileSave);
-                if (isPublicDemoSession()) {
-                    saveButton.disabled = true;
-                    saveButton.setAttribute('aria-disabled', 'true');
-                }
             }
 
             const profileErrorContainer = document.getElementById('profileErrorContainer');
@@ -65554,10 +65245,6 @@
         async function handleSaveProfile(event) {
             if (event && typeof event.preventDefault === 'function') {
                 event.preventDefault();
-            }
-            if (isPublicDemoSession()) {
-                showDemoReadonlySettingsMessage('profileErrorContainer');
-                return;
             }
             const errorContainer = document.getElementById('profileErrorContainer');
             
@@ -65647,54 +65334,9 @@
             container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
 
-        function getDemoReadonlyMessage() {
-            return 'Ukázkový účet je jen pro prohlížení. E-mail je skrytý a nastavení účtu, telefon, notifikace, heslo, 2FA, biometrie ani smazání účtu nelze měnit.';
-        }
-
-        function showDemoReadonlySettingsMessage(containerId = 'profileErrorContainer') {
-            const message = getDemoReadonlyMessage();
-            if (typeof setProfileDataStatus === 'function') {
-                setProfileDataStatus(containerId, message, 'warning');
-            } else if (typeof showAlert === 'function') {
-                showAlert(message, 'warning');
-            }
-            return false;
-        }
-
-        function applyDemoAccountSettingsLock() {
-            if (!isPublicDemoSession()) return;
-            const container = document.getElementById('profileContainer');
-            if (!container) return;
-            container.classList.add('is-demo-readonly');
-
-            container.querySelectorAll('input, select, textarea').forEach((field) => {
-                field.disabled = true;
-                field.setAttribute('aria-disabled', 'true');
-                field.classList.add('input-disabled');
-            });
-
-            container.querySelectorAll('button').forEach((button) => {
-                if (button.hasAttribute('data-settings-panel-btn')) return;
-                button.disabled = true;
-                button.setAttribute('aria-disabled', 'true');
-                button.classList.add('is-disabled');
-            });
-
-            const heroSaveButton = document.getElementById('accountHeroSaveButton');
-            if (heroSaveButton) {
-                heroSaveButton.disabled = true;
-                heroSaveButton.setAttribute('aria-disabled', 'true');
-                heroSaveButton.classList.add('is-disabled');
-            }
-        }
-
         async function handleAccountDataExport() {
             if (!isAuthenticated()) {
                 showAlert('Nejprve se přihlaste.', 'error');
-                return;
-            }
-            if (isPublicDemoSession()) {
-                showDemoReadonlySettingsMessage('profileExportStatus');
                 return;
             }
 
@@ -65785,10 +65427,6 @@
         async function handleDeleteAccount() {
             if (!isAuthenticated()) {
                 showAlert('Nejprve se přihlaste.', 'error');
-                return;
-            }
-            if (isPublicDemoSession()) {
-                showDemoReadonlySettingsMessage('profileDeleteStatus');
                 return;
             }
 
@@ -65977,7 +65615,6 @@
                 const settings = await apiCall('/user/security/settings', 'GET');
                 authSecuritySettingsCache = settings || {};
                 renderProfileSecuritySettings();
-                applyDemoAccountSettingsLock();
             } catch (error) {
                 console.error('[SECURITY] Chyba při načítání nastavení zabezpečení:', error);
                 setSecurityInlineMessage(
@@ -65986,15 +65623,10 @@
                     'error'
                 );
                 renderProfileSecuritySettings();
-                applyDemoAccountSettingsLock();
             }
         }
 
         async function startTotpSetup() {
-            if (isPublicDemoSession()) {
-                showDemoReadonlySettingsMessage('security2faMessage');
-                return;
-            }
             setSecurityInlineMessage('security2faMessage', '');
             const setupPanel = document.getElementById('securityTotpSetupPanel');
             const disablePanel = document.getElementById('securityTotpDisablePanel');
@@ -66070,10 +65702,6 @@
         }
 
         async function confirmTotpEnable() {
-            if (isPublicDemoSession()) {
-                showDemoReadonlySettingsMessage('security2faMessage');
-                return;
-            }
             const code = String(document.getElementById('securityTotpEnableCode')?.value || '').trim();
             if (!/^\d{6}$/.test(code)) {
                 setSecurityInlineMessage('security2faMessage', 'Zadejte platný 6místný kód.', 'error');
@@ -66095,10 +65723,6 @@
         }
 
         function toggleTotpDisableForm(forceOpen) {
-            if (isPublicDemoSession()) {
-                showDemoReadonlySettingsMessage('security2faMessage');
-                return;
-            }
             const panel = document.getElementById('securityTotpDisablePanel');
             if (!panel) return;
             const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : panel.classList.contains('hidden');
@@ -66111,10 +65735,6 @@
         }
 
         async function confirmTotpDisable() {
-            if (isPublicDemoSession()) {
-                showDemoReadonlySettingsMessage('security2faMessage');
-                return;
-            }
             const currentPassword = String(document.getElementById('securityDisable2faPassword')?.value || '');
             const code = String(document.getElementById('securityDisable2faCode')?.value || '').trim();
 
@@ -66145,10 +65765,6 @@
         }
 
         async function toggleBiometricPreference() {
-            if (isPublicDemoSession()) {
-                showDemoReadonlySettingsMessage('securityBiometricMessage');
-                return;
-            }
             const support = getBiometricClientSupport();
             if (!support.supported) {
                 setSecurityInlineMessage('securityBiometricMessage', support.reason, 'warning');
@@ -66197,8 +65813,8 @@
             }
 
             const userName = (currentUser && currentUser.name) ? currentUser.name : 'Uživatel';
-            const userEmail = (currentUser && currentUser.email) ? getVisibleUserEmail(currentUser) : '-';
-            const userPhone = (isPublicDemoSession() || !currentUser || !currentUser.phone) ? '' : currentUser.phone;
+            const userEmail = (currentUser && currentUser.email) ? currentUser.email : '-';
+            const userPhone = (currentUser && currentUser.phone) ? currentUser.phone : '';
 
             container.innerHTML = `
                 <div class="support-layout">
@@ -66253,7 +65869,7 @@
                                 </div>
                                 <div class="form-group">
                                     <label>Email odesílatele</label>
-                                    <input type="text" value="${escapeHtml(userEmail)}" disabled class="input-disabled">
+                                    <input type="email" value="${userEmail}" disabled class="input-disabled">
                                 </div>
                                 <div class="form-actions">
                                     <button type="submit" id="supportSubmitBtn" class="btn-primary">Odeslat na podporu</button>
@@ -66667,10 +66283,6 @@
         // Změna hesla
         async function handleChangePassword(event) {
             event.preventDefault();
-            if (isPublicDemoSession()) {
-                showDemoReadonlySettingsMessage('changePasswordMessage');
-                return;
-            }
             const errorContainer = document.getElementById('changePasswordErrorContainer');
             const button = event.target.querySelector('button[type="submit"]');
             const originalButtonText = button ? button.textContent : 'Změnit heslo';
@@ -66808,7 +66420,7 @@
                 }
             }
             const user = currentUser || parsedStoredUser;
-            document.getElementById('debug-user-email').textContent = getVisibleUserEmail(user) || '-';
+            document.getElementById('debug-user-email').textContent = user?.email || '-';
             
             // Recent requests
             const requestsList = document.getElementById('debug-requests-list');
@@ -69035,7 +68647,6 @@
     </script>
 
     <!-- Interaktivní návody (metadata + engine) -->
-    <script src="/web/user-app-next.js?v=2026051911"></script>
     <script src="/web/tutorials/tutorial-config.js"></script>
     <script src="/web/tutorials/tutorial-engine.js"></script>
     <script>
@@ -69050,6 +68661,11 @@
     
     <!-- AI Features JavaScript -->
     <script src="/web/ai-features.js"></script>
+    <script src="/web/service-shell-invoices-dashboard.js?v=202605204"></script>
+    <script src="/web/user-invoices-workflow.js?v=202605206"></script>
+    <script src="/web/user-invoice-settings.js?v=202605206"></script>
+    <script src="/web/user-invoices-dashboard.js?v=202605206"></script>
+    <script src="/web/user-app-next.js?v=2026052008"></script>
     <script src="/web/service-shell.js?v=2026050720"></script>
     <script src="/web/fakturyweb-test.js"></script>
     <script src="/web/support-widget.js?v=20260507"></script>
