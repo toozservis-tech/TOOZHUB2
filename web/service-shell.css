@@ -1290,6 +1290,70 @@ body.service-shell-theme-light .service-shell-modal-header {
   text-align: left;
 }
 
+.service-shell-work-order-items-card {
+  display: grid;
+  gap: 16px;
+  margin: 4px 0 18px;
+}
+
+.service-shell-work-order-add-actions,
+.service-shell-work-order-item-actions {
+  flex-wrap: wrap;
+}
+
+.service-shell-work-order-items-wrap {
+  margin: 0;
+  overflow-x: auto;
+}
+
+.service-shell-work-order-items-table {
+  min-width: 920px;
+}
+
+.service-shell-work-order-items-table td,
+.service-shell-work-order-items-table th {
+  vertical-align: middle;
+}
+
+.service-shell-work-order-items-table .btn {
+  min-height: 34px;
+  padding: 8px 10px;
+}
+
+.service-shell-work-order-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.service-shell-work-order-summary-grid > div {
+  display: grid;
+  gap: 5px;
+  min-height: 78px;
+  padding: 12px 14px;
+  border-radius: var(--service-radius-sm);
+  border: 1px solid var(--service-border);
+  background: var(--service-panel-soft);
+}
+
+.service-shell-work-order-summary-grid span {
+  color: var(--service-text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.service-shell-work-order-summary-grid strong {
+  color: var(--service-text);
+  font-size: 1rem;
+}
+
+.service-shell-work-order-summary-total {
+  border-color: rgba(75, 130, 255, 0.38) !important;
+  background: rgba(75, 130, 255, 0.1) !important;
+}
+
 @keyframes serviceShellModalSpin {
   to {
     transform: rotate(360deg);
@@ -2098,6 +2162,14 @@ body.service-shell-theme-light .service-shell-inline-error {
     grid-column: 1 / -1;
     width: 100%;
   }
+
+  .service-shell-work-order-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .service-shell-work-order-summary-total {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 720px) {
@@ -2138,6 +2210,20 @@ body.service-shell-theme-light .service-shell-inline-error {
 @media (max-width: 560px) {
   .service-shell-invoice-line-row,
   .service-dashboard-modal-grid.cols-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .service-shell-work-order-add-actions,
+  .service-shell-work-order-item-actions {
+    width: 100%;
+  }
+
+  .service-shell-work-order-add-actions .btn,
+  .service-shell-work-order-item-actions .btn {
+    width: 100%;
+  }
+
+  .service-shell-work-order-summary-grid {
     grid-template-columns: 1fr;
   }
 }

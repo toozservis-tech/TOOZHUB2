@@ -34,6 +34,42 @@ python3 -m pytest tests/api/test_service_cases_api.py tests/api/test_service_das
 - `tests/api/test_service_work_order_items.py`: PASS, 8 passed
 - `tests/api/test_service_cases_api.py tests/api/test_service_dashboard.py`: PASS, 10 passed
 
+## Dodatek 2026-05-20: UI napojeni service shellu
+
+Runtime safety:
+
+- `pwd` => `/opt/toozhub2-staging/app`
+- branch => `feature/user-app-visual-reference-20260518`
+- staging service => `toozhub2-staging.service` active
+- health endpoint => OK, `environment=staging`
+- DB => `sqlite:////opt/toozhub2-staging/data/vehicles_staging.db`
+
+Testovaci prikazy:
+
+```bash
+node --check web/service-shell.js
+python3 -m pytest tests/api/test_service_work_order_items.py
+BASE_URL=http://127.0.0.1:8010 npx playwright test service-shell-work-order-flow.spec.ts --config=playwright.config.ts --workers=1 --retries=0 --reporter=line
+```
+
+Vysledky:
+
+- `node --check web/service-shell.js`: PASS
+- `tests/api/test_service_work_order_items.py`: PASS, 8 passed
+- `service-shell-work-order-flow.spec.ts`: PASS, 1 passed proti staging portu `8010`
+
+Pokryte UI scenare:
+
+- detail zakazky nacte blok `Polozky zakazky`
+- prazdna zakazka ukaze empty state
+- pridani prace vola backend POST endpoint
+- po pridani se zobrazi server-side summary a cena s DPH
+- odebrani polozky vola DELETE endpoint a obnovi summary
+- 403 z item endpointu zobrazi hlasku `Servis nema opravneni k teto zakazce/vozidlu.`
+- `createWorkOrderFromIntake(321)` vola `POST /api/v1/services/workspace/vehicle-intakes/321/create-work-order` a otevre detail vytvorene zakazky
+- existujici create/update flow zakazky zustal funkcni
+- test bezi proti staging URL, ne proti portu produkce
+
 ## Pokryte scenare
 
 - vytvoreni work order z `ServiceIntake`
@@ -51,14 +87,11 @@ python3 -m pytest tests/api/test_service_cases_api.py tests/api/test_service_das
 
 ## Nespustene testy
 
-E2E service shell testy nebyly spusteny, protoze v tomto rezu nebylo meneno runtime UI.
+Siroke full-suite E2E nebyly spusteny. Tento rez overil pouze targeted service-shell flow a backend testy polozek zakazky.
 
-## Dalsi testy pro navazujici UI rez
+## Dalsi testy pro navazujici rezy
 
-- service login
-- otevreni detailu zakazky
-- zobrazeni polozek zakazky
-- pridani prace/materialu/ostatni polozky pres UI
 - zmena a soft-delete polozky pres UI
-- kontrola souhrnu cen v UI
+- pridani materialu a ostatni polozky pres UI
+- vytvoreni zakazky z konkretniho intake detailu, az bude potvrzene misto v service shellu
 - mobil/tablet smoke pro service shell

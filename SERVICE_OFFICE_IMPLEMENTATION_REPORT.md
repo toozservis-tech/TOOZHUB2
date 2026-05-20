@@ -14,6 +14,33 @@ Tento rez doplnil prvni bezpecny implementacni clanek servisniho retezce:
 
 Nevznikl druhy ERP system. Implementace rozsiruje existujici `ServiceWorkOrder`, `ServiceIntake`, `VehicleServiceLink`, `ServiceCustomerLink` a globalni audit log.
 
+## Dodatek 2026-05-20: UI napojeni polozek zakazky
+
+Navazujici staging-only rez napojil hotovy backend polozek zakazky do existujiciho `web/service-shell.js`. Nevznikl novy frontend ani druhy detail zakazky.
+
+Upraveno:
+
+- detail existujici servisni zakazky zobrazuje blok `Polozky zakazky`
+- blok nacita server-side summary z `GET /api/v1/services/workspace/work-orders/{id}/summary`
+- UI obsahuje tabulku polozek `Prace / Material / Ostatni`
+- UI obsahuje souhrny `prace bez DPH`, `material bez DPH`, `ostatni bez DPH`, `DPH celkem`, `celkem s DPH`
+- modal umi pridat/upravit polozku pres `POST/PATCH`
+- odebrani polozky vola `DELETE` a necha backend provest soft-delete/audit
+- po create/update/delete se summary znovu nacita ze serveru
+- 403 chyba se zobrazuje jako jasna hlaska pro servisni opravneni
+- doplnen helper `createWorkOrderFromIntake(intakeId)` pro existujici/future intake UI, napojeny na `POST /api/v1/services/workspace/vehicle-intakes/{id}/create-work-order`
+
+Zmenene soubory v UI rezu:
+
+- `web/service-shell.js`
+- `web/service-shell.css`
+- `tests/e2e/service-shell-fallback.helpers.ts`
+- `tests/e2e/service-shell-work-order-flow.spec.ts`
+- `SERVICE_OFFICE_IMPLEMENTATION_REPORT.md`
+- `SERVICE_OFFICE_TEST_REPORT.md`
+
+Backend, DB a migrace nebyly v tomto navazujicim UI rezu meneny.
+
 ## Staging potvrzeni
 
 - pracovni cesta: `/opt/toozhub2-staging/app`
@@ -85,7 +112,13 @@ Zadne existujici API kontrakty nebyly zmeneny.
 
 ## Nove UI prvky
 
-Zadne runtime UI prvky v tomto rezu nebyly pridany. Service shell zustal beze zmen, protoze tento krok resil nejdriv stabilni datovy/API zaklad. UI napojeni bloku "Polozky zakazky" je dalsi maly navazujici rez.
+Backendovy rez z 2026-05-19 runtime UI nemenil. Navazujici UI rez z 2026-05-20 doplnil do existujiciho service shellu:
+
+- blok `Polozky zakazky` v detailu zakazky
+- tlacitka `Pridat praci`, `Pridat material`, `Pridat ostatni`
+- modal pro pridani/upravu polozky
+- akce `Upravit` a `Odebrat`
+- server-side souhrn cen v detailu zakazky
 
 ## Pouzite existujici funkce
 
@@ -116,11 +149,11 @@ Zadne runtime UI prvky v tomto rezu nebyly pridany. Service shell zustal beze zm
 
 - Stavovy workflow zakazek zustava v existujicim rozsahu `awaiting_client_approval/approved/in_progress/completed/issue`.
 - `mechanic_id` je pripraveny nullable field, ale plne napojeni na service employees/payroll prijde v dalsim rezu.
-- UI pro pridavani polozek v service shellu jeste neni napojene.
+- Tlacitko `Vytvorit zakazku` z prijmu je pripraveno jako helper `createWorkOrderFromIntake(intakeId)`, ale nebylo vlozeno do konkretniho intake detailu, protoze v aktualnim service shellu nebyl nalezen samostatny existujici detail prijmu vozidla.
 - CSV import, fakturace ze zakazky a uzavreni do VIN historie nejsou soucasti tohoto rezu.
 
 ## Dalsi doporuceny krok
 
-1. Spustit migraci na staging DB.
-2. Minimalne napojit existujici detail zakazky v `web/service-shell.js` na summary a CRUD polozek.
-3. Potom udelat CSV preview/import jako navazujici zdroj `material` polozek.
+1. Doplnit viditelne intake detail UI, pokud bude v service shellu potvrzene jeho misto.
+2. Navazat CSV preview/import jako zdroj `material` polozek.
+3. Potom pripravit fakturaci ze zakazky.

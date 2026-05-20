@@ -58,6 +58,42 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
       ],
     },
   ];
+  let nextWorkOrderItemId = 1001;
+  const workOrderItems: Record<number, Array<{
+    id: number;
+    work_order_id: number;
+    type: 'labor' | 'material' | 'other';
+    name: string;
+    code: string | null;
+    quantity: number;
+    unit: string;
+    vat_rate: number;
+    purchase_price_without_vat: number | null;
+    sale_price_without_vat: number;
+    discount_percent: number;
+    source: string;
+    deleted_at: string | null;
+    created_at: string;
+    updated_at: string;
+  }>> = {
+    501: [{
+      id: 900,
+      work_order_id: 501,
+      type: 'labor',
+      name: 'Diagnostika',
+      code: 'DIAG',
+      quantity: 1,
+      unit: 'h',
+      vat_rate: 21,
+      purchase_price_without_vat: null,
+      sale_price_without_vat: 800,
+      discount_percent: 0,
+      source: 'manual',
+      deleted_at: null,
+      created_at: '2026-04-12T10:30:00Z',
+      updated_at: '2026-04-12T10:30:00Z',
+    }],
+  };
   const serviceRecords = [
     {
       id: 601,
@@ -283,6 +319,47 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
       suspicious_km: 0,
       unfinished_jobs: workOrders.filter((item) => String(item.status || '').toLowerCase() !== 'completed').length,
       internal_warnings: 0,
+    };
+  };
+
+  const itemTotals = (item: NonNullable<(typeof workOrderItems)[number]>[number]) => {
+    const net = Math.round(item.quantity * item.sale_price_without_vat * (1 - item.discount_percent / 100) * 100) / 100;
+    const vat = Math.round(net * item.vat_rate) / 100;
+    return {
+      line_total_without_vat: net,
+      vat_amount: vat,
+      line_total_with_vat: Math.round((net + vat) * 100) / 100,
+    };
+  };
+
+  const buildWorkOrderItemsSummary = (workOrderId: number) => {
+    const items = (workOrderItems[workOrderId] || []).filter((item) => !item.deleted_at);
+    const groups = {
+      labor: { total_without_vat: 0, vat_total: 0, total_with_vat: 0 },
+      material: { total_without_vat: 0, vat_total: 0, total_with_vat: 0 },
+      other: { total_without_vat: 0, vat_total: 0, total_with_vat: 0 },
+    };
+    const serialized = items.map((item) => {
+      const totals = itemTotals(item);
+      const g = groups[item.type];
+      g.total_without_vat += totals.line_total_without_vat;
+      g.vat_total += totals.vat_amount;
+      g.total_with_vat += totals.line_total_with_vat;
+      return { ...item, ...totals };
+    });
+    const round = (n: number) => Math.round(n * 100) / 100;
+    Object.values(groups).forEach((group) => {
+      group.total_without_vat = round(group.total_without_vat);
+      group.vat_total = round(group.vat_total);
+      group.total_with_vat = round(group.total_with_vat);
+    });
+    return {
+      work_order_id: workOrderId,
+      items: serialized,
+      groups,
+      total_without_vat: round(Object.values(groups).reduce((sum, group) => sum + group.total_without_vat, 0)),
+      vat_total: round(Object.values(groups).reduce((sum, group) => sum + group.vat_total, 0)),
+      total_with_vat: round(Object.values(groups).reduce((sum, group) => sum + group.total_with_vat, 0)),
     };
   };
 
@@ -657,6 +734,103 @@ export async function installServiceShellMocks(page: Page): Promise<void> {
         { id: (item.audit_log || []).length + 1, action: 'update', created_at: '2026-04-13T11:00:00Z' },
       ];
       return json(route, 200, serializeWorkOrderDetail(item));
+    }
+    if (/^\/api\/v1\/services\/workspace\/work-orders\/\d+\/summary$/.test(path) && method === 'GET') {
+      const workOrderId = Number(path.split('/').slice(-2, -1)[0]);
+      const exists = workOrders.some((entry) => entry.id === workOrderId);
+      return json(route, exists ? 200 : 404, exists ? buildWorkOrderItemsSummary(workOrderId) : { detail: 'Not Found' });
+    }
+    if (/^\/api\/v1\/services\/workspace\/work-orders\/\d+\/items$/.test(path) && method === 'POST') {
+      const workOrderId = Number(path.split('/').slice(-2, -1)[0]);
+      const exists = workOrders.some((entry) => entry.id === workOrderId);
+      if (!exists) return json(route, 404, { detail: 'Not Found' });
+      const body = route.request().postDataJSON() as {
+        type: 'labor' | 'material' | 'other';
+        name: string;
+        code?: string | null;
+        quantity?: number;
+        unit?: string;
+        vat_rate?: number;
+        purchase_price_without_vat?: number | null;
+        sale_price_without_vat?: number;
+        discount_percent?: number;
+      };
+      if (body.name === 'FORBIDDEN') {
+        return json(route, 403, { detail: 'Servis nemá oprávnění k této zakázce/vozidlu.' });
+      }
+      if (!workOrderItems[workOrderId]) workOrderItems[workOrderId] = [];
+      const item = {
+        id: nextWorkOrderItemId++,
+        work_order_id: workOrderId,
+        type: body.type,
+        name: body.name,
+        code: body.code || null,
+        quantity: Number(body.quantity || 1),
+        unit: body.unit || 'ks',
+        vat_rate: Number(body.vat_rate ?? 21),
+        purchase_price_without_vat: body.purchase_price_without_vat ?? null,
+        sale_price_without_vat: Number(body.sale_price_without_vat || 0),
+        discount_percent: Number(body.discount_percent || 0),
+        source: 'manual',
+        deleted_at: null,
+        created_at: '2026-04-13T12:00:00Z',
+        updated_at: '2026-04-13T12:00:00Z',
+      };
+      workOrderItems[workOrderId].push(item);
+      return json(route, 201, { item: { ...item, ...itemTotals(item) }, summary: buildWorkOrderItemsSummary(workOrderId) });
+    }
+    if (/^\/api\/v1\/services\/workspace\/work-orders\/\d+\/items\/\d+$/.test(path) && method === 'PATCH') {
+      const parts = path.split('/');
+      const workOrderId = Number(parts[6]);
+      const itemId = Number(parts[8]);
+      const item = (workOrderItems[workOrderId] || []).find((entry) => entry.id === itemId && !entry.deleted_at);
+      if (!item) return json(route, 404, { detail: 'Not Found' });
+      const body = route.request().postDataJSON() as Partial<typeof item>;
+      Object.assign(item, {
+        type: body.type || item.type,
+        name: body.name || item.name,
+        code: Object.prototype.hasOwnProperty.call(body, 'code') ? body.code || null : item.code,
+        quantity: body.quantity != null ? Number(body.quantity) : item.quantity,
+        unit: body.unit || item.unit,
+        vat_rate: body.vat_rate != null ? Number(body.vat_rate) : item.vat_rate,
+        purchase_price_without_vat: Object.prototype.hasOwnProperty.call(body, 'purchase_price_without_vat') ? body.purchase_price_without_vat ?? null : item.purchase_price_without_vat,
+        sale_price_without_vat: body.sale_price_without_vat != null ? Number(body.sale_price_without_vat) : item.sale_price_without_vat,
+        discount_percent: body.discount_percent != null ? Number(body.discount_percent) : item.discount_percent,
+        updated_at: '2026-04-13T12:30:00Z',
+      });
+      return json(route, 200, { item: { ...item, ...itemTotals(item) }, summary: buildWorkOrderItemsSummary(workOrderId) });
+    }
+    if (/^\/api\/v1\/services\/workspace\/work-orders\/\d+\/items\/\d+$/.test(path) && method === 'DELETE') {
+      const parts = path.split('/');
+      const workOrderId = Number(parts[6]);
+      const itemId = Number(parts[8]);
+      const item = (workOrderItems[workOrderId] || []).find((entry) => entry.id === itemId && !entry.deleted_at);
+      if (!item) return json(route, 404, { detail: 'Not Found' });
+      item.deleted_at = '2026-04-13T12:45:00Z';
+      item.updated_at = item.deleted_at;
+      return json(route, 200, { ok: true, summary: buildWorkOrderItemsSummary(workOrderId) });
+    }
+    if (/^\/api\/v1\/services\/workspace\/vehicle-intakes\/\d+\/create-work-order$/.test(path) && method === 'POST') {
+      const intakeId = Number(path.split('/').slice(-2, -1)[0]);
+      const created = {
+        id: nextWorkOrderId++,
+        title: `Zakázka z příjmu #${intakeId}`,
+        customer_name: 'Linked Customer',
+        owner_id: 101,
+        vehicle_id: 301,
+        vehicle_vin: 'VINLINKED123456789',
+        vehicle_spz: '1AB2345',
+        due_date: '2026-04-13',
+        status: 'awaiting_client_approval',
+        source_type: 'intake',
+        technician_id: 9901,
+        technician_name: 'ToozServis',
+        description: 'Zakázka vytvořená z příjmu',
+        audit_log: [{ id: 3, action: 'create_from_intake', created_at: '2026-04-13T13:00:00Z' }],
+      };
+      workOrders.unshift(created);
+      workOrderItems[created.id] = [];
+      return json(route, 201, { work_order: serializeWorkOrderDetail(created) });
     }
 
     if (path === '/api/v1/services/workspace/customers' && method === 'GET') {
