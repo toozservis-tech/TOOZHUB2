@@ -39,7 +39,12 @@
 
   function money(value, currency) {
     const n = Number(value || 0);
-    return `${n.toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency || 'CZK'}`;
+    const cur = !currency || currency === 'CZK' ? 'Kč' : currency;
+    return `${n.toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
+  }
+
+  function moneyPlain(value) {
+    return money(value, 'Kč');
   }
 
   function fmtDate(value) {
@@ -296,18 +301,19 @@
     const spayd = spaydString(doc, totals);
     const invNo = doc.invoice_number || '(koncept)';
     const appName = 'Správa vozidel';
+    const isA4 = opts?.a4 !== false;
     const compact = opts?.compact;
-    const supplierAddr = [extra.supplier_street, extra.supplier_zip, extra.supplier_city].filter(Boolean).join(', ');
-    const customerAddr = [extra.customer_street, extra.customer_zip, extra.customer_city].filter(Boolean).join(', ');
-    const noteText =
-      doc.notes ||
-      'Děkujeme za spolupráci. Uhraďte prosím na účet uvedený níže s variabilním symbolem do data splatnosti.';
+    const supplierAddr = extra.supplier_street || [extra.supplier_street, extra.supplier_zip, extra.supplier_city].filter(Boolean).join(', ');
+    const customerAddr = extra.customer_street || [extra.customer_street, extra.customer_zip, extra.customer_city].filter(Boolean).join(', ');
+    const payMethod = extra.payment_method === 'hotovost' ? 'Hotově' : (doc.payment_method || extra.payment_method || 'Bankovní převod');
+    const noteText = doc.notes || doc.note || 'Děkujeme za spolupráci. Uhraďte prosím na účet uvedený níže s variabilním symbolem do data splatnosti.';
+    const logoSvg = '<svg class="sv-inv-doc-logo-svg" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#2563eb"/><path d="M20 8l10 5v8c0 6-4 11.5-10 13-6-1.5-10-7-10-13v-8l10-5z" fill="#fff" opacity=".95"/><path d="M14 18h12v2H14zm0 4h8v2h-8z" fill="#2563eb"/></svg>';
 
     return `
-      <div class="sv-inv-doc ${compact ? 'sv-inv-doc--compact' : ''}">
+      <div class="sv-inv-doc ${isA4 ? 'sv-inv-doc--a4' : ''} ${compact ? 'sv-inv-doc--compact' : ''}">
         <div class="sv-inv-doc-header">
           <div class="sv-inv-doc-brand">
-            <span class="sv-inv-doc-brand-mark" aria-hidden="true">🛡</span>
+            ${logoSvg}
             <div>
               <strong class="sv-inv-doc-brand-name">${esc(appName)}</strong>
               <div class="sv-inv-doc-brand-sub">Faktura vystavená v aplikaci</div>
@@ -320,58 +326,64 @@
         </div>
         <div class="sv-inv-doc-parties-row">
           <div class="sv-inv-doc-party-block">
-            <h4 class="sv-inv-doc-party-label"><span aria-hidden="true">👤</span> DODAVATEL</h4>
+            <h4 class="sv-inv-doc-party-label"><span class="sv-inv-doc-ico" aria-hidden="true">👤</span> DODAVATEL</h4>
             <p class="sv-inv-doc-party-name">${esc(extra.supplier_name || '—')}</p>
             <p>${esc(supplierAddr || '—')}</p>
-            <p>IČO: ${esc(extra.supplier_ico || '—')}</p>
-            <p>DIČ: ${esc(extra.supplier_dic || '—')}</p>
+            <p>IČO: ${esc(extra.supplier_ico || '—')} · DIČ: ${esc(extra.supplier_dic || '—')}</p>
             <p class="sv-inv-doc-contact">✉ ${esc(extra.supplier_email || '—')}</p>
             <p class="sv-inv-doc-contact">☎ ${esc(extra.supplier_phone || '—')}</p>
           </div>
           <div class="sv-inv-doc-party-block">
-            <h4 class="sv-inv-doc-party-label"><span aria-hidden="true">👤</span> ODBĚRATEL</h4>
+            <h4 class="sv-inv-doc-party-label"><span class="sv-inv-doc-ico" aria-hidden="true">👤</span> ODBĚRATEL</h4>
             <p class="sv-inv-doc-party-name">${esc(extra.customer_name || doc.customer_label || '—')}</p>
             <p>${esc(customerAddr || '—')}</p>
-            <p>IČO: ${esc(extra.customer_ico || '—')}</p>
-            <p>DIČ: ${esc(extra.customer_dic || '—')}</p>
+            <p>IČO: ${esc(extra.customer_ico || '—')} · DIČ: ${esc(extra.customer_dic || '—')}</p>
             <p class="sv-inv-doc-contact">✉ ${esc(extra.customer_email || '—')}</p>
             <p class="sv-inv-doc-contact">☎ ${esc(extra.customer_phone || '—')}</p>
           </div>
           <div class="sv-inv-doc-meta-panel">
-            <div class="sv-inv-doc-meta-line"><span>📅</span><div><em>Datum vystavení</em><strong>${esc(fmtDateLong(extra.issue_date || doc.issued_at))}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span>📅</span><div><em>Datum zdanitelného plnění</em><strong>${esc(fmtDateLong(extra.delivery_date || extra.issue_date))}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span>📅</span><div><em>Datum splatnosti</em><strong class="is-due">${esc(fmtDateLong(doc.due_at))}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span>📄</span><div><em>Forma úhrady</em><strong>Bankovní převod</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span>#</span><div><em>Variabilní symbol</em><strong>${esc(extra.variable_symbol || '—')}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span>#</span><div><em>Konstantní symbol</em><strong>${esc(extra.constant_symbol || '—')}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span>#</span><div><em>Specifický symbol</em><strong>${esc(extra.specific_symbol || '—')}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">📅</span><div><em>Datum vystavení</em><strong>${esc(fmtDateLong(extra.issue_date || doc.issued_at))}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">📅</span><div><em>Datum zdanitelného plnění</em><strong>${esc(fmtDateLong(extra.delivery_date || extra.issue_date))}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">📅</span><div><em>Datum splatnosti</em><strong class="is-due">${esc(fmtDateLong(doc.due_at))}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">📄</span><div><em>Forma úhrady</em><strong>${esc(payMethod)}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">#</span><div><em>Variabilní symbol</em><strong>${esc(extra.variable_symbol || '—')}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">#</span><div><em>Konstantní symbol</em><strong>${esc(extra.constant_symbol || '—')}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">#</span><div><em>Specifický symbol</em><strong>${esc(extra.specific_symbol || '—')}</strong></div></div>
           </div>
         </div>
         <h3 class="sv-inv-doc-section-title">Položky faktury</h3>
-        <div class="sv-inv-table-wrap">
+        <div class="sv-inv-doc-table-scroll">
           <table class="sv-inv-table sv-inv-lines-table">
             <thead><tr>
-              <th>#</th><th>Položka / Popis</th><th>Množství</th><th>Jedn.</th>
-              <th>Cena za jedn.</th><th>Sleva</th><th>DPH</th><th>Celkem bez DPH</th>
+              <th class="col-idx">#</th>
+              <th class="col-item">Položka / Popis</th>
+              <th class="col-qty">Množ.</th>
+              <th class="col-unit">Jedn.</th>
+              <th class="col-price">Cena za jedn.</th>
+              <th class="col-disc">Sleva</th>
+              <th class="col-vat">DPH</th>
+              <th class="col-net">Celkem bez DPH</th>
             </tr></thead>
             <tbody>
               ${lines
                 .map((ln, i) => {
                   const net = lineNet(ln);
                   const disc = Number(ln?.discount_percent || 0);
+                  const title = ln.description || ln.name || '';
+                  const sub = ln.note || (ln.description && ln.name && ln.description !== ln.name ? ln.description : '');
                   return `<tr>
-                    <td>${i + 1}</td>
-                    <td>
-                      <div class="sv-inv-line-desc-cell">${lineIconHtml(ln.description)}
-                        <div><div class="sv-inv-cell-primary">${esc(ln.description)}</div>${ln.note ? `<div class="sv-inv-cell-sub">${esc(ln.note)}</div>` : ''}</div>
+                    <td class="col-idx">${i + 1}</td>
+                    <td class="col-item">
+                      <div class="sv-inv-line-desc-cell">${lineIconHtml(title)}
+                        <div><div class="sv-inv-cell-primary">${esc(title)}</div>${sub ? `<div class="sv-inv-cell-sub">${esc(sub)}</div>` : ''}</div>
                       </div>
                     </td>
-                    <td>${esc(ln.quantity)}</td>
-                    <td>${esc(ln.unit)}</td>
-                    <td>${esc(money(ln.unit_price, doc.currency))}</td>
-                    <td>${disc ? `<span class="sv-inv-discount">${disc} %</span>` : '—'}</td>
-                    <td>${esc(ln.tax_rate)} %</td>
-                    <td>${esc(money(net, doc.currency))}</td>
+                    <td class="col-qty">${esc(ln.quantity)}</td>
+                    <td class="col-unit">${esc(ln.unit)}</td>
+                    <td class="col-price">${esc(moneyPlain(ln.unit_price))}</td>
+                    <td class="col-disc">${disc ? `<span class="sv-inv-discount-pct">${disc} %</span>` : '—'}</td>
+                    <td class="col-vat">${esc(ln.tax_rate)} %</td>
+                    <td class="col-net">${esc(moneyPlain(net))}</td>
                   </tr>`;
                 })
                 .join('') || '<tr><td colspan="8">Bez položek</td></tr>'}
@@ -381,30 +393,35 @@
         <div class="sv-inv-doc-footer-pay">
           <div class="sv-inv-pay-box">
             <strong class="sv-inv-pay-title">Platební údaje</strong>
-            <p><span class="sv-inv-pay-lbl">Banka</span> ${esc(extra.supplier_bank || 'Fio banka')}</p>
-            <p><span class="sv-inv-pay-lbl">Číslo účtu</span> ${esc(extra.supplier_bankaccount || '—')}</p>
-            <p><span class="sv-inv-pay-lbl">IBAN</span> ${esc(extra.supplier_iban || '—')}</p>
-            <p><span class="sv-inv-pay-lbl">BIC/SWIFT</span> ${esc(extra.supplier_swift || '—')}</p>
-            ${spayd ? `<div class="sv-inv-pay-qr-row"><div class="sv-inv-qr"><img src="${esc(qrImgUrl(spayd))}" alt="QR Platba" width="100" height="100"></div><span class="sv-inv-pay-qr-label">QR Platba</span></div>` : ''}
+            <div class="sv-inv-pay-grid">
+              <div class="sv-inv-pay-details">
+                <p><span class="sv-inv-pay-lbl">Banka</span> ${esc(extra.supplier_bank || 'Fio banka, a.s.')}</p>
+                <p><span class="sv-inv-pay-lbl">Číslo účtu</span> ${esc(extra.supplier_bankaccount || '—')}</p>
+                <p><span class="sv-inv-pay-lbl">IBAN</span> ${esc(extra.supplier_iban || '—')}</p>
+                <p><span class="sv-inv-pay-lbl">BIC/SWIFT</span> ${esc(extra.supplier_swift || '—')}</p>
+                <p><span class="sv-inv-pay-lbl">Variabilní symbol</span> ${esc(extra.variable_symbol || '—')}</p>
+              </div>
+              ${spayd ? `<div class="sv-inv-pay-qr-col"><div class="sv-inv-qr"><img src="${esc(qrImgUrl(spayd))}" alt="QR Platba" width="88" height="88"></div><span class="sv-inv-pay-qr-label">QR Platba</span></div>` : ''}
+            </div>
           </div>
           <div class="sv-inv-doc-totals-wrap">
             <table class="sv-inv-totals-table">
               <tbody>
-                <tr><td>Mezisoučet bez DPH</td><td>${esc(money(totals.subtotal, doc.currency))}</td></tr>
-                <tr><td>Sleva celkem</td><td class="sv-inv-discount">-${esc(money(totals.discountTotal, doc.currency))}</td></tr>
-                <tr><td>Základ DPH</td><td>${esc(money(totals.base, doc.currency))}</td></tr>
-                <tr><td>DPH (21 %)</td><td>${esc(money(totals.tax, doc.currency))}</td></tr>
+                <tr><td>Mezisoučet bez DPH</td><td>${esc(moneyPlain(totals.subtotal))}</td></tr>
+                <tr><td>Sleva celkem</td><td class="sv-inv-discount">-${esc(moneyPlain(totals.discountTotal))}</td></tr>
+                <tr><td>Základ DPH</td><td>${esc(moneyPlain(totals.base))}</td></tr>
+                <tr><td>DPH (21 %)</td><td>${esc(moneyPlain(totals.tax))}</td></tr>
               </tbody>
             </table>
             <div class="sv-inv-totals-box">
               <div class="sv-inv-totals-label">CELKEM K ÚHRADĚ</div>
-              <div class="grand">${esc(money(totals.total, doc.currency))}</div>
+              <div class="grand">${esc(moneyPlain(totals.total))}</div>
             </div>
           </div>
         </div>
         <div class="sv-inv-doc-footer-notes">
           <div class="sv-inv-thanks">
-            <span class="sv-inv-thanks-ico" aria-hidden="true">🛡</span>
+            <span class="sv-inv-thanks-ico" aria-hidden="true">✓</span>
             <div><strong>Děkujeme za spolupráci!</strong> Faktura byla vytvořena v aplikaci ${esc(appName)}.</div>
           </div>
           <div class="sv-inv-doc-note-box">
@@ -412,15 +429,16 @@
             <p>${esc(noteText)}</p>
           </div>
           <div class="sv-inv-doc-signature">
+            <div class="sv-inv-doc-signature-scribble" aria-hidden="true"></div>
             <div class="sv-inv-doc-signature-line"></div>
             <div class="sv-inv-doc-signature-name">${esc(extra.supplier_name || appName)}</div>
           </div>
         </div>
         <div class="sv-inv-doc-bar">
           <span>✓ Vytvořeno v aplikaci ${esc(appName)}</span>
-          <span>›</span><span>🔒 Bezpečně a online</span>
-          <span>›</span><span>☁ Rychle a přehledně</span>
-          <span>›</span><span>🌿 Šetříme čas i přírodu</span>
+          <span class="sv-inv-doc-bar-sep">›</span><span>🔒 Bezpečně a online</span>
+          <span class="sv-inv-doc-bar-sep">›</span><span>☁ Rychle a přehledně</span>
+          <span class="sv-inv-doc-bar-sep">›</span><span>🌿 Šetříme čas i přírodu</span>
         </div>
       </div>`;
   }
@@ -811,21 +829,35 @@
       ? `window.${API}.openLocalPdf(${JSON.stringify(String(id))})`
       : `window.${API}.openPdf(${Number(id)}, ${vid})`;
     return `
-      <div class="sv-inv-modal-backdrop" onclick="if(event.target===this) window.${API}.closePreview()">
-        <div class="sv-inv-modal sv-inv-modal--wide" role="dialog" aria-labelledby="userInvModalTitle">
+      <div class="sv-inv-modal-backdrop sv-inv-modal-backdrop--dark" onclick="if(event.target===this) window.${API}.closePreview()">
+        <div class="sv-inv-modal sv-inv-modal--wide sv-inv-modal--pdf" role="dialog" aria-labelledby="userInvModalTitle" onclick="event.stopPropagation()">
           <div class="sv-inv-modal-head">
-            <h2 id="userInvModalTitle" style="margin:0;font-size:1.125rem;">Náhled faktury</h2>
-            <button type="button" class="sv-inv-icon-btn" onclick="window.${API}.closePreview()" aria-label="Zavřít">×</button>
+            <h2 id="userInvModalTitle" class="sv-inv-modal-title">Náhled faktury</h2>
+            <button type="button" class="sv-inv-modal-close" onclick="window.${API}.closePreview()" aria-label="Zavřít">×</button>
           </div>
           <div class="sv-inv-modal-toolbar">
-            <span>‹ 1 / 1 ›</span>
-            <button type="button" class="sv-inv-icon-btn" onclick="window.${API}.zoomOut()">−</button>
-            <span>${zoom} %</span>
-            <button type="button" class="sv-inv-icon-btn" onclick="window.${API}.zoomIn()">+</button>
-            <button type="button" class="sv-inv-icon-btn" onclick="${pdfClick}" title="Stáhnout">${icoDownload()}</button>
-            <button type="button" class="sv-inv-icon-btn" onclick="window.print()" title="Tisk">🖨</button>
+            <div class="sv-inv-modal-toolbar-group">
+              <button type="button" class="sv-inv-toolbar-btn" disabled aria-label="Předchozí strana">‹</button>
+              <span class="sv-inv-toolbar-pages">1 / 1</span>
+              <button type="button" class="sv-inv-toolbar-btn" disabled aria-label="Další strana">›</button>
+            </div>
+            <div class="sv-inv-modal-toolbar-group">
+              <button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.zoomOut()" aria-label="Zmenšit">−</button>
+              <span class="sv-inv-toolbar-zoom">${zoom} %</span>
+              <button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.zoomIn()" aria-label="Zvětšit">+</button>
+            </div>
+            <div class="sv-inv-modal-toolbar-group sv-inv-modal-toolbar-actions">
+              <button type="button" class="sv-inv-toolbar-btn" onclick="${pdfClick}" title="Stáhnout">${icoDownload()}</button>
+              <button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.printPreview()" title="Tisk">🖨</button>
+            </div>
           </div>
-          <div class="sv-inv-modal-body sv-inv-modal-body--a4"><div class="sv-inv-a4-sheet" style="transform:scale(${zoom / 100})">${renderDocumentHtml(inv)}</div></div>
+          <div class="sv-inv-modal-body sv-inv-modal-body--a4">
+            <div class="sv-inv-a4-viewport">
+              <div class="sv-inv-a4-sheet" style="transform:scale(${zoom / 100})">
+                ${renderDocumentHtml(inv, { a4: true })}
+              </div>
+            </div>
+          </div>
           <div class="sv-inv-modal-foot">
             <button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.closePreview()">Zavřít</button>
           </div>
@@ -1031,6 +1063,12 @@
     },
     zoomIn() { state.previewZoom = Math.min(200, (state.previewZoom || 100) + 10); paint(); },
     zoomOut() { state.previewZoom = Math.max(50, (state.previewZoom || 100) - 10); paint(); },
+    printPreview() {
+      const prev = state.previewModal;
+      state.previewZoom = 100;
+      paint();
+      window.setTimeout(() => { window.print(); if (!prev) { state.previewModal = false; paint(); } }, 100);
+    },
     renderDocumentHtml,
     invoiceCalc,
     onVatDetail() {
@@ -1181,6 +1219,12 @@
   }
 
   window.UserInvoicesDashboard = api;
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.previewModal) {
+      state.previewModal = false;
+      paint();
+    }
+  });
   window.loadUserInvoices = function (force) {
     const tabMount = getMount();
     if (tabMount) state.mountEl = tabMount;

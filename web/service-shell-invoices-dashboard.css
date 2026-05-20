@@ -1933,3 +1933,462 @@ body.user-app-next-view-invoices .sv-inv-page--detail {
   .sv-inv-toolbar { flex-wrap: wrap; }
   .sv-inv-table-wrap { overflow-x: auto; }
 }
+
+/* === A4 document parity (reference vzhled faktura) === */
+.sv-inv-doc--a4 {
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 100%;
+  font-size: 8.5pt;
+  line-height: 1.35;
+  color: #1e293b;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+.sv-inv-a4-sheet {
+  width: 210mm;
+  min-height: 297mm;
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.28);
+  transform-origin: top center;
+  padding: 14mm 12mm 12mm;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.sv-inv-a4-sheet .sv-inv-doc--a4 {
+  min-height: calc(297mm - 26mm);
+}
+
+.sv-inv-a4-viewport {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100%;
+  padding: 8px 0 24px;
+}
+
+.sv-inv-doc-logo-svg {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.sv-inv-doc-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sv-inv-doc-header {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+}
+
+.sv-inv-doc-title {
+  font-size: 1.65rem;
+  line-height: 1.1;
+}
+
+.sv-inv-doc-number {
+  margin-top: 6px;
+  padding: 5px 12px;
+  font-size: 0.8125rem;
+}
+
+.sv-inv-doc-parties-row {
+  grid-template-columns: 1.05fr 1.05fr 0.95fr;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.sv-inv-doc-meta-line strong.is-due {
+  color: #dc2626;
+}
+
+.sv-inv-doc-table-scroll {
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.sv-inv-lines-table {
+  table-layout: fixed;
+  width: 100%;
+  font-size: 7.5pt;
+  border-collapse: collapse;
+}
+
+.sv-inv-lines-table th,
+.sv-inv-lines-table td {
+  padding: 5px 4px;
+  vertical-align: top;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.sv-inv-lines-table th {
+  background: #f1f5f9;
+  font-size: 6.5pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #64748b;
+}
+
+.sv-inv-lines-table .col-idx { width: 4%; }
+.sv-inv-lines-table .col-item { width: 28%; }
+.sv-inv-lines-table .col-qty { width: 7%; text-align: center; }
+.sv-inv-lines-table .col-unit { width: 6%; text-align: center; }
+.sv-inv-lines-table .col-price { width: 13%; text-align: right; }
+.sv-inv-lines-table .col-disc { width: 8%; text-align: center; }
+.sv-inv-lines-table .col-vat { width: 7%; text-align: center; }
+.sv-inv-lines-table .col-net { width: 14%; text-align: right; font-weight: 600; }
+
+.sv-inv-lines-table tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.sv-inv-line-desc-cell .sv-inv-cell-primary {
+  font-size: 8pt;
+  font-weight: 600;
+}
+
+.sv-inv-line-desc-cell .sv-inv-cell-sub {
+  font-size: 6.5pt;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.sv-inv-line-ico {
+  width: 22px;
+  height: 22px;
+  font-size: 0.65rem;
+}
+
+.sv-inv-pay-grid {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.sv-inv-pay-details { flex: 1; min-width: 0; }
+
+.sv-inv-pay-qr-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.sv-inv-pay-qr-col .sv-inv-qr {
+  width: 80px;
+  height: 80px;
+}
+
+.sv-inv-doc-signature-scribble {
+  height: 28px;
+  margin-bottom: 4px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 30'%3E%3Cpath d='M5 20 Q30 5 55 18 T115 12' stroke='%232563eb' stroke-width='2' fill='none'/%3E%3C/svg%3E") no-repeat left center;
+  background-size: contain;
+}
+
+.sv-inv-doc-bar-sep { opacity: 0.45; }
+
+/* Modal PDF preview parity */
+.sv-inv-modal-backdrop--dark {
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.sv-inv-modal--pdf {
+  width: min(1040px, 96vw);
+  max-height: calc(100vh - 32px);
+}
+
+.sv-inv-modal-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.sv-inv-modal-close {
+  border: 0;
+  background: transparent;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.sv-inv-modal-toolbar {
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sv-inv-modal-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sv-inv-toolbar-btn {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 8px;
+  min-width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #334155;
+}
+
+.sv-inv-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sv-inv-toolbar-pages,
+.sv-inv-toolbar-zoom {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #475569;
+  min-width: 48px;
+  text-align: center;
+}
+
+.sv-inv-modal-body--a4 {
+  overflow: auto;
+  background: #52525b;
+  padding: 20px;
+  flex: 1;
+}
+
+/* Wizard form parity */
+.sv-inv-wizard-layout--form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+
+.sv-inv-form-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  grid-column: 1 / -1;
+}
+
+.sv-inv-form-title {
+  margin: 0;
+  font-size: 1.65rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.sv-inv-form-sub {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 0.92rem;
+}
+
+.sv-inv-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.sv-inv-section-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.sv-inv-form-grid label small {
+  font-weight: 400;
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.sv-inv-form-lines-wrap {
+  overflow-x: auto;
+  margin-bottom: 10px;
+}
+
+.sv-inv-lines-edit-table {
+  min-width: 720px;
+}
+
+.sv-inv-lines-edit-table th {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.sv-inv-form-line-item {
+  min-width: 180px;
+}
+
+.sv-inv-inline-input--name {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.sv-inv-inline-input--desc {
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.sv-inv-form-line-actions {
+  white-space: nowrap;
+  display: flex;
+  gap: 4px;
+}
+
+.sv-inv-add-line-btn {
+  margin-top: 4px;
+}
+
+.sv-inv-discount--pos {
+  color: #059669 !important;
+}
+
+.sv-inv-sticky-bar-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sv-inv-mini-preview {
+  height: 320px;
+  overflow: hidden;
+  border: 1px solid var(--sv-inv-border);
+  border-radius: var(--sv-inv-radius-sm);
+  margin-bottom: 12px;
+  background: #52525b;
+  position: relative;
+}
+
+.sv-inv-a4-sheet--mini {
+  transform: scale(0.34);
+  transform-origin: top left;
+  margin: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.sv-inv-mini-preview .sv-inv-a4-sheet--mini {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  margin-left: calc(-210mm * 0.34 / 2);
+}
+
+.sv-inv-doc--a4 .sv-inv-doc-footer-pay {
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.sv-inv-doc--a4 .sv-inv-totals-box {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.sv-inv-doc--a4 .sv-inv-totals-box .grand {
+  font-size: 1.125rem;
+  font-weight: 800;
+  color: var(--sv-inv-primary);
+  margin-top: 4px;
+}
+
+.sv-inv-doc--a4 .sv-inv-pay-box {
+  padding: 10px 12px;
+  font-size: 7pt;
+}
+
+.sv-inv-doc--a4 .sv-inv-doc-bar {
+  margin-top: 12px;
+  padding: 8px 10px;
+  font-size: 6.5pt;
+  gap: 8px;
+}
+
+.sv-inv-doc--a4 .sv-inv-thanks {
+  padding: 8px 10px;
+  font-size: 7pt;
+  margin-top: 0;
+}
+
+.sv-inv-doc--a4 .sv-inv-doc-note-box {
+  padding: 8px 10px;
+  font-size: 7pt;
+}
+
+.sv-inv-doc--a4 .sv-inv-doc-note-box p {
+  margin: 4px 0 0;
+}
+
+.sv-inv-doc--a4 .sv-inv-doc-signature {
+  text-align: center;
+  font-size: 7pt;
+}
+
+.sv-inv-doc--a4 .sv-inv-discount {
+  color: #059669;
+}
+
+@media (max-width: 1024px) {
+  .sv-inv-wizard-layout--form {
+    grid-template-columns: 1fr;
+  }
+  .sv-inv-doc-parties-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .sv-inv-doc-meta-panel {
+    grid-column: 1 / -1;
+  }
+}
+
+@media print {
+  body * { visibility: hidden; }
+  .sv-inv-modal-backdrop,
+  .sv-inv-modal-backdrop * { visibility: visible; }
+  .sv-inv-modal-head,
+  .sv-inv-modal-toolbar,
+  .sv-inv-modal-foot { display: none !important; }
+  .sv-inv-modal-backdrop {
+    position: static;
+    background: none;
+    padding: 0;
+  }
+  .sv-inv-modal {
+    box-shadow: none;
+    max-height: none;
+    width: 100%;
+  }
+  .sv-inv-modal-body--a4 {
+    background: #fff;
+    padding: 0;
+  }
+  .sv-inv-a4-sheet {
+    box-shadow: none;
+    transform: none !important;
+    width: 210mm;
+    min-height: 297mm;
+  }
+}

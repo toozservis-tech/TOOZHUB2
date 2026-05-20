@@ -57,7 +57,12 @@
 
   function money(value, currency) {
     const n = Number(value || 0);
-    return `${n.toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency || 'CZK'}`;
+    const cur = !currency || currency === 'CZK' ? 'Kč' : currency;
+    return `${n.toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
+  }
+
+  function blockerToast(feature) {
+    showToast(`${feature}: Tato funkce čeká na backend API.`, 'info');
   }
 
   function fmtDateLong(value) {
@@ -175,24 +180,24 @@
       currency: 'CZK',
       source: 'user_local',
       supplier: {
-        name: u.name || '',
-        ico: u.ico || '',
-        dic: u.dic || '',
-        address: [u.street, u.city, u.zip].filter(Boolean).join(', '),
-        email: u.email || '',
-        phone: u.phone || '',
+        name: u.name || 'AutoFuture s.r.o.',
+        ico: u.ico || '12345678',
+        dic: u.dic || 'CZ12345678',
+        address: u.street ? [u.street, u.city, u.zip].filter(Boolean).join(', ') : 'U Trati 123, 100 00 Praha 10, Česká republika',
+        email: u.email || 'info@autofuture.cz',
+        phone: u.phone || '+420 777 123 456',
         bank_name: 'Fio banka, a.s.',
-        bank_account: '',
-        iban: '',
-        bic: '',
+        bank_account: '2501234567 / 2010',
+        iban: 'CZ89 2010 0000 0025 0123 4567',
+        bic: 'FIOBCZPPXXX',
       },
       customer: {
-        name: '',
-        ico: '',
-        dic: '',
-        address: '',
-        email: '',
-        phone: '',
+        name: 'Novák Trans s.r.o.',
+        ico: '87654321',
+        dic: 'CZ87654321',
+        address: 'Brněnská 45, 602 00 Brno, Česká republika',
+        email: 'ucto@novaktrans.cz',
+        phone: '+420 602 555 888',
       },
       items: [
         { id: 1, name: 'Výměna oleje a filtru', description: 'Motorový olej 5W-30, olejový filtr', quantity: 1, unit: 'ks', unit_price: 2500, discount_percent: 0, vat_rate: 21, total_without_vat: 2500 },
@@ -392,17 +397,23 @@
 
   function lineRowHtml(it, idx) {
     const net = lineNet(it);
+    const desc = it.description && it.description !== it.name ? it.description : '';
     return `
-      <tr data-u-inv-line="${idx}">
-        <td><input data-u-line-name class="sv-inv-inline-input" value="${esc(it.name)}" placeholder="Položka"></td>
-        <td><input data-u-line-desc class="sv-inv-inline-input" value="${esc(it.description !== it.name ? it.description : '')}" placeholder="Popis"></td>
-        <td><input data-u-line-qty type="number" min="0" step="0.1" class="sv-inv-inline-input sv-inv-inline-input--num" value="${esc(it.quantity)}" oninput="window.${API}.recalcSidebar()"></td>
-        <td><input data-u-line-unit class="sv-inv-inline-input sv-inv-inline-input--sm" value="${esc(it.unit)}"></td>
-        <td><input data-u-line-price type="number" min="0" step="0.01" class="sv-inv-inline-input sv-inv-inline-input--num" value="${esc(it.unit_price)}" oninput="window.${API}.recalcSidebar()"></td>
-        <td><input data-u-line-disc type="number" min="0" max="100" class="sv-inv-inline-input sv-inv-inline-input--num" value="${esc(it.discount_percent || 0)}" oninput="window.${API}.recalcSidebar()"></td>
-        <td><input data-u-line-vat type="number" class="sv-inv-inline-input sv-inv-inline-input--num" value="${esc(it.vat_rate || 21)}" oninput="window.${API}.recalcSidebar()"></td>
-        <td class="sv-inv-line-net">${esc(money(net))}</td>
-        <td><button type="button" class="sv-inv-icon-btn sv-inv-icon-btn--danger" onclick="window.${API}.removeLine(${idx})" title="Odstranit">🗑</button></td>
+      <tr class="sv-inv-form-line" data-u-inv-line="${idx}">
+        <td class="sv-inv-form-line-item">
+          <input data-u-line-name class="sv-inv-inline-input sv-inv-inline-input--name" value="${esc(it.name)}" placeholder="Název položky" oninput="window.${API}.recalcSidebar()">
+          <input data-u-line-desc class="sv-inv-inline-input sv-inv-inline-input--desc" value="${esc(desc)}" placeholder="Popis (volitelné)">
+        </td>
+        <td class="sv-inv-form-line-qty"><input data-u-line-qty type="number" min="0" step="0.1" class="sv-inv-inline-input sv-inv-inline-input--num" value="${esc(it.quantity)}" oninput="window.${API}.recalcSidebar()"></td>
+        <td class="sv-inv-form-line-unit"><input data-u-line-unit class="sv-inv-inline-input sv-inv-inline-input--sm" value="${esc(it.unit)}" oninput="window.${API}.recalcSidebar()"></td>
+        <td class="sv-inv-form-line-price"><input data-u-line-price type="number" min="0" step="0.01" class="sv-inv-inline-input sv-inv-inline-input--num" value="${esc(it.unit_price)}" oninput="window.${API}.recalcSidebar()"></td>
+        <td class="sv-inv-form-line-disc"><input data-u-line-disc type="number" min="0" max="100" class="sv-inv-inline-input sv-inv-inline-input--num" value="${esc(it.discount_percent || 0)}" oninput="window.${API}.recalcSidebar()"></td>
+        <td class="sv-inv-form-line-vat"><input data-u-line-vat type="number" class="sv-inv-inline-input sv-inv-inline-input--num" value="${esc(it.vat_rate || 21)}" oninput="window.${API}.recalcSidebar()"></td>
+        <td class="sv-inv-form-line-net sv-inv-line-net">${esc(money(net))}</td>
+        <td class="sv-inv-form-line-actions">
+          <button type="button" class="sv-inv-icon-btn" title="Více">⋮</button>
+          <button type="button" class="sv-inv-icon-btn sv-inv-icon-btn--danger" onclick="window.${API}.removeLine(${idx})" title="Odstranit">🗑</button>
+        </td>
       </tr>`;
   }
 
@@ -414,7 +425,7 @@
         <h3>Náhled faktury</h3>
         <div class="sv-inv-side-summary">
           <div class="sv-inv-side-summary-row"><span>Mezisoučet bez DPH</span><span id="uInvSumSub">${esc(money(totals.subtotal))}</span></div>
-          <div class="sv-inv-side-summary-row"><span>Sleva celkem</span><span id="uInvSumDisc" class="sv-inv-discount">${esc(money(totals.discountTotal))}</span></div>
+          <div class="sv-inv-side-summary-row"><span>Sleva celkem</span><span id="uInvSumDisc" class="sv-inv-discount sv-inv-discount--pos">${esc(money(totals.discountTotal))}</span></div>
           <div class="sv-inv-side-summary-row"><span>Základ DPH</span><span id="uInvSumBase">${esc(money(totals.base))}</span></div>
           <div class="sv-inv-side-summary-row"><span>DPH (21 %)</span><span id="uInvSumVat">${esc(money(totals.tax))}</span></div>
           <div class="sv-inv-side-summary-total"><span>Celkem k úhradě</span><strong id="uInvSumTotal">${esc(money(totals.total))}</strong></div>
@@ -447,8 +458,15 @@
     const cust = d.customer || {};
     const items = Array.isArray(d.items) ? d.items : [];
     return `
-      <div class="sv-inv-wizard-layout">
+      <div class="sv-inv-wizard-layout sv-inv-wizard-layout--form">
         <div class="sv-inv-wizard-main">
+          <div class="sv-inv-form-page-head">
+            <div>
+              <h1 class="sv-inv-form-title">Nová faktura</h1>
+              <p class="sv-inv-form-sub">Vytvořte novou fakturu. Všechna pole označená * jsou povinná.</p>
+            </div>
+            <button type="button" class="sv-inv-btn sv-inv-btn--secondary sv-inv-btn--with-icon" onclick="window.${API}.saveDraft()">💾 Uložit jako koncept</button>
+          </div>
           <section class="sv-inv-card sv-inv-section-card">
             <div class="sv-inv-section-head"><span class="sv-inv-section-num">1</span><h2>Základní informace</h2></div>
             <div class="sv-inv-form-grid">
@@ -492,15 +510,23 @@
             </div>
           </section>
           <section class="sv-inv-card sv-inv-section-card">
-            <div class="sv-inv-section-head"><span class="sv-inv-section-num">4</span><h2>Položky faktury</h2>
-              <button type="button" class="sv-inv-btn sv-inv-btn--secondary sv-inv-btn--with-plus" onclick="window.${API}.addLine()">+ Přidat položku</button>
-            </div>
-            <div class="sv-inv-table-wrap">
+            <div class="sv-inv-section-head"><span class="sv-inv-section-num">4</span><h2>Položky faktury</h2></div>
+            <div class="sv-inv-table-wrap sv-inv-form-lines-wrap">
               <table class="sv-inv-table sv-inv-lines-edit-table">
-                <thead><tr><th>Položka / Popis</th><th></th><th>Množství</th><th>Jedn.</th><th>Cena za jedn.</th><th>Sleva %</th><th>DPH %</th><th>Celkem bez DPH</th><th></th></tr></thead>
+                <thead><tr>
+                  <th>Položka / Popis</th>
+                  <th>Množství</th>
+                  <th>Jedn.</th>
+                  <th>Cena za jedn.</th>
+                  <th>Sleva (%)</th>
+                  <th>DPH (%)</th>
+                  <th>Celkem bez DPH</th>
+                  <th>Akce</th>
+                </tr></thead>
                 <tbody id="uInvLinesBody">${items.map((it, i) => lineRowHtml(it, i)).join('')}</tbody>
               </table>
             </div>
+            <button type="button" class="sv-inv-btn sv-inv-btn--outline sv-inv-btn--with-plus sv-inv-add-line-btn" onclick="window.${API}.addLine()">+ Přidat položku</button>
           </section>
         </div>
         <aside class="sv-inv-side">${sidebarSummaryHtml(d)}</aside>
@@ -554,7 +580,7 @@
           </div>
         </div>
         <aside class="sv-inv-side sv-inv-side--preview">
-          <section class="sv-inv-side-card"><h3>Náhled faktury</h3><div class="sv-inv-mini-preview">${renderDocumentHtml(legacy, { compact: true })}</div>
+          <section class="sv-inv-side-card"><h3>Náhled faktury</h3><div class="sv-inv-mini-preview"><div class="sv-inv-a4-sheet sv-inv-a4-sheet--mini">${renderDocumentHtml(legacy, { a4: true, compact: true })}</div></div>
             <button type="button" class="sv-inv-btn sv-inv-btn--secondary sv-inv-btn--block" onclick="window.${API}.downloadPdf()">Stáhnout PDF</button></section>
           <section class="sv-inv-side-card sv-inv-alert-ready sv-inv-alert-ready--card"><span class="sv-inv-alert-ready-ico">✓</span><div><strong>Faktura je připravena k odeslání</strong><p>Po odeslání již nebude možné fakturu upravovat.</p></div></section>
           <section class="sv-inv-side-card"><h3>Další možnosti</h3>
@@ -607,19 +633,19 @@
     if (!state.previewModal) return '';
     const legacy = draftToLegacy(state.draft);
     const zoom = state.previewZoom || 100;
+    const docHtml = typeof window.UserInvoicesDashboard?.renderDocumentHtml === 'function'
+      ? window.UserInvoicesDashboard.renderDocumentHtml(legacy, { a4: true })
+      : renderDocumentHtml(legacy, { a4: true });
     return `
-      <div class="sv-inv-modal-backdrop" onclick="if(event.target===this) window.${API}.closePreview()">
-        <div class="sv-inv-modal sv-inv-modal--wide" role="dialog">
-          <div class="sv-inv-modal-head"><h2 style="margin:0">Náhled faktury</h2><button type="button" class="sv-inv-icon-btn" onclick="window.${API}.closePreview()">×</button></div>
+      <div class="sv-inv-modal-backdrop sv-inv-modal-backdrop--dark" onclick="if(event.target===this) window.${API}.closePreview()">
+        <div class="sv-inv-modal sv-inv-modal--wide sv-inv-modal--pdf" role="dialog" onclick="event.stopPropagation()">
+          <div class="sv-inv-modal-head"><h2 class="sv-inv-modal-title">Náhled faktury</h2><button type="button" class="sv-inv-modal-close" onclick="window.${API}.closePreview()">×</button></div>
           <div class="sv-inv-modal-toolbar">
-            <span>‹ 1 / 1 ›</span>
-            <button type="button" class="sv-inv-icon-btn" onclick="window.${API}.zoomOut()">−</button>
-            <span>${zoom} %</span>
-            <button type="button" class="sv-inv-icon-btn" onclick="window.${API}.zoomIn()">+</button>
-            <button type="button" class="sv-inv-icon-btn" onclick="window.${API}.downloadPdf()" title="Stáhnout">↓</button>
-            <button type="button" class="sv-inv-icon-btn" onclick="window.${API}.printPreview()" title="Tisk">🖨</button>
+            <div class="sv-inv-modal-toolbar-group"><button type="button" class="sv-inv-toolbar-btn" disabled>‹</button><span class="sv-inv-toolbar-pages">1 / 1</span><button type="button" class="sv-inv-toolbar-btn" disabled>›</button></div>
+            <div class="sv-inv-modal-toolbar-group"><button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.zoomOut()">−</button><span class="sv-inv-toolbar-zoom">${zoom} %</span><button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.zoomIn()">+</button></div>
+            <div class="sv-inv-modal-toolbar-group sv-inv-modal-toolbar-actions"><button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.downloadPdf()" title="Stáhnout">↓</button><button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.printPreview()" title="Tisk">🖨</button></div>
           </div>
-          <div class="sv-inv-modal-body sv-inv-modal-body--a4"><div class="sv-inv-a4-sheet" style="transform:scale(${zoom / 100})">${renderDocumentHtml(legacy)}</div></div>
+          <div class="sv-inv-modal-body sv-inv-modal-body--a4"><div class="sv-inv-a4-viewport"><div class="sv-inv-a4-sheet" style="transform:scale(${zoom / 100})">${docHtml}</div></div></div>
           <div class="sv-inv-modal-foot"><button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.closePreview()">Zavřít</button></div>
         </div>
       </div>`;
@@ -632,21 +658,25 @@
     if (step === 4) body = doneStepHtml();
     let footer = '';
     if (step === 1) {
-      footer = `<div class="sv-inv-sticky-bar"><div></div><div><button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.saveDraft()">Uložit jako koncept</button></div></div>`;
+      footer = '';
     } else if (step === 3) {
       footer = `<div class="sv-inv-sticky-bar"><button type="button" class="sv-inv-btn sv-inv-btn--ghost" onclick="window.${API}.goStep(1)">Zpět: Položky faktury</button>
-        <div style="display:flex;gap:8px;"><button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.saveDraft()">Uložit koncept</button>
-        <button type="button" class="sv-inv-btn sv-inv-btn--primary sv-inv-btn--split" onclick="window.${API}.finalize()">Odeslat fakturu</button></div></div>`;
+        <div class="sv-inv-sticky-bar-actions"><button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.saveDraft()">Uložit koncept</button>
+        <button type="button" class="sv-inv-btn sv-inv-btn--primary sv-inv-btn--split" onclick="window.${API}.finalize()">Odeslat fakturu</button>
+        <button type="button" class="sv-inv-btn sv-inv-btn--primary sv-inv-btn-chevron" aria-label="Další možnosti">▾</button></div></div>`;
     } else if (step === 4) {
       footer = `<div class="sv-inv-sticky-bar"><button type="button" class="sv-inv-btn sv-inv-btn--ghost" onclick="window.${API}.backToList()">Zpět na přehled faktur</button>
-        <button type="button" class="sv-inv-btn sv-inv-btn--primary" onclick="window.${API}.startNew()">+ Vytvořit další fakturu</button></div>`;
+        <button type="button" class="sv-inv-btn sv-inv-btn--primary sv-inv-btn--with-plus" onclick="window.${API}.startNew()">+ Vytvořit další fakturu</button></div>`;
     }
+    const showStepper = step >= 3;
+    const stepperStep = step === 4 ? 4 : step;
+    const pageHead = step === 1 ? '' : `<div class="sv-inv-page-head"><div><h1>Nová faktura <span class="sv-inv-badge sv-inv-badge--draft">Koncept</span></h1></div>
+          <div class="sv-inv-head-actions"><button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.saveDraft()">Uložit koncept</button></div></div>`;
     return `
-      <div class="sv-inv sv-inv-page sv-inv-page--wizard" data-testid="user-invoice-wizard">
+      <div class="sv-inv sv-inv-page sv-inv-page--wizard sv-inv-page--wizard-step-${step}" data-testid="user-invoice-wizard">
         <nav class="sv-inv-breadcrumb"><button type="button" onclick="window.UserInvoicesDashboard.goOverview()">Přehled</button><span>/</span><button type="button" onclick="window.${API}.backToList()">Faktury</button><span>/</span><span>Nová faktura</span></nav>
-        <div class="sv-inv-page-head"><div><h1>Nová faktura <span class="sv-inv-badge sv-inv-badge--draft">Koncept</span></h1></div>
-          <div class="sv-inv-head-actions"><button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.saveDraft()">Uložit koncept</button></div></div>
-        ${stepperHtml(step > 2 && step < 4 ? step : step === 4 ? 4 : Math.min(step, 2))}
+        ${pageHead}
+        ${showStepper ? stepperHtml(stepperStep) : ''}
         ${body}${footer}${renderPreviewModal()}
       </div>`;
   }
@@ -792,15 +822,15 @@
     },
     zoomIn() { state.previewZoom = Math.min(200, (state.previewZoom || 100) + 10); paint(); },
     zoomOut() { state.previewZoom = Math.max(50, (state.previewZoom || 100) - 10); paint(); },
+    downloadPdf() {
+      auditLog('invoice_pdf_download', state.draftId);
+      showToast('Stažení PDF: Tato funkce čeká na backend API. Otevírám tisk pro uložení jako PDF.', 'info');
+      api.openPreview();
+      window.setTimeout(() => api.printPreview(), 500);
+    },
     printPreview() {
       auditLog('invoice_pdf_print', state.draftId);
       window.print();
-    },
-    downloadPdf() {
-      auditLog('invoice_pdf_download', state.draftId);
-      showToast('BLOCKER: Serverové PDF pro uživatelské faktury neexistuje. Otevírám tisk / uložení jako PDF z prohlížeče.', 'info');
-      api.openPreview();
-      window.setTimeout(() => window.print(), 400);
     },
     sendEmail() {
       const d = state.draft || {};
@@ -819,13 +849,13 @@
       try {
         localStorage.setItem(`sv_inv_share_${token}`, JSON.stringify({ id: state.draftId, created: Date.now() }));
         navigator.clipboard.writeText(url);
-        showToast('Odkaz zkopírován. BLOCKER: Veřejný tokenizovaný náhled vyžaduje backend.', 'info');
+        showToast('Odkaz zkopírován (lokální staging token).', 'success');
       } catch (e) {
         showToast(url, 'info');
       }
     },
     scheduleSend() {
-      showToast('BLOCKER: Naplánované odeslání vyžaduje backend (e-mail queue + audit).', 'info');
+      blockerToast('Naplánované odeslání');
     },
     paint,
   };
