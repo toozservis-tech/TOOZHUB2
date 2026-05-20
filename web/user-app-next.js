@@ -1004,7 +1004,7 @@
   function setActiveClass(active) {
     document.body.classList.toggle('user-app-next-active', Boolean(active));
     if (!active) {
-      document.body.classList.remove('user-app-next-sidebar-collapsed', 'user-app-next-view-vehicles', 'user-app-next-view-legacy');
+      document.body.classList.remove('user-app-next-sidebar-collapsed', 'user-app-next-view-vehicles', 'user-app-next-view-legacy', 'user-app-next-mobile-nav-open');
       clearUserAppScreen();
     }
   }
@@ -1572,6 +1572,39 @@
     });
   }
 
+  function renderMobileChrome() {
+    const badge = document.getElementById('desktopNotificationsBadge') || document.getElementById('mobileNotificationsBadge');
+    const count = badge ? String(badge.getAttribute('data-count') || badge.textContent || '0').trim() : '0';
+    const showBadge = count && count !== '0';
+    return `
+      <div class="uapp-next-mobile-bar" aria-label="Mobilní navigace">
+        <button type="button" class="uapp-next-mobile-menu" data-uapp-action="mobileNav" aria-label="Otevřít menu" aria-expanded="false">☰</button>
+        <div class="uapp-next-mobile-brand">
+          <img src="${LOGO_SRC}" alt="" width="32" height="32">
+          <span>Správa vozidel</span>
+        </div>
+        <div class="uapp-next-mobile-actions">
+          <button type="button" class="uapp-next-mobile-icon-btn" data-uapp-action="notifications" aria-label="Oznámení"${showBadge ? ` data-count="${esc(count)}"` : ''}>${ICO.bell}</button>
+          <button type="button" class="uapp-next-mobile-profile" data-uapp-action="profile" aria-label="Profil">
+            <span class="uapp-next-avatar" aria-hidden="true">${esc(initials())}</span>
+          </button>
+        </div>
+      </div>
+      <button type="button" class="uapp-next-mobile-overlay" data-uapp-action="mobileNavClose" aria-label="Zavřít menu" tabindex="-1"></button>`;
+  }
+
+  function closeMobileNav() {
+    document.body.classList.remove('user-app-next-mobile-nav-open');
+    const btn = document.querySelector('.uapp-next-mobile-menu');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggleMobileNav() {
+    const open = document.body.classList.toggle('user-app-next-mobile-nav-open');
+    const btn = document.querySelector('.uapp-next-mobile-menu');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
   function renderSidebar(data, activeNav) {
     const reminderBadge = activeRemindersCount(data);
     const nav = activeNav || 'home';
@@ -2125,6 +2158,7 @@
     root.replaceChildren();
     root.innerHTML = `
       <div class="uapp-next-shell" data-testid="${testId}">
+        ${renderMobileChrome()}
         ${renderSidebar(data, activeView)}
         <main class="uapp-next-main">
           <div class="uapp-next-canvas">
@@ -2694,14 +2728,16 @@
       STATE.detailModal.optionsOpen = false;
       refreshDetailModalShell();
     }
-    if (name === 'home' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('home'); }
-    if (name === 'vehicles' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('vehicles'); }
-    if (name === 'reminders' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('reminders'); }
-    if (name === 'documents' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('documents'); }
-    if (name === 'servicesDirectory' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('servicesDirectory'); }
-    if (name === 'account' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('account'); }
-    if (name === 'invoices' && hasFn('switchTab')) { STATE.viewOverride = null; return window.switchTab('documents'); }
-    if (name === 'serviceHistory') { STATE.viewOverride = 'serviceHistory'; return render(); }
+    if (name === 'mobileNav') return toggleMobileNav();
+    if (name === 'mobileNavClose') return closeMobileNav();
+    if (name === 'home' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('home'); }
+    if (name === 'vehicles' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('vehicles'); }
+    if (name === 'reminders' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('reminders'); }
+    if (name === 'documents' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('documents'); }
+    if (name === 'servicesDirectory' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('servicesDirectory'); }
+    if (name === 'account' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('account'); }
+    if (name === 'invoices' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('documents'); }
+    if (name === 'serviceHistory') { closeMobileNav(); STATE.viewOverride = 'serviceHistory'; return render(); }
     if (name === 'serviceHistoryAdd') {
       if (hasFn('openAddServiceRecordModal')) return window.openAddServiceRecordModal();
       return;
