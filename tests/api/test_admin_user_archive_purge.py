@@ -96,6 +96,30 @@ def test_purge_deleted_user_archive_removes_only_soft_deleted_accounts(
     assert db_session.query(Customer).filter(Customer.id == admin_id).count() == 1
 
 
+def test_purge_deleted_user_archive_accepts_case_and_space_variants(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+) -> None:
+    admin, deleted = _seed_admin_and_deleted_user(db_session)
+    deleted_id = int(deleted.id)
+
+    monkeypatch.setattr(admin_api, "log_developer_action", lambda *_, **__: None)
+
+    result = admin_api.purge_deleted_users_archive(
+        admin_api.UserArchivePurgeRequest(
+            customer_ids=[deleted_id],
+            purge_all=False,
+            confirm_phrase="  vymazat   archiv  ",
+        ),
+        request=None,
+        email=admin.email,
+        db=db_session,
+    )
+
+    assert result["purged"] == 1
+    assert db_session.query(Customer).filter(Customer.id == deleted_id).count() == 0
+
+
 def test_purge_deleted_user_archive_rejects_wrong_confirm_phrase(
     monkeypatch: pytest.MonkeyPatch,
     db_session,

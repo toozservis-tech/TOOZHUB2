@@ -4332,6 +4332,10 @@ def _fetch_deleted_user_archive_rows(db: Session) -> List[DeletedUserArchiveRow]
 ARCHIVED_USERS_PURGE_CONFIRM_PHRASE = "VYMAZAT ARCHIV"
 
 
+def _normalize_archive_purge_confirm_phrase(value: Optional[str]) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).upper()
+
+
 def _merge_deleted_counts(target: Dict[str, int], source: Dict[str, Any]) -> None:
     for key, value in (source or {}).items():
         try:
@@ -4432,7 +4436,7 @@ def purge_deleted_users_archive(
     které už jsou označené jako smazané, a vyžaduje potvrzovací frázi.
     """
     try:
-        if (payload.confirm_phrase or "").strip() != ARCHIVED_USERS_PURGE_CONFIRM_PHRASE:
+        if _normalize_archive_purge_confirm_phrase(payload.confirm_phrase) != ARCHIVED_USERS_PURGE_CONFIRM_PHRASE:
             raise HTTPException(status_code=400, detail="Potvrzovací fráze nesouhlasí.")
 
         actor = get_customer_by_email(db, email)

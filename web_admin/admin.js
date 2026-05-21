@@ -27,6 +27,9 @@ const ADMIN_VIEW_MODES = ['grid', 'list', 'compact'];
 const ADMIN_API_TIMEOUT_MS = 30000;
 const adminViewState = {};
 const ARCHIVED_USERS_PURGE_CONFIRM_PHRASE = 'VYMAZAT ARCHIV';
+function normalizeArchivedUsersPurgeConfirmPhrase(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
 const ADMIN_NAVBAR_CLOCK_TZ = 'Europe/Prague';
 let adminNavbarClockTimer = null;
 let trafficReportObjectUrl = null;
@@ -2213,7 +2216,7 @@ async function purgeDeletedArchiveSelected() {
   const phrase = window.prompt(
     `Trvale odstranit ${ids.length} účet(ů) z databáze?\n\nOpište přesně:\n${ARCHIVED_USERS_PURGE_CONFIRM_PHRASE}`,
   );
-  if (phrase !== ARCHIVED_USERS_PURGE_CONFIRM_PHRASE) {
+  if (normalizeArchivedUsersPurgeConfirmPhrase(phrase) !== ARCHIVED_USERS_PURGE_CONFIRM_PHRASE) {
     if (phrase !== null) showGlobalError('Potvrzovací text neodpovídá — operace zrušena.');
     return;
   }
@@ -2221,7 +2224,7 @@ async function purgeDeletedArchiveSelected() {
     const res = await apiRequest('POST', '/admin-api/user-archive-purge', {
       customer_ids: ids,
       purge_all: false,
-      confirm_phrase: phrase,
+      confirm_phrase: normalizeArchivedUsersPurgeConfirmPhrase(phrase),
     });
     showSuccess(res?.message || `Trvale odstraněno: ${res?.purged ?? ids.length}.`);
     await loadDeletedUsersArchive();
@@ -2237,7 +2240,7 @@ async function purgeDeletedArchiveAll() {
   const phrase = window.prompt(
     `Opravdu trvale odstranit VŠECHNY účty se stavem soft-smazaný z databáze?\n\nOpište přesně:\n${ARCHIVED_USERS_PURGE_CONFIRM_PHRASE}`,
   );
-  if (phrase !== ARCHIVED_USERS_PURGE_CONFIRM_PHRASE) {
+  if (normalizeArchivedUsersPurgeConfirmPhrase(phrase) !== ARCHIVED_USERS_PURGE_CONFIRM_PHRASE) {
     if (phrase !== null) showGlobalError('Potvrzovací text neodpovídá — operace zrušena.');
     return;
   }
@@ -2245,7 +2248,7 @@ async function purgeDeletedArchiveAll() {
     const res = await apiRequest('POST', '/admin-api/user-archive-purge', {
       customer_ids: [],
       purge_all: true,
-      confirm_phrase: phrase,
+      confirm_phrase: normalizeArchivedUsersPurgeConfirmPhrase(phrase),
     });
     showSuccess(res?.message || `Trvale odstraněno: ${res?.purged ?? 0}.`);
     await loadDeletedUsersArchive();
