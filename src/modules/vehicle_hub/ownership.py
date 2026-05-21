@@ -292,6 +292,15 @@ def get_owned_vehicle_ids(
             legacy_query = legacy_query.filter(Vehicle.tenant_id == tenant_scope)
 
         legacy_vehicles = legacy_query.all()
+        if not legacy_vehicles and tenant_scope is not None:
+            legacy_vehicles = (
+                db.query(Vehicle)
+                .filter(
+                    func.lower(Vehicle.user_email) == normalized_email,
+                    Vehicle.status != "archived",
+                )
+                .all()
+            )
         for vehicle in legacy_vehicles:
             backfill_vehicle_owner_assignment(db, vehicle)
             if getattr(vehicle, "id", None) is not None:
@@ -312,10 +321,7 @@ def get_owned_vehicle_rows(
     if not owned_vehicle_ids:
         return []
 
-    tenant_scope = tenant_id if tenant_id is not None else getattr(customer, "tenant_id", None)
     query = db.query(Vehicle).filter(Vehicle.id.in_(sorted(owned_vehicle_ids)))
-    if tenant_scope is not None:
-        query = query.filter(Vehicle.tenant_id == tenant_scope)
     return query.order_by(Vehicle.created_at.desc(), Vehicle.id.desc()).all()
 
 

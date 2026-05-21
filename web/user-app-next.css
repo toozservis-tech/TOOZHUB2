@@ -210,6 +210,16 @@ body.user-app-next-view-invoices #homeTab.active {
   font-weight: 800;
 }
 
+.uapp-next-nav-lock {
+  margin-left: auto;
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+.uapp-next-nav button.is-locked .uapp-next-nav-label {
+  opacity: 0.82;
+}
+
 .uapp-next-sidebar-bottom {
   margin-top: auto;
   display: grid;
@@ -6138,4 +6148,45 @@ body.user-app-next-view-services .uapp-next-canvas {
   .uapp-next-legacy-page {
     padding: 0 0.85rem 1rem;
   }
+}
+
+/* --- Tutorial hub (Jak na to) — scoped, neovlivňuje service-shell --- */
+.how-to-hub-modal .how-to-hub-modal__shell {
+  max-width: 720px;
+}
+
+.how-to-hub-grid,
+#howToHubCategories {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.how-to-hub-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 0.95rem 1rem;
+  background: #fff;
+}
+
+.how-to-hub-card__title {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.how-to-hub-card__desc {
+  margin: 0 0 0.75rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.how-to-hub-card__pending,
+.how-to-hub-status {
+  display: inline-block;
+  font-size: 0.82rem;
+  color: #94a3b8;
+  font-style: italic;
 }

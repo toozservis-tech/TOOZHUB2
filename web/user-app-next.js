@@ -73,6 +73,8 @@
     building: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 7V3H2v18h20V7H12zM6 19H4v-2h2v2zm0-4H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 12H8v-2h2v2zm0-4H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 12h-8v-2h2v-2h-2v-2h2v-2h-2V9h8v10zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2z"/></svg>',
     invoice: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>',
     gear: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>',
+    calendar: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zM7 12h5v5H7z"/></svg>',
+    support: '<svg class="uapp-next-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h1v-8H5c-.55 0-1-.45-1-1 0-4.42 3.58-8 8-8s8 3.58 8 8c0 .55-.45 1-1 1h-2v8h1c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/></svg>',
     search: '<svg class="uapp-next-search-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>',
     quickStk: '<svg class="uapp-next-quick-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>',
     quickShield: '<svg class="uapp-next-quick-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>',
@@ -155,6 +157,74 @@
     support: { tabId: 'supportTab', testId: 'user-app-next-support' },
     reservations: { tabId: 'reservationsTab', testId: 'user-app-next-reservations' },
   };
+
+  const FEATURE_TO_LICENSE_TAB = {
+    documents: 'documents',
+    reservations: 'reservations',
+    service_discovery: 'servicesDirectory',
+    service_partners: 'servicesDirectory',
+    servicesDirectory: 'servicesDirectory',
+    vin_mdcr_decode: 'vin',
+    vin: 'vin',
+    vehicleHistory: 'vehicleHistory',
+    costs: 'costs',
+  };
+
+  function canAccessFeature(featureKey) {
+    if (isServiceMode()) return true;
+    const tabKey = FEATURE_TO_LICENSE_TAB[featureKey] || featureKey;
+    if (tabKey === 'invoices') return USER_INVOICES_ENABLED === true;
+    if (tabKey === 'ai_features' || tabKey === 'ai') {
+      return window.FEATURE_ENABLE_AI_FEATURES === true || window.ENABLE_AI_FEATURES === true;
+    }
+    if (typeof window.getDashboardTabLicenseLock === 'function') {
+      const lock = window.getDashboardTabLicenseLock(tabKey, null);
+      return !(lock && lock.allowed === false);
+    }
+    const flags = window.__licenseFlags;
+    if (flags && typeof flags === 'object') {
+      if (tabKey === 'documents') return !!flags.documentsEnabled;
+      if (tabKey === 'reservations') return !!flags.reservationsEnabled;
+      if (tabKey === 'servicesDirectory') return !!flags.sharingWithServiceEnabled;
+      if (tabKey === 'vin') return !!flags.vinEnabled;
+      if (tabKey === 'vehicleHistory') return !!flags.vehicleHistoryEnabled;
+    }
+    return true;
+  }
+
+  function showFeatureLock(featureKey) {
+    if (typeof window.showDashboardUpgradePrompt === 'function') {
+      window.showDashboardUpgradePrompt(featureKey);
+      return;
+    }
+    alert('Tato sekce vyžaduje vyšší licenci.');
+  }
+
+  window.canAccessFeature = canAccessFeature;
+
+  function getSidebarLockFlags() {
+    return {
+      documents: !canAccessFeature('documents'),
+      reservations: !canAccessFeature('reservations'),
+      servicesDirectory: !canAccessFeature('servicesDirectory'),
+    };
+  }
+
+  function navigateLicensedTab(tabName, featureKey) {
+    const key = featureKey || tabName;
+    if (!canAccessFeature(key)) {
+      showFeatureLock(key);
+      return;
+    }
+    closeMobileNav();
+    if (LEGACY_SECTION_META[tabName] || tabName === 'reservations' || tabName === 'support') {
+      STATE.viewOverride = tabName;
+    } else {
+      STATE.viewOverride = tabName;
+    }
+    if (hasFn('switchTab')) return window.switchTab(tabName);
+    return render();
+  }
 
   function getActiveView() {
     if (STATE.viewOverride) return STATE.viewOverride;
@@ -1216,14 +1286,23 @@
   function setActiveClass(active) {
     document.body.classList.toggle('user-app-next-active', Boolean(active));
     if (!active) {
-      document.body.classList.remove('user-app-next-sidebar-collapsed', 'user-app-next-view-vehicles', 'user-app-next-view-legacy', 'user-app-next-mobile-nav-open');
+      document.body.classList.remove(
+        'user-app-next-sidebar-collapsed',
+        'user-app-next-view-vehicles',
+        'user-app-next-view-legacy',
+        'user-app-next-view-reservations',
+        'user-app-next-view-support',
+        'user-app-next-mobile-nav-open'
+      );
       clearUserAppScreen();
     }
   }
 
-  function navButton(label, iconSvg, action, active, badge) {
+  function navButton(label, iconSvg, action, active, badge, locked) {
     const badgeHtml = badge > 0 ? `<span class="uapp-next-nav-badge">${esc(String(badge))}</span>` : '';
-    return `<button type="button" class="${active ? 'is-active' : ''}" data-uapp-action="${esc(action)}"><span class="uapp-next-nav-ico" aria-hidden="true">${iconSvg}</span><span class="uapp-next-nav-label">${esc(label)}</span>${badgeHtml}</button>`;
+    const lockHtml = locked ? '<span class="uapp-next-nav-lock" aria-hidden="true" title="Vyžaduje vyšší licenci">🔒</span>' : '';
+    const lockClass = locked ? ' is-locked' : '';
+    return `<button type="button" class="${active ? 'is-active' : ''}${lockClass}" data-uapp-action="${esc(action)}"${locked ? ' data-uapp-locked="1"' : ''}><span class="uapp-next-nav-ico" aria-hidden="true">${iconSvg}</span><span class="uapp-next-nav-label">${esc(label)}</span>${lockHtml}${badgeHtml}</button>`;
   }
 
   function reminderReferenceDate(reminder) {
@@ -3403,6 +3482,7 @@
   function renderSidebar(data, activeNav) {
     const reminderBadge = activeRemindersCount(data);
     const nav = activeNav || 'home';
+    const locks = getSidebarLockFlags();
     return `
       <aside class="uapp-next-sidebar" aria-label="Navigace uživatelského rozhraní">
         <div class="uapp-next-brand">
@@ -3410,14 +3490,16 @@
           <span>Správa vozidel</span>
         </div>
         <nav class="uapp-next-nav" aria-label="Sekce aplikace">
-          ${navButton('Přehled', ICO.home, 'home', nav === 'home', 0)}
-          ${navButton('Moje vozidla', ICO.car, 'vehicles', nav === 'vehicles', 0)}
-          ${navButton('Servisní historie', ICO.wrench, 'serviceHistory', nav === 'serviceHistory', 0)}
-          ${navButton('Připomínky', ICO.bell, 'reminders', nav === 'reminders', reminderBadge)}
-          ${navButton('Dokumenty', ICO.folder, 'documents', nav === 'documents', 0)}
-          ${navButton('Servisy', ICO.building, 'servicesDirectory', nav === 'servicesDirectory', 0)}
-          ${USER_INVOICES_ENABLED ? navButton('Faktury', ICO.invoice, 'invoices', nav === 'invoices', 0) : ''}
-          ${navButton('Nastavení', ICO.gear, 'account', nav === 'account', 0)}
+          ${navButton('Přehled', ICO.home, 'home', nav === 'home', 0, false)}
+          ${navButton('Moje vozidla', ICO.car, 'vehicles', nav === 'vehicles', 0, false)}
+          ${navButton('Servisní historie', ICO.wrench, 'serviceHistory', nav === 'serviceHistory', 0, false)}
+          ${navButton('Připomínky', ICO.bell, 'reminders', nav === 'reminders', reminderBadge, false)}
+          ${navButton('Objednat servis', ICO.calendar, 'reservations', nav === 'reservations', 0, locks.reservations)}
+          ${navButton('Dokumenty', ICO.folder, 'documents', nav === 'documents', 0, locks.documents)}
+          ${navButton('Servisy', ICO.building, 'servicesDirectory', nav === 'servicesDirectory', 0, locks.servicesDirectory)}
+          ${USER_INVOICES_ENABLED ? navButton('Faktury', ICO.invoice, 'invoices', nav === 'invoices', 0, false) : ''}
+          ${navButton('Podpora', ICO.support, 'support', nav === 'support', 0, false)}
+          ${navButton('Nastavení', ICO.gear, 'account', nav === 'account', 0, false)}
         </nav>
         <div class="uapp-next-sidebar-bottom">
           <button type="button" class="uapp-next-help-card" data-uapp-action="help">
@@ -3975,6 +4057,8 @@
     else if (activeView === 'documents') testId = 'user-app-next-documents';
     else if (activeView === 'invoices') testId = 'user-app-next-invoices';
     else if (activeView === 'servicesDirectory') testId = 'user-app-next-services';
+    else if (activeView === 'reservations') testId = 'user-app-next-reservations';
+    else if (activeView === 'support') testId = 'user-app-next-support';
 
     root.replaceChildren();
     root.innerHTML = `
@@ -3996,6 +4080,8 @@
     document.body.classList.toggle('user-app-next-view-documents', activeView === 'documents');
     document.body.classList.toggle('user-app-next-view-invoices', activeView === 'invoices');
     document.body.classList.toggle('user-app-next-view-services', activeView === 'servicesDirectory');
+    document.body.classList.toggle('user-app-next-view-reservations', activeView === 'reservations');
+    document.body.classList.toggle('user-app-next-view-support', activeView === 'support');
     if (isLegacySection) {
       mountLegacyTabContent(activeView);
     }
@@ -4579,11 +4665,13 @@
     if (name === 'home' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('home'); }
     if (name === 'vehicles' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('vehicles'); }
     if (name === 'reminders' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('reminders'); }
-    if (name === 'documents') { closeMobileNav(); STATE.viewOverride = 'documents'; return render(); }
-    if (name === 'servicesDirectory') {
+    if (name === 'reservations') return navigateLicensedTab('reservations', 'reservations');
+    if (name === 'documents') return navigateLicensedTab('documents', 'documents');
+    if (name === 'servicesDirectory') return navigateLicensedTab('servicesDirectory', 'servicesDirectory');
+    if (name === 'support') {
       closeMobileNav();
-      STATE.viewOverride = 'servicesDirectory';
-      if (hasFn('switchTab')) return window.switchTab('servicesDirectory');
+      STATE.viewOverride = 'support';
+      if (hasFn('switchTab')) return window.switchTab('support');
       return render();
     }
     if (name === 'account' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('account'); }
@@ -4594,7 +4682,14 @@
       if (hasFn('switchTab')) return window.switchTab('invoices');
       return render();
     }
-    if (name === 'serviceHistory') { closeMobileNav(); STATE.viewOverride = 'serviceHistory'; return render(); }
+    if (name === 'serviceHistory') {
+      closeMobileNav();
+      STATE.viewOverride = 'serviceHistory';
+      if (hasFn('syncUserTabUrlHistory')) {
+        try { window.syncUserTabUrlHistory('serviceHistory'); } catch (_) {}
+      }
+      return render();
+    }
     if (name === 'documentsUpload') return openDocumentsUploadFlow(STATE.latestData || {});
     if (name === 'documentsUploadPickerClose') { STATE.documentsUploadPickerOpen = false; return render(); }
     if (name === 'documentsUploadTo' && id) {
@@ -4987,6 +5082,8 @@
       home: 'home',
       vehicles: 'vehicles',
       reminders: 'reminders',
+      reservations: 'reservations',
+      support: 'support',
       documents: 'documents',
       servicesDirectory: 'servicesDirectory',
       serviceHistory: 'serviceHistory',

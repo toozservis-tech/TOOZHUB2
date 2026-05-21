@@ -413,6 +413,26 @@ def _vehicle_options_for_service_reservations(db: Session, *, service_id: int) -
             continue
         source_by_vehicle.setdefault(int(vehicle_id), "linked_customer")
 
+    linked_customer_ids = [
+        int(link.customer_id)
+        for link in db.query(ServiceCustomerLink)
+        .filter(
+            ServiceCustomerLink.service_customer_id == service_id,
+            ServiceCustomerLink.status == "active",
+        )
+        .all()
+        if link.customer_id is not None
+    ]
+    if linked_customer_ids:
+        linked_customers = db.query(Customer).filter(Customer.id.in_(linked_customer_ids)).all()
+        for customer in linked_customers:
+            for row in _vehicle_options_for_user_reservations(
+                db,
+                customer,
+                tenant_id=getattr(customer, "tenant_id", None),
+            ):
+                source_by_vehicle.setdefault(int(row["id"]), "linked_customer")
+
     vehicle_ids = sorted(source_by_vehicle.keys())
     if not vehicle_ids:
         return []

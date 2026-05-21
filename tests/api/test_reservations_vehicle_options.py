@@ -64,6 +64,14 @@ def db_context(tmp_path: Path):
         db.refresh(user)
         db.refresh(service)
 
+        from src.modules.licensing.service import get_or_create_license
+
+        for tenant in (tenant_a, tenant_b):
+            lic = get_or_create_license(db, tenant.id)
+            lic.plan = "basic"
+            lic.status = "active"
+        db.commit()
+
         yield {
             "db": db,
             "tenant_a": tenant_a,

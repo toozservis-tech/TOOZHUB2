@@ -60,6 +60,18 @@ _SERVICE_GEO_SUGGEST_URL = (
 )
 _SERVICE_GEOLOOKUP_TIMEOUT_SEC = 1.8
 _DEFAULT_OWNER_DISCOVERY_RADIUS_KM = 50.0
+
+
+def _unwrap_fastapi_query_param(value: Any) -> Any:
+    """Normalizuje Query() default při přímém volání handleru mimo FastAPI (unit testy)."""
+    if value is None or isinstance(value, (int, float, str, bool)):
+        return value
+    if hasattr(value, "default"):
+        default = value.default
+        if default is ...:
+            return None
+        return default
+    return value
 _SERVICE_GEOLOOKUP_MAX_NEW_LOOKUPS_PER_REQUEST = 25
 
 
@@ -1179,6 +1191,19 @@ def get_services_discovery(
     - Geolokační řazení jako dříve (hlavičky / profilová adresa), nebo explicitní ref_lat/ref_lon
       (např. místo na dovolené — uživatel ho vybere z našeptávače adres).
     """
+    radius_km = float(_unwrap_fastapi_query_param(radius_km) or 0)
+    ref_lat = _unwrap_fastapi_query_param(ref_lat)
+    ref_lon = _unwrap_fastapi_query_param(ref_lon)
+    if ref_lat is not None and not isinstance(ref_lat, (int, float)):
+        try:
+            ref_lat = float(ref_lat)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="Neplatné ref_lat.") from None
+    if ref_lon is not None and not isinstance(ref_lon, (int, float)):
+        try:
+            ref_lon = float(ref_lon)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="Neplatné ref_lon.") from None
     _ensure_services_schema(db)
 
     linked_service_ids: set[int] = set()

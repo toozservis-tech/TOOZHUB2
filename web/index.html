@@ -33320,7 +33320,7 @@
                 </div>
             </div>
             
-            <!-- Panel „Jak na to“ (návody; engine v /web/tutorials/tutorial-engine.js) -->
+            <!-- Panel „Jak na to“ (návody; hub v /web/tutorial-hub.js) -->
             <div
                 id="howToHubModal"
                 class="vehicle-modal add-vehicle-modal how-to-hub-modal"
@@ -43349,6 +43349,7 @@
             if (s === 'documents') return 'documents';
             if (s === 'settings') return 'account';
             if (s === 'support') return 'support';
+            if (s === 'service-history') return 'serviceHistory';
             return 'home';
         }
 
@@ -43362,7 +43363,7 @@
             if (t === 'documents') return 'documents';
             if (t === 'account') return 'settings';
             if (t === 'support') return 'support';
-            if (t === 'serviceworkspace') return 'dashboard';
+            if (t === 'servicehistory') return 'service-history';
             return 'dashboard';
         }
 
@@ -43617,6 +43618,7 @@
                 console.warn('[ROUTER] user tab URL sync failed', e);
             }
         }
+        window.syncUserTabUrlHistory = syncUserTabUrlHistory;
 
         async function fetchApiMeWorkspace(options = {}) {
             const assertRoute = options.assertRoute || null;
@@ -68638,7 +68640,8 @@
     
     <!-- AI Features JavaScript -->
     <script src="/web/ai-features.js"></script>
-    <script src="/web/user-app-next.js?v=202605215"></script>
+    <script src="/web/tutorial-hub.js?v=20260521"></script>
+    <script src="/web/user-app-next.js?v=20260521p1"></script>
     <script src="/web/service-shell.js?v=2026050720"></script>
 </body>
 </html>

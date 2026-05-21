@@ -273,32 +273,12 @@ def effective_license_plan_for_runtime(
     return normalized_plan
 
 
-def activate_initial_user_trial(
-    db: Session,
-    customer: Customer,
+def _apply_initial_user_trial_to_license(
+    license_obj: License,
     *,
     now: Optional[datetime] = None,
-) -> Optional[License]:
-    """Zapne první 30denní plnou trial licenci při prvním úspěšném přihlášení.
-
-    Aktivuje se jen pro běžné uživatelské účty, které ještě nemají `last_login_at`
-    a dosud jsou na FREE plánu. Placené/ručně nastavené licence nepřepisujeme.
-    """
-    if not customer or str(getattr(customer, "role", "user") or "user").strip().lower() != "user":
-        return None
-    tenant_id = getattr(customer, "tenant_id", None)
-    if not tenant_id:
-        return None
-    if ADMIN_FORCE_PREMIUM and is_admin_tenant(int(tenant_id)):
-        return None
-    if getattr(customer, "last_login_at", None) is not None:
-        return None
-
-    license_obj = get_or_create_license(db, int(tenant_id))
-    current_plan = effective_license_plan_for_runtime(db, license_obj, int(tenant_id), now=now)
-    if current_plan != "free":
-        return None
-
+) -> License:
+    """Nastaví 30denní premium trial na licenci (bez commit)."""
     current_now = now or datetime.utcnow()
     features = PLAN_FEATURES[USER_INITIAL_TRIAL_PLAN]
     license_obj.plan = USER_INITIAL_TRIAL_PLAN
@@ -310,8 +290,80 @@ def activate_initial_user_trial(
     license_obj.ares_enabled = bool(features.get("ares_enabled", True))
     license_obj.reminders_enabled = bool(features["reminders_enabled"])
     license_obj.updated_at = current_now
+    return license_obj
+
+
+def activate_initial_user_trial(
+    db: Session,
+    customer: Customer,
+    *,
+    now: Optional[datetime] = None,
+) -> Optional[License]:
+    """Zapne první 30denní plnou trial licenci při úspěšném přihlášení.
+
+    Aktivuje se pro běžné uživatelské účty na FREE plánu, které ještě neměly
+    trial ani placené období (`valid_to IS NULL`). Placené/ručně nastavené
+    licence nepřepisujeme.
+    """
+    if not customer or str(getattr(customer, "role", "user") or "user").strip().lower() != "user":
+        return None
+    tenant_id = getattr(customer, "tenant_id", None)
+    if not tenant_id:
+        return None
+    if ADMIN_FORCE_PREMIUM and is_admin_tenant(int(tenant_id)):
+        return None
+
+    license_obj = get_or_create_license(db, int(tenant_id))
+    if license_obj.valid_to is not None:
+        return None
+
+    stored_plan = normalize_license_plan_key(getattr(license_obj, "plan", None), "user") or "free"
+    if stored_plan != "free":
+        return None
+
+    current_plan = effective_license_plan_for_runtime(db, license_obj, int(tenant_id), now=now)
+    if current_plan != "free":
+        return None
+
+    _apply_initial_user_trial_to_license(license_obj, now=now)
     db.add(license_obj)
     return license_obj
+
+
+def backfill_missing_initial_user_trials(db: Session, *, now: Optional[datetime] = None) -> int:
+    """Jednorázově doplní trial u existujících FREE tenantů bez `valid_to`.
+
+    Řeší regresi po nasazení trial logiky jen pro úplně nové účty.
+    """
+    current_now = now or datetime.utcnow()
+    updated = 0
+    rows = (
+        db.query(License)
+        .filter(
+            License.plan == "free",
+            License.valid_to.is_(None),
+        )
+        .all()
+    )
+    for license_obj in rows:
+        tenant_id = int(getattr(license_obj, "tenant_id", 0) or 0)
+        if not tenant_id:
+            continue
+        if ADMIN_FORCE_PREMIUM and is_admin_tenant(tenant_id):
+            continue
+        has_user = (
+            db.query(Customer.id)
+            .filter(Customer.tenant_id == tenant_id, Customer.role == "user")
+            .first()
+        )
+        if not has_user:
+            continue
+        _apply_initial_user_trial_to_license(license_obj, now=current_now)
+        db.add(license_obj)
+        updated += 1
+    if updated:
+        db.commit()
+    return updated
 
 
 def _normalized_service_workspace_plan(db: Session, service_customer_id: int) -> Optional[str]:
