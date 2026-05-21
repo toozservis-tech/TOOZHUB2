@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/web/app.css" />
     <link rel="stylesheet" href="/web/inline-styles.css" />
     <link rel="stylesheet" href="/web/service-shell.css?v=2026050720" />
+    <link rel="stylesheet" href="/web/user-app-next.css?v=202605215" />
     <style>
         * {
             margin: 0;
@@ -68624,9 +68625,7 @@
     })();
     </script>
 
-    <!-- Interaktivní návody (metadata + engine) -->
-    <script src="/web/tutorials/tutorial-config.js"></script>
-    <script src="/web/tutorials/tutorial-engine.js"></script>
+    <!-- Interaktivní návody — volitelné, soubory nemusí být nasazené -->
     <script>
       document.addEventListener('DOMContentLoaded', function () {
         if (typeof window.TutorialEngine !== 'undefined' && typeof TutorialEngine.boot === 'function') {
@@ -68639,8 +68638,7 @@
     
     <!-- AI Features JavaScript -->
     <script src="/web/ai-features.js"></script>
+    <script src="/web/user-app-next.js?v=202605215"></script>
     <script src="/web/service-shell.js?v=2026050720"></script>
-    <script src="/web/fakturyweb-test.js"></script>
-    <script src="/web/support-widget.js?v=20260507"></script>
 </body>
 </html>
