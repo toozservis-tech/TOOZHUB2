@@ -27,6 +27,8 @@ from . import (
     system_notifications,
     capabilities,
     admin_service_read,
+    service_map,
+    service_workspace_work_orders,
 )
 
 # Hlavní router pro v1 API
@@ -59,6 +61,8 @@ api_router.include_router(push.router)  # Web Push notifications
 api_router.include_router(system_notifications.router)  # System notifications
 api_router.include_router(capabilities.router)  # Runtime capabilities
 api_router.include_router(admin_service_read.router)
+api_router.include_router(service_map.router)  # Additive service map API
+api_router.include_router(service_workspace_work_orders.router)  # Additive work-order items/CSV API
 
 # License status router - explicitní kontrola
 try:

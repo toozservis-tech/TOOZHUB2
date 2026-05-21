@@ -298,6 +298,14 @@ VEHICLE_IMAGE_SERPAPI_YANDEX_IMAGE_TYPE = os.getenv("VEHICLE_IMAGE_SERPAPI_YANDE
 VEHICLE_IMAGE_SERPAPI_YANDEX_FAMILY_MODE = os.getenv("VEHICLE_IMAGE_SERPAPI_YANDEX_FAMILY_MODE", "1").strip() or "1"
 VEHICLE_IMAGE_REGEN_LIMIT_ENABLED = _env_flag("VEHICLE_IMAGE_REGEN_LIMIT_ENABLED", True)
 
+# Google Maps (volitelné – legacy embed; servisní mapa používá MAP_PROVIDER)
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
+
+# Servisní mapa – tile provider (nikdy neukládat klíč do repozitáře)
+MAP_PROVIDER = os.getenv("MAP_PROVIDER", "osm_tiles").strip() or "osm_tiles"
+MAPY_COM_API_KEY = os.getenv("MAPY_COM_API_KEY", "").strip()
+MAP_TILE_URL = os.getenv("MAP_TILE_URL", "").strip()
+
 # =============================================================================
 # FILE PATHS
 # =============================================================================
