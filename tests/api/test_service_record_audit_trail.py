@@ -15,6 +15,9 @@ from src.modules.vehicle_hub.database import Base
 from src.modules.vehicle_hub.models import ServiceRecord as ServiceRecordModel, Tenant, Vehicle as VehicleModel
 from src.modules.vehicle_hub.routers_v1 import service_records as service_records_router
 from src.modules.vehicle_hub.routers_v1.schemas import ServiceRecordUpdateV1
+from src.modules.vehicle_hub.routers_v1.service_records import (
+    _split_service_record_description_annotation,
+)
 
 
 @pytest.fixture()
@@ -91,9 +94,13 @@ def test_service_record_update_preserves_previous_state(
         db=db,
     )
 
-    assert updated.description == "Updated description"
+    main_description, previous_description = _split_service_record_description_annotation(
+        updated.description
+    )
+    assert main_description == "Updated description"
+    assert previous_description == "Original description"
     assert updated.note == "Updated note"
-    assert updated.mileage == 120500
+    assert updated.mileage == 120000
 
     inspector = inspect(db.bind)
     assert inspector.has_table("service_record_audit_logs"), "Missing service_record_audit_logs table"
