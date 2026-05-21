@@ -28,7 +28,11 @@ const ADMIN_API_TIMEOUT_MS = 30000;
 const adminViewState = {};
 const ARCHIVED_USERS_PURGE_CONFIRM_PHRASE = 'VYMAZAT ARCHIV';
 function normalizeArchivedUsersPurgeConfirmPhrase(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+  return String(value || '')
+    .trim()
+    .replace(/[.,;:!?'"`´]+/g, '')
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
 }
 const ADMIN_NAVBAR_CLOCK_TZ = 'Europe/Prague';
 let adminNavbarClockTimer = null;
@@ -2167,6 +2171,18 @@ async function loadDeletedUsersArchive() {
         Vyžaduje opsání přesné fráze <code>${esc(ARCHIVED_USERS_PURGE_CONFIRM_PHRASE)}</code>.
       </p>
       <div class="section-toolbar" style="margin-bottom:0.75rem; flex-wrap:wrap; gap:8px;">
+        <label class="archive-purge-confirm-wrap" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="muted">Potvrzení</span>
+          <input
+            type="text"
+            id="archive-purge-confirm-input"
+            class="archive-purge-confirm-input"
+            placeholder="${esc(ARCHIVED_USERS_PURGE_CONFIRM_PHRASE)}"
+            autocomplete="off"
+            spellcheck="false"
+            style="min-width:210px;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px;"
+          />
+        </label>
         <button type="button" class="btn-secondary" onclick="purgeDeletedArchiveSelected()">Odstranit vybrané z DB…</button>
         <button type="button" class="btn-secondary" onclick="purgeDeletedArchiveAll()">Odstranit všechny soft-smazané z DB…</button>
       </div>
@@ -2207,27 +2223,42 @@ function getArchivePurgeSelectedIds() {
     .filter((n) => Number.isFinite(n) && n > 0);
 }
 
+function getArchivePurgeConfirmPhrase() {
+  return document.getElementById('archive-purge-confirm-input')?.value || '';
+}
+
+function resetArchivePurgeConfirmPhrase() {
+  const input = document.getElementById('archive-purge-confirm-input');
+  if (input) input.value = '';
+}
+
+function validateArchivePurgeConfirmPhrase() {
+  const phrase = getArchivePurgeConfirmPhrase();
+  if (normalizeArchivedUsersPurgeConfirmPhrase(phrase) !== ARCHIVED_USERS_PURGE_CONFIRM_PHRASE) {
+    showGlobalError(`Do pole Potvrzení napište ${ARCHIVED_USERS_PURGE_CONFIRM_PHRASE}.`);
+    document.getElementById('archive-purge-confirm-input')?.focus();
+    return null;
+  }
+  return normalizeArchivedUsersPurgeConfirmPhrase(phrase);
+}
+
 async function purgeDeletedArchiveSelected() {
   const ids = getArchivePurgeSelectedIds();
   if (!ids.length) {
     showGlobalError('Vyberte v archivu alespoň jeden účet (zaškrtnutí).');
     return;
   }
-  const phrase = window.prompt(
-    `Trvale odstranit ${ids.length} účet(ů) z databáze?\n\nOpište přesně:\n${ARCHIVED_USERS_PURGE_CONFIRM_PHRASE}`,
-  );
-  if (normalizeArchivedUsersPurgeConfirmPhrase(phrase) !== ARCHIVED_USERS_PURGE_CONFIRM_PHRASE) {
-    if (phrase !== null) showGlobalError('Potvrzovací text neodpovídá — operace zrušena.');
-    return;
-  }
+  const phrase = validateArchivePurgeConfirmPhrase();
+  if (!phrase) return;
   try {
     const res = await apiRequest('POST', '/admin-api/user-archive-purge', {
       customer_ids: ids,
       purge_all: false,
-      confirm_phrase: normalizeArchivedUsersPurgeConfirmPhrase(phrase),
+      confirm_phrase: phrase,
     });
     showSuccess(res?.message || `Trvale odstraněno: ${res?.purged ?? ids.length}.`);
     await loadDeletedUsersArchive();
+    resetArchivePurgeConfirmPhrase();
     if (typeof refetchUsersListForSearch === 'function') {
       await refetchUsersListForSearch(false);
     }
@@ -2237,21 +2268,17 @@ async function purgeDeletedArchiveSelected() {
 }
 
 async function purgeDeletedArchiveAll() {
-  const phrase = window.prompt(
-    `Opravdu trvale odstranit VŠECHNY účty se stavem soft-smazaný z databáze?\n\nOpište přesně:\n${ARCHIVED_USERS_PURGE_CONFIRM_PHRASE}`,
-  );
-  if (normalizeArchivedUsersPurgeConfirmPhrase(phrase) !== ARCHIVED_USERS_PURGE_CONFIRM_PHRASE) {
-    if (phrase !== null) showGlobalError('Potvrzovací text neodpovídá — operace zrušena.');
-    return;
-  }
+  const phrase = validateArchivePurgeConfirmPhrase();
+  if (!phrase) return;
   try {
     const res = await apiRequest('POST', '/admin-api/user-archive-purge', {
       customer_ids: [],
       purge_all: true,
-      confirm_phrase: normalizeArchivedUsersPurgeConfirmPhrase(phrase),
+      confirm_phrase: phrase,
     });
     showSuccess(res?.message || `Trvale odstraněno: ${res?.purged ?? 0}.`);
     await loadDeletedUsersArchive();
+    resetArchivePurgeConfirmPhrase();
     if (typeof refetchUsersListForSearch === 'function') {
       await refetchUsersListForSearch(false);
     }

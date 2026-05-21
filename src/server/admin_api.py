@@ -4333,7 +4333,8 @@ ARCHIVED_USERS_PURGE_CONFIRM_PHRASE = "VYMAZAT ARCHIV"
 
 
 def _normalize_archive_purge_confirm_phrase(value: Optional[str]) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip()).upper()
+    without_punctuation = re.sub(r"[.,;:!?\"'`´]+", "", str(value or "").strip())
+    return re.sub(r"\s+", " ", without_punctuation).upper()
 
 
 def _merge_deleted_counts(target: Dict[str, int], source: Dict[str, Any]) -> None:
