@@ -2365,30 +2365,181 @@ body.user-app-next-view-invoices .sv-inv-page--detail {
 }
 
 @media print {
-  body * { visibility: hidden; }
-  .sv-inv-modal-backdrop,
-  .sv-inv-modal-backdrop * { visibility: visible; }
-  .sv-inv-modal-head,
-  .sv-inv-modal-toolbar,
-  .sv-inv-modal-foot { display: none !important; }
-  .sv-inv-modal-backdrop {
-    position: static;
-    background: none;
-    padding: 0;
+  @page {
+    size: A4 portrait;
+    margin: 0;
   }
-  .sv-inv-modal {
-    box-shadow: none;
-    max-height: none;
-    width: 100%;
+
+  html, body {
+    width: 210mm !important;
+    height: 297mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    background: #fff !important;
   }
-  .sv-inv-modal-body--a4 {
-    background: #fff;
-    padding: 0;
+
+  body * {
+    visibility: hidden !important;
   }
-  .sv-inv-a4-sheet {
-    box-shadow: none;
+
+  #svInvoicePrintRoot,
+  #svInvoicePrintRoot * {
+    visibility: visible !important;
+  }
+
+  #svInvoicePrintRoot {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 210mm !important;
+    height: 297mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    background: #fff !important;
+  }
+
+  .sv-invoice-print-page,
+  .sv-invoice-print-page * {
+    visibility: visible !important;
+  }
+
+  .sv-invoice-print-page {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 210mm !important;
+    min-height: 297mm !important;
+    max-height: 297mm !important;
+    overflow: hidden !important;
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    padding: 12mm !important;
+    box-sizing: border-box !important;
+    background: #fff !important;
     transform: none !important;
-    width: 210mm;
-    min-height: 297mm;
   }
+
+  .sv-inv-doc--print {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 7pt !important;
+    line-height: 1.25 !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-doc-header {
+    margin-bottom: 8px !important;
+    padding-bottom: 6px !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-doc-title {
+    font-size: 1.25rem !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-doc-parties-row {
+    padding: 6px !important;
+    margin-bottom: 6px !important;
+    gap: 6px !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-doc-party-block,
+  .sv-inv-doc--print .sv-inv-doc-meta-line {
+    font-size: 6.5pt !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-doc-section-title {
+    margin-bottom: 4px !important;
+    font-size: 7.5pt !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-lines-table {
+    font-size: 6pt !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-lines-table th,
+  .sv-inv-doc--print .sv-inv-lines-table td {
+    padding: 2px 3px !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-line-ico {
+    width: 16px !important;
+    height: 16px !important;
+    font-size: 0.5rem !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-doc-footer-pay {
+    margin-top: 6px !important;
+    gap: 6px !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-pay-qr-col .sv-inv-qr {
+    width: 56px !important;
+    height: 56px !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-doc-footer-notes {
+    margin-top: 6px !important;
+    gap: 6px !important;
+  }
+
+  .sv-inv-doc--print .sv-inv-doc-bar {
+    margin-top: 6px !important;
+    padding: 4px 6px !important;
+    font-size: 5.5pt !important;
+  }
+
+  .sv-inv-modal-backdrop,
+  .sv-inv-modal,
+  .sv-inv-page,
+  .uapp-next-shell,
+  .uapp-next-sidebar {
+    display: none !important;
+  }
+}
+
+.sv-inv-history-list {
+  display: grid;
+  gap: 8px;
+  font-size: 0.8125rem;
+}
+
+.sv-inv-history-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--sv-inv-border);
+}
+
+.sv-inv-a4-sheet--embed {
+  transform: scale(0.72);
+  transform-origin: top center;
+  margin: 0 auto;
+  box-shadow: var(--sv-inv-shadow);
+}
+
+.sv-inv-preview-embed--a4 {
+  overflow: hidden;
+  max-height: 420px;
+  background: #52525b;
+  padding: 12px;
+  display: flex;
+  justify-content: center;
+}
+
+#svInvoicePrintRoot {
+  position: fixed;
+  left: -99999px;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
 }
