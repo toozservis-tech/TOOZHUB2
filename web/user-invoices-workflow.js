@@ -74,12 +74,8 @@
       if (parsed && parsed.year === year) maxFromInvoices = Math.max(maxFromInvoices, parsed.seq);
     });
     const ns = loadNumberState();
-    if (Number(ns.currentYear) !== year) {
-      ns.currentYear = year;
-      ns.lastCommittedNumber = maxFromInvoices;
-    } else {
-      ns.lastCommittedNumber = Math.max(Number(ns.lastCommittedNumber || 0), maxFromInvoices);
-    }
+    ns.currentYear = year;
+    ns.lastCommittedNumber = maxFromInvoices;
     saveNumberState(ns);
     return ns;
   }
