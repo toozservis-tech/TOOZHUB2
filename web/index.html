@@ -12805,6 +12805,22 @@
             gap: 8px;
         }
 
+        #licenseModal .license-trial-banner {
+            margin: 0 0 10px !important;
+            padding: 11px 12px !important;
+            border: 1px solid #93c5fd !important;
+            border-left: 4px solid #2563eb !important;
+            border-radius: 12px !important;
+            background: #eff6ff !important;
+            color: #1e3a8a !important;
+            font-size: 0.86rem !important;
+            line-height: 1.45 !important;
+        }
+
+        #licenseModal .license-trial-banner strong {
+            color: #172554 !important;
+        }
+
         #licenseModal .license-subscription-head {
             display: flex;
             align-items: center;
@@ -33378,6 +33394,7 @@
                         <button class="license-modal-close" onclick="closeLicenseModal()" title="Zavřít">×</button>
                     </div>
                     <div class="license-modal-body">
+                        <div id="licenseTrialBanner" class="license-trial-banner hidden" role="status"></div>
                         <p id="licenseLifetimeNotice" class="license-lifetime-notice hidden" role="status" hidden></p>
                         <div class="license-plans-section">
                             <h3>Dostupné plány</h3>
@@ -45414,6 +45431,19 @@
             });
         }
 
+        function isActiveUserTrialLicense(license) {
+            return !!(license && license.trial_active && normalizeLicensePlanKey(license.plan || '') === 'premium');
+        }
+
+        function getTrialDaysRemainingLabel(license) {
+            const raw = Number(license?.trial_days_remaining);
+            if (!Number.isFinite(raw)) return '';
+            const days = Math.max(0, Math.floor(raw));
+            if (days === 1) return 'zbývá 1 den';
+            if (days >= 2 && days <= 4) return `zbývají ${days} dny`;
+            return `zbývá ${days} dní`;
+        }
+
         function formatCreditBalanceHalers(value) {
             const raw = Number(value || 0);
             if (!Number.isFinite(raw)) return '0 Kč';
@@ -45432,7 +45462,7 @@
             return { label: 'Neznámý stav', color: '#334155', bg: '#e2e8f0', border: '#cbd5e1' };
         }
 
-        function renderLicenseSubscriptionPanel(subscription, licensePlan) {
+        function renderLicenseSubscriptionPanel(subscription, licensePlan, license) {
             const panel = document.getElementById('licenseSubscriptionPanel');
             const statusBadge = document.getElementById('licenseSubscriptionStatusBadge');
             const summary = document.getElementById('licenseSubscriptionSummary');
@@ -45441,6 +45471,7 @@
             const resumeBtn = document.getElementById('licenseSubscriptionResumeBtn');
             const changePlanSelect = document.getElementById('licenseSubscriptionChangePlanSelect');
             const changePlanBtn = document.getElementById('licenseSubscriptionChangePlanBtn');
+            const changePlanWrap = changePlanSelect?.closest('.license-subscription-change');
             if (!panel || !statusBadge || !summary || !notice || !cancelBtn || !resumeBtn || !changePlanSelect || !changePlanBtn) {
                 return;
             }
@@ -45448,6 +45479,35 @@
             const normalizedPlan = normalizeLicensePlanKey(licensePlan || 'free');
             const payload = subscription && typeof subscription === 'object' ? subscription : null;
             currentLicenseSubscriptionForUi = payload;
+            const isTrial = isActiveUserTrialLicense(license);
+            if (isTrial) {
+                const daysLabel = getTrialDaysRemainingLabel(license);
+                const validTo = formatSubscriptionDate(license?.valid_to);
+                panel.classList.remove('hidden');
+                statusBadge.textContent = daysLabel ? `Trial · ${daysLabel}` : 'Trial';
+                statusBadge.style.color = '#1e3a8a';
+                statusBadge.style.background = '#dbeafe';
+                statusBadge.style.borderColor = '#93c5fd';
+                summary.innerHTML = `
+                    <strong>Zkušební období Premium:</strong> aktivní<br>
+                    <strong>Konec trialu:</strong> ${validTo}${daysLabel ? ` • ${daysLabel}` : ''}<br>
+                    <strong>Co se stane potom:</strong> účet se přepne do FREE režimu bez ztráty dat.<br>
+                    <strong>Platba:</strong> zatím není aktivní; pro pokračování po trialu vyberte a zaplaťte licenci.
+                `;
+                notice.textContent = license?.license_banner?.message || 'Běží zkušební období plné verze. Před koncem vyberte placenou licenci, pokud chcete pokračovat bez omezení.';
+                notice.classList.remove('hidden', 'notice-warning', 'notice-danger');
+                notice.classList.add('notice-info');
+                cancelBtn.classList.add('hidden');
+                cancelBtn.disabled = true;
+                resumeBtn.classList.add('hidden');
+                resumeBtn.disabled = true;
+                changePlanSelect.disabled = true;
+                changePlanBtn.disabled = true;
+                changePlanBtn.textContent = 'Trial běží';
+                if (changePlanWrap) changePlanWrap.classList.add('hidden');
+                return;
+            }
+            if (changePlanWrap) changePlanWrap.classList.remove('hidden');
             if (!payload || normalizedPlan === 'free' || normalizedPlan === 'lifetime') {
                 panel.classList.add('hidden');
                 notice.classList.add('hidden');
@@ -45838,6 +45898,8 @@
 
             const planLabel = formatLicensePlanDisplayName(license?.plan || 'free', workspaceKind).toUpperCase();
             const plan = planLabel;
+            const isTrial = isActiveUserTrialLicense(license);
+            const trialDaysLabel = getTrialDaysRemainingLabel(license);
             const tenantCurrent = Number(license.vehicles_current ?? 0);
             const userCurrentRaw = license.vehicles_current_user;
             const hasUserCurrent = userCurrentRaw !== null
@@ -45849,7 +45911,9 @@
             const hasDifferentUserCount = hasUserCurrent && userCurrent !== tenantCurrent;
             
             labelEl.textContent = workspaceKind === 'service' ? `Licence servisu: ${plan}` : `Licence: ${plan}`;
-            currentEl.textContent = workspaceKind === 'service' ? `Aktuální servisní plán: ${plan}` : `Aktuální plán: ${plan}`;
+            currentEl.textContent = isTrial
+                ? `Trial Premium: ${trialDaysLabel || 'aktivní'}`
+                : (workspaceKind === 'service' ? `Aktuální servisní plán: ${plan}` : `Aktuální plán: ${plan}`);
             
             if (unlimited || limit === 0) {
                 if (hasDifferentUserCount) {
@@ -46031,11 +46095,23 @@
             applyLicenseCatalogPresentation(workspaceKind);
             const plan = normalizeLicensePlanKey(rawPlan);
             const planUpper = formatLicensePlanDisplayName(rawPlan, workspaceKind).toUpperCase();
+            const isTrial = isActiveUserTrialLicense(license);
+            const trialDaysLabel = getTrialDaysRemainingLabel(license);
             currentLicensePlanForUi = plan;
             currentLicenseSubscriptionForUi = license?.subscription && typeof license.subscription === 'object'
                 ? license.subscription
                 : null;
             const isLifetimePlan = plan === 'lifetime' || !!license.is_lifetime;
+            const trialBannerEl = document.getElementById('licenseTrialBanner');
+            if (trialBannerEl) {
+                if (isTrial) {
+                    trialBannerEl.innerHTML = `<strong>Běží 30denní zkušební období Premium.</strong> ${escapeHtml(trialDaysLabel || 'Trial je aktivní')}. Konec: ${escapeHtml(formatSubscriptionDate(license.valid_to))}. Po skončení se účet přepne do FREE režimu bez ztráty dat.`;
+                    trialBannerEl.classList.remove('hidden');
+                } else {
+                    trialBannerEl.innerHTML = '';
+                    trialBannerEl.classList.add('hidden');
+                }
+            }
             const lifetimeNoticeEl = document.getElementById('licenseLifetimeNotice');
             const plansSectionEl = document.querySelector('#licenseModal .license-plans-section');
             if (lifetimeNoticeEl) {
@@ -46078,7 +46154,9 @@
                 planBadge.className = `license-plan-badge plan-${plan}`;
             }
             if (statusBadge) {
-                statusBadge.textContent = status === 'active' ? 'Aktivní' : status;
+                statusBadge.textContent = isTrial
+                    ? (trialDaysLabel ? `Trial: ${trialDaysLabel}` : 'Trial aktivní')
+                    : (status === 'active' ? 'Aktivní' : status);
                 statusBadge.className = `license-status-badge status-${status}`;
             }
             
@@ -46110,6 +46188,9 @@
             if (license.reminders_enabled) features.push('Připomínky');
 
             const detailChunks = [`<span class="license-detail-item">${vehicleSummary}</span>`];
+            if (isTrial) {
+                detailChunks.push(`<span class="license-detail-item">Trial Premium: ${escapeHtml(trialDaysLabel || 'aktivní')} · konec ${escapeHtml(formatSubscriptionDate(license.valid_to))}</span>`);
+            }
             if (features.length > 0) {
                 const visibleFeatures = features.slice(0, 2);
                 const extraFeatures = Math.max(0, features.length - visibleFeatures.length);
@@ -46159,7 +46240,7 @@
                     resetLicenseLegalConsent();
                 }
             } else {
-                renderLicenseSubscriptionPanel(currentLicenseSubscriptionForUi, currentLicensePlanForUi);
+                renderLicenseSubscriptionPanel(currentLicenseSubscriptionForUi, currentLicensePlanForUi, license);
             }
 
             // Ceny a payment-ready stav se dopočítají podle aktivní konfigurace Comgate.
