@@ -1,7 +1,7 @@
 """Kvóty SERVICE FREE vs FULL — přímé volání licenční vrstvy (SQLite in-memory)."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine
@@ -9,11 +9,14 @@ from sqlalchemy.orm import sessionmaker
 
 from src.modules.licensing.service import (
     LicenseError,
+    activate_initial_user_trial,
     assert_service_customer_link_quota,
     assert_service_invoice_monthly_quota,
     assert_service_monthly_service_record_quota,
     assert_service_vehicle_link_quota,
     assert_vehicle_quota,
+    get_license_status,
+    upgrade_license_plan,
 )
 from src.modules.vehicle_hub.database import Base
 from src.modules.vehicle_hub.models import (
@@ -228,3 +231,109 @@ def test_user_free_second_vehicle_quota(db_session):
     with pytest.raises(LicenseError) as ei:
         assert_vehicle_quota(db, int(t.id))
     assert ei.value.code == "LICENSE_QUOTA_EXCEEDED"
+
+
+def test_first_login_activates_user_premium_trial(db_session):
+    db = db_session
+    t = Tenant(name="Trial", license_key="lic-trial", workspace_route_kind="user", workspace_slug="trial-user")
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    u = Customer(tenant_id=t.id, email="trial@example.com", password_hash="x", name="Trial", role="user")
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    lic = License(tenant_id=t.id, plan="free", status="active", vehicles_limit=1, valid_from=datetime.utcnow())
+    db.add(lic)
+    db.commit()
+
+    start = datetime(2026, 5, 21, 10, 0, 0)
+    trial = activate_initial_user_trial(db, u, now=start)
+    db.commit()
+
+    assert trial is not None
+    assert trial.plan == "premium"
+    assert trial.vehicles_limit == 0
+    assert trial.valid_from == start
+    assert trial.valid_to == start + timedelta(days=30)
+    status = get_license_status(db, int(t.id), u.email)
+    assert status["plan"] == "premium"
+    assert status["trial_active"] is True
+    assert status["is_expired_trial"] is False
+
+
+def test_expired_user_trial_behaves_as_free_without_data_loss(db_session):
+    db = db_session
+    t = Tenant(name="Expired Trial", license_key="lic-expired-trial", workspace_route_kind="user", workspace_slug="expired-trial")
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    u = Customer(tenant_id=t.id, email="expired-trial@example.com", password_hash="x", name="Trial", role="user")
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    db.add(
+        License(
+            tenant_id=t.id,
+            plan="premium",
+            status="active",
+            vehicles_limit=0,
+            valid_from=datetime.utcnow() - timedelta(days=40),
+            valid_to=datetime.utcnow() - timedelta(days=1),
+        )
+    )
+    for i in range(2):
+        db.add(
+            Vehicle(
+                tenant_id=t.id,
+                user_email=u.email,
+                nickname=f"Kept {i}",
+                vin=f"TRIAL{i:012d}"[:17],
+            )
+        )
+    db.commit()
+
+    status = get_license_status(db, int(t.id), u.email)
+    assert status["stored_plan"] == "premium"
+    assert status["plan"] == "free"
+    assert status["is_expired_trial"] is True
+    assert status["vehicles_current"] == 2
+    assert status["is_over_limit"] is True
+
+    with pytest.raises(LicenseError) as ei:
+        assert_vehicle_quota(db, int(t.id))
+    assert ei.value.code == "LICENSE_QUOTA_EXCEEDED"
+    assert ei.value.details["plan"] == "free"
+
+
+def test_paid_upgrade_clears_expired_trial_valid_to(db_session):
+    db = db_session
+    t = Tenant(name="Paid After Trial", license_key="lic-paid-after-trial", workspace_route_kind="user", workspace_slug="paid-after-trial")
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    u = Customer(tenant_id=t.id, email="paid-after-trial@example.com", password_hash="x", name="Paid", role="user")
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    expired_at = datetime.utcnow() - timedelta(days=1)
+    db.add(
+        License(
+            tenant_id=t.id,
+            plan="premium",
+            status="active",
+            vehicles_limit=0,
+            valid_from=datetime.utcnow() - timedelta(days=40),
+            valid_to=expired_at,
+        )
+    )
+    db.commit()
+
+    upgrade_license_plan(db, int(t.id), "premium")
+    status = get_license_status(db, int(t.id), u.email)
+
+    lic = db.query(License).filter(License.tenant_id == int(t.id)).first()
+    assert lic.valid_to is None
+    assert status["plan"] == "premium"
+    assert status["trial_active"] is False
+    assert status["is_expired_trial"] is False

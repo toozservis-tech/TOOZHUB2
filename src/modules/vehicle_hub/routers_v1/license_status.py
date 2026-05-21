@@ -127,6 +127,14 @@ class LicenseStatusResponse(BaseModel):
     vehicles_count: Optional[int] = None
     license_limit: Optional[int] = None
     is_over_limit: Optional[bool] = None
+    plan_base: Optional[str] = None
+    plan_workspace_kind: Optional[str] = None
+    plan_public_label: Optional[str] = None
+    stored_plan: Optional[str] = None
+    valid_to: Optional[str] = None
+    trial_active: bool = False
+    trial_days_remaining: Optional[int] = None
+    is_expired_trial: bool = False
     vin_decode_enabled: bool = True
     ares_enabled: bool = True
     reminders_enabled: bool = True
@@ -651,6 +659,29 @@ def _compute_license_ui_banner(
     status: Dict[str, Any],
     subscription_payload: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, str]]:
+    if str(status.get("plan_workspace_kind") or "") == "user":
+        if bool(status.get("is_expired_trial")):
+            return {
+                "tone": "warning",
+                "message": (
+                    "Zkušební období plné verze skončilo. Účet běží ve FREE režimu; "
+                    "data zůstávají uložená. Pro další plnou práci vyberte a uhraďte licenci."
+                ),
+                "cta_label": "Vybrat licenci",
+            }
+        if bool(status.get("trial_active")):
+            days = status.get("trial_days_remaining")
+            day_text = f"{days} dní" if days is not None else "30 dní"
+            return {
+                "tone": "info",
+                "message": (
+                    f"Běží zkušební období plné verze. Zbývá {day_text}; "
+                    "po skončení se účet přepne do FREE režimu bez ztráty dat."
+                ),
+                "cta_label": "Licence",
+            }
+        return None
+
     if str(status.get("plan_workspace_kind") or "") != "service":
         return None
     if not subscription_payload:

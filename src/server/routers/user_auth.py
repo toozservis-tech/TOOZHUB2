@@ -44,6 +44,7 @@ from src.modules.vehicle_hub.registration_security import (
     normalize_validate_phone_e164,
 )
 from src.modules.vehicle_hub.tenant_provisioning import create_dedicated_tenant, ensure_default_license_for_tenant
+from src.modules.licensing.service import activate_initial_user_trial
 from src.server.main_helpers import (
     ForgotPasswordRequest,
     LoginResponse,
@@ -750,6 +751,7 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
                 challenge_expires_in=expires_in,
             )
 
+        activate_initial_user_trial(db, customer)
         touch_customer_last_login(customer)
         db.commit()
         access_token = create_access_token(data={"sub": customer.email, "sv": customer_session_version(customer)})
@@ -870,6 +872,7 @@ def verify_login_two_factor(
         raise HTTPException(status_code=401, detail="Neplatný 2FA kód")
 
     pop_2fa_login_challenge(payload.challenge_token)
+    activate_initial_user_trial(db, customer)
     touch_customer_last_login(customer)
     db.commit()
     access_token = create_access_token(data={"sub": customer.email, "sv": customer_session_version(customer)})

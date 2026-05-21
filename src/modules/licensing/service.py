@@ -3,7 +3,7 @@ License Service - produkční licencování pro Správu vozidel
 """
 import logging
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -220,6 +220,8 @@ PLAN_LIMITS = {
 
 FREE_SERVICE_RECORDS_LIMIT = 1
 FREE_ACTIVE_MANUAL_REMINDERS_LIMIT = 1
+USER_INITIAL_TRIAL_DAYS = 30
+USER_INITIAL_TRIAL_PLAN = "premium"
 
 # Servisní FREE: technické kvóty (oddělené od uživatelských tarifů zákazníka)
 SERVICE_FREE_MAX_CUSTOMER_LINKS = 3
@@ -232,6 +234,84 @@ SERVICE_CUSTOMER_LINK_STATUSES_COUNTED = (
     "invited",
     "pending_customer_confirm",
 )
+
+
+def _license_valid_to_expired(license_obj: License, now: Optional[datetime] = None) -> bool:
+    valid_to = getattr(license_obj, "valid_to", None)
+    if valid_to is None:
+        return False
+    current_now = now or datetime.utcnow()
+    return current_now > valid_to
+
+
+def is_expired_user_trial(license_obj: License, now: Optional[datetime] = None) -> bool:
+    """Placený uživatelský plán s `valid_to` po expiraci se chová jako FREE.
+
+    Používáme existující sloupce `licenses.valid_from/valid_to`, abychom nemuseli
+    zavádět novou tabulku pro první 30denní trial.
+    """
+    plan = normalize_license_plan_key(getattr(license_obj, "plan", None), "user") or "free"
+    if plan not in {"basic", "premium"}:
+        return False
+    return _license_valid_to_expired(license_obj, now)
+
+
+def effective_license_plan_for_runtime(
+    db: Session,
+    license_obj: License,
+    tenant_id: int,
+    *,
+    now: Optional[datetime] = None,
+) -> str:
+    pairing = pairing_role_for_tenant_license(db, tenant_id)
+    normalized_plan = (
+        normalize_license_plan_key(effective_service_license_storage_plan(license_obj.plan), pairing)
+        or "free"
+    )
+    if pairing == "user" and is_expired_user_trial(license_obj, now):
+        return "free"
+    return normalized_plan
+
+
+def activate_initial_user_trial(
+    db: Session,
+    customer: Customer,
+    *,
+    now: Optional[datetime] = None,
+) -> Optional[License]:
+    """Zapne první 30denní plnou trial licenci při prvním úspěšném přihlášení.
+
+    Aktivuje se jen pro běžné uživatelské účty, které ještě nemají `last_login_at`
+    a dosud jsou na FREE plánu. Placené/ručně nastavené licence nepřepisujeme.
+    """
+    if not customer or str(getattr(customer, "role", "user") or "user").strip().lower() != "user":
+        return None
+    tenant_id = getattr(customer, "tenant_id", None)
+    if not tenant_id:
+        return None
+    if ADMIN_FORCE_PREMIUM and is_admin_tenant(int(tenant_id)):
+        return None
+    if getattr(customer, "last_login_at", None) is not None:
+        return None
+
+    license_obj = get_or_create_license(db, int(tenant_id))
+    current_plan = effective_license_plan_for_runtime(db, license_obj, int(tenant_id), now=now)
+    if current_plan != "free":
+        return None
+
+    current_now = now or datetime.utcnow()
+    features = PLAN_FEATURES[USER_INITIAL_TRIAL_PLAN]
+    license_obj.plan = USER_INITIAL_TRIAL_PLAN
+    license_obj.status = "active"
+    license_obj.vehicles_limit = PLAN_LIMITS[USER_INITIAL_TRIAL_PLAN]
+    license_obj.valid_from = current_now
+    license_obj.valid_to = current_now + timedelta(days=USER_INITIAL_TRIAL_DAYS)
+    license_obj.vin_decode_enabled = bool(features["vin_decode_enabled"])
+    license_obj.ares_enabled = bool(features.get("ares_enabled", True))
+    license_obj.reminders_enabled = bool(features["reminders_enabled"])
+    license_obj.updated_at = current_now
+    db.add(license_obj)
+    return license_obj
 
 
 def _normalized_service_workspace_plan(db: Session, service_customer_id: int) -> Optional[str]:
@@ -686,7 +766,7 @@ def assert_vehicle_quota(db: Session, tenant_id: int) -> None:
     
     # Zkontrolovat valid_to (admin bypass valid_to)
     if license_obj.valid_to and not (ADMIN_FORCE_PREMIUM and is_admin_tenant(tenant_id)):
-        if datetime.utcnow() > license_obj.valid_to:
+        if datetime.utcnow() > license_obj.valid_to and not is_expired_user_trial(license_obj):
             raise LicenseError(
                 code="LICENSE_EXPIRED",
                 message=f"Licence vypršela (valid_to: {license_obj.valid_to})",
@@ -694,17 +774,20 @@ def assert_vehicle_quota(db: Session, tenant_id: int) -> None:
             )
     
     # Zkontrolovat quota
-    if is_unlimited(license_obj):
+    effective_plan = effective_license_plan_for_runtime(db, license_obj, tenant_id)
+    effective_limit = PLAN_LIMITS.get(effective_plan, license_obj.vehicles_limit)
+    if effective_limit == 0:
         return  # Unlimited - OK
     
     current = get_vehicle_count(db, tenant_id)
-    if current >= license_obj.vehicles_limit:
+    if current >= effective_limit:
         raise LicenseError(
             code="LICENSE_QUOTA_EXCEEDED",
-            message=f"Limit vozidel překročen ({current}/{license_obj.vehicles_limit})",
+            message=f"Limit vozidel překročen ({current}/{effective_limit})",
             details={
-                "plan": license_obj.plan,
-                "limit": license_obj.vehicles_limit,
+                "plan": effective_plan,
+                "stored_plan": license_obj.plan,
+                "limit": effective_limit,
                 "current": current
             },
             status_code=403
@@ -730,11 +813,7 @@ def assert_feature(db: Session, tenant_id: int, feature_name: str) -> None:
     if ADMIN_FORCE_PREMIUM and is_admin_tenant(tenant_id):
         return
 
-    pairing = pairing_role_for_tenant_license(db, tenant_id)
-    feat_key = (
-        normalize_license_plan_key(effective_service_license_storage_plan(license_obj.plan), pairing)
-        or "free"
-    )
+    feat_key = effective_license_plan_for_runtime(db, license_obj, tenant_id)
     features = PLAN_FEATURES.get(feat_key, PLAN_FEATURES["free"])
 
     if feature_name == "documents":
@@ -817,21 +896,31 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
     tenant_vehicle_count = get_vehicle_count(db, tenant_id)
     user_vehicle_count = get_vehicle_count_for_user(db, tenant_id, user_email)
     pairing = pairing_role_for_tenant_license(db, tenant_id)
-    normalized_plan = normalize_license_plan_key(
+    stored_plan = normalize_license_plan_key(
         effective_service_license_storage_plan(license_obj.plan),
         pairing,
     ) or "free"
+    normalized_plan = effective_license_plan_for_runtime(db, license_obj, tenant_id)
     features = PLAN_FEATURES.get(normalized_plan, PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"]))
     tier_limit = PLAN_LIMITS.get(normalized_plan, license_obj.vehicles_limit)
     is_unl = tier_limit == 0
 
     vehicles_remaining = None if is_unl else max(0, tier_limit - tenant_vehicle_count)
 
-    is_expired_trial = False
+    current_now = datetime.utcnow()
+    trial_valid_to = license_obj.valid_to if stored_plan in {"basic", "premium"} else None
+    is_expired_trial = bool(trial_valid_to and current_now > trial_valid_to and normalized_plan == "free")
+    trial_active = bool(trial_valid_to and current_now <= trial_valid_to and stored_plan in {"basic", "premium"})
+    trial_days_remaining = None
+    if trial_valid_to:
+        trial_days_remaining = max(0, (trial_valid_to.date() - current_now.date()).days)
 
     over_limit = (not is_unl) and tenant_vehicle_count > int(tier_limit or 0)
     status = {
         "is_expired_trial": is_expired_trial,
+        "trial_active": trial_active,
+        "trial_days_remaining": trial_days_remaining,
+        "stored_plan": stored_plan,
         "valid_to": license_obj.valid_to.isoformat() if license_obj.valid_to else None,
         "tenant_id": str(tenant_id),
         "plan": normalized_plan,
@@ -904,6 +993,8 @@ def upgrade_license_plan(db: Session, tenant_id: int, plan: str) -> dict:
     license_obj.ares_enabled = features.get("ares_enabled", True)
     license_obj.reminders_enabled = features["reminders_enabled"]
     license_obj.updated_at = datetime.utcnow()
+    if get_license_plan_base(plan_key) in {"basic", "premium", "full"}:
+        license_obj.valid_to = None
     if plan_key == "service_full":
         license_obj.valid_to = None
 
