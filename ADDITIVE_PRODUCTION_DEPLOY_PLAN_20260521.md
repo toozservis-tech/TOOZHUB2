@@ -3,8 +3,8 @@
 ## Release Candidate
 
 - Branch: `release/additive-functions-to-production-20260521`
-- Base used: actual production head `20ede5ace2a013e067c07704ec153a6b2018d028`
-- Candidate head at plan creation: `8581a93940e7bf0dd4621258b05eb76f60a43fe4`
+- Base used: actual production head `04882c747586bd4751e71de31db190abf6809fdd`
+- Candidate head: release branch tip at push/deploy approval time.
 - Production deploy status: not deployed.
 
 ## What Will Be Deployed

@@ -5,10 +5,10 @@
 - Repository: `toozservis-tech/TOOZHUB2`
 - Staging source: `freeze/staging-current-ui-20260520` (`ccd384acfbc8229a821bb6e31c5548170e7fcb5e`)
 - Requested legacy production tag: `prod-frontend-ui-20260521` (`3fe02d581c0701f52a7b8e5cdfc5b4d66e94668e`)
-- Actual production baseline preserved for this release candidate: `apprepo/production/verify-email-page-20260521` (`20ede5ace2a013e067c07704ec153a6b2018d028`)
+- Actual production baseline preserved for this release candidate after final production read-only check: `apprepo/fix/backend-sanity-gate-ci-20260521` (`04882c747586bd4751e71de31db190abf6809fdd`)
 - Release candidate branch: `release/additive-functions-to-production-20260521`
 
-The requested production tag is older than the current production working state. The candidate is therefore based on the actual production head so the logo, email verification, services visibility, admin archive fixes, and trial countdown fixes are not lost.
+The requested production tag is older than the current production working state. During final read-only verification the production tree was on `fix/backend-sanity-gate-ci-20260521` at `04882c747586bd4751e71de31db190abf6809fdd`, so the candidate was rebased onto that exact production head to avoid overwriting the currently deployed backend sanity fix and admin/archive fixes.
 
 ## Staging Diff Summary
 
