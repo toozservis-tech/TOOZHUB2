@@ -44662,6 +44662,10 @@
             const flags = getNormalizedLicenseFlags(license);
             currentLicensePlanForUi = normalizeLicensePlanKey(license?.plan || currentLicensePlanForUi || 'free');
             window.__licenseFlags = flags;
+
+            if (typeof setDashboardTabVisibility === 'function' && typeof shouldShowServicesDirectoryTab === 'function') {
+                setDashboardTabVisibility('servicesDirectory', shouldShowServicesDirectoryTab());
+            }
             
             const vinInput = document.getElementById('vehicleVin');
             if (vinInput) {
