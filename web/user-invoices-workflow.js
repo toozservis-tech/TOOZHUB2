@@ -7,6 +7,7 @@
 
   const API = 'UserInvoicesWorkflow';
   const STORAGE_PREFIX = 'sv_user_invoices_staging_v1';
+  const NUMBER_STATE_KEY = 'sv_user_invoice_number_state_staging_v1';
   const APPEARANCE_KEY = 'sv_user_invoice_appearance_v1';
 
   const WIZARD_STEPS = [
@@ -43,9 +44,101 @@
     }
   }
 
+  function numberStateStorageKey() {
+    return `${NUMBER_STATE_KEY}:${storageKey().split(':').slice(1).join(':')}`;
+  }
+
+  function loadNumberState() {
+    try {
+      const raw = localStorage.getItem(numberStateStorageKey());
+      if (raw) return JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+    return { currentYear: new Date().getFullYear(), lastCommittedNumber: 0 };
+  }
+
+  function saveNumberState(ns) {
+    localStorage.setItem(numberStateStorageKey(), JSON.stringify(ns));
+  }
+
+  function parseInvoiceSeq(num) {
+    const m = /^FV-(\d{4})-(\d+)$/.exec(String(num || '').trim());
+    if (!m) return null;
+    return { year: Number(m[1]), seq: Number(m[2]) };
+  }
+
+  function repairNumberState() {
+    const year = new Date().getFullYear();
+    let maxFromInvoices = 0;
+    (loadStore().invoices || []).forEach((inv) => {
+      const parsed = parseInvoiceSeq(inv.number || inv.invoice_number);
+      if (parsed && parsed.year === year) maxFromInvoices = Math.max(maxFromInvoices, parsed.seq);
+    });
+    const ns = loadNumberState();
+    if (Number(ns.currentYear) !== year) {
+      ns.currentYear = year;
+      ns.lastCommittedNumber = maxFromInvoices;
+    } else {
+      ns.lastCommittedNumber = Math.max(Number(ns.lastCommittedNumber || 0), maxFromInvoices);
+    }
+    saveNumberState(ns);
+    return ns;
+  }
+
+  function allocateInvoiceNumber() {
+    const ns = repairNumberState();
+    const year = new Date().getFullYear();
+    if (Number(ns.currentYear) !== year) {
+      ns.currentYear = year;
+      ns.lastCommittedNumber = 0;
+    }
+    ns.lastCommittedNumber = Number(ns.lastCommittedNumber || 0) + 1;
+    saveNumberState(ns);
+    return `FV-${year}-${String(ns.lastCommittedNumber).padStart(5, '0')}`;
+  }
+
+  function commitNumberIfNeeded(draft) {
+    const d = draft || {};
+    if (d.number && String(d.number).trim()) return d;
+    const num = allocateInvoiceNumber();
+    d.number = num;
+    d.invoice_number = num;
+    d.variable_symbol = num.replace(/\D/g, '').slice(-9);
+    return d;
+  }
+
+  function pushHistory(inv, action, label) {
+    if (!inv) return inv;
+    if (!Array.isArray(inv.history)) inv.history = [];
+    inv.history.unshift({ at: new Date().toISOString(), action, label: label || action });
+    return inv;
+  }
+
+  function validItems(items) {
+    return (Array.isArray(items) ? items : []).filter((it) => {
+      const name = String(it?.name || '').trim();
+      const qty = Number(it?.quantity || 0);
+      const price = Number(it?.unit_price || 0);
+      return name && qty > 0 && price >= 0;
+    });
+  }
+
+  function emptySupplier() {
+    return { name: '', ico: '', dic: '', address: '', email: '', phone: '', bank_name: '', bank_account: '', iban: '', bic: '' };
+  }
+
+  function emptyCustomer() {
+    return { name: '', ico: '', dic: '', address: '', email: '', phone: '' };
+  }
+
+  function emptyLine(idx) {
+    return { id: idx || 1, name: '', description: '', quantity: 1, unit: 'ks', unit_price: 0, discount_percent: 0, vat_rate: 21, total_without_vat: 0 };
+  }
+
   function saveStore(data) {
     localStorage.setItem(storageKey(), JSON.stringify(data));
   }
+
+  repairNumberState();
 
   function esc(v) {
     return String(v ?? '')
@@ -87,7 +180,13 @@
   }
 
   function invoiceCalc(lines) {
-    const rows = Array.isArray(lines) ? lines : [];
+    const rows = validItems(Array.isArray(lines) ? lines.map((ln) => ({
+      quantity: ln?.quantity,
+      unit_price: ln?.unit_price,
+      discount_percent: ln?.discount_percent,
+      vat_rate: ln?.tax_rate || ln?.vat_rate,
+      name: ln?.description || ln?.name,
+    })) : []);
     let subtotal = 0;
     let discountTotal = 0;
     let tax = 0;
@@ -99,7 +198,7 @@
       const net = lineNet(ln);
       discountTotal += grossLine - net;
       subtotal += grossLine;
-      tax += net * (Number(ln?.tax_rate || ln?.vat_rate || 0) / 100);
+      tax += net * (Number(ln?.vat_rate || 0) / 100);
     });
     const base = subtotal - discountTotal;
     return {
@@ -149,67 +248,35 @@
     localStorage.setItem(`${APPEARANCE_KEY}:${storageKey()}`, JSON.stringify(cfg));
   }
 
-  function nextInvoiceNumber() {
-    const store = loadStore();
-    store.seq = Number(store.seq || 0) + 1;
-    const year = new Date().getFullYear();
-    const num = `FV-${year}-${String(store.seq).padStart(5, '0')}`;
-    saveStore(store);
-    return num;
-  }
-
   function defaultDraft() {
     const today = new Date().toISOString().slice(0, 10);
     const due = new Date();
     due.setDate(due.getDate() + 14);
-    const num = nextInvoiceNumber();
-    const u = window.currentUser || {};
     return {
       id: null,
-      number: num,
-      invoice_number: num,
+      number: '',
+      invoice_number: '',
       status: 'draft',
       issue_date: today,
       taxable_date: today,
       due_date: due.toISOString().slice(0, 10),
       due_at: due.toISOString().slice(0, 10),
       payment_method: 'Bankovní převod',
-      variable_symbol: num.replace(/\D/g, '').slice(-9),
-      constant_symbol: '0308',
+      variable_symbol: '',
+      constant_symbol: '',
       specific_symbol: '',
       currency: 'CZK',
       source: 'user_local',
-      supplier: {
-        name: u.name || 'AutoFuture s.r.o.',
-        ico: u.ico || '12345678',
-        dic: u.dic || 'CZ12345678',
-        address: u.street ? [u.street, u.city, u.zip].filter(Boolean).join(', ') : 'U Trati 123, 100 00 Praha 10, Česká republika',
-        email: u.email || 'info@autofuture.cz',
-        phone: u.phone || '+420 777 123 456',
-        bank_name: 'Fio banka, a.s.',
-        bank_account: '2501234567 / 2010',
-        iban: 'CZ89 2010 0000 0025 0123 4567',
-        bic: 'FIOBCZPPXXX',
-      },
-      customer: {
-        name: 'Novák Trans s.r.o.',
-        ico: '87654321',
-        dic: 'CZ87654321',
-        address: 'Brněnská 45, 602 00 Brno, Česká republika',
-        email: 'ucto@novaktrans.cz',
-        phone: '+420 602 555 888',
-      },
-      items: [
-        { id: 1, name: 'Výměna oleje a filtru', description: 'Motorový olej 5W-30, olejový filtr', quantity: 1, unit: 'ks', unit_price: 2500, discount_percent: 0, vat_rate: 21, total_without_vat: 2500 },
-        { id: 2, name: 'Práce mechanika', description: 'Diagnostika vozidla', quantity: 2, unit: 'hod', unit_price: 800, discount_percent: 0, vat_rate: 21, total_without_vat: 1600 },
-        { id: 3, name: 'Brzdové destičky přední', description: 'Kvalitní OEM', quantity: 1, unit: 'sada', unit_price: 3200, discount_percent: 5, vat_rate: 21, total_without_vat: 3040 },
-      ],
-      note: 'Děkujeme za spolupráci. Splatnost faktury je 14 dní od data vystavení.',
+      supplier: emptySupplier(),
+      customer: emptyCustomer(),
+      items: [emptyLine(1)],
+      note: '',
       attachments: [],
+      history: [],
       extra: {},
       lines: [],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: null,
+      updated_at: null,
     };
   }
 
@@ -217,7 +284,7 @@
     const d = draft || {};
     const sup = d.supplier || {};
     const cust = d.customer || {};
-    const items = Array.isArray(d.items) ? d.items : [];
+    const items = validItems(Array.isArray(d.items) ? d.items : []);
     const lines = items.map((it) => ({
       description: it.name || it.description,
       note: it.description !== it.name ? it.description : '',
@@ -277,8 +344,9 @@
     const d = state.draft || defaultDraft();
     const g = (id) => document.getElementById(id)?.value;
     const gc = (id) => document.getElementById(id)?.checked;
-    d.number = g('uInvNumber') || d.number;
-    d.invoice_number = d.number;
+    if (d.number) {
+      d.invoice_number = d.number;
+    }
     d.issue_date = g('uInvIssueDate') || d.issue_date;
     d.taxable_date = g('uInvTaxDate') || d.taxable_date;
     d.due_date = g('uInvDueDate') || d.due_date;
@@ -340,22 +408,49 @@
   function validateDraft(d) {
     const errors = [];
     if (!d.supplier?.name?.trim()) errors.push('Vyplňte název dodavatele.');
-    if (!d.supplier?.ico?.trim()) errors.push('Vyplňte IČO dodavatele.');
     if (!d.customer?.name?.trim()) errors.push('Vyplňte název odběratele.');
-    if (!d.customer?.ico?.trim()) errors.push('Vyplňte IČO odběratele.');
-    if (!Array.isArray(d.items) || !d.items.filter((it) => it.name && it.quantity > 0).length) {
-      errors.push('Přidejte alespoň jednu položku faktury.');
-    }
+    if (!d.issue_date) errors.push('Vyplňte datum vystavení.');
+    if (!d.due_date) errors.push('Vyplňte datum splatnosti.');
+    const good = validItems(d.items);
+    if (!good.length) errors.push('Přidejte alespoň jednu platnou položku (název, množství, cena).');
+    good.forEach((it, i) => {
+      if (!String(it.name || '').trim()) errors.push(`Položka ${i + 1}: vyplňte název.`);
+      if (!(Number(it.quantity) > 0)) errors.push(`Položka ${i + 1}: množství musí být větší než 0.`);
+      if (Number(it.unit_price) < 0) errors.push(`Položka ${i + 1}: cena nesmí být záporná.`);
+    });
     if (d.due_date && d.issue_date && d.due_date < d.issue_date) {
       errors.push('Datum splatnosti nesmí být před datem vystavení.');
     }
     return errors;
   }
 
-  function persistDraft(status) {
+  function canEditInvoice(inv) {
+    const s = String(inv?.status || 'draft').toLowerCase();
+    return s === 'draft' || s === 'created';
+  }
+
+  function canDeleteInvoice(inv) {
+    return String(inv?.status || '').toLowerCase() === 'draft';
+  }
+
+  function saveLocalInvoice(d) {
+    const store = loadStore();
+    const idx = store.invoices.findIndex((x) => x.id === d.id);
+    if (idx >= 0) store.invoices[idx] = d;
+    else store.invoices.unshift(d);
+    saveStore(store);
+    return d;
+  }
+
+  function persistDraft(status, historyLabel) {
     const d = readFormIntoDraft();
+    const errs = validateDraft(d);
+    if (errs.length) throw new Error(errs[0]);
+    const isNew = !d.id;
+    commitNumberIfNeeded(d);
     const store = loadStore();
     const totals = invoiceCalc(draftToLegacy(d).lines);
+    d.items = validItems(d.items);
     d.totals = {
       subtotal_without_vat: totals.subtotal,
       discount_total: totals.discountTotal,
@@ -368,12 +463,17 @@
     if (!d.id) {
       d.id = `local_${Date.now()}`;
       d.created_at = new Date().toISOString();
+      pushHistory(d, 'created', 'Faktura vytvořena');
       store.invoices.unshift(d);
     } else {
       const idx = store.invoices.findIndex((x) => x.id === d.id);
       if (idx >= 0) store.invoices[idx] = d;
       else store.invoices.unshift(d);
+      pushHistory(d, 'updated', historyLabel || 'Faktura upravena');
     }
+    if (status === 'draft') pushHistory(d, 'draft_save', 'Uloženo jako koncept');
+    if (status === 'created') pushHistory(d, 'invoice_created', 'Faktura vytvořena');
+    d.updated_at = new Date().toISOString();
     state.draftId = d.id;
     state.draft = d;
     saveStore(store);
@@ -470,7 +570,7 @@
           <section class="sv-inv-card sv-inv-section-card">
             <div class="sv-inv-section-head"><span class="sv-inv-section-num">1</span><h2>Základní informace</h2></div>
             <div class="sv-inv-form-grid">
-              <label>Číslo faktury *<input id="uInvNumber" value="${esc(d.number)}" readonly><small>Číslo se vygeneruje automaticky</small></label>
+              <label>Číslo faktury *<input id="uInvNumber" value="${esc(d.number || '')}" readonly placeholder="Číslo bude přiděleno při uložení"><small>${d.number ? esc(d.number) : 'Číslo bude přiděleno při uložení'}</small></label>
               <label>Datum vystavení *<input id="uInvIssueDate" type="date" value="${esc(String(d.issue_date || '').slice(0, 10))}"></label>
               <label>Datum zdanitelného plnění *<input id="uInvTaxDate" type="date" value="${esc(String(d.taxable_date || '').slice(0, 10))}"></label>
               <label>Datum splatnosti *<input id="uInvDueDate" type="date" value="${esc(String(d.due_date || '').slice(0, 10))}"></label>
@@ -481,7 +581,9 @@
             </div>
           </section>
           <section class="sv-inv-card sv-inv-section-card">
-            <div class="sv-inv-section-head"><span class="sv-inv-section-num">2</span><h2>Dodavatel</h2></div>
+            <div class="sv-inv-section-head"><span class="sv-inv-section-num">2</span><h2>Dodavatel</h2>
+              <button type="button" class="sv-inv-btn sv-inv-btn--ghost sv-inv-btn--sm" onclick="window.${API}.fillSupplierFromProfile()">Použít údaje z profilu</button>
+            </div>
             <div class="sv-inv-form-grid">
               <label>Název firmy / jméno *<input id="uInvSupName" value="${esc(sup.name)}"></label>
               <label>IČO *<input id="uInvSupIco" value="${esc(sup.ico)}"></label>
@@ -645,7 +747,7 @@
             <div class="sv-inv-modal-toolbar-group"><button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.zoomOut()">−</button><span class="sv-inv-toolbar-zoom">${zoom} %</span><button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.zoomIn()">+</button></div>
             <div class="sv-inv-modal-toolbar-group sv-inv-modal-toolbar-actions"><button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.downloadPdf()" title="Stáhnout">↓</button><button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.printPreview()" title="Tisk">🖨</button></div>
           </div>
-          <div class="sv-inv-modal-body sv-inv-modal-body--a4"><div class="sv-inv-a4-viewport"><div class="sv-inv-a4-sheet" style="transform:scale(${zoom / 100})">${docHtml}</div></div></div>
+          <div class="sv-inv-modal-body sv-inv-modal-body--a4"><div class="sv-inv-a4-viewport"><div class="sv-inv-a4-sheet sv-inv-a4-sheet--preview" style="transform:scale(${zoom / 100})">${docHtml}</div></div></div>
           <div class="sv-inv-modal-foot"><button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.closePreview()">Zavřít</button></div>
         </div>
       </div>`;
@@ -703,9 +805,95 @@
       return (loadStore().invoices || []).find((x) => x.id === id) || null;
     },
     deleteLocalInvoice(id) {
+      const inv = api.getLocalInvoice(id);
+      if (!inv) { showToast('Faktura nenalezena.', 'error'); return false; }
+      if (!canDeleteInvoice(inv)) { showToast('Smazat lze pouze koncept.', 'warning'); return false; }
       const store = loadStore();
       store.invoices = (store.invoices || []).filter((x) => x.id !== id);
       saveStore(store);
+      pushHistory(inv, 'deleted', 'Koncept smazán');
+      showToast('Koncept byl smazán.', 'success');
+      return true;
+    },
+    canEditInvoice,
+    canDeleteInvoice,
+    validItems,
+    repairNumberState,
+    commitNumberIfNeeded,
+    pushHistory,
+    mutateLocalInvoice(id, fn) {
+      const store = loadStore();
+      const idx = (store.invoices || []).findIndex((x) => x.id === id);
+      if (idx < 0) return null;
+      const next = fn({ ...(store.invoices[idx] || {}) });
+      store.invoices[idx] = next;
+      saveStore(store);
+      return next;
+    },
+    markPaid(id) {
+      const inv = api.mutateLocalInvoice(id, (d) => {
+        if (['paid', 'cancelled'].includes(String(d.status).toLowerCase())) return d;
+        d.status = 'paid';
+        d.paid_at = new Date().toISOString();
+        pushHistory(d, 'paid', 'Označeno jako zaplaceno');
+        d.updated_at = new Date().toISOString();
+        return d;
+      });
+      if (inv) showToast('Faktura označena jako zaplacena.', 'success');
+      return inv;
+    },
+    cancelInvoice(id) {
+      const inv = api.mutateLocalInvoice(id, (d) => {
+        if (String(d.status).toLowerCase() === 'cancelled') return d;
+        d.status = 'cancelled';
+        d.cancelled_at = new Date().toISOString();
+        pushHistory(d, 'cancelled', 'Faktura zrušena');
+        d.updated_at = new Date().toISOString();
+        return d;
+      });
+      if (inv) showToast('Faktura byla zrušena.', 'success');
+      return inv;
+    },
+    duplicateInvoice(id) {
+      const src = api.getLocalInvoice(id);
+      if (!src) { showToast('Faktura nenalezena.', 'error'); return null; }
+      const copy = JSON.parse(JSON.stringify(src));
+      copy.id = null;
+      copy.number = '';
+      copy.invoice_number = '';
+      copy.variable_symbol = '';
+      copy.status = 'draft';
+      copy.sent_at = null;
+      copy.paid_at = null;
+      copy.cancelled_at = null;
+      copy.history = [];
+      copy.created_at = null;
+      copy.updated_at = null;
+      state.draft = copy;
+      state.draftId = null;
+      state.step = 1;
+      if (typeof window.UserInvoicesDashboard !== 'undefined') {
+        window.UserInvoicesDashboard.state.view = 'wizard';
+        window.UserInvoicesDashboard.state.wizardDraftId = null;
+        window.UserInvoicesDashboard.paint();
+      } else {
+        navigateInvoiceNew();
+        paint();
+      }
+      showToast('Duplikát připraven — uložte pro přidělení nového čísla.', 'info');
+      return copy;
+    },
+    saveLocalInvoice,
+    sendLocalEmail(id) {
+      const inv = api.getLocalInvoice(id) || state.draft;
+      if (!inv) return;
+      const email = inv.customer?.email;
+      if (!email) { showToast('U odběratele chybí e-mail.', 'warning'); return; }
+      pushHistory(inv, 'email_send', 'Odesláno e-mailem');
+      saveLocalInvoice(inv);
+      const subject = encodeURIComponent(`Faktura ${inv.number || ''}`);
+      const body = encodeURIComponent(`Dobrý den,\n\nzasíláme fakturu ${inv.number || ''}.\n\n`);
+      window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
     },
     getAppearance,
     saveAppearance,
@@ -714,18 +902,40 @@
     invoiceCalc,
     mountWizard(el, draftId) {
       state.mountEl = el;
-      state.step = 1;
       state.previewModal = false;
       state.attachments = [];
       if (draftId) {
         const found = api.getLocalInvoice(draftId);
-        state.draft = found ? { ...found } : defaultDraft();
-        state.draftId = draftId;
+        if (found) {
+          state.draft = { ...found, items: Array.isArray(found.items) && found.items.length ? found.items : [emptyLine(1)] };
+          state.draftId = draftId;
+          state.step = 1;
+        } else {
+          state.draft = defaultDraft();
+          state.draftId = null;
+          state.step = 1;
+        }
+      } else if (state.draft && !state.draftId && state.draft.items) {
+        state.step = state.step || 1;
       } else {
         state.draft = defaultDraft();
         state.draftId = null;
+        state.step = 1;
       }
       paint();
+    },
+    editInvoice(id) {
+      const inv = api.getLocalInvoice(id);
+      if (!inv) { showToast('Faktura nenalezena.', 'error'); return; }
+      if (!canEditInvoice(inv)) { showToast('Tuto fakturu již nelze upravovat.', 'warning'); return; }
+      state.draft = { ...inv, items: Array.isArray(inv.items) && inv.items.length ? inv.items : [emptyLine(1)] };
+      state.draftId = id;
+      state.step = 1;
+      if (typeof window.UserInvoicesDashboard?.openWizardEdit === 'function') {
+        window.UserInvoicesDashboard.openWizardEdit(id);
+      } else {
+        paint();
+      }
     },
     startNew() {
       state.draft = defaultDraft();
@@ -734,6 +944,22 @@
       navigateInvoiceNew();
       paint();
     },
+    fillSupplierFromProfile() {
+      const u = window.currentUser || {};
+      if (!u.name && !u.email) { showToast('Profil neobsahuje údaje dodavatele.', 'info'); return; }
+      readFormIntoDraft();
+      state.draft.supplier = {
+        ...emptySupplier(),
+        name: u.name || u.company_name || '',
+        email: u.email || '',
+        phone: u.phone || '',
+        address: [u.street, u.city, u.zip].filter(Boolean).join(', '),
+        ico: u.ico || '',
+        dic: u.dic || '',
+      };
+      paint();
+      showToast('Údaje dodavatele načteny z profilu.', 'success');
+    },
     goStep(n) {
       if (n === 1) readFormIntoDraft();
       state.step = Number(n) || 1;
@@ -741,7 +967,7 @@
     },
     recalcSidebar() {
       readFormIntoDraft();
-      const legacy = draftToLegacy(state.draft);
+      const legacy = draftToLegacy({ ...state.draft, items: validItems(state.draft?.items) });
       const totals = invoiceCalc(legacy.lines);
       const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
       set('uInvSumSub', money(totals.subtotal));
@@ -779,27 +1005,31 @@
     saveDraft() {
       try {
         readFormIntoDraft();
-        const errs = validateDraft(state.draft);
-        if (errs.length) { showToast(errs[0], 'warning'); return; }
-        persistDraft('draft');
+        persistDraft('draft', 'Uloženo jako koncept');
         showToast('Koncept faktury byl uložen (staging localStorage).', 'success');
       } catch (e) {
         showToast(e?.message || 'Uložení selhalo', 'error');
       }
     },
     createInvoice() {
-      readFormIntoDraft();
-      const errs = validateDraft(state.draft);
-      if (errs.length) { showToast(errs[0], 'warning'); return; }
-      persistDraft('draft');
-      state.step = 3;
-      paint();
+      try {
+        readFormIntoDraft();
+        persistDraft('draft', 'Připraveno k odeslání');
+        state.step = 3;
+        paint();
+      } catch (e) {
+        showToast(e?.message || 'Vytvoření selhalo', 'warning');
+      }
     },
     finalize() {
-      persistDraft('created');
-      state.step = 4;
-      auditLog('invoice_created', state.draftId);
-      paint();
+      try {
+        persistDraft('created', 'Faktura vytvořena');
+        state.step = 4;
+        auditLog('invoice_created', state.draftId);
+        paint();
+      } catch (e) {
+        showToast(e?.message || 'Dokončení selhalo', 'warning');
+      }
     },
     cancel() {
       if (window.confirm('Zrušit vytváření faktury? Neuložené změny budou ztraceny.')) api.backToList();
@@ -813,6 +1043,7 @@
       readFormIntoDraft();
       state.previewModal = true;
       state.previewZoom = 100;
+      if (state.draftId) pushHistory(state.draft, 'preview_open', 'Náhled otevřen');
       auditLog('invoice_preview_open', state.draftId);
       paint();
     },
@@ -823,14 +1054,29 @@
     zoomIn() { state.previewZoom = Math.min(200, (state.previewZoom || 100) + 10); paint(); },
     zoomOut() { state.previewZoom = Math.max(50, (state.previewZoom || 100) - 10); paint(); },
     downloadPdf() {
+      readFormIntoDraft();
       auditLog('invoice_pdf_download', state.draftId);
-      showToast('Stažení PDF: Tato funkce čeká na backend API. Otevírám tisk pro uložení jako PDF.', 'info');
-      api.openPreview();
-      window.setTimeout(() => api.printPreview(), 500);
+      if (state.draftId) pushHistory(state.draft, 'pdf_download', 'PDF staženo/vytištěno');
+      saveLocalInvoice(state.draft);
+      showToast('Stažení PDF: Tato funkce čeká na backend API. Otevírám tisk A4.', 'info');
+      const legacy = draftToLegacy(state.draft);
+      if (typeof window.UserInvoicesDashboard?.printInvoice === 'function') {
+        window.UserInvoicesDashboard.printInvoice({ ...legacy, source: 'user_local', id: state.draftId });
+      } else {
+        api.printPreview();
+      }
     },
     printPreview() {
+      readFormIntoDraft();
       auditLog('invoice_pdf_print', state.draftId);
-      window.print();
+      if (state.draftId) pushHistory(state.draft, 'pdf_print', 'PDF vytištěno');
+      saveLocalInvoice(state.draft);
+      const legacy = draftToLegacy(state.draft);
+      if (typeof window.UserInvoicesDashboard?.printInvoice === 'function') {
+        window.UserInvoicesDashboard.printInvoice({ ...legacy, source: 'user_local', id: state.draftId });
+      } else {
+        showToast('Tisk není dostupný.', 'error');
+      }
     },
     sendEmail() {
       const d = state.draft || {};
@@ -843,16 +1089,7 @@
     },
     shareLink() {
       auditLog('invoice_share_link', state.draftId);
-      const token = btoa(`${state.draftId}:${Date.now()}`).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
-      const slug = window.lastWorkspaceMePayload?.account_slug || '';
-      const url = `${window.location.origin}${typeof toBrowserAppPath === 'function' ? toBrowserAppPath(`/app/u/${slug}/invoices`) : ''}?local_inv=${token}`;
-      try {
-        localStorage.setItem(`sv_inv_share_${token}`, JSON.stringify({ id: state.draftId, created: Date.now() }));
-        navigator.clipboard.writeText(url);
-        showToast('Odkaz zkopírován (lokální staging token).', 'success');
-      } catch (e) {
-        showToast(url, 'info');
-      }
+      blockerToast('Sdílení odkazem');
     },
     scheduleSend() {
       blockerToast('Naplánované odeslání');
