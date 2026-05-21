@@ -19,7 +19,6 @@ from . import (
     vehicle_lifecycle,
     service_workspace,
     service_workspace_cases,
-    service_workspace_work_orders,
     bot,
     vin_lookup,
     ares_lookup,
@@ -28,6 +27,7 @@ from . import (
     system_notifications,
     capabilities,
     admin_service_read,
+    user_invoices,
 )
 
 # Hlavní router pro v1 API
@@ -49,7 +49,6 @@ api_router.include_router(reminder_settings.router)  # Nastavení připomínek
 api_router.include_router(services.router)
 api_router.include_router(service_workspace.router)
 api_router.include_router(service_workspace_cases.router)
-api_router.include_router(service_workspace_work_orders.router)
 from .service_workspace_customer_centre import router as service_workspace_customer_centre_router
 
 api_router.include_router(service_workspace_customer_centre_router, prefix="/services/workspace")
@@ -61,6 +60,7 @@ api_router.include_router(push.router)  # Web Push notifications
 api_router.include_router(system_notifications.router)  # System notifications
 api_router.include_router(capabilities.router)  # Runtime capabilities
 api_router.include_router(admin_service_read.router)
+api_router.include_router(user_invoices.router)
 
 # License status router - explicitní kontrola
 try:

@@ -28,7 +28,7 @@ from fastapi import APIRouter, HTTPException, Depends, Body, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 import requests
-from sqlalchemy import func, nullslast
+from sqlalchemy import func, nullslast, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import Any, Dict, List, Optional
@@ -73,6 +73,7 @@ from ..models import (
     Customer,
     GlobalAuditLog as GlobalAuditLogModel,
     ServiceInvoice,
+    ServiceInvoiceLine,
     ServiceRecord as ServiceRecordModel,
     VehicleTachometerHistoryEntry as VehicleTachometerHistoryEntryModel,
 )
@@ -4729,6 +4730,262 @@ def delete_vehicle_photo(
     return {"message": "Fotka vozidla byla smazána."}
 
 
+def _require_user_account(current_user: Customer) -> None:
+    if is_service(normalize_role(getattr(current_user, "role", None))):
+        raise HTTPException(status_code=403, detail="Pouze uživatelský účet.")
+
+
+def _user_owned_vehicle_ids(db: Session, *, current_user: Customer) -> set[int]:
+    from ..models import VehicleOwnership
+
+    tenant_id = getattr(current_user, "tenant_id", None)
+    if tenant_id is None:
+        return set()
+    owned: set[int] = set()
+    current_user_id = getattr(current_user, "id", None)
+    if current_user_id is not None:
+        ownership_rows = (
+            db.query(VehicleOwnership.vehicle_id)
+            .join(VehicleModel, VehicleModel.id == VehicleOwnership.vehicle_id)
+            .filter(
+                VehicleOwnership.customer_id == int(current_user_id),
+                VehicleOwnership.is_active.is_(True),
+                VehicleModel.tenant_id == int(tenant_id),
+            )
+            .all()
+        )
+        for (vehicle_id,) in ownership_rows:
+            if vehicle_id:
+                owned.add(int(vehicle_id))
+    legacy_vehicles = (
+        db.query(VehicleModel.id)
+        .filter(
+            func.lower(VehicleModel.user_email) == func.lower(current_user.email),
+            VehicleModel.tenant_id == int(tenant_id),
+            VehicleModel.status != "archived",
+        )
+        .all()
+    )
+    for (vehicle_id,) in legacy_vehicles:
+        if vehicle_id:
+            owned.add(int(vehicle_id))
+    return owned
+
+
+def _user_invoice_list_item(db: Session, *, inv: ServiceInvoice) -> dict[str, Any]:
+    from .service_invoices import _parse_invoice_extra, _resolve_invoice_labels
+
+    extra = _parse_invoice_extra(inv.extra_json)
+    _customer_label, vehicle_label = _resolve_invoice_labels(db, inv=inv)
+    issuer = db.query(Customer).filter(Customer.id == int(inv.service_id)).first()
+    service_label = (issuer.name or issuer.email) if issuer else "Servis"
+    return {
+        "id": int(inv.id),
+        "vehicle_id": int(inv.vehicle_id) if inv.vehicle_id is not None else None,
+        "invoice_number": inv.invoice_number,
+        "status": inv.status,
+        "total": inv.total,
+        "currency": inv.currency,
+        "issued_at": inv.issued_at.isoformat() if inv.issued_at else None,
+        "due_at": inv.due_at.isoformat() if inv.due_at else None,
+        "service_record_id": int(inv.service_record_id) if getattr(inv, "service_record_id", None) else None,
+        "service_label": service_label,
+        "vehicle_label": vehicle_label,
+        "variable_symbol": extra.get("variable_symbol"),
+        "issue_date": extra.get("issue_date"),
+        "already_paid": bool(extra.get("already_paid")),
+    }
+
+
+def _user_invoice_detail(db: Session, *, inv: ServiceInvoice) -> dict[str, Any]:
+    from .service_invoices import _parse_invoice_extra, _resolve_invoice_labels, _serialize_line
+
+    lines = (
+        db.query(ServiceInvoiceLine)
+        .filter(ServiceInvoiceLine.invoice_id == int(inv.id))
+        .order_by(ServiceInvoiceLine.sort_order, ServiceInvoiceLine.id)
+        .all()
+    )
+    extra = _parse_invoice_extra(inv.extra_json)
+    _customer_label, vehicle_label = _resolve_invoice_labels(db, inv=inv)
+    issuer = db.query(Customer).filter(Customer.id == int(inv.service_id)).first()
+    service_label = (issuer.name or issuer.email) if issuer else "Servis"
+    return {
+        "id": int(inv.id),
+        "vehicle_id": int(inv.vehicle_id) if inv.vehicle_id is not None else None,
+        "invoice_number": inv.invoice_number,
+        "status": inv.status,
+        "subtotal": inv.subtotal,
+        "tax_total": inv.tax_total,
+        "total": inv.total,
+        "currency": inv.currency,
+        "issued_at": inv.issued_at.isoformat() if inv.issued_at else None,
+        "due_at": inv.due_at.isoformat() if inv.due_at else None,
+        "notes": inv.notes,
+        "extra": extra,
+        "service_label": service_label,
+        "vehicle_label": vehicle_label,
+        "lines": [_serialize_line(ln) for ln in lines],
+    }
+
+
+@router.get("/invoices/overview")
+def user_list_invoices_overview(
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Souhrnný seznam vystavených faktur pro přihlášeného majitele."""
+    _require_user_account(current_user)
+    assert_module_ready(db, "service_invoices", detail_prefix="Faktury nejsou připravené")
+    owned_ids = _user_owned_vehicle_ids(db, current_user=current_user)
+    vehicle_filter = ServiceInvoice.vehicle_id.is_(None)
+    if owned_ids:
+        vehicle_filter = or_(
+            ServiceInvoice.vehicle_id.is_(None),
+            ServiceInvoice.vehicle_id.in_(list(owned_ids)),
+        )
+
+    rows = (
+        db.query(ServiceInvoice)
+        .filter(
+            ServiceInvoice.customer_id == int(current_user.id),
+            ServiceInvoice.status == "issued",
+            vehicle_filter,
+        )
+        .order_by(nullslast(ServiceInvoice.issued_at.desc()), ServiceInvoice.id.desc())
+        .limit(500)
+        .all()
+    )
+    return {"items": [_user_invoice_list_item(db, inv=inv) for inv in rows]}
+
+
+def _user_get_owned_invoice_or_404(
+    db: Session,
+    *,
+    current_user: Customer,
+    invoice_id: int,
+) -> ServiceInvoice:
+    owned_ids = _user_owned_vehicle_ids(db, current_user=current_user)
+    vehicle_filter = ServiceInvoice.vehicle_id.is_(None)
+    if owned_ids:
+        vehicle_filter = or_(
+            ServiceInvoice.vehicle_id.is_(None),
+            ServiceInvoice.vehicle_id.in_(list(owned_ids)),
+        )
+    inv = (
+        db.query(ServiceInvoice)
+        .filter(
+            ServiceInvoice.id == int(invoice_id),
+            ServiceInvoice.customer_id == int(current_user.id),
+            ServiceInvoice.status == "issued",
+            vehicle_filter,
+        )
+        .first()
+    )
+    if not inv:
+        raise HTTPException(status_code=404, detail="Faktura nebyla nalezena.")
+    return inv
+
+
+@router.get("/invoices/{invoice_id}")
+def user_get_invoice(
+    invoice_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_user_account(current_user)
+    assert_module_ready(db, "service_invoices", detail_prefix="Faktury nejsou připravené")
+    inv = _user_get_owned_invoice_or_404(db, current_user=current_user, invoice_id=invoice_id)
+
+    write_global_audit_log(
+        db,
+        entity_type="service_invoice",
+        entity_id=int(inv.id),
+        action="service_invoice_user_view",
+        actor_type="user",
+        actor_user_id=int(current_user.id),
+        actor_role=str(getattr(current_user, "role", None) or ""),
+        tenant_id=int(inv.tenant_id),
+        metadata={"vehicle_id": inv.vehicle_id, "invoice_number": inv.invoice_number},
+    )
+    db.commit()
+    return _user_invoice_detail(db, inv=inv)
+
+
+@router.get("/invoices/{invoice_id}/pdf")
+def user_download_invoice_pdf(
+    invoice_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from .service_invoices import render_internal_service_invoice_pdf
+
+    _require_user_account(current_user)
+    assert_module_ready(db, "service_invoices", detail_prefix="Faktury nejsou připravené")
+    inv = _user_get_owned_invoice_or_404(db, current_user=current_user, invoice_id=invoice_id)
+
+    pdf_bytes = render_internal_service_invoice_pdf(db, invoice=inv)
+    write_global_audit_log(
+        db,
+        entity_type="service_invoice",
+        entity_id=int(inv.id),
+        action="service_invoice_user_pdf_download",
+        actor_type="user",
+        actor_user_id=int(current_user.id),
+        actor_role=str(getattr(current_user, "role", None) or ""),
+        tenant_id=int(inv.tenant_id),
+        metadata={"vehicle_id": inv.vehicle_id, "invoice_number": inv.invoice_number},
+    )
+    db.commit()
+    filename = f"faktura-{inv.invoice_number or inv.id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.get("/{vehicle_id}/invoices/{invoice_id}")
+def user_get_vehicle_invoice(
+    vehicle_id: int,
+    invoice_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_user_account(current_user)
+    assert_module_ready(db, "service_invoices", detail_prefix="Faktury nejsou připravené")
+    if not can_access_vehicle(vehicle_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Nemáte přístup k fakturám tohoto vozidla.")
+
+    inv = (
+        db.query(ServiceInvoice)
+        .filter(
+            ServiceInvoice.id == int(invoice_id),
+            ServiceInvoice.vehicle_id == int(vehicle_id),
+            ServiceInvoice.customer_id == int(current_user.id),
+            ServiceInvoice.status == "issued",
+        )
+        .first()
+    )
+    if not inv:
+        raise HTTPException(status_code=404, detail="Faktura nebyla nalezena.")
+
+    write_global_audit_log(
+        db,
+        entity_type="service_invoice",
+        entity_id=int(inv.id),
+        action="service_invoice_user_view",
+        actor_type="user",
+        actor_user_id=int(current_user.id),
+        actor_role=str(getattr(current_user, "role", None) or ""),
+        tenant_id=int(inv.tenant_id),
+        vehicle_id=int(vehicle_id),
+        metadata={"invoice_number": inv.invoice_number},
+    )
+    db.commit()
+    return _user_invoice_detail(db, inv=inv)
+
+
 @router.get("/{vehicle_id}/invoices")
 def user_list_vehicle_invoices(
     vehicle_id: int,
@@ -4745,6 +5002,7 @@ def user_list_vehicle_invoices(
         db.query(ServiceInvoice)
         .filter(
             ServiceInvoice.vehicle_id == int(vehicle_id),
+            ServiceInvoice.customer_id == int(current_user.id),
             ServiceInvoice.status == "issued",
         )
         .order_by(nullslast(ServiceInvoice.issued_at.desc()), ServiceInvoice.id.desc())
@@ -4787,6 +5045,7 @@ def user_download_vehicle_invoice_pdf(
         .filter(
             ServiceInvoice.id == int(invoice_id),
             ServiceInvoice.vehicle_id == int(vehicle_id),
+            ServiceInvoice.customer_id == int(current_user.id),
             ServiceInvoice.status == "issued",
         )
         .first()

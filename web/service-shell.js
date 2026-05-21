@@ -298,7 +298,6 @@
     customers: [],
     vehicles: [],
     reservations: [],
-    serviceCases: [],
     reminders: [],
     documents: [],
     invoices: [],
@@ -314,6 +313,12 @@
     showCompletedReminders: false,
     invoiceStatusFilter: 'all',
     invoiceSearchTerm: '',
+    invoiceListTab: 'overview',
+    invoicePage: 1,
+    invoicePerPage: 10,
+    invoicePreviewModalId: null,
+    invoicePreviewModalData: null,
+    invoiceWizard: null,
     customerSearchQuery: '',
     customerSearchResults: [],
     customerSearchMeta: null,
@@ -341,7 +346,6 @@
     vehicleLookupLoading: false,
     vehicleLookupError: '',
     workOrderDraft: null,
-    creatingWorkOrderFromIntake: new Set(),
     addVehicleDraft: null,
     activeVehicle: null,
     modal: null,
@@ -1467,6 +1471,7 @@
     if (key === 'serviceworkspace' || key === 'workorders') return 'work-orders';
     if (key === 'documents') return 'documents';
     if (key === 'invoices') return 'invoices';
+    if (key === 'invoice-new' || key === 'invoice-wizard') return 'invoice-new';
     if (key === 'reservations') return 'reservations';
     if (key === 'reminders') return 'reminders';
     if (key === 'account' || key === 'team') return 'team';
@@ -1603,10 +1608,6 @@
         customers: window.apiCall('/api/v1/services/workspace/customers', 'GET'),
         vehicles: window.apiCall('/api/v1/services/workspace/approved-vehicles', 'GET'),
         reservations: window.apiCall('/api/v1/reservations/service', 'GET'),
-        serviceCases: window.apiCall('/api/v1/services/workspace/service-cases/', 'GET').catch((err) => {
-          console.warn('[SERVICE_SHELL] service-cases endpoint:', err?.message || err);
-          return { items: [] };
-        }),
         reminders: window.apiCall('/api/v1/services/workspace/reminders?include_completed=true&limit=500', 'GET'),
         documents: window.apiCall('/api/v1/services/workspace/documents?limit=50', 'GET'),
         invoices: window.apiCall('/api/service/invoices', 'GET').catch((err) => {
@@ -1638,7 +1639,6 @@
         if (key === 'customers') state.customers = Array.isArray(payload) ? payload : [];
         if (key === 'vehicles') state.vehicles = Array.isArray(payload?.items) ? payload.items : [];
         if (key === 'reservations') state.reservations = Array.isArray(payload) ? payload : [];
-        if (key === 'serviceCases') state.serviceCases = Array.isArray(payload?.items) ? payload.items : [];
         if (key === 'reminders') state.reminders = Array.isArray(payload) ? payload : [];
         if (key === 'documents') state.documents = Array.isArray(payload) ? payload : [];
         if (key === 'invoices') state.invoices = Array.isArray(payload?.items) ? payload.items : [];
@@ -3254,573 +3254,6 @@
     }
   }
 
-  function formatMoney(value) {
-    const n = Number(value || 0);
-    if (!Number.isFinite(n)) return '0 Kč';
-    return `${n.toLocaleString('cs-CZ', { maximumFractionDigits: 2 })} Kč`;
-  }
-
-  function workOrderItemTypeLabel(type) {
-    const key = String(type || '').toLowerCase();
-    if (key === 'labor') return 'Práce';
-    if (key === 'material') return 'Materiál';
-    if (key === 'other') return 'Ostatní';
-    return type ? String(type) : '-';
-  }
-
-  function workOrderItemTypeActionLabel(type) {
-    const key = String(type || '').toLowerCase();
-    if (key === 'labor') return 'práci';
-    if (key === 'material') return 'materiál';
-    if (key === 'other') return 'ostatní';
-    return workOrderItemTypeLabel(type).toLowerCase();
-  }
-
-  function workOrderItemsSummaryEmpty() {
-    return {
-      items: [],
-      groups: {
-        labor: { total_without_vat: 0, vat_total: 0, total_with_vat: 0 },
-        material: { total_without_vat: 0, vat_total: 0, total_with_vat: 0 },
-        other: { total_without_vat: 0, vat_total: 0, total_with_vat: 0 },
-      },
-      total_without_vat: 0,
-      vat_total: 0,
-      total_with_vat: 0,
-    };
-  }
-
-  function serviceShellApiErrorMessage(error, fallback = 'Operace se nepodařila.') {
-    const status = Number(error?.status || error?.response?.status || 0);
-    if (status === 403) return 'Servis nemá oprávnění k této zakázce/vozidlu.';
-    const detail = error?.detail || error?.data?.detail || error?.response?.detail;
-    if (typeof detail === 'string' && detail.trim()) return detail;
-    if (detail && typeof detail === 'object') {
-      if (typeof detail.message === 'string' && detail.message.trim()) return detail.message;
-      try {
-        return JSON.stringify(detail);
-      } catch (e) {
-        /* ignore */
-      }
-    }
-    return error?.message || fallback;
-  }
-
-  async function serviceShellApiFormData(endpoint, formData) {
-    const baseUrl = typeof window.getApiBaseUrl === 'function'
-      ? window.getApiBaseUrl()
-      : window.location.origin;
-    const headers = { Accept: 'application/json' };
-    const token = window.accessToken || localStorage.getItem('accessToken') || localStorage.getItem('token');
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    } else if (window.currentUser?.email) {
-      headers['X-User-Email'] = window.currentUser.email;
-    }
-    const response = await fetch(`${baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      body: formData,
-    });
-    let payload = null;
-    try {
-      payload = await response.json();
-    } catch (e) {
-      payload = null;
-    }
-    if (!response.ok) {
-      const err = new Error(
-        typeof payload?.detail === 'string'
-          ? payload.detail
-          : payload?.detail?.message || payload?.message || `HTTP ${response.status}`,
-      );
-      err.status = response.status;
-      err.data = payload;
-      throw err;
-    }
-    return payload;
-  }
-
-  async function fetchWorkOrderItemsSummary(workOrderId) {
-    const id = Number(workOrderId || 0);
-    if (!id) throw new Error('Chybí ID zakázky.');
-    return window.apiCall(`/api/v1/services/workspace/work-orders/${id}/summary`, 'GET');
-  }
-
-  function renderWorkOrderItemsSection(workOrderId, summary, errorMessage = '') {
-    const id = Number(workOrderId || 0);
-    const safeSummary = summary && typeof summary === 'object' ? summary : workOrderItemsSummaryEmpty();
-    const items = Array.isArray(safeSummary.items) ? safeSummary.items : [];
-    const groups = safeSummary.groups || {};
-    const groupTotal = (key) => Number(groups?.[key]?.total_without_vat || 0);
-    const rows = items.map((item) => {
-      const itemId = Number(item?.id || 0);
-      const itemType = String(item?.type || item?.item_type || '');
-      return `
-        <tr>
-          <td data-label="Typ"><span class="service-shell-badge ${escape(itemType)}">${escape(workOrderItemTypeLabel(itemType))}</span></td>
-          <td data-label="Název"><strong>${escape(item?.name || '-')}</strong></td>
-          <td data-label="Kód">${escape(item?.code || '-')}</td>
-          <td data-label="Množství">${escape(Number(item?.quantity || 0).toLocaleString('cs-CZ'))}</td>
-          <td data-label="Jednotka">${escape(item?.unit || 'ks')}</td>
-          <td data-label="DPH">${escape(Number(item?.vat_rate || 0).toLocaleString('cs-CZ'))} %</td>
-          <td data-label="Cena bez DPH">${escape(formatMoney(item?.line_total_without_vat ?? item?.sale_price_without_vat))}</td>
-          <td data-label="Sleva">${escape(Number(item?.discount_percent || 0).toLocaleString('cs-CZ'))} %</td>
-          <td data-label="Cena s DPH">${escape(formatMoney(item?.line_total_with_vat))}</td>
-          <td data-label="Akce">
-            <div class="service-shell-work-order-item-actions">
-              <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openWorkOrderItemModal(${id}, '${escape(itemType)}', ${itemId})">Upravit</button>
-              <button type="button" class="btn btn-secondary" onclick="window.serviceShell.removeWorkOrderItem(${id}, ${itemId})">Odebrat</button>
-            </div>
-          </td>
-        </tr>
-      `;
-    }).join('');
-    return `
-      <section class="service-shell-side-card service-shell-work-order-items-card">
-        <div class="service-shell-card-head">
-          <div>
-            <h3>Položky zakázky</h3>
-            <p class="service-shell-subtitle">Práce, materiál a ostatní položky počítané serverem.</p>
-          </div>
-          <div class="service-shell-modal-actions service-shell-work-order-add-actions">
-            <button type="button" class="btn btn-primary" onclick="window.serviceShell.openWorkOrderItemModal(${id}, 'labor')">Přidat práci</button>
-            <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openWorkOrderItemModal(${id}, 'material')">Přidat materiál</button>
-            <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openWorkOrderItemModal(${id}, 'other')">Přidat ostatní</button>
-            <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openWorkOrderCsvImportModal(${id})">Import CSV dílů</button>
-          </div>
-        </div>
-        ${errorMessage ? `<div class="service-shell-inline-error">${escape(errorMessage)}</div>` : ''}
-        ${items.length ? `
-          <div class="service-shell-table-wrap service-shell-work-order-items-wrap">
-            <table class="service-shell-data-table service-shell-work-order-items-table">
-              <thead>
-                <tr>
-                  <th>Typ</th>
-                  <th>Název</th>
-                  <th>Kód</th>
-                  <th>Množství</th>
-                  <th>Jednotka</th>
-                  <th>DPH</th>
-                  <th>Cena bez DPH</th>
-                  <th>Sleva</th>
-                  <th>Cena s DPH</th>
-                  <th>Akce</th>
-                </tr>
-              </thead>
-              <tbody>${rows}</tbody>
-            </table>
-          </div>
-        ` : '<div class="service-shell-empty">Zatím nejsou přidané žádné položky zakázky.</div>'}
-        <div class="service-shell-work-order-summary-grid">
-          <div><span>Práce bez DPH</span><strong>${escape(formatMoney(groupTotal('labor')))}</strong></div>
-          <div><span>Materiál bez DPH</span><strong>${escape(formatMoney(groupTotal('material')))}</strong></div>
-          <div><span>Ostatní bez DPH</span><strong>${escape(formatMoney(groupTotal('other')))}</strong></div>
-          <div><span>DPH celkem</span><strong>${escape(formatMoney(safeSummary.vat_total))}</strong></div>
-          <div class="service-shell-work-order-summary-total"><span>Celkem s DPH</span><strong>${escape(formatMoney(safeSummary.total_with_vat))}</strong></div>
-        </div>
-      </section>
-    `;
-  }
-
-  function getWorkOrderItemFromModalSummary(workOrderId, itemId) {
-    const summary = state.modal?.data?.work_order_items_summary || null;
-    const items = Array.isArray(summary?.items) ? summary.items : [];
-    const id = Number(itemId || 0);
-    return items.find((item) => Number(item?.id || 0) === id) || null;
-  }
-
-  async function openWorkOrderItemModal(workOrderId, type = 'labor', itemId = 0) {
-    const id = Number(workOrderId || 0);
-    if (!id || !hasFloatingModalSupport()) return;
-    const normalizedType = ['labor', 'material', 'other'].includes(String(type)) ? String(type) : 'labor';
-    let item = Number(itemId || 0) ? getWorkOrderItemFromModalSummary(id, itemId) : null;
-    if (Number(itemId || 0) && !item) {
-      try {
-        const summary = await fetchWorkOrderItemsSummary(id);
-        item = (Array.isArray(summary?.items) ? summary.items : []).find((row) => Number(row?.id || 0) === Number(itemId || 0)) || null;
-      } catch (error) {
-        showToast(serviceShellApiErrorMessage(error, 'Položku se nepodařilo načíst.'), 'error');
-        return;
-      }
-    }
-    const edit = Boolean(item && Number(item.id || 0));
-    const itemType = edit ? String(item?.type || item?.item_type || normalizedType) : normalizedType;
-    openModal({
-      key: `work-order-item-${id}-${edit ? Number(item.id) : itemType}`,
-      entityType: 'work_order_item',
-      kicker: `Zakázka #${id}`,
-      title: edit ? 'Upravit položku zakázky' : `Přidat ${workOrderItemTypeActionLabel(itemType)}`,
-      description: 'Výpočet v UI je jen orientační. Finální souhrn se vždy znovu načítá ze serveru.',
-      context: { workOrderId: id, itemId: edit ? Number(item.id) : 0, itemType },
-      actions: {
-        save: async (modal) => {
-          const formItemType = String(modal?.context?.itemType || itemType);
-          const name = String(document.getElementById('serviceShellWorkOrderItemName')?.value || '').trim();
-          const code = String(document.getElementById('serviceShellWorkOrderItemCode')?.value || '').trim() || null;
-          const quantity = Number(document.getElementById('serviceShellWorkOrderItemQuantity')?.value || 0);
-          const unit = String(document.getElementById('serviceShellWorkOrderItemUnit')?.value || '').trim() || 'ks';
-          const vatRate = Number(document.getElementById('serviceShellWorkOrderItemVat')?.value || 0);
-          const purchaseRaw = String(document.getElementById('serviceShellWorkOrderItemPurchase')?.value || '').trim();
-          const purchase = purchaseRaw === '' ? null : Number(purchaseRaw);
-          const salePrice = Number(document.getElementById('serviceShellWorkOrderItemSale')?.value || 0);
-          const discount = Number(document.getElementById('serviceShellWorkOrderItemDiscount')?.value || 0);
-          if (!name) throw new Error('Vyplňte název položky.');
-          if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Množství musí být větší než nula.');
-          if (!Number.isFinite(vatRate) || vatRate < 0) throw new Error('Sazba DPH nesmí být záporná.');
-          if (purchase !== null && (!Number.isFinite(purchase) || purchase < 0)) throw new Error('Nákupní cena nesmí být záporná.');
-          if (!Number.isFinite(salePrice) || salePrice < 0) throw new Error('Prodejní cena nesmí být záporná.');
-          if (!Number.isFinite(discount) || discount < 0 || discount > 100) throw new Error('Sleva musí být mezi 0 a 100 %.');
-          const payload = {
-            type: formItemType,
-            name,
-            code,
-            quantity,
-            unit,
-            vat_rate: vatRate,
-            purchase_price_without_vat: purchase,
-            sale_price_without_vat: salePrice,
-            discount_percent: discount,
-            source: 'manual',
-          };
-          try {
-            if (edit) {
-              await window.apiCall(`/api/v1/services/workspace/work-orders/${id}/items/${Number(item.id)}`, 'PATCH', payload);
-            } else {
-              await window.apiCall(`/api/v1/services/workspace/work-orders/${id}/items`, 'POST', payload);
-            }
-            await fetchWorkOrderItemsSummary(id);
-            window.setTimeout(() => openWorkOrderDetailModal(id), 50);
-            return {
-              close: true,
-              message: edit ? 'Položka zakázky byla upravena.' : 'Položka zakázky byla přidána.',
-            };
-          } catch (error) {
-            throw new Error(serviceShellApiErrorMessage(error, 'Položku se nepodařilo uložit.'));
-          }
-        },
-      },
-      renderContent: () => `
-        <form class="service-dashboard-modal-form" onsubmit="event.preventDefault(); window.serviceShell.submitWorkOrderItemModal();">
-          <div class="service-dashboard-modal-grid cols-2">
-            <div class="form-group">
-              <label for="serviceShellWorkOrderItemName">Název</label>
-              <input type="text" id="serviceShellWorkOrderItemName" value="${escape(item?.name || '')}" placeholder="Např. Diagnostika, olejový filtr">
-            </div>
-            <div class="form-group">
-              <label for="serviceShellWorkOrderItemCode">Kód</label>
-              <input type="text" id="serviceShellWorkOrderItemCode" value="${escape(item?.code || '')}" placeholder="Volitelné">
-            </div>
-          </div>
-          <div class="service-dashboard-modal-grid cols-2">
-            <div class="form-group">
-              <label for="serviceShellWorkOrderItemQuantity">Množství</label>
-              <input type="number" id="serviceShellWorkOrderItemQuantity" min="0.01" step="0.01" value="${escape(item?.quantity ?? 1)}">
-            </div>
-            <div class="form-group">
-              <label for="serviceShellWorkOrderItemUnit">Jednotka</label>
-              <input type="text" id="serviceShellWorkOrderItemUnit" value="${escape(item?.unit || (itemType === 'labor' ? 'h' : 'ks'))}">
-            </div>
-          </div>
-          <div class="service-dashboard-modal-grid cols-2">
-            <div class="form-group">
-              <label for="serviceShellWorkOrderItemVat">Sazba DPH (%)</label>
-              <input type="number" id="serviceShellWorkOrderItemVat" min="0" max="100" step="0.01" value="${escape(item?.vat_rate ?? 21)}">
-            </div>
-            <div class="form-group">
-              <label for="serviceShellWorkOrderItemDiscount">Sleva (%)</label>
-              <input type="number" id="serviceShellWorkOrderItemDiscount" min="0" max="100" step="0.01" value="${escape(item?.discount_percent ?? 0)}">
-            </div>
-          </div>
-          <div class="service-dashboard-modal-grid cols-2">
-            <div class="form-group">
-              <label for="serviceShellWorkOrderItemPurchase">Nákupní cena bez DPH${itemType === 'material' ? '' : ' (volitelné)'}</label>
-              <input type="number" id="serviceShellWorkOrderItemPurchase" min="0" step="0.01" value="${escape(item?.purchase_price_without_vat ?? '')}">
-            </div>
-            <div class="form-group">
-              <label for="serviceShellWorkOrderItemSale">Prodejní cena bez DPH</label>
-              <input type="number" id="serviceShellWorkOrderItemSale" min="0" step="0.01" value="${escape(item?.sale_price_without_vat ?? 0)}">
-            </div>
-          </div>
-          <div class="service-shell-inline-alert">
-            <span>Typ položky: <strong>${escape(workOrderItemTypeLabel(itemType))}</strong>. Souhrn se po uložení znovu načte ze serveru.</span>
-          </div>
-        </form>
-      `,
-      renderFooter: (modal) => `
-        <div class="service-shell-modal-footer">
-          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openWorkOrderDetailModal(${id})">Zpět na zakázku</button>
-          <button type="button" class="btn btn-primary" onclick="window.serviceShell.submitWorkOrderItemModal()">${modal.saving ? 'Ukládám…' : edit ? 'Uložit položku' : 'Přidat položku'}</button>
-        </div>
-      `,
-    });
-  }
-
-  async function submitWorkOrderItemModal() {
-    if (String(state.modal?.key || '').startsWith('work-order-item-')) {
-      return runModalAction('save');
-    }
-  }
-
-  const csvImportFields = [
-    ['name', 'Název dílu *'],
-    ['code', 'Kód dílu'],
-    ['quantity', 'Množství *'],
-    ['unit', 'Jednotka'],
-    ['vat_rate', 'Sazba DPH'],
-    ['purchase_price_without_vat', 'Nákup bez DPH'],
-    ['sale_price_without_vat', 'Prodej bez DPH *'],
-    ['discount_percent', 'Sleva %'],
-    ['note', 'Poznámka'],
-  ];
-
-  function getCsvImportMappingFromDom(columns) {
-    const mapping = {};
-    csvImportFields.forEach(([field]) => {
-      const value = String(document.getElementById(`serviceShellCsvMap_${field}`)?.value || '').trim();
-      if (value && columns.includes(value)) mapping[field] = value;
-    });
-    return mapping;
-  }
-
-  function renderCsvImportPreview(preview, mapping) {
-    if (!preview) {
-      return '<div class="service-shell-empty">Nahrajte CSV soubor s hlavičkou. Náhled nic nezapisuje do zakázky.</div>';
-    }
-    const columns = Array.isArray(preview.columns) ? preview.columns : [];
-    const validation = preview.validation || {};
-    const rows = Array.isArray(validation.rows) ? validation.rows : [];
-    const sampleRows = Array.isArray(preview.sample_rows) ? preview.sample_rows : [];
-    const optionHtml = (selected) => `
-      <option value="">Nenamapovat</option>
-      ${columns.map((column) => `<option value="${escape(column)}" ${column === selected ? 'selected' : ''}>${escape(column)}</option>`).join('')}
-    `;
-    return `
-      <div class="service-shell-csv-summary">
-        <div><span>Oddělovač</span><strong>${escape(preview.delimiter === '\t' ? 'tabulátor' : preview.delimiter || '-')}</strong></div>
-        <div><span>Řádků</span><strong>${Number(validation.rows_count || 0)}</strong></div>
-        <div><span>K importu</span><strong>${Number(validation.importable_count || 0)}</strong></div>
-        <div><span>Přeskočeno</span><strong>${Number(validation.skipped_count || 0)}</strong></div>
-        <div><span>Duplicity</span><strong>${Number(validation.duplicate_count || 0)}</strong></div>
-      </div>
-      <div class="service-shell-csv-mapping">
-        ${csvImportFields.map(([field, label]) => `
-          <label>
-            <span>${escape(label)}</span>
-            <select id="serviceShellCsvMap_${field}">
-              ${optionHtml(mapping?.[field] || '')}
-            </select>
-          </label>
-        `).join('')}
-      </div>
-      ${sampleRows.length ? `
-        <div class="service-shell-table-wrap service-shell-csv-preview-wrap">
-          <table class="service-shell-data-table service-shell-csv-preview-table">
-            <thead><tr>${columns.map((column) => `<th>${escape(column)}</th>`).join('')}</tr></thead>
-            <tbody>
-              ${sampleRows.map((row) => `<tr>${columns.map((column) => `<td>${escape(row?.[column] || '')}</td>`).join('')}</tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      ` : ''}
-      ${rows.some((row) => row.errors?.length || row.warnings?.length) ? `
-        <div class="service-shell-csv-errors">
-          ${rows.filter((row) => row.errors?.length || row.warnings?.length).slice(0, 8).map((row) => `
-            <div>
-              <strong>Řádek ${Number(row.row_number || 0)}</strong>
-              <span>${escape([...(row.errors || []), ...(row.warnings || [])].join(' '))}</span>
-            </div>
-          `).join('')}
-        </div>
-      ` : ''}
-    `;
-  }
-
-  async function previewWorkOrderCsvImport(workOrderId) {
-    const id = Number(workOrderId || 0);
-    if (!id || !isModalOpen(`work-order-csv-import-${id}`)) return;
-    const input = document.getElementById('serviceShellCsvFile');
-    const file = input?.files?.[0] || state.modal?.context?.csvFile || null;
-    if (!file) {
-      showToast('Vyberte CSV soubor.', 'warning');
-      return;
-    }
-    const formData = new FormData();
-    formData.append('file', file);
-    const currentColumns = Array.isArray(state.modal?.data?.preview?.columns) ? state.modal.data.preview.columns : [];
-    if (currentColumns.length) {
-      formData.append('mapping_json', JSON.stringify(getCsvImportMappingFromDom(currentColumns)));
-    }
-    setModalState({ saving: true, error: '', actionKey: 'preview' });
-    try {
-      const preview = await serviceShellApiFormData(`/api/v1/services/workspace/work-orders/${id}/csv/preview`, formData);
-      const detected = preview?.mapping && typeof preview.mapping === 'object'
-        ? preview.mapping
-        : preview?.detected_mapping && typeof preview.detected_mapping === 'object'
-          ? preview.detected_mapping
-        : {};
-      state.modal.data = { ...(state.modal.data || {}), preview };
-      state.modal.context = { ...(state.modal.context || {}), csvFile: file, mapping: detected };
-      setModalState({ saving: false, actionKey: '' });
-    } catch (error) {
-      showToast(serviceShellApiErrorMessage(error, 'CSV náhled se nepodařilo načíst.'), 'error');
-      setModalState({ saving: false, actionKey: '', error: serviceShellApiErrorMessage(error, 'CSV náhled se nepodařilo načíst.') });
-    }
-  }
-
-  function openWorkOrderCsvImportModal(workOrderId) {
-    const id = Number(workOrderId || 0);
-    if (!id || !hasFloatingModalSupport()) return;
-    openModal({
-      key: `work-order-csv-import-${id}`,
-      entityType: 'work_order_csv_import',
-      kicker: `Zakázka #${id}`,
-      title: 'Import CSV dílů',
-      description: 'Preview je bezpečné a nic nezapisuje. Položky vzniknou až po potvrzení importu.',
-      context: { workOrderId: id, csvFile: null, mapping: {} },
-      actions: {
-        save: async (modal) => {
-          const preview = modal?.data?.preview || null;
-          const file = modal?.context?.csvFile || document.getElementById('serviceShellCsvFile')?.files?.[0] || null;
-          if (!preview || !file) throw new Error('Nejdřív nahrajte CSV a zkontrolujte náhled.');
-          const columns = Array.isArray(preview.columns) ? preview.columns : [];
-          const mapping = getCsvImportMappingFromDom(columns);
-          ['name', 'quantity', 'sale_price_without_vat'].forEach((field) => {
-            if (!mapping[field]) throw new Error('Namapujte název dílu, množství a prodej bez DPH.');
-          });
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('mapping_json', JSON.stringify(mapping));
-          formData.append('skip_duplicates', document.getElementById('serviceShellCsvSkipDuplicates')?.checked ? 'true' : 'false');
-          const result = await serviceShellApiFormData(`/api/v1/services/workspace/work-orders/${id}/csv/import`, formData);
-          await fetchWorkOrderItemsSummary(id);
-          window.setTimeout(() => openWorkOrderDetailModal(id), 50);
-          const imported = Number(result?.import_result?.imported_count || 0);
-          const skipped = Number(result?.import_result?.skipped_count || 0);
-          return {
-            close: true,
-            message: `CSV import hotový: importováno ${imported}, přeskočeno ${skipped}.`,
-          };
-        },
-      },
-      renderContent: (modal) => {
-        const preview = modal?.data?.preview || null;
-        const mapping = modal?.context?.mapping || preview?.detected_mapping || {};
-        return `
-          <form class="service-dashboard-modal-form" onsubmit="event.preventDefault(); window.serviceShell.submitWorkOrderCsvImportModal();">
-            <div class="form-group">
-              <label for="serviceShellCsvFile">CSV soubor</label>
-              <input type="file" id="serviceShellCsvFile" accept=".csv,text/csv" onchange="window.serviceShell.previewWorkOrderCsvImport(${id})">
-            </div>
-            <div class="service-shell-inline-alert">
-              <span>Povinné minimum: název dílu, množství a prodej bez DPH. Výchozí hodnoty: jednotka ks, DPH 21 %, sleva 0 %.</span>
-            </div>
-            ${renderCsvImportPreview(preview, mapping)}
-            <label class="service-shell-checkbox-row">
-              <input type="checkbox" id="serviceShellCsvSkipDuplicates" checked>
-              <span>Přeskočit možné duplicity z předchozího CSV importu</span>
-            </label>
-          </form>
-        `;
-      },
-      renderFooter: (modal) => `
-        <div class="service-shell-modal-footer">
-          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.openWorkOrderDetailModal(${id})">Zpět na zakázku</button>
-          <button type="button" class="btn btn-secondary" onclick="window.serviceShell.previewWorkOrderCsvImport(${id})">${modal.saving && modal.actionKey === 'preview' ? 'Načítám…' : 'Načíst náhled'}</button>
-          <button type="button" class="btn btn-primary" onclick="window.serviceShell.submitWorkOrderCsvImportModal()">${modal.saving && modal.actionKey === 'save' ? 'Importuji…' : 'Potvrdit import'}</button>
-        </div>
-      `,
-    });
-  }
-
-  async function submitWorkOrderCsvImportModal() {
-    if (String(state.modal?.key || '').startsWith('work-order-csv-import-')) {
-      return runModalAction('save');
-    }
-  }
-
-  async function removeWorkOrderItem(workOrderId, itemId) {
-    const id = Number(workOrderId || 0);
-    const iid = Number(itemId || 0);
-    if (!id || !iid) {
-      showToast('Chybí ID zakázky nebo položky.', 'warning');
-      return;
-    }
-    const confirmed = typeof window.confirm === 'function'
-      ? window.confirm('Odebrat položku ze zakázky?')
-      : true;
-    if (!confirmed) return;
-    try {
-      await window.apiCall(`/api/v1/services/workspace/work-orders/${id}/items/${iid}`, 'DELETE');
-      const summary = await fetchWorkOrderItemsSummary(id);
-      if (isModalOpen(`work-order-detail-${id}`)) {
-        state.modal.data = {
-          ...(state.modal.data || {}),
-          work_order_items_summary: summary,
-          work_order_items_error: '',
-        };
-        renderModal();
-      }
-      showToast('Položka zakázky byla odebrána.', 'success');
-    } catch (error) {
-      showToast(serviceShellApiErrorMessage(error, 'Položku se nepodařilo odebrat.'), 'error');
-    }
-  }
-
-  function workOrderForIntake(intakeId) {
-    const id = Number(intakeId || 0);
-    if (!id) return null;
-    const orders = Array.isArray(state.workOrders) ? state.workOrders : [];
-    return orders.find((order) => Number(order?.source_intake_id || 0) === id) || null;
-  }
-
-  function serviceIntakeCreateErrorMessage(error) {
-    const raw = serviceShellApiErrorMessage(error, 'Zakázku z příjmu se nepodařilo vytvořit.');
-    const msg = String(raw || '').trim();
-    if (/oprávn|opravnen|403/i.test(msg)) {
-      return 'Servis nemá oprávnění vytvořit zakázku z tohoto příjmu.';
-    }
-    if (/nebyl nalezen|not found|404|endpoint nebyl nalezen/i.test(msg)) {
-      return 'Příjem vozidla nebyl nalezen.';
-    }
-    if (/už existuje|uz existuje|duplicate|409/i.test(msg)) {
-      return 'Zakázka z tohoto příjmu už existuje.';
-    }
-    return msg || 'Zakázku z příjmu se nepodařilo vytvořit.';
-  }
-
-  async function createWorkOrderFromIntake(intakeId) {
-    const id = Number(intakeId || 0);
-    if (!id) {
-      showServiceToast('warning', 'Příjem vozidla', 'Chybí ID příjmu vozidla.');
-      return null;
-    }
-    if (!state.creatingWorkOrderFromIntake || typeof state.creatingWorkOrderFromIntake.has !== 'function') {
-      state.creatingWorkOrderFromIntake = new Set();
-    }
-    if (state.creatingWorkOrderFromIntake.has(id)) {
-      return null;
-    }
-    state.creatingWorkOrderFromIntake.add(id);
-    render();
-    try {
-      const result = await window.apiCall(`/api/v1/services/workspace/vehicle-intakes/${id}/create-work-order`, 'POST', {});
-      const workOrderId = Number(result?.work_order?.id || result?.id || 0);
-      showServiceToast('success', 'Zakázka vytvořena', workOrderId ? `Zakázka #${workOrderId} byla vytvořena.` : 'Zakázka byla vytvořena.');
-      if (workOrderId) {
-        openWorkOrderDetailModal(workOrderId);
-      }
-      return result;
-    } catch (error) {
-      showServiceToast('error', 'Příjem vozidla', serviceIntakeCreateErrorMessage(error));
-      return null;
-    } finally {
-      state.creatingWorkOrderFromIntake.delete(id);
-      render();
-    }
-  }
-
   async function openWorkOrderDetailModal(workOrderId) {
     const id = Number(workOrderId || 0);
     if (!id || !hasFloatingModalSupport()) return;
@@ -3833,17 +3266,7 @@
       kicker: `Zakázka #${id}`,
       title: 'Detail zakázky',
       description: 'Úpravy detailu, auditní stopa a navázané servisní workflow v jednom modal lifecycle.',
-      load: async () => {
-        const detail = await window.apiCall(`/api/service/work-orders/${id}`, 'GET');
-        try {
-          detail.work_order_items_summary = await fetchWorkOrderItemsSummary(id);
-          detail.work_order_items_error = '';
-        } catch (error) {
-          detail.work_order_items_summary = workOrderItemsSummaryEmpty();
-          detail.work_order_items_error = serviceShellApiErrorMessage(error, 'Položky zakázky se nepodařilo načíst.');
-        }
-        return detail;
-      },
+      load: async () => window.apiCall(`/api/service/work-orders/${id}`, 'GET'),
       actions: {
         save: async () => {
           const status = String(document.getElementById('serviceShellDetailStatus')?.value || 'awaiting_client_approval').trim();
@@ -3914,7 +3337,6 @@
               <label for="serviceShellDetailDescription">Popis</label>
               <textarea id="serviceShellDetailDescription" rows="4">${escape(detail?.description || '')}</textarea>
             </div>
-            ${renderWorkOrderItemsSection(id, detail?.work_order_items_summary, detail?.work_order_items_error)}
             ${quote ? `
               <section class="service-shell-side-card">
                 <h3>Nabídka</h3>
@@ -4842,6 +4264,7 @@
     return {
       customer_id: customerId,
       vehicle_id: vehicleId,
+      non_vehicle_invoice: !vehicleId,
       currency: String(document.getElementById(`${prefix}Currency`)?.value || fallback?.currency || 'CZK').trim() || 'CZK',
       due_at: fromDateTimeInputValue(document.getElementById(`${prefix}DueAt`)?.value),
       notes: String(document.getElementById(`${prefix}Notes`)?.value || '').trim() || null,
@@ -5405,6 +4828,13 @@
   }
 
   async function openCreateInvoiceModal(prefill = {}) {
+    if (window.serviceShell?.startInvoiceWizard) {
+      window.serviceShell.startInvoiceWizard({
+        customerId: prefill.customerId,
+        vehicleId: prefill.vehicleId,
+      });
+      return;
+    }
     const customers = Array.isArray(state.customers) ? state.customers : [];
     const preferredCustomerId = Number(prefill.customerId || customers[0]?.customer_id || 0);
     const prof = currentProfile();
@@ -6793,12 +6223,7 @@
           '<p>Modul zpráv připravujeme. Zatím použijte stávající notifikace, e-mail nebo záznam u zakázky.</p>',
         );
       case 'invoice-new':
-        return staticInfoSection(
-          'Nová faktura',
-          'Založení servisní faktury v tomto rozhraní.',
-          `<p>Vyplněním formuláře vytvoříte koncept nebo vystavíte fakturu stejně jako v přehledu faktur.</p>
-          <p style="margin-top:14px;"><button type="button" class="service-shell-primary-btn" onclick="window.serviceShell.openCreateInvoiceModal()">Otevřít formulář nové faktury</button></p>`,
-        );
+        return null;
       case 'quotes':
         return staticInfoSection(
           'Cenové nabídky',
@@ -7572,67 +6997,9 @@
     });
   }
 
-  function renderServiceIntakeAction(serviceCase) {
-    const intakeId = Number(serviceCase?.id || 0);
-    const existingWorkOrderId = Number(serviceCase?.work_order_id || serviceCase?.workOrderId || 0)
-      || Number(workOrderForIntake(intakeId)?.id || 0);
-    if (existingWorkOrderId) {
-      return `<button type="button" class="service-shell-primary-btn" onclick="event.stopPropagation(); window.serviceShell.openWorkOrderDetailModal(${existingWorkOrderId})">Otevřít zakázku</button>`;
-    }
-    const busy = Boolean(state.creatingWorkOrderFromIntake?.has?.(intakeId));
-    return `<button type="button" class="service-shell-primary-btn" ${busy ? 'disabled aria-busy="true"' : ''} onclick="event.stopPropagation(); window.serviceShell.createWorkOrderFromIntake(${intakeId})">${busy ? 'Vytvářím…' : 'Vytvořit zakázku'}</button>`;
-  }
-
-  function serviceCaseVehicle(serviceCase) {
-    const direct = serviceCase?.vehicle && typeof serviceCase.vehicle === 'object' ? serviceCase.vehicle : {};
-    const vehicleId = Number(serviceCase?.vehicle_id || direct?.id || 0);
-    const fromState = vehicleId && Array.isArray(state.vehicles)
-      ? state.vehicles.find((item) => Number(item?.id || item?.vehicle_id || 0) === vehicleId)
-      : null;
-    return { ...(fromState || {}), ...direct };
-  }
-
-  function serviceIntakeTitle(serviceCase) {
-    const vehicle = serviceCaseVehicle(serviceCase);
-    const brandModel = [vehicle?.brand || serviceCase?.vehicle_brand, vehicle?.model || serviceCase?.vehicle_model]
-      .filter(Boolean)
-      .join(' ')
-      .trim();
-    return brandModel || vehicle?.plate || vehicle?.spz || serviceCase?.vehicle_plate || `Příjem #${serviceCase?.id || '-'}`;
-  }
-
-  function renderServiceIntakeCard(serviceCase) {
-    const intakeId = Number(serviceCase?.id || 0);
-    const vehicle = serviceCaseVehicle(serviceCase);
-    const status = String(serviceCase?.status || serviceCase?.case_phase || 'intake_started');
-    const existingWorkOrderId = Number(serviceCase?.work_order_id || serviceCase?.workOrderId || 0)
-      || Number(workOrderForIntake(intakeId)?.id || 0);
-    return `
-      <article class="service-shell-list-card service-shell-intake-card">
-        <div class="service-shell-list-card-top">
-          <div>
-            <p class="service-shell-mobile-kicker">${escape(vehicle?.plate || vehicle?.spz || serviceCase?.vehicle_plate || serviceCase?.vehicle_spz || 'Příjem vozidla')}</p>
-            <h3>${escape(serviceIntakeTitle(serviceCase))}</h3>
-          </div>
-          <span class="service-shell-badge ${existingWorkOrderId ? 'approved' : 'in_progress'}">${existingWorkOrderId ? 'Zakázka založena' : accessStatusLabel(status)}</span>
-        </div>
-        <div class="service-shell-list-card-meta">
-          <div class="service-shell-list-card-row"><span>Požadavek</span><strong>${escape(serviceCase?.customer_request || serviceCase?.intake_note || '-')}</strong></div>
-          <div class="service-shell-list-card-row"><span>Stav km</span><strong>${escape(serviceCase?.mileage_in != null ? `${serviceCase.mileage_in} km` : '-')}</strong></div>
-          <div class="service-shell-list-card-row"><span>VIN</span><strong>${escape(vehicle?.vin || serviceCase?.vehicle_vin || '-')}</strong></div>
-          <div class="service-shell-list-card-row"><span>Vytvořeno</span><strong>${escape(formatDate(serviceCase?.created_at || '-'))}</strong></div>
-        </div>
-        <div class="service-shell-list-card-actions">
-          ${renderServiceIntakeAction(serviceCase)}
-        </div>
-      </article>
-    `;
-  }
-
   function reservationsSection() {
     const reservations = filteredReservations();
     const allReservations = Array.isArray(state.reservations) ? state.reservations : [];
-    const serviceCases = Array.isArray(state.serviceCases) ? state.serviceCases : [];
     const archivedReservations = allReservations.filter((item) => isReservationArchived(item)).length;
     const cards = reservations.length ? reservations.map((reservation) => listCard({
       kicker: reservation?.vehicle_plate || reservation?.vehicle_label || 'Rezervace',
@@ -7649,12 +7016,10 @@
     })).join('') : '';
     const stats = `
       <article class="service-shell-mini-card summary-card"><h3>Aktivní rezervace</h3><div class="service-shell-stat-value">${reservations.length}</div><p class="service-shell-muted">Ve výchozím pohledu bez zrušených a dokončených</p></article>
-      <article class="service-shell-mini-card summary-card"><h3>Příjmy</h3><div class="service-shell-stat-value">${serviceCases.length}</div><p class="service-shell-muted">Servisní příjmy připravené pro zakázku</p></article>
       <article class="service-shell-mini-card summary-card"><h3>Dnes</h3><div class="service-shell-stat-value">${reservations.filter((item) => toDateKey(item?.scheduled_for || item?.reservation_date || item?.starts_at) === todayKey()).length}</div><p class="service-shell-muted">Příjezdy během dneška</p></article>
       <article class="service-shell-mini-card summary-card"><h3>Archiv</h3><div class="service-shell-stat-value">${archivedReservations}</div><p class="service-shell-muted">Zrušené nebo dokončené rezervace</p></article>
     `;
-    const main = `
-      ${renderCardList({
+    const main = renderCardList({
         head: `
           <div class="service-shell-card-head">
             <div><h3 class="service-shell-card-title">Příchozí rezervace</h3><p class="service-shell-subtitle">Příjezdy zákazníků, nepotvrzené termíny a navazující servisní požadavky.</p></div>
@@ -7666,20 +7031,7 @@
         `,
         cards,
         empty: 'Bez aktivních rezervací.',
-      })}
-      ${renderCardList({
-        head: `
-          <div class="service-shell-card-head">
-            <div><h3 class="service-shell-card-title">Příjmy vozidel</h3><p class="service-shell-subtitle">Převzatá vozidla lze jedním klikem převést na servisní zakázku.</p></div>
-            <div class="service-shell-card-head-actions">
-              <button type="button" class="service-shell-icon-btn" onclick="window.serviceShell.load(true)">↗</button>
-            </div>
-          </div>
-        `,
-        cards: serviceCases.map(renderServiceIntakeCard).join(''),
-        empty: 'Zatím není evidovaný příjem vozidla.',
-      })}
-    `;
+      });
     const side = `
       <aside class="service-shell-side">
         <section class="service-shell-side-card">
@@ -7938,6 +7290,12 @@
 
   function currentSectionHtml() {
     if (state.loading) return loadingShell();
+    if (state.activeSection === 'invoices' && window.ServiceInvoicesDashboard?.renderList) {
+      return window.ServiceInvoicesDashboard.renderList();
+    }
+    if (state.activeSection === 'invoice-new' && window.ServiceInvoicesDashboard?.renderWizard) {
+      return window.ServiceInvoicesDashboard.renderWizard();
+    }
     const placeholder = serviceAccountPlaceholderSections();
     if (placeholder) return placeholder;
     if (state.activeSection === 'clients') return clientsSection();
@@ -7993,6 +7351,10 @@
       const nav = ServiceNav();
       const banner = activeVehicleBanner();
       const section = currentSectionHtmlSafe();
+      const invoicePreviewOverlay =
+        window.ServiceInvoicesDashboard?.renderPreviewOverlay && state.invoicePreviewModalId
+          ? window.ServiceInvoicesDashboard.renderPreviewOverlay()
+          : '';
       root.innerHTML = `
       <div class="service-shell-root ${isMobileViewport() ? 'service-shell-root--mobile' : ''}" data-service-shell="root" data-service-active-section="${escape(String(state.activeSection || '').trim())}">
         ${nav}
@@ -8001,8 +7363,18 @@
           ${banner}
           ${section}
         </div>
+        ${invoicePreviewOverlay}
       </div>
       `;
+      if (state.activeSection === 'invoice-new' && window.ServiceInvoicesDashboard?.initWizardAfterRender) {
+        window.setTimeout(() => {
+          try {
+            window.ServiceInvoicesDashboard.initWizardAfterRender();
+          } catch (wizardErr) {
+            console.warn('[SERVICE_SHELL] invoice wizard init failed:', wizardErr);
+          }
+        }, 0);
+      }
       if (typeof window.tickPragueNavbarClocks === 'function') {
         window.tickPragueNavbarClocks();
       }
@@ -8080,13 +7452,6 @@
     submitCreateWorkOrderModal,
     openWorkOrderDetailModal,
     submitWorkOrderDetailUpdate,
-    openWorkOrderItemModal,
-    submitWorkOrderItemModal,
-    openWorkOrderCsvImportModal,
-    previewWorkOrderCsvImport,
-    submitWorkOrderCsvImportModal,
-    removeWorkOrderItem,
-    createWorkOrderFromIntake,
     openAddVehicleModal,
     submitAddVehicleModal,
     appendWorkItemDraft,

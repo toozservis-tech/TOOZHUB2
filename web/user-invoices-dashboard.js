@@ -1,6 +1,7 @@
 /**
  * Správa vozidel — modul Faktury pro uživatele (/app/u/).
- * Samostatný modul (bez InvoicesUiShared / service-shell-invoices-dashboard.js).
+ * Vystavené faktury: 1:1 UI přes ServiceInvoicesDashboard + user-invoices-shell-adapter.
+ * Přijaté od servisu: read-only seznam v tomto modulu.
  */
 (function () {
   'use strict';
@@ -10,9 +11,9 @@
 
   const state = {
     mountEl: null,
+    viewMode: 'issued',
     view: 'list',
     invoices: [],
-    localInvoices: [],
     loading: false,
     listTab: 'overview',
     searchTerm: '',
@@ -26,7 +27,6 @@
     detailData: null,
     previewModal: false,
     previewData: null,
-    previewZoom: 100,
   };
 
   function esc(v) {
@@ -39,12 +39,7 @@
 
   function money(value, currency) {
     const n = Number(value || 0);
-    const cur = !currency || currency === 'CZK' ? 'Kč' : currency;
-    return `${n.toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
-  }
-
-  function moneyPlain(value) {
-    return money(value, 'Kč');
+    return `${n.toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency || 'CZK'}`;
   }
 
   function fmtDate(value) {
@@ -66,11 +61,20 @@
     }
   }
 
-  function getMount() {
-    if (state.mountEl) return state.mountEl;
-    const uapp = document.getElementById('userInvoicesMount');
-    if (uapp) return uapp;
+  function isUserAppNextActive() {
+    return document.body.classList.contains('user-app-next-active');
+  }
+
+  function resolveInvoicesMountEl() {
+    const nextMount = document.getElementById('uappNextInvoicesMount');
+    if (isUserAppNextActive() && nextMount) return nextMount;
+    if (state.mountEl && document.body.contains(state.mountEl)) return state.mountEl;
+    if (nextMount) return nextMount;
     return document.getElementById('invoicesTabMount');
+  }
+
+  function getMount() {
+    return resolveInvoicesMountEl();
   }
 
   function showToast(msg, kind) {
@@ -81,39 +85,17 @@
     return String(inv?.status || '').trim().toLowerCase();
   }
 
-  function resolveInvoiceStatus(inv) {
-    const key = statusKey(inv);
-    if (key === 'paid' || inv?.paid_at) return 'paid';
-    if (key === 'cancelled' || inv?.cancelled_at) return 'cancelled';
-    if (key === 'sent' || inv?.sent_at) {
-      const due = inv?.due_at || inv?.due_date;
-      const today = new Date().toISOString().slice(0, 10);
-      if (due && String(due).slice(0, 10) < today) return 'overdue';
-      return 'sent';
-    }
-    if (key === 'draft') return 'draft';
-    if (key === 'created') {
-      const due = inv?.due_at || inv?.due_date;
-      const today = new Date().toISOString().slice(0, 10);
-      if (due && String(due).slice(0, 10) < today) return 'overdue';
-      return 'created';
-    }
-    const extra = inv?.extra || {};
-    if (inv?.already_paid || extra.already_paid) return 'paid';
-    const due = inv?.due_at ? new Date(inv.due_at) : null;
-    if (due && due < new Date(new Date().toDateString())) return 'overdue';
-    return key || 'created';
-  }
-
   function displayStatus(inv) {
-    const resolved = resolveInvoiceStatus(inv);
-    if (resolved === 'draft') return { label: 'Koncept', cls: 'draft', key: 'draft' };
-    if (resolved === 'created') return { label: 'Vytvořena', cls: 'pending', key: 'created' };
-    if (resolved === 'sent') return { label: 'Odesláno', cls: 'pending', key: 'sent' };
-    if (resolved === 'paid') return { label: 'Zaplaceno', cls: 'paid', key: 'paid' };
-    if (resolved === 'overdue') return { label: 'Po splatnosti', cls: 'overdue', key: 'overdue' };
-    if (resolved === 'cancelled') return { label: 'Zrušeno', cls: 'overdue', key: 'cancelled' };
-    return { label: 'Čeká na úhradu', cls: 'pending', key: 'pending' };
+    const key = statusKey(inv);
+    if (key === 'draft') return { label: 'Koncept', cls: 'draft' };
+    if (key === 'cancelled') return { label: 'Zrušeno', cls: 'overdue' };
+    const extra = inv?.extra || {};
+    if (inv?.already_paid || extra.already_paid) return { label: 'Zaplaceno', cls: 'paid' };
+    const due = inv?.due_at ? new Date(inv.due_at) : null;
+    if (due && due < new Date(new Date().toDateString())) {
+      return { label: 'Po splatnosti', cls: 'overdue' };
+    }
+    return { label: 'Čeká na úhradu', cls: 'pending' };
   }
 
   function computeStats(invoices) {
@@ -153,26 +135,12 @@
     return raw ? String(raw).slice(0, 10) : '';
   }
 
-  function mergeAllInvoices() {
-    const apiRows = Array.isArray(state.invoices) ? state.invoices : [];
-    const localRows = (Array.isArray(state.localInvoices) ? state.localInvoices : []).map((inv) => {
-      const wf = window.UserInvoicesWorkflow;
-      const legacy = wf?.draftToLegacy ? wf.draftToLegacy(inv) : inv;
-      return {
-        ...legacy,
-        id: inv.id,
-        source: 'user_local',
-        invoice_number: inv.number || inv.invoice_number,
-        customer_label: inv.customer?.name || legacy?.extra?.customer_name,
-        service_label: inv.supplier?.name || legacy?.extra?.supplier_name,
-        vehicle_label: inv.vehicle_label || '',
-        status: inv.status || 'draft',
-        total: inv.total || inv.totals?.total_with_vat || 0,
-        due_at: inv.due_date || inv.due_at,
-        vehicle_id: inv.vehicle_id || null,
-      };
-    });
-    return [...localRows, ...apiRows];
+  function currentListSource() {
+    return state.invoices;
+  }
+
+  function isIssuedDirection() {
+    return false;
   }
 
   function filterInvoices(list) {
@@ -183,18 +151,9 @@
     const to = String(state.dateTo || '').trim();
     let rows = Array.isArray(list) ? [...list] : [];
 
-    if (tab === 'drafts') {
-      return rows.filter((inv) => {
-        const key = statusKey(inv);
-        return key === 'draft' || inv.source === 'user_local' && ['draft', 'created'].includes(key);
-      });
-    }
+    if (tab === 'drafts') return [];
 
-    rows = rows.filter((inv) => {
-      const key = statusKey(inv);
-      if (inv.source === 'user_local') return key !== 'draft' || tab === 'drafts';
-      return key !== 'draft';
-    });
+    rows = rows.filter((inv) => statusKey(inv) !== 'draft');
 
     if (statusF === 'paid') rows = rows.filter((inv) => displayStatus(inv).cls === 'paid');
     else if (statusF === 'pending') rows = rows.filter((inv) => displayStatus(inv).cls === 'pending');
@@ -310,60 +269,29 @@
     if (!extra.supplier_name && inv?.service_label) {
       extra.supplier_name = inv.service_label;
     }
-    if (!extra.supplier_name && inv?.supplier?.name) extra.supplier_name = inv.supplier.name;
-    if (!extra.customer_name && inv?.customer?.name) extra.customer_name = inv.customer.name;
     return { ...inv, extra, lines: Array.isArray(inv?.lines) ? inv.lines : [] };
-  }
-
-  function validDocumentLines(lines) {
-    return (Array.isArray(lines) ? lines : []).filter((ln) => {
-      const name = String(ln?.description || ln?.name || '').trim();
-      const qty = Number(ln?.quantity || 0);
-      return name && qty > 0;
-    });
-  }
-
-  function ensurePrintRoot() {
-    let root = document.getElementById('svInvoicePrintRoot');
-    if (!root) {
-      root = document.createElement('div');
-      root.id = 'svInvoicePrintRoot';
-      root.setAttribute('aria-hidden', 'true');
-      document.body.appendChild(root);
-    }
-    return root;
-  }
-
-  function printInvoice(inv) {
-    const doc = invoiceForDocument(inv);
-    const html = renderDocumentHtml(doc, { a4: true, print: true });
-    const root = ensurePrintRoot();
-    root.innerHTML = `<div class="sv-invoice-print-page">${html}</div>`;
-    window.print();
   }
 
   function renderDocumentHtml(inv, opts) {
     const doc = invoiceForDocument(inv);
     const extra = doc.extra || {};
-    const lines = validDocumentLines(doc.lines);
+    const lines = Array.isArray(doc.lines) ? doc.lines : [];
     const totals = invoiceCalc(lines.length ? lines : []);
     const spayd = spaydString(doc, totals);
     const invNo = doc.invoice_number || '(koncept)';
     const appName = 'Správa vozidel';
-    const isA4 = opts?.a4 !== false;
     const compact = opts?.compact;
-    const isPrint = !!opts?.print;
-    const supplierAddr = extra.supplier_street || [extra.supplier_street, extra.supplier_zip, extra.supplier_city].filter(Boolean).join(', ');
-    const customerAddr = extra.customer_street || [extra.customer_street, extra.customer_zip, extra.customer_city].filter(Boolean).join(', ');
-    const payMethod = extra.payment_method === 'hotovost' ? 'Hotově' : (doc.payment_method || extra.payment_method || 'Bankovní převod');
-    const noteText = doc.notes || doc.note || 'Děkujeme za spolupráci. Uhraďte prosím na účet uvedený níže s variabilním symbolem do data splatnosti.';
-    const logoSvg = '<svg class="sv-inv-doc-logo-svg" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#2563eb"/><path d="M20 8l10 5v8c0 6-4 11.5-10 13-6-1.5-10-7-10-13v-8l10-5z" fill="#fff" opacity=".95"/><path d="M14 18h12v2H14zm0 4h8v2h-8z" fill="#2563eb"/></svg>';
+    const supplierAddr = [extra.supplier_street, extra.supplier_zip, extra.supplier_city].filter(Boolean).join(', ');
+    const customerAddr = [extra.customer_street, extra.customer_zip, extra.customer_city].filter(Boolean).join(', ');
+    const noteText =
+      doc.notes ||
+      'Děkujeme za spolupráci. Uhraďte prosím na účet uvedený níže s variabilním symbolem do data splatnosti.';
 
     return `
-      <div class="sv-inv-doc ${isA4 ? 'sv-inv-doc--a4' : ''} ${compact ? 'sv-inv-doc--compact' : ''} ${isPrint ? 'sv-inv-doc--print' : ''}">
+      <div class="sv-inv-doc ${compact ? 'sv-inv-doc--compact' : ''}">
         <div class="sv-inv-doc-header">
           <div class="sv-inv-doc-brand">
-            ${logoSvg}
+            <span class="sv-inv-doc-brand-mark" aria-hidden="true">🛡</span>
             <div>
               <strong class="sv-inv-doc-brand-name">${esc(appName)}</strong>
               <div class="sv-inv-doc-brand-sub">Faktura vystavená v aplikaci</div>
@@ -376,64 +304,58 @@
         </div>
         <div class="sv-inv-doc-parties-row">
           <div class="sv-inv-doc-party-block">
-            <h4 class="sv-inv-doc-party-label"><span class="sv-inv-doc-ico" aria-hidden="true">👤</span> DODAVATEL</h4>
+            <h4 class="sv-inv-doc-party-label"><span aria-hidden="true">👤</span> DODAVATEL</h4>
             <p class="sv-inv-doc-party-name">${esc(extra.supplier_name || '—')}</p>
             <p>${esc(supplierAddr || '—')}</p>
-            <p>IČO: ${esc(extra.supplier_ico || '—')} · DIČ: ${esc(extra.supplier_dic || '—')}</p>
+            <p>IČO: ${esc(extra.supplier_ico || '—')}</p>
+            <p>DIČ: ${esc(extra.supplier_dic || '—')}</p>
             <p class="sv-inv-doc-contact">✉ ${esc(extra.supplier_email || '—')}</p>
             <p class="sv-inv-doc-contact">☎ ${esc(extra.supplier_phone || '—')}</p>
           </div>
           <div class="sv-inv-doc-party-block">
-            <h4 class="sv-inv-doc-party-label"><span class="sv-inv-doc-ico" aria-hidden="true">👤</span> ODBĚRATEL</h4>
+            <h4 class="sv-inv-doc-party-label"><span aria-hidden="true">👤</span> ODBĚRATEL</h4>
             <p class="sv-inv-doc-party-name">${esc(extra.customer_name || doc.customer_label || '—')}</p>
             <p>${esc(customerAddr || '—')}</p>
-            <p>IČO: ${esc(extra.customer_ico || '—')} · DIČ: ${esc(extra.customer_dic || '—')}</p>
+            <p>IČO: ${esc(extra.customer_ico || '—')}</p>
+            <p>DIČ: ${esc(extra.customer_dic || '—')}</p>
             <p class="sv-inv-doc-contact">✉ ${esc(extra.customer_email || '—')}</p>
             <p class="sv-inv-doc-contact">☎ ${esc(extra.customer_phone || '—')}</p>
           </div>
           <div class="sv-inv-doc-meta-panel">
-            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">📅</span><div><em>Datum vystavení</em><strong>${esc(fmtDateLong(extra.issue_date || doc.issued_at))}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">📅</span><div><em>Datum zdanitelného plnění</em><strong>${esc(fmtDateLong(extra.delivery_date || extra.issue_date))}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">📅</span><div><em>Datum splatnosti</em><strong class="is-due">${esc(fmtDateLong(doc.due_at))}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">📄</span><div><em>Forma úhrady</em><strong>${esc(payMethod)}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">#</span><div><em>Variabilní symbol</em><strong>${esc(extra.variable_symbol || '—')}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">#</span><div><em>Konstantní symbol</em><strong>${esc(extra.constant_symbol || '—')}</strong></div></div>
-            <div class="sv-inv-doc-meta-line"><span class="sv-inv-doc-ico">#</span><div><em>Specifický symbol</em><strong>${esc(extra.specific_symbol || '—')}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span>📅</span><div><em>Datum vystavení</em><strong>${esc(fmtDateLong(extra.issue_date || doc.issued_at))}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span>📅</span><div><em>Datum zdanitelného plnění</em><strong>${esc(fmtDateLong(extra.delivery_date || extra.issue_date))}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span>📅</span><div><em>Datum splatnosti</em><strong class="is-due">${esc(fmtDateLong(doc.due_at))}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span>📄</span><div><em>Forma úhrady</em><strong>Bankovní převod</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span>#</span><div><em>Variabilní symbol</em><strong>${esc(extra.variable_symbol || '—')}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span>#</span><div><em>Konstantní symbol</em><strong>${esc(extra.constant_symbol || '—')}</strong></div></div>
+            <div class="sv-inv-doc-meta-line"><span>#</span><div><em>Specifický symbol</em><strong>${esc(extra.specific_symbol || '—')}</strong></div></div>
           </div>
         </div>
         <h3 class="sv-inv-doc-section-title">Položky faktury</h3>
-        <div class="sv-inv-doc-table-scroll">
+        <div class="sv-inv-table-wrap">
           <table class="sv-inv-table sv-inv-lines-table">
             <thead><tr>
-              <th class="col-idx">#</th>
-              <th class="col-item">Položka / Popis</th>
-              <th class="col-qty">Množ.</th>
-              <th class="col-unit">Jedn.</th>
-              <th class="col-price">Cena za jedn.</th>
-              <th class="col-disc">Sleva</th>
-              <th class="col-vat">DPH</th>
-              <th class="col-net">Celkem bez DPH</th>
+              <th>#</th><th>Položka / Popis</th><th>Množství</th><th>Jedn.</th>
+              <th>Cena za jedn.</th><th>Sleva</th><th>DPH</th><th>Celkem bez DPH</th>
             </tr></thead>
             <tbody>
               ${lines
                 .map((ln, i) => {
                   const net = lineNet(ln);
                   const disc = Number(ln?.discount_percent || 0);
-                  const title = ln.description || ln.name || '';
-                  const sub = ln.note || (ln.description && ln.name && ln.description !== ln.name ? ln.description : '');
                   return `<tr>
-                    <td class="col-idx">${i + 1}</td>
-                    <td class="col-item">
-                      <div class="sv-inv-line-desc-cell">${lineIconHtml(title)}
-                        <div><div class="sv-inv-cell-primary">${esc(title)}</div>${sub ? `<div class="sv-inv-cell-sub">${esc(sub)}</div>` : ''}</div>
+                    <td>${i + 1}</td>
+                    <td>
+                      <div class="sv-inv-line-desc-cell">${lineIconHtml(ln.description)}
+                        <div><div class="sv-inv-cell-primary">${esc(ln.description)}</div>${ln.note ? `<div class="sv-inv-cell-sub">${esc(ln.note)}</div>` : ''}</div>
                       </div>
                     </td>
-                    <td class="col-qty">${esc(ln.quantity)}</td>
-                    <td class="col-unit">${esc(ln.unit)}</td>
-                    <td class="col-price">${esc(moneyPlain(ln.unit_price))}</td>
-                    <td class="col-disc">${disc ? `<span class="sv-inv-discount-pct">${disc} %</span>` : '—'}</td>
-                    <td class="col-vat">${esc(ln.tax_rate)} %</td>
-                    <td class="col-net">${esc(moneyPlain(net))}</td>
+                    <td>${esc(ln.quantity)}</td>
+                    <td>${esc(ln.unit)}</td>
+                    <td>${esc(money(ln.unit_price, doc.currency))}</td>
+                    <td>${disc ? `<span class="sv-inv-discount">${disc} %</span>` : '—'}</td>
+                    <td>${esc(ln.tax_rate)} %</td>
+                    <td>${esc(money(net, doc.currency))}</td>
                   </tr>`;
                 })
                 .join('') || '<tr><td colspan="8">Bez položek</td></tr>'}
@@ -443,35 +365,30 @@
         <div class="sv-inv-doc-footer-pay">
           <div class="sv-inv-pay-box">
             <strong class="sv-inv-pay-title">Platební údaje</strong>
-            <div class="sv-inv-pay-grid">
-              <div class="sv-inv-pay-details">
-                <p><span class="sv-inv-pay-lbl">Banka</span> ${esc(extra.supplier_bank || 'Fio banka, a.s.')}</p>
-                <p><span class="sv-inv-pay-lbl">Číslo účtu</span> ${esc(extra.supplier_bankaccount || '—')}</p>
-                <p><span class="sv-inv-pay-lbl">IBAN</span> ${esc(extra.supplier_iban || '—')}</p>
-                <p><span class="sv-inv-pay-lbl">BIC/SWIFT</span> ${esc(extra.supplier_swift || '—')}</p>
-                <p><span class="sv-inv-pay-lbl">Variabilní symbol</span> ${esc(extra.variable_symbol || '—')}</p>
-              </div>
-              ${spayd ? `<div class="sv-inv-pay-qr-col"><div class="sv-inv-qr"><img src="${esc(qrImgUrl(spayd))}" alt="QR Platba" width="88" height="88"></div><span class="sv-inv-pay-qr-label">QR Platba</span></div>` : ''}
-            </div>
+            <p><span class="sv-inv-pay-lbl">Banka</span> ${esc(extra.supplier_bank || 'Fio banka')}</p>
+            <p><span class="sv-inv-pay-lbl">Číslo účtu</span> ${esc(extra.supplier_bankaccount || '—')}</p>
+            <p><span class="sv-inv-pay-lbl">IBAN</span> ${esc(extra.supplier_iban || '—')}</p>
+            <p><span class="sv-inv-pay-lbl">BIC/SWIFT</span> ${esc(extra.supplier_swift || '—')}</p>
+            ${spayd ? `<div class="sv-inv-pay-qr-row"><div class="sv-inv-qr"><img src="${esc(qrImgUrl(spayd))}" alt="QR Platba" width="100" height="100"></div><span class="sv-inv-pay-qr-label">QR Platba</span></div>` : ''}
           </div>
           <div class="sv-inv-doc-totals-wrap">
             <table class="sv-inv-totals-table">
               <tbody>
-                <tr><td>Mezisoučet bez DPH</td><td>${esc(moneyPlain(totals.subtotal))}</td></tr>
-                <tr><td>Sleva celkem</td><td class="sv-inv-discount">-${esc(moneyPlain(totals.discountTotal))}</td></tr>
-                <tr><td>Základ DPH</td><td>${esc(moneyPlain(totals.base))}</td></tr>
-                <tr><td>DPH (21 %)</td><td>${esc(moneyPlain(totals.tax))}</td></tr>
+                <tr><td>Mezisoučet bez DPH</td><td>${esc(money(totals.subtotal, doc.currency))}</td></tr>
+                <tr><td>Sleva celkem</td><td class="sv-inv-discount">-${esc(money(totals.discountTotal, doc.currency))}</td></tr>
+                <tr><td>Základ DPH</td><td>${esc(money(totals.base, doc.currency))}</td></tr>
+                <tr><td>DPH (21 %)</td><td>${esc(money(totals.tax, doc.currency))}</td></tr>
               </tbody>
             </table>
             <div class="sv-inv-totals-box">
               <div class="sv-inv-totals-label">CELKEM K ÚHRADĚ</div>
-              <div class="grand">${esc(moneyPlain(totals.total))}</div>
+              <div class="grand">${esc(money(totals.total, doc.currency))}</div>
             </div>
           </div>
         </div>
         <div class="sv-inv-doc-footer-notes">
           <div class="sv-inv-thanks">
-            <span class="sv-inv-thanks-ico" aria-hidden="true">✓</span>
+            <span class="sv-inv-thanks-ico" aria-hidden="true">🛡</span>
             <div><strong>Děkujeme za spolupráci!</strong> Faktura byla vytvořena v aplikaci ${esc(appName)}.</div>
           </div>
           <div class="sv-inv-doc-note-box">
@@ -479,16 +396,15 @@
             <p>${esc(noteText)}</p>
           </div>
           <div class="sv-inv-doc-signature">
-            <div class="sv-inv-doc-signature-scribble" aria-hidden="true"></div>
             <div class="sv-inv-doc-signature-line"></div>
             <div class="sv-inv-doc-signature-name">${esc(extra.supplier_name || appName)}</div>
           </div>
         </div>
         <div class="sv-inv-doc-bar">
           <span>✓ Vytvořeno v aplikaci ${esc(appName)}</span>
-          <span class="sv-inv-doc-bar-sep">›</span><span>🔒 Bezpečně a online</span>
-          <span class="sv-inv-doc-bar-sep">›</span><span>☁ Rychle a přehledně</span>
-          <span class="sv-inv-doc-bar-sep">›</span><span>🌿 Šetříme čas i přírodu</span>
+          <span>›</span><span>🔒 Bezpečně a online</span>
+          <span>›</span><span>☁ Rychle a přehledně</span>
+          <span>›</span><span>🌿 Šetříme čas i přírodu</span>
         </div>
       </div>`;
   }
@@ -554,11 +470,12 @@
   }
 
   function renderListHtml() {
-    const all = mergeAllInvoices();
+    const all = currentListSource();
     const listTab = state.listTab;
     const searchTerm = state.searchTerm;
     const statusFilter = state.statusFilter;
     const loading = state.loading;
+    const issued = false;
     const stats = computeStats(all);
     const filtered = filterInvoices(all);
     const { slice, page, pages, total, per } = paginateList(filtered);
@@ -569,31 +486,27 @@
           <option value="pending"${statusFilter === 'pending' ? ' selected' : ''}>Čeká na úhradu</option>
           <option value="overdue"${statusFilter === 'overdue' ? ' selected' : ''}>Po splatnosti</option>`;
 
-    const tableBody = slice
+    const tableBody =
+      listTab === 'drafts' && !issued
+        ? '<tr><td colspan="7"><div class="sv-inv-table-empty">Koncepty faktur od servisů nevidíte — ty spravuje autoservis. V záložce Moje vystavené najdete své koncepty.</div></td></tr>'
+        : slice
             .map((inv) => {
-              const isLocal = inv.source === 'user_local';
-              const id = isLocal ? JSON.stringify(String(inv?.id || '')) : Number(inv?.id || 0);
+              const id = Number(inv?.id || 0);
               const vid = Number(inv?.vehicle_id || 0);
               const extra = inv?.extra || {};
-              const partyPrimary = esc(inv?.customer_label || inv?.service_label || '—');
-              const partySub = isLocal ? esc(`IČO: ${inv?.extra?.customer_ico || inv?.customer?.ico || '—'}`) : esc(inv?.vehicle_label || '—');
-              const detailClick = isLocal
-                ? `window.${API}.openLocalDetail(${JSON.stringify(String(inv.id))})`
+              const partyPrimary = esc(issued ? (inv?.customer_label || extra.customer_name || '—') : (inv?.service_label || '—'));
+              const partySub = esc(issued ? (extra.customer_ico ? `IČO ${extra.customer_ico}` : '—') : (inv?.vehicle_label || '—'));
+              const detailClick = issued
+                ? `window.${API}.openIssuedDetail(${id})`
                 : `window.${API}.openDetail(${id}, ${vid})`;
-              const previewClick = isLocal
-                ? `window.${API}.previewLocal(${JSON.stringify(String(inv.id))})`
-                : `window.${API}.openPreview(${id}, ${vid})`;
-              const pdfClick = isLocal
-                ? `window.${API}.printLocal(${JSON.stringify(String(inv.id))})`
+              const pdfClick = issued
+                ? `window.${API}.openIssuedPdf(${id})`
                 : `window.${API}.openPdf(${id}, ${vid})`;
-              const menuClick = isLocal
-                ? `window.${API}.openLocalMenu(${JSON.stringify(String(inv.id))}, event)`
-                : detailClick;
               return `<tr>
-          <td><button type="button" class="sv-inv-link-item" style="text-align:left;width:100%;" onclick="${detailClick}">
+          <td>
             <div class="sv-inv-cell-primary">${esc(inv?.invoice_number || '—')}</div>
             <div class="sv-inv-cell-sub">VS ${esc(extra.variable_symbol || inv?.variable_symbol || '—')}</div>
-          </button></td>
+          </td>
           <td>
             <div class="sv-inv-cell-primary">${partyPrimary}</div>
             <div class="sv-inv-cell-sub">${partySub}</div>
@@ -607,9 +520,9 @@
           <td>${statusBadgeHtml(inv)}</td>
           <td>
             <div class="sv-inv-row-actions">
-              <button type="button" class="sv-inv-icon-btn" title="Detail / náhled" onclick="${isLocal ? previewClick : detailClick}">${icoEye()}</button>
+              <button type="button" class="sv-inv-icon-btn" title="Detail" onclick="${detailClick}">${icoEye()}</button>
               <button type="button" class="sv-inv-icon-btn" title="Stáhnout PDF" onclick="${pdfClick}">${icoDownload()}</button>
-              <button type="button" class="sv-inv-icon-btn" title="Více akcí" onclick="${menuClick}">${icoMore()}</button>
+              <button type="button" class="sv-inv-icon-btn" title="Detail" onclick="${detailClick}">${icoMore()}</button>
             </div>
           </td>
         </tr>`;
@@ -670,17 +583,20 @@
       </div>`;
 
     return `
-      <div class="sv-inv sv-inv-page sv-inv-page--user" data-testid="user-invoices-dashboard">
+      <div class="sv-inv sv-inv-page sv-inv-page--user" data-testid="user-invoices-received">
         <nav class="sv-inv-breadcrumb" aria-label="Drobečková navigace">
           <button type="button" onclick="window.${API}.goOverview()">Přehled</button>
           <span aria-hidden="true">/</span>
-          <span>Faktury</span>
+          <button type="button" onclick="window.${API}.backToIssued()">Faktury</button>
+          <span aria-hidden="true">/</span>
+          <span>Přijaté od servisu</span>
         </nav>
         <div class="sv-inv-page-head">
           <div>
-            <h1>Faktury</h1>
-            <p>Vytvářejte, spravujte a sledujte přehled všech faktur. Rychle vystavte fakturu a mějte své finance pod kontrolou.</p>
+            <h1>Přijaté faktury od servisu</h1>
+            <p>Faktury vystavené autoservisy po dokončení opravy nebo servisu vašeho vozidla.</p>
           </div>
+          <button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.backToIssued()">← Moje vystavené faktury</button>
         </div>
         ${loading ? '<p class="sv-inv-loading-hint">Načítám faktury…</p>' : ''}
         ${kpi}
@@ -688,8 +604,8 @@
           <div class="sv-inv-main">
             <div class="sv-inv-card">
               <div class="sv-inv-tabs">
-                <button type="button" class="sv-inv-tab ${listTab === 'overview' ? 'is-active' : ''}" onclick="window.${API}.setListTab('overview')">Přehled faktur</button>
-                <button type="button" class="sv-inv-tab ${listTab === 'drafts' ? 'is-active' : ''}" onclick="window.${API}.setListTab('drafts')">Návrhy / Koncepty</button>
+                <button type="button" class="sv-inv-tab is-active">Přehled faktur</button>
+                <button type="button" class="sv-inv-tab" disabled title="Koncepty spravuje autoservis">Návrhy / Koncepty</button>
               </div>
               <div class="sv-inv-toolbar">
                 <input class="sv-inv-search" type="search" placeholder="Hledat fakturu, servis, číslo…" value="${esc(searchTerm)}" oninput="window.${API}.setSearch(this.value)">
@@ -701,7 +617,7 @@
               <div class="sv-inv-table-wrap">
                 <table class="sv-inv-table">
                   <thead><tr>
-                    <th>Číslo faktury</th><th>Zákazník</th><th>Datum vystavení</th><th>Splatnost</th>
+                    <th>Číslo faktury</th><th>Servis / vozidlo</th><th>Datum vystavení</th><th>Splatnost</th>
                     <th>Částka</th><th>Stav</th><th>Akce</th>
                   </tr></thead>
                   <tbody>${tableBody}</tbody>
@@ -723,10 +639,10 @@
           </div>
           <aside class="sv-inv-side">
             <section class="sv-inv-side-card">
-              <h3>Vytvořit fakturu</h3>
-              <p class="sv-inv-side-desc">Vystavte novou fakturu během pár sekund.</p>
-              <button type="button" class="sv-inv-btn sv-inv-btn--primary sv-inv-btn--block sv-inv-btn--with-plus" onclick="window.${API}.startNewInvoice()">+ Nová faktura</button>
-              <button type="button" class="sv-inv-btn sv-inv-btn--secondary sv-inv-btn--block sv-inv-btn--with-plus" onclick="window.${API}.openDrafts()">+ Z návrhu / konceptu</button>
+              <h3>Faktury od servisu</h3>
+              <p class="sv-inv-side-desc">Fakturu vám vystaví autoservis po dokončení opravy. Objednejte servis nebo prohlédněte své servisy.</p>
+              <button type="button" class="sv-inv-btn sv-inv-btn--primary sv-inv-btn--block sv-inv-btn--with-plus" onclick="window.${API}.onCreatePrimary()">Objednat servis</button>
+              <button type="button" class="sv-inv-btn sv-inv-btn--secondary sv-inv-btn--block" onclick="window.${API}.backToIssued()">Moje vystavené faktury</button>
             </section>
             <section class="sv-inv-side-card">
               <h3>Přehled DPH</h3>
@@ -746,10 +662,10 @@
             <section class="sv-inv-side-card">
               <h3>Rychlé akce</h3>
               <div class="sv-inv-link-list">
-                <button type="button" class="sv-inv-link-item" onclick="window.${API}.openNumberingSettings()">Nastavení číslování faktur</button>
-                <button type="button" class="sv-inv-link-item" onclick="window.${API}.openTemplates()">Šablony faktur</button>
-                <button type="button" class="sv-inv-link-item" onclick="window.${API}.openPriceList()">Ceník služeb a položek</button>
-                <button type="button" class="sv-inv-link-item" onclick="window.${API}.exportList()">Export faktur</button>
+                <button type="button" class="sv-inv-link-item" onclick="window.${API}.exportList()">Export faktur (CSV)</button>
+                <button type="button" class="sv-inv-link-item" onclick="window.${API}.goDocuments()">Dokumenty</button>
+                <button type="button" class="sv-inv-link-item" onclick="window.${API}.goServices()">Servisy</button>
+                <button type="button" class="sv-inv-link-item" onclick="window.${API}.goServiceHistory()">Servisní historie</button>
               </div>
             </section>
           </aside>
@@ -760,21 +676,26 @@
   function renderDetailHtml() {
     const inv = state.detailData || {};
     const loading = state.detailLoading;
-    const isLocal = inv.source === 'user_local';
-    const id = inv.id;
+    const id = Number(inv.id || 0);
     const vid = Number(inv.vehicle_id || 0);
+    const issued = !!inv._issued;
     const invNo = inv.invoice_number || '—';
     const ds = displayStatus(inv);
-    const totals = invoiceCalc(validDocumentLines(inv.lines || []));
+    const totals = invoiceCalc(inv.lines || []);
     const extra = inv.extra || {};
-    const paid = ds.key === 'paid';
-    const overdue = ds.key === 'overdue';
-    const canEdit = isLocal && window.UserInvoicesWorkflow?.canEditInvoice?.(inv);
-    const lid = JSON.stringify(String(id || ''));
+    const paid = ds.cls === 'paid';
+    const overdue = ds.cls === 'overdue';
+    const pdfClick = issued ? `window.${API}.openIssuedPdf(${id})` : `window.${API}.openPdf(${id}, ${vid})`;
 
-    const checklist = `
+    const checklist = issued
+      ? `<div class="sv-inv-checklist">
+          <div class="sv-inv-check-item is-done"><span class="sv-inv-check-ico" aria-hidden="true">✓</span><span>Faktura vystavena</span></div>
+          <div class="sv-inv-check-item"><span class="sv-inv-check-ico" aria-hidden="true">○</span><span>Odeslat PDF odběrateli</span></div>
+          <div class="sv-inv-check-item"><span class="sv-inv-check-ico" aria-hidden="true">○</span><span>Sledovat úhradu</span></div>
+        </div>`
+      : `
       <div class="sv-inv-checklist">
-        <div class="sv-inv-check-item is-done"><span class="sv-inv-check-ico" aria-hidden="true">✓</span><span>Faktura vystavena</span></div>
+        <div class="sv-inv-check-item is-done"><span class="sv-inv-check-ico" aria-hidden="true">✓</span><span>Faktura vystavena autoservisem</span></div>
         <div class="sv-inv-check-item is-done"><span class="sv-inv-check-ico" aria-hidden="true">✓</span><span>Zkontrolovat údaje a položky</span></div>
         <div class="sv-inv-check-item ${paid ? 'is-done' : overdue ? 'is-warn' : ''}">
           <span class="sv-inv-check-ico" aria-hidden="true">${paid ? '✓' : '○'}</span>
@@ -783,30 +704,9 @@
         <div class="sv-inv-check-item"><span class="sv-inv-check-ico" aria-hidden="true">○</span><span>Archivovat PDF u sebe</span></div>
       </div>`;
 
-    const historyHtml = (Array.isArray(inv.history) ? inv.history : []).slice(0, 12).map((h) =>
-      `<div class="sv-inv-history-row"><span>${esc(fmtDateLong(h.at))}</span><strong>${esc(h.label || h.action)}</strong></div>`
-    ).join('') || '<p class="sv-inv-side-empty">Zatím bez záznamů</p>';
-
-    const itemsHtml = (inv.items || inv.lines || []).map((it) => {
-      const name = it.name || it.description || '—';
-      const net = lineNet(it);
-      return `<tr><td><strong>${esc(name)}</strong></td><td>${esc(it.quantity)}</td><td>${esc(it.unit)}</td><td>${esc(money(it.unit_price))}</td><td>${esc(money(net))}</td></tr>`;
-    }).join('');
-
     const docHtml = loading
       ? '<p class="sv-inv-table-empty" style="padding:48px;">Načítám fakturu…</p>'
-      : renderDocumentHtml(inv, { a4: true, preview: true });
-
-    const previewBtn = isLocal
-      ? `window.${API}.previewLocal(${lid})`
-      : `window.${API}.openPreview(${Number(id)}, ${vid})`;
-    const pdfBtn = isLocal
-      ? `window.${API}.printLocal(${lid})`
-      : `window.${API}.openPdf(${Number(id)}, ${vid})`;
-    const shareBtn = isLocal
-      ? `showToast('Sdílení odkazem: Tato funkce čeká na backend API.', 'info')`
-      : `window.${API}.sharePdfLink(${Number(id)}, ${vid})`;
-    const editBtn = isLocal && canEdit ? `window.${API}.editLocal(${lid})` : '';
+      : renderDocumentHtml(inv);
 
     return `
       <div class="sv-inv sv-inv-page sv-inv-page--user sv-inv-page--detail" data-testid="user-invoice-detail">
@@ -820,54 +720,73 @@
         <div class="sv-inv-page-head">
           <div>
             <h1>${esc(invNo)} ${statusBadgeHtml(inv)}</h1>
-            <p>${esc(extra.supplier_name || inv.service_label || 'Dodavatel')} · ${esc(extra.customer_name || inv.customer_label || 'Odběratel')}</p>
-          </div>
-          <div class="sv-inv-head-actions">
-            ${isLocal && editBtn ? `<button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="${editBtn}">Upravit</button>` : ''}
-            ${isLocal ? `<button type="button" class="sv-inv-btn sv-inv-btn--ghost" onclick="window.${API}.openLocalMenu(${lid}, event)">Více akcí</button>` : ''}
+            <p>${issued ? esc(inv.customer_label || extra.customer_name || 'Odběratel') : `${esc(inv.service_label || 'Autoservis')} · ${esc(inv.vehicle_label || 'Vozidlo')}`}</p>
           </div>
         </div>
         <div class="sv-inv-layout sv-inv-user-invoice-view">
           <div class="sv-inv-main">
-            <div class="sv-inv-card sv-inv-section-card">
-              <h2>Údaje faktury</h2>
-              <div class="sv-inv-meta-grid sv-inv-meta-grid--review">
-                <div class="sv-inv-meta-item"><label>Dodavatel</label><strong>${esc(extra.supplier_name || '—')}</strong></div>
-                <div class="sv-inv-meta-item"><label>Odběratel</label><strong>${esc(extra.customer_name || '—')}</strong></div>
-                <div class="sv-inv-meta-item"><label>Datum vystavení</label><strong>${esc(fmtDateLong(extra.issue_date || inv.issue_date))}</strong></div>
-                <div class="sv-inv-meta-item"><label>Datum splatnosti</label><strong>${esc(fmtDateLong(inv.due_at))}</strong></div>
-              </div>
-            </div>
-            <div class="sv-inv-card sv-inv-section-card">
-              <h2>Položky faktury</h2>
-              <div class="sv-inv-table-wrap"><table class="sv-inv-table"><thead><tr><th>Položka</th><th>Množství</th><th>Jedn.</th><th>Cena</th><th>Celkem bez DPH</th></tr></thead><tbody>${itemsHtml || '<tr><td colspan="5">Bez položek</td></tr>'}</tbody></table></div>
-            </div>
             <div class="sv-inv-card sv-inv-preview-card">
               <div class="sv-inv-preview-card-head">
-                <div><h2>Náhled faktury</h2></div>
-                <button type="button" class="sv-inv-btn sv-inv-btn--secondary" ${loading ? 'disabled' : ''} onclick="${previewBtn}">Zobrazit na celou obrazovku</button>
+                <div>
+                  <h2>Náhled faktury</h2>
+                  <p class="sv-inv-preview-card-sub">${issued ? 'Vámi vystavená faktura odběrateli' : 'Kompletní dokument faktury od autoservisu — pouze pro čtení'}</p>
+                </div>
+                <button type="button" class="sv-inv-btn sv-inv-btn--secondary" ${loading || !id ? 'disabled' : ''} onclick="window.${API}.openPreview(${id}, ${vid})">Zobrazit na celou obrazovku</button>
               </div>
-              <div class="sv-inv-preview-embed sv-inv-preview-embed--a4"><div class="sv-inv-a4-sheet sv-inv-a4-sheet--embed">${docHtml}</div></div>
+              <div class="sv-inv-preview-embed">${docHtml}</div>
             </div>
             <div class="sv-inv-sticky-bar sv-inv-sticky-bar--user">
               <button type="button" class="sv-inv-btn sv-inv-btn--ghost" onclick="window.${API}.backToList()">Zpět na přehled</button>
               <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button type="button" class="sv-inv-btn sv-inv-btn--secondary sv-inv-btn--with-icon" ${loading ? 'disabled' : ''} onclick="${pdfBtn}">${icoDownload()} Stáhnout PDF</button>
-                <button type="button" class="sv-inv-btn sv-inv-btn--outline sv-inv-btn--with-icon" ${loading ? 'disabled' : ''} onclick="${isLocal ? `window.UserInvoicesWorkflow.sendLocalEmail(${lid})` : `window.${API}.contactService()`}">${icoMail()} Odeslat e-mailem</button>
-                <button type="button" class="sv-inv-btn sv-inv-btn--outline sv-inv-btn--with-icon" onclick="${shareBtn}">${icoLink()} Sdílet odkazem</button>
+                <button type="button" class="sv-inv-btn sv-inv-btn--secondary sv-inv-btn--with-icon" ${loading || !id ? 'disabled' : ''} onclick="${pdfClick}">${icoDownload()} Stáhnout PDF</button>
+                ${issued ? '' : `<button type="button" class="sv-inv-btn sv-inv-btn--outline sv-inv-btn--with-icon" ${loading || !id ? 'disabled' : ''} onclick="window.${API}.sharePdfLink(${id}, ${vid})">${icoLink()} Sdílet odkazem</button>`}
               </div>
             </div>
           </div>
           <aside class="sv-inv-side">
-            <section class="sv-inv-side-card"><h3>Stav faktury</h3>${statusBadgeHtml(inv)}<p class="sv-inv-side-desc">${esc(ds.label)}</p></section>
-            <section class="sv-inv-side-card"><h3>Další kroky</h3>${checklist}</section>
-            <section class="sv-inv-side-card"><h3>Souhrn</h3><div class="sv-inv-side-summary">
-              <div class="sv-inv-side-summary-row"><span>Mezisoučet bez DPH</span><span>${esc(money(totals.subtotal))}</span></div>
-              <div class="sv-inv-side-summary-row"><span>DPH (21 %)</span><span>${esc(money(totals.tax))}</span></div>
-              <div class="sv-inv-side-summary-total"><span>Celkem k úhradě</span><strong>${esc(money(totals.total || inv.total))}</strong></div>
-            </div></section>
-            <section class="sv-inv-side-card"><h3>Poznámka</h3><p>${esc(inv.note || inv.notes || '—')}</p></section>
-            <section class="sv-inv-side-card"><h3>Historie akcí</h3><div class="sv-inv-history-list">${historyHtml}</div></section>
+            <section class="sv-inv-side-card">
+              <h3>Stav faktury</h3>
+              ${statusBadgeHtml(inv)}
+              <p class="sv-inv-side-desc">${paid ? 'Faktura je označena jako zaplacená.' : overdue ? 'Faktura je po splatnosti — uhraďte co nejdříve.' : 'Faktura čeká na úhradu do data splatnosti.'}</p>
+            </section>
+            <section class="sv-inv-side-card">
+              <h3>Další kroky</h3>
+              ${checklist}
+            </section>
+            <section class="sv-inv-side-card">
+              <h3>Možnosti</h3>
+              <div class="sv-inv-send-options-list">
+                <button type="button" class="sv-inv-option-row" ${loading || !id ? 'disabled' : ''} onclick="${pdfClick}"><span class="sv-inv-option-ico">${icoDownload()}</span> Stáhnout PDF</button>
+                ${issued ? '' : `<button type="button" class="sv-inv-option-row" ${loading || !id ? 'disabled' : ''} onclick="window.${API}.sharePdfLink(${id}, ${vid})"><span class="sv-inv-option-ico">${icoLink()}</span> Sdílet odkazem</button>
+                <button type="button" class="sv-inv-option-row" onclick="window.${API}.contactService()"><span class="sv-inv-option-ico">${icoMail()}</span> Kontaktovat autoservis</button>`}
+              </div>
+            </section>
+            <section class="sv-inv-side-card">
+              <h3>Souhrn</h3>
+              <div class="sv-inv-side-summary">
+                <div class="sv-inv-side-summary-row"><span>Mezisoučet bez DPH</span><span>${esc(money(totals.subtotal, inv.currency))}</span></div>
+                <div class="sv-inv-side-summary-row"><span>Sleva celkem</span><span class="sv-inv-discount">-${esc(money(totals.discountTotal, inv.currency))}</span></div>
+                <div class="sv-inv-side-summary-row"><span>Základ DPH</span><span>${esc(money(totals.base, inv.currency))}</span></div>
+                <div class="sv-inv-side-summary-row"><span>DPH (21 %)</span><span>${esc(money(totals.tax, inv.currency))}</span></div>
+                <div class="sv-inv-side-summary-total"><span>Celkem k úhradě</span><strong>${esc(money(totals.total || inv.total, inv.currency))}</strong></div>
+              </div>
+            </section>
+            <section class="sv-inv-side-card">
+              <h3>Informace o faktuře</h3>
+              <dl class="sv-inv-info-list">
+                <div><dt>Číslo faktury</dt><dd>${esc(invNo)}</dd></div>
+                <div><dt>Variabilní symbol</dt><dd>${esc(extra.variable_symbol || '—')}</dd></div>
+                <div><dt>Datum vystavení</dt><dd>${esc(fmtDateLong(extra.issue_date || inv.issued_at))}</dd></div>
+                <div><dt>Datum splatnosti</dt><dd>${esc(fmtDateLong(inv.due_at))}</dd></div>
+                <div><dt>Forma úhrady</dt><dd>Bankovní převod</dd></div>
+                <div><dt>Servis</dt><dd>${esc(inv.service_label || '—')}</dd></div>
+                <div><dt>Vozidlo</dt><dd>${esc(inv.vehicle_label || '—')}</dd></div>
+              </dl>
+            </section>
+            <section class="sv-inv-side-card sv-inv-tip">
+              <span>💡</span>
+              <div><strong>Tip</strong> PDF si stáhněte pro archivaci. Při dotazu využijte kontakt na autoservis uvedený na faktuře.</div>
+            </section>
           </aside>
         </div>
       </div>`;
@@ -882,43 +801,22 @@
           <div class="sv-inv-modal sv-inv-modal--wide"><p style="padding:40px;">Načítám náhled…</p></div>
         </div>`;
     }
-    const id = inv.id;
+    const id = Number(inv.id);
     const vid = Number(inv.vehicle_id || 0);
-    const isLocal = inv.source === 'user_local';
-    const zoom = state.previewZoom || 100;
-    const pdfClick = isLocal
-      ? `window.${API}.openLocalPdf(${JSON.stringify(String(id))})`
-      : `window.${API}.openPdf(${Number(id)}, ${vid})`;
     return `
-      <div class="sv-inv-modal-backdrop sv-inv-modal-backdrop--dark" onclick="if(event.target===this) window.${API}.closePreview()">
-        <div class="sv-inv-modal sv-inv-modal--wide sv-inv-modal--pdf" role="dialog" aria-labelledby="userInvModalTitle" onclick="event.stopPropagation()">
+      <div class="sv-inv-modal-backdrop" onclick="if(event.target===this) window.${API}.closePreview()">
+        <div class="sv-inv-modal sv-inv-modal--wide" role="dialog" aria-labelledby="userInvModalTitle">
           <div class="sv-inv-modal-head">
-            <h2 id="userInvModalTitle" class="sv-inv-modal-title">Náhled faktury</h2>
-            <button type="button" class="sv-inv-modal-close" onclick="window.${API}.closePreview()" aria-label="Zavřít">×</button>
+            <h2 id="userInvModalTitle" style="margin:0;font-size:1.125rem;">Náhled faktury</h2>
+            <button type="button" class="sv-inv-icon-btn" onclick="window.${API}.closePreview()" aria-label="Zavřít">×</button>
           </div>
           <div class="sv-inv-modal-toolbar">
-            <div class="sv-inv-modal-toolbar-group">
-              <button type="button" class="sv-inv-toolbar-btn" disabled aria-label="Předchozí strana">‹</button>
-              <span class="sv-inv-toolbar-pages">1 / 1</span>
-              <button type="button" class="sv-inv-toolbar-btn" disabled aria-label="Další strana">›</button>
-            </div>
-            <div class="sv-inv-modal-toolbar-group">
-              <button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.zoomOut()" aria-label="Zmenšit">−</button>
-              <span class="sv-inv-toolbar-zoom">${zoom} %</span>
-              <button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.zoomIn()" aria-label="Zvětšit">+</button>
-            </div>
-            <div class="sv-inv-modal-toolbar-group sv-inv-modal-toolbar-actions">
-              <button type="button" class="sv-inv-toolbar-btn" onclick="${pdfClick}" title="Stáhnout">${icoDownload()}</button>
-              <button type="button" class="sv-inv-toolbar-btn" onclick="window.${API}.printPreview()" title="Tisk">🖨</button>
-            </div>
+            <span>‹ 1 / 1 ›</span>
+            <span>− 100% +</span>
+            <button type="button" class="sv-inv-icon-btn" onclick="window.${API}.openPdf(${id}, ${vid})" title="Stáhnout">${icoDownload()}</button>
+            <button type="button" class="sv-inv-icon-btn" onclick="window.print()" title="Tisk">🖨</button>
           </div>
-          <div class="sv-inv-modal-body sv-inv-modal-body--a4">
-            <div class="sv-inv-a4-viewport">
-              <div class="sv-inv-a4-sheet sv-inv-a4-sheet--preview" style="transform:scale(${zoom / 100})">
-                ${renderDocumentHtml(inv, { a4: true, preview: true })}
-              </div>
-            </div>
-          </div>
+          <div class="sv-inv-modal-body">${renderDocumentHtml(inv)}</div>
           <div class="sv-inv-modal-foot">
             <button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.closePreview()">Zavřít</button>
           </div>
@@ -926,31 +824,147 @@
       </div>`;
   }
 
+  function renderWizardHtml() {
+    const w = ensureWizardState();
+    const draft = w.draft || defaultIssuedDraft();
+    const extra = draft.extra || {};
+    const step = Number(w.step || 1);
+    const saving = w.saving ? ' disabled' : '';
+    let body = '';
+    if (step === 1) {
+      body = `
+        <div class="sv-inv-card sv-inv-section-card">
+          <h2>Dodavatel a odběratel</h2>
+          <h3 style="margin:16px 0 8px;font-size:0.75rem;color:#1d4ed8;text-transform:uppercase;">Dodavatel (vy)</h3>
+          <div class="sv-inv-form-grid">
+            <label>Název<input id="uInvSupName" value="${esc(extra.supplier_name)}"></label>
+            <label>IČO<input id="uInvSupIco" value="${esc(extra.supplier_ico)}"></label>
+            <label>DIČ<input id="uInvSupDic" value="${esc(extra.supplier_dic)}"></label>
+            <label>Ulice<input id="uInvSupStreet" value="${esc(extra.supplier_street)}"></label>
+            <label>Město<input id="uInvSupCity" value="${esc(extra.supplier_city)}"></label>
+            <label>PSČ<input id="uInvSupZip" value="${esc(extra.supplier_zip)}"></label>
+            <label>E-mail<input id="uInvSupEmail" type="email" value="${esc(extra.supplier_email)}"></label>
+            <label>Telefon<input id="uInvSupPhone" value="${esc(extra.supplier_phone)}"></label>
+            <label>Číslo účtu<input id="uInvSupAccount" value="${esc(extra.supplier_bankaccount)}"></label>
+            <label>Banka<input id="uInvSupBank" value="${esc(extra.supplier_bank || '')}"></label>
+          </div>
+          <h3 style="margin:16px 0 8px;font-size:0.75rem;color:#1d4ed8;text-transform:uppercase;">Odběratel</h3>
+          <div class="sv-inv-form-grid">
+            <label>Název odběratele *<input id="uInvCustName" value="${esc(extra.customer_name)}"></label>
+            <label>IČO<input id="uInvCustIco" value="${esc(extra.customer_ico)}"></label>
+            <label>E-mail<input id="uInvCustEmail" type="email" value="${esc(extra.customer_email)}"></label>
+            <label>Ulice<input id="uInvCustStreet" value="${esc(extra.customer_street || '')}"></label>
+            <label>Město<input id="uInvCustCity" value="${esc(extra.customer_city || '')}"></label>
+            <label>PSČ<input id="uInvCustZip" value="${esc(extra.customer_zip || '')}"></label>
+          </div>
+          <h3 style="margin:16px 0 8px;font-size:0.75rem;color:#1d4ed8;text-transform:uppercase;">Údaje faktury</h3>
+          <div class="sv-inv-form-grid">
+            <label>Datum vystavení<input id="uInvIssueDate" type="date" value="${esc(String(extra.issue_date || '').slice(0, 10))}"></label>
+            <label>Datum zdan. plnění<input id="uInvDeliveryDate" type="date" value="${esc(String(extra.delivery_date || '').slice(0, 10))}"></label>
+            <label>Splatnost<input id="uInvDueAt" type="date" value="${esc(String(draft.due_at || '').slice(0, 10))}"></label>
+            <label>Variabilní symbol<input id="uInvVs" value="${esc(extra.variable_symbol || '')}"></label>
+            <label>Měna<input id="uInvCurrency" value="${esc(draft.currency || 'CZK')}"></label>
+            <label>Poznámka<textarea id="uInvNotes" rows="2">${esc(draft.notes || '')}</textarea></label>
+          </div>
+        </div>`;
+    } else if (step === 2) {
+      const lines = Array.isArray(draft.lines) ? draft.lines : [];
+      body = `
+        <div class="sv-inv-card sv-inv-section-card">
+          <div class="sv-inv-section-head"><h2>Položky faktury</h2>
+            <button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.appendWizardLine()">+ Přidat položku</button>
+          </div>
+          <div id="uInvLinesEditor">${lines.map((ln, idx) => `
+            <div class="sv-inv-line-row" data-u-inv-line="${idx}">
+              <label><span>Popis</span><input data-u-line-desc value="${esc(ln.description)}"></label>
+              <label><span>Množ.</span><input data-u-line-qty type="number" min="0" step="0.1" value="${esc(ln.quantity)}"></label>
+              <label><span>Jedn.</span><input data-u-line-unit value="${esc(ln.unit)}"></label>
+              <label><span>Cena</span><input data-u-line-price type="number" min="0" step="0.01" value="${esc(ln.unit_price)}"></label>
+              <label><span>DPH</span><input data-u-line-vat type="number" value="${esc(ln.tax_rate)}"></label>
+            </div>`).join('')}</div>
+        </div>`;
+    } else {
+      const totals = invoiceCalc(draft.lines || []);
+      body = `
+        <div class="sv-inv-card sv-inv-section-card">
+          <h2>Náhled před vystavením</h2>
+          <p><strong>Odběratel:</strong> ${esc(extra.customer_name || '—')}</p>
+          <p><strong>Celkem k úhradě:</strong> ${esc(money(totals.total, draft.currency))}</p>
+          <p class="sv-inv-side-desc">Po vystavení fakturu již nebude možné upravit.</p>
+        </div>`;
+    }
+    const footer = step === 1
+      ? `<button type="button" class="sv-inv-btn sv-inv-btn--primary" onclick="window.${API}.wizardNext()"${saving}>Pokračovat</button>`
+      : step === 2
+        ? `<button type="button" class="sv-inv-btn sv-inv-btn--ghost" onclick="window.${API}.wizardBack()"${saving}>Zpět</button>
+           <button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.saveWizardDraft()"${saving}>Uložit koncept</button>
+           <button type="button" class="sv-inv-btn sv-inv-btn--primary" onclick="window.${API}.wizardNext()"${saving}>Náhled</button>`
+        : `<button type="button" class="sv-inv-btn sv-inv-btn--ghost" onclick="window.${API}.wizardBack()"${saving}>Zpět</button>
+           <button type="button" class="sv-inv-btn sv-inv-btn--secondary" onclick="window.${API}.saveWizardDraft()"${saving}>Uložit koncept</button>
+           <button type="button" class="sv-inv-btn sv-inv-btn--primary" onclick="window.${API}.issueWizard()"${saving}>Vystavit fakturu</button>`;
+    return `
+      <div class="sv-inv sv-inv-page sv-inv-page--user">
+        <nav class="sv-inv-breadcrumb"><button type="button" onclick="window.${API}.cancelWizard()">Faktury</button><span>/</span><span>Nová faktura</span></nav>
+        <div class="sv-inv-page-head"><h1>Nová faktura <span class="sv-inv-badge sv-inv-badge--draft">Koncept</span></h1></div>
+        ${body}
+        <div class="sv-inv-sticky-bar"><div></div><div style="display:flex;gap:8px;flex-wrap:wrap;">${footer}</div></div>
+      </div>`;
+  }
+
+  function mountIssuedAdapter(el) {
+    if (!el || !window.UserInvoicesShellAdapter) return;
+    window.UserInvoicesShellAdapter.mountInto(el);
+    if (window.ServiceInvoicesDashboard?.wireShellMethods) {
+      window.ServiceInvoicesDashboard.wireShellMethods();
+    }
+  }
+
   function paint() {
+    if (state.viewMode === 'issued') return;
     const mount = getMount();
     if (!mount) return;
-    if (state.view === 'wizard' && window.UserInvoicesWorkflow) {
-      window.UserInvoicesWorkflow.mountWizard(mount, state.wizardDraftId || null);
-      return;
-    }
-    if (state.view === 'settings' && window.UserInvoiceSettings) {
-      window.UserInvoiceSettings.mount(mount);
-      return;
-    }
-    const main = state.view === 'detail' ? renderDetailHtml() : renderListHtml();
+    let main = renderListHtml();
+    if (state.view === 'wizard') main = renderWizardHtml();
+    else if (state.view === 'detail') main = renderDetailHtml();
     mount.innerHTML = main + renderPreviewOverlay();
     document.body.classList.toggle('sv-inv-modal-open', !!state.previewModal);
     document.body.classList.toggle('user-invoices-view-detail', state.view === 'detail');
   }
 
-  async function load(force) {
-    if (state.loading && !force) return;
-    if (window.UserInvoicesWorkflow?.getLocalInvoices) {
-      state.localInvoices = window.UserInvoicesWorkflow.getLocalInvoices();
+  async function loadEligibility() {
+    if (typeof window.apiCall !== 'function') return;
+    try {
+      state.eligible = await window.apiCall(API_ELIGIBILITY, 'GET');
+    } catch (e) {
+      state.eligible = { eligible: false, message: e?.message || 'Nelze ověřit oprávnění.' };
     }
+  }
+
+  async function loadIssued(force) {
+    if (state.issuedLoading && !force) return;
+    if (typeof window.apiCall !== 'function') return;
+    state.issuedLoading = true;
+    if (state.direction === 'issued') paint();
+    try {
+      const res = await window.apiCall(API_ISSUED, 'GET');
+      state.issuedInvoices = Array.isArray(res?.items) ? res.items : [];
+    } catch (e) {
+      state.issuedInvoices = [];
+      if (state.direction === 'issued') showToast(e?.message || 'Vystavené faktury se nepodařilo načíst.', 'error');
+    } finally {
+      state.issuedLoading = false;
+      if (state.direction === 'issued') paint();
+    }
+  }
+
+  async function load(force) {
+    if (state.viewMode === 'issued') {
+      if (window.UserInvoicesShellAdapter?.reload) return window.UserInvoicesShellAdapter.reload(!!force);
+      return;
+    }
+    if (state.loading && !force) return;
     if (typeof window.apiCall !== 'function') {
-      showToast('API není dostupné — zobrazuji lokální koncepty.', 'info');
-      state.invoices = [];
+      showToast('API není dostupné.', 'error');
       paint();
       return;
     }
@@ -961,25 +975,55 @@
       state.invoices = Array.isArray(res?.items) ? res.items : [];
     } catch (e) {
       state.invoices = [];
-      showToast(e?.message || 'Servisní faktury se nepodařilo načíst.', 'error');
+      showToast(e?.message || 'Faktury se nepodařilo načíst.', 'error');
     } finally {
       state.loading = false;
-      if (window.UserInvoicesWorkflow?.getLocalInvoices) {
-        state.localInvoices = window.UserInvoicesWorkflow.getLocalInvoices();
-      }
       paint();
     }
   }
 
+  async function saveWizardDraft(options = {}) {
+    const requireLines = options.requireLines !== false;
+    const w = ensureWizardState();
+    w.saving = true;
+    paint();
+    try {
+      const draft = readWizardFormIntoDraft();
+      if (!String(draft.extra?.customer_name || '').trim()) throw new Error('Vyplňte název odběratele.');
+      const payload = payloadFromWizardDraft(draft);
+      if (requireLines && !payload.lines.length) throw new Error('Přidejte alespoň jednu položku faktury.');
+      let saved;
+      if (w.draftId) saved = await window.apiCall(`${API_ISSUED}/${w.draftId}`, 'PUT', payload);
+      else {
+        saved = await window.apiCall(API_ISSUED, 'POST', payload);
+        w.draftId = Number(saved?.id || 0);
+      }
+      const full = await window.apiCall(`${API_ISSUED}/${w.draftId}`, 'GET');
+      w.draft = full;
+      await loadIssued(true);
+      return full;
+    } finally {
+      w.saving = false;
+    }
+  }
+
+  function userInvoiceApiPath(invoiceId, vehicleId, suffix = '') {
+    const id = Number(invoiceId || 0);
+    const vid = Number(vehicleId || 0);
+    if (!id) return '';
+    if (vid > 0) return `/api/v1/vehicles/${vid}/invoices/${id}${suffix}`;
+    return `/api/v1/vehicles/invoices/${id}${suffix}`;
+  }
+
   async function loadDetail(invoiceId, vehicleId) {
     const id = Number(invoiceId);
-    const vid = Number(vehicleId);
-    if (!id || !vid) return;
+    const path = userInvoiceApiPath(id, vehicleId);
+    if (!path) return;
     state.detailLoading = true;
     state.detailData = null;
     paint();
     try {
-      const full = await window.apiCall(`/api/v1/vehicles/${vid}/invoices/${id}`, 'GET');
+      const full = await window.apiCall(path, 'GET');
       state.detailData = { ...full, already_paid: !!(full?.extra?.already_paid) };
     } catch (e) {
       showToast(e?.message || 'Fakturu se nepodařilo načíst.', 'error');
@@ -1012,6 +1056,137 @@
       state.page = 1;
       paint();
     },
+    setDirection(dir) {
+      state.direction = dir === 'issued' ? 'issued' : 'received';
+      state.listTab = 'overview';
+      state.page = 1;
+      state.view = 'list';
+      if (dir === 'issued' && !state.issuedInvoices.length) loadIssued(true);
+      paint();
+    },
+    goProfile() {
+      if (typeof switchTab === 'function') switchTab('settings');
+      else clickUappNav('settings');
+    },
+    startWizard() {
+      if (state.eligible && !state.eligible.eligible) {
+        showToast(state.eligible.message || 'Doplňte IČO v profilu.', 'warning');
+        return;
+      }
+      state.view = 'wizard';
+      state.wizard = { step: 1, draftId: null, draft: defaultIssuedDraft(), saving: false };
+      paint();
+    },
+    cancelWizard() {
+      state.view = 'list';
+      state.wizard = null;
+      paint();
+    },
+    wizardBack() {
+      const w = ensureWizardState();
+      readWizardFormIntoDraft();
+      w.step = Math.max(1, Number(w.step || 1) - 1);
+      paint();
+    },
+    async wizardNext() {
+      const w = ensureWizardState();
+      try {
+        readWizardFormIntoDraft();
+        if (w.step === 1) {
+          if (!String(w.draft?.extra?.customer_name || '').trim()) {
+            showToast('Vyplňte název odběratele.', 'warning');
+            return;
+          }
+          w.step = 2;
+          if (!Array.isArray(w.draft.lines) || !w.draft.lines.length) {
+            w.draft.lines = [{ description: '', quantity: 1, unit: 'ks', unit_price: 0, tax_rate: 21 }];
+          }
+          paint();
+          return;
+        }
+        if (w.step === 2) await saveWizardDraft({ requireLines: true });
+        w.step = Math.min(3, Number(w.step || 1) + 1);
+        paint();
+      } catch (e) {
+        showToast(e?.message || 'Uložení selhalo', 'error');
+        paint();
+      }
+    },
+    async saveWizardDraft() {
+      try {
+        const w = ensureWizardState();
+        const requireLines = Number(w.step || 1) >= 2;
+        await saveWizardDraft({ requireLines });
+        showToast('Koncept faktury byl uložen.', 'success');
+        paint();
+      } catch (e) {
+        showToast(e?.message || 'Uložení selhalo', 'error');
+        paint();
+      }
+    },
+    async issueWizard() {
+      const w = ensureWizardState();
+      try {
+        readWizardFormIntoDraft();
+        await saveWizardDraft({ requireLines: true });
+        const id = Number(w.draftId || 0);
+        if (!id) throw new Error('Chybí ID faktury.');
+        const issued = await window.apiCall(`${API_ISSUED}/${id}/issue`, 'POST');
+        w.draft = issued;
+        state.view = 'list';
+        state.direction = 'issued';
+        state.wizard = null;
+        await loadIssued(true);
+        showToast(`Faktura ${issued.invoice_number || ''} byla vystavena.`, 'success');
+        paint();
+      } catch (e) {
+        showToast(e?.message || 'Vystavení selhalo', 'error');
+        paint();
+      }
+    },
+    appendWizardLine() {
+      const ed = document.getElementById('uInvLinesEditor');
+      if (!ed) return;
+      const idx = ed.querySelectorAll('[data-u-inv-line]').length;
+      const div = document.createElement('div');
+      div.className = 'sv-inv-line-row';
+      div.setAttribute('data-u-inv-line', String(idx));
+      div.innerHTML = `
+        <label><span>Popis</span><input data-u-line-desc value=""></label>
+        <label><span>Množ.</span><input data-u-line-qty type="number" min="0" step="0.1" value="1"></label>
+        <label><span>Jedn.</span><input data-u-line-unit value="ks"></label>
+        <label><span>Cena</span><input data-u-line-price type="number" min="0" step="0.01" value="0"></label>
+        <label><span>DPH</span><input data-u-line-vat type="number" value="21"></label>`;
+      ed.appendChild(div);
+    },
+    async openIssuedDetail(invoiceId) {
+      const id = Number(invoiceId || 0);
+      if (!id) return;
+      state.view = 'detail';
+      state.detailLoading = true;
+      state.detailData = null;
+      paint();
+      try {
+        const full = await window.apiCall(`${API_ISSUED}/${id}`, 'GET');
+        state.detailData = { ...full, already_paid: !!(full?.extra?.already_paid), _issued: true };
+      } catch (e) {
+        showToast(e?.message || 'Fakturu se nepodařilo načíst.', 'error');
+        state.view = 'list';
+      } finally {
+        state.detailLoading = false;
+        paint();
+      }
+    },
+    openIssuedPdf(invoiceId) {
+      const id = Number(invoiceId || 0);
+      if (!id) return;
+      const path = `${API_ISSUED}/${id}/pdf`;
+      if (typeof window.openAuthenticatedPdf === 'function') {
+        window.openAuthenticatedPdf(path).catch((err) => showToast(err?.message || 'PDF se nepodařilo otevřít.', 'error'));
+      } else {
+        window.open(`${window.location.origin}${path}`, '_blank', 'noopener');
+      }
+    },
     setSearch(v) {
       state.searchTerm = v;
       state.page = 1;
@@ -1043,7 +1218,7 @@
       paint();
     },
     setPage(p) {
-      const filtered = filterInvoices(state.invoices);
+      const filtered = filterInvoices(currentListSource());
       const per = Math.max(1, state.perPage);
       const pages = Math.max(1, Math.ceil(filtered.length / per));
       state.page = Math.min(Math.max(1, Number(p) || 1), pages);
@@ -1055,166 +1230,13 @@
       paint();
     },
     onCreatePrimary() {
-      api.startNewInvoice();
-    },
-    startNewInvoice() {
-      state.view = 'wizard';
-      state.wizardDraftId = null;
-      state.previewModal = false;
-      if (typeof syncUserTabUrlHistory === 'function') {
-        try { syncUserTabUrlHistory('invoiceNew', {}); } catch (_) {}
+      if (typeof switchTab === 'function') {
+        switchTab('reservations');
+        showToast('Objednejte servis — fakturu vám vystaví autoservis po dokončení opravy.', 'info');
+      } else {
+        clickUappNav('reservations');
       }
-      paint();
     },
-    showList() {
-      state.view = 'list';
-      state.wizardDraftId = null;
-      state.detailData = null;
-      state.previewModal = false;
-      if (typeof syncUserTabUrlHistory === 'function') {
-        try { syncUserTabUrlHistory('invoices', {}); } catch (_) {}
-      }
-      load(true);
-    },
-    openDrafts() {
-      state.listTab = 'drafts';
-      state.view = 'list';
-      state.page = 1;
-      paint();
-    },
-    openLocalDetail(id) {
-      const inv = window.UserInvoicesWorkflow?.getLocalInvoice?.(id);
-      if (!inv) { showToast('Faktura nenalezena.', 'error'); return; }
-      const legacy = window.UserInvoicesWorkflow?.draftToLegacy?.(inv) || inv;
-      state.detailData = {
-        ...legacy,
-        source: 'user_local',
-        id,
-        status: inv.status,
-        history: inv.history || [],
-        note: inv.note,
-        attachments: inv.attachments || [],
-        supplier: inv.supplier,
-        customer: inv.customer,
-        items: inv.items || [],
-      };
-      state.view = 'detail';
-      state.detailLoading = false;
-      state.previewModal = false;
-      paint();
-    },
-    openWizardEdit(id) {
-      state.view = 'wizard';
-      state.wizardDraftId = id;
-      state.previewModal = false;
-      if (typeof syncUserTabUrlHistory === 'function') {
-        try { syncUserTabUrlHistory('invoiceNew', {}); } catch (_) {}
-      }
-      paint();
-    },
-    editLocal(id) {
-      if (window.UserInvoicesWorkflow?.editInvoice) window.UserInvoicesWorkflow.editInvoice(id);
-    },
-    printLocal(id) {
-      const inv = window.UserInvoicesWorkflow?.getLocalInvoice?.(id);
-      if (!inv) return;
-      const legacy = window.UserInvoicesWorkflow?.draftToLegacy?.(inv);
-      api.printInvoice({ ...legacy, source: 'user_local', id });
-      window.UserInvoicesWorkflow?.mutateLocalInvoice?.(id, (d) => {
-        window.UserInvoicesWorkflow.pushHistory(d, 'pdf_print', 'PDF vytištěno');
-        d.updated_at = new Date().toISOString();
-        return d;
-      });
-    },
-    previewLocal(id) {
-      const inv = window.UserInvoicesWorkflow?.getLocalInvoice?.(id);
-      if (!inv) return;
-      const legacy = window.UserInvoicesWorkflow?.draftToLegacy?.(inv);
-      state.previewData = { ...legacy, source: 'user_local', id };
-      state.previewModal = true;
-      state.previewZoom = 100;
-      window.UserInvoicesWorkflow?.mutateLocalInvoice?.(id, (d) => {
-        window.UserInvoicesWorkflow.pushHistory(d, 'preview_open', 'Náhled otevřen');
-        d.updated_at = new Date().toISOString();
-        return d;
-      });
-      paint();
-    },
-    localAction(id, action) {
-      const wf = window.UserInvoicesWorkflow;
-      if (!wf) return;
-      const inv = wf.getLocalInvoice(id);
-      if (!inv) { showToast('Faktura nenalezena.', 'error'); return; }
-      if (action === 'edit') { wf.editInvoice(id); return; }
-      if (action === 'duplicate') { wf.duplicateInvoice(id); api.load(true); return; }
-      if (action === 'email') { wf.sendLocalEmail(id); return; }
-      if (action === 'share') { showToast('Sdílení odkazem: Tato funkce čeká na backend API.', 'info'); return; }
-      if (action === 'paid') { wf.markPaid(id); api.load(true); return; }
-      if (action === 'cancel') {
-        if (window.confirm('Opravdu zrušit fakturu?')) { wf.cancelInvoice(id); api.load(true); }
-        return;
-      }
-      if (action === 'delete') {
-        if (window.confirm('Smazat koncept?')) {
-          if (wf.deleteLocalInvoice(id)) { state.view = 'list'; api.load(true); }
-        }
-        return;
-      }
-      if (action === 'credit') { showToast('Dobropis / oprava: Tato funkce čeká na backend API.', 'info'); return; }
-      if (action === 'reminder') { showToast('Upomínka: Tato funkce čeká na backend API.', 'info'); }
-    },
-    openLocalMenu(id, ev) {
-      ev?.stopPropagation?.();
-      const wf = window.UserInvoicesWorkflow;
-      const inv = wf?.getLocalInvoice?.(id);
-      if (!inv) return;
-      const canEdit = wf?.canEditInvoice?.(inv);
-      const canDel = wf?.canDeleteInvoice?.(inv);
-      const resolved = resolveInvoiceStatus(inv);
-      const items = [];
-      if (canEdit) items.push(['edit', 'Upravit']);
-      items.push(['duplicate', 'Duplikovat']);
-      items.push(['email', 'Odeslat e-mailem']);
-      items.push(['share', 'Sdílet odkazem']);
-      if (!['paid', 'cancelled'].includes(resolved)) items.push(['paid', 'Označit jako zaplaceno']);
-      if (!['cancelled', 'paid'].includes(resolved)) items.push(['cancel', 'Zrušit fakturu']);
-      if (canDel) items.push(['delete', 'Smazat koncept']);
-      if (resolved === 'paid') items.push(['credit', 'Vytvořit dobropis']);
-      if (resolved === 'overdue') items.push(['reminder', 'Odeslat upomínku']);
-      const labels = items.map((it, i) => `${i + 1}. ${it[1]}`).join('\n');
-      const choice = window.prompt(`Akce faktury ${inv.number || id}:\n${labels}\n\nZadejte číslo akce:`);
-      const idx = Number(choice) - 1;
-      if (idx >= 0 && idx < items.length) api.localAction(id, items[idx][0]);
-    },
-    openLocalPdf(id) {
-      api.printLocal(id);
-    },
-    openInvoiceSettings() {
-      state.view = 'settings';
-      paint();
-    },
-    openNumberingSettings() {
-      showToast('Číslování faktur: staging localStorage sekvence FV-YYYY-NNNNN.', 'info');
-    },
-    openTemplates() {
-      api.openInvoiceSettings();
-    },
-    openPriceList() {
-      showToast('BLOCKER: Ceník služeb vyžaduje backend API.', 'info');
-    },
-    openAccount() {
-      if (typeof switchTab === 'function') switchTab('account');
-    },
-    zoomIn() { state.previewZoom = Math.min(200, (state.previewZoom || 100) + 10); paint(); },
-    zoomOut() { state.previewZoom = Math.max(50, (state.previewZoom || 100) - 10); paint(); },
-    printPreview() {
-      const inv = state.previewData;
-      if (!inv) return;
-      printInvoice(inv);
-    },
-    printInvoice,
-    renderDocumentHtml,
-    invoiceCalc,
     onVatDetail() {
       showToast('Detailní přehled DPH z vašich faktur připravujeme.', 'info');
     },
@@ -1240,7 +1262,7 @@
       clickUappNav('serviceHistory');
     },
     exportList() {
-      const list = filterInvoices(mergeAllInvoices());
+      const list = filterInvoices(currentListSource());
       if (!list.length) {
         showToast('Není co exportovat.', 'info');
         return;
@@ -1277,8 +1299,8 @@
     },
     async openPreview(invoiceId, vehicleId) {
       const id = Number(invoiceId);
-      const vid = Number(vehicleId);
-      if (!id || !vid) return;
+      const path = userInvoiceApiPath(id, vehicleId);
+      if (!path) return;
       if (state.detailData && Number(state.detailData.id) === id) {
         state.previewData = invoiceForDocument(state.detailData);
         state.previewModal = true;
@@ -1286,7 +1308,7 @@
         return;
       }
       try {
-        const full = await window.apiCall(`/api/v1/vehicles/${vid}/invoices/${id}`, 'GET');
+        const full = await window.apiCall(path, 'GET');
         state.previewData = invoiceForDocument({ ...full, already_paid: !!(full?.extra?.already_paid) });
         state.previewModal = true;
         paint();
@@ -1299,10 +1321,8 @@
       paint();
     },
     openPdf(invoiceId, vehicleId) {
-      const id = Number(invoiceId);
-      const vid = Number(vehicleId);
-      if (!id || !vid) return;
-      const path = `/api/v1/vehicles/${vid}/invoices/${id}/pdf`;
+      const path = userInvoiceApiPath(invoiceId, vehicleId, '/pdf');
+      if (!path) return;
       if (typeof window.openAuthenticatedPdf === 'function') {
         window.openAuthenticatedPdf(path).catch((err) => showToast(err?.message || 'PDF se nepodařilo otevřít.', 'error'));
       } else {
@@ -1310,10 +1330,9 @@
       }
     },
     sharePdfLink(invoiceId, vehicleId) {
-      const id = Number(invoiceId);
-      const vid = Number(vehicleId);
-      if (!id || !vid) return;
-      const url = `${window.location.origin}/api/v1/vehicles/${vid}/invoices/${id}/pdf`;
+      const path = userInvoiceApiPath(invoiceId, vehicleId, '/pdf');
+      if (!path) return;
+      const url = `${window.location.origin}${path}`;
       if (navigator.clipboard?.writeText) {
         navigator.clipboard.writeText(url).then(() => showToast('Odkaz na PDF zkopírován.', 'success'));
       } else {
@@ -1344,37 +1363,43 @@
     },
     mountInto(el) {
       if (!el) return;
+      const legacyMount = document.getElementById('invoicesTabMount');
+      if (legacyMount && el !== legacyMount) legacyMount.replaceChildren();
       state.mountEl = el;
-      const sub = el.dataset?.invSubRoute || '';
-      const path = String(window.location.pathname || '');
-      if (sub === 'new' || path.includes('invoice-new')) {
-        state.view = 'wizard';
-      } else if (sub === 'settings' || path.includes('invoice-settings')) {
-        state.view = 'settings';
-      } else {
-        state.view = 'list';
-      }
+      state.viewMode = 'issued';
+      state.view = 'list';
+      mountIssuedAdapter(el);
+    },
+    showReceived() {
+      if (window.UserInvoicesShellAdapter?.unmount) window.UserInvoicesShellAdapter.unmount();
+      state.viewMode = 'received';
+      state.view = 'list';
+      state.detailData = null;
+      state.previewModal = false;
       load(true);
+    },
+    backToIssued() {
+      state.viewMode = 'issued';
+      state.view = 'list';
+      state.detailData = null;
+      state.previewModal = false;
+      const el = state.mountEl || document.getElementById('uappNextInvoicesMount');
+      if (el) mountIssuedAdapter(el);
     },
   };
 
-  function auditLogLocal(action, id) {
-    console.info('[USER_INVOICE_AUDIT]', action, { id, staging: true });
-  }
-
   window.UserInvoicesDashboard = api;
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.previewModal) {
-      state.previewModal = false;
-      paint();
-    }
-  });
   window.loadUserInvoices = function (force) {
-    const tabMount = getMount();
-    if (tabMount) state.mountEl = tabMount;
-    if (!state.mountEl) {
-      const legacy = document.getElementById('invoicesTabMount');
-      if (legacy && legacy.closest('#invoicesTab')) state.mountEl = legacy;
+    const nextMount = document.getElementById('uappNextInvoicesMount');
+    const legacyMount = document.getElementById('invoicesTabMount');
+    if (isUserAppNextActive() && nextMount) {
+      state.mountEl = nextMount;
+    } else if (!state.mountEl) {
+      if (nextMount) state.mountEl = nextMount;
+      else if (legacyMount) state.mountEl = legacyMount;
+    }
+    if (state.viewMode === 'issued' && window.UserInvoicesShellAdapter?.reload) {
+      return window.UserInvoicesShellAdapter.reload(!!force);
     }
     return api.load(force);
   };

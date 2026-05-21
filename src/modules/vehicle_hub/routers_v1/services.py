@@ -7,7 +7,7 @@ import math
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import APIRouter, HTTPException, Depends, Request, Query
@@ -16,6 +16,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from src.core.branding import APP_DISPLAY_NAME, APP_SERVER_PRODUCT_TOKEN
+from src.core.config import GOOGLE_MAPS_API_KEY, VEHICLE_IMAGE_API_KEY, VEHICLE_IMAGE_SERPAPI_ENDPOINT
 from src.core.rbac import ROLE_SERVICE, is_admin, normalize_role
 from ..database import get_db
 from ..models import (
@@ -61,6 +62,13 @@ _SERVICE_GEO_SUGGEST_URL = (
 _SERVICE_GEOLOOKUP_TIMEOUT_SEC = 1.8
 _DEFAULT_OWNER_DISCOVERY_RADIUS_KM = 50.0
 _SERVICE_GEOLOOKUP_MAX_NEW_LOOKUPS_PER_REQUEST = 25
+_OVERPASS_INTERPRETER_URL = "https://overpass-api.de/api/interpreter"
+_OVERPASS_TIMEOUT_SEC = 28.0
+_OSM_WORKSHOP_CACHE: Dict[str, Dict[str, Any]] = {}
+_OSM_WORKSHOP_CACHE_TTL_SEC = 6 * 60 * 60
+_OSM_WORKSHOP_CACHE_MAX_ITEMS = 400
+_REVERSE_GEO_CACHE: Dict[str, str] = {}
+_REVERSE_GEO_CACHE_MAX_ITEMS = 2000
 
 
 class VehicleAccessGrantRequest(BaseModel):
@@ -337,6 +345,545 @@ def _geocode_address(address: str) -> Optional[Dict[str, Any]]:
         }
         _cache_set(key, payload)
         return payload
+    except Exception:
+        return None
+
+
+def _bbox_from_radius_km(lat: float, lon: float, radius_km: float) -> tuple[float, float, float, float]:
+    lat_delta = float(radius_km) / 111.0
+    cos_lat = max(math.cos(math.radians(lat)), 0.2)
+    lon_delta = float(radius_km) / (111.0 * cos_lat)
+    return (lat - lat_delta, lon - lon_delta, lat + lat_delta, lon + lon_delta)
+
+
+def _osm_workshop_cache_get(key: str) -> Optional[list[Dict[str, Any]]]:
+    entry = _OSM_WORKSHOP_CACHE.get(key)
+    if not entry:
+        return None
+    if float(entry.get("expires_at") or 0) <= time.time():
+        _OSM_WORKSHOP_CACHE.pop(key, None)
+        return None
+    payload = entry.get("payload")
+    return payload if isinstance(payload, list) else None
+
+
+def _osm_workshop_cache_set(key: str, payload: list[Dict[str, Any]]) -> None:
+    if len(_OSM_WORKSHOP_CACHE) >= _OSM_WORKSHOP_CACHE_MAX_ITEMS:
+        oldest_key = min(_OSM_WORKSHOP_CACHE, key=lambda k: float(_OSM_WORKSHOP_CACHE[k].get("expires_at") or 0))
+        _OSM_WORKSHOP_CACHE.pop(oldest_key, None)
+    _OSM_WORKSHOP_CACHE[key] = {
+        "expires_at": time.time() + _OSM_WORKSHOP_CACHE_TTL_SEC,
+        "payload": payload,
+    }
+
+
+def _osm_element_coordinates(element: Dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
+    if element.get("type") == "node":
+        lat_raw = element.get("lat")
+        lon_raw = element.get("lon")
+    else:
+        center = element.get("center") if isinstance(element.get("center"), dict) else {}
+        lat_raw = center.get("lat")
+        lon_raw = center.get("lon")
+    try:
+        return float(lat_raw), float(lon_raw)
+    except (TypeError, ValueError):
+        return None, None
+
+
+def _osm_address_from_tags(tags: Dict[str, Any]) -> tuple[str, str, str]:
+    addr_full = str(tags.get("addr:full") or "").strip()
+    street = ""
+    if addr_full:
+        street = addr_full
+    elif tags.get("addr:street"):
+        house = str(tags.get("addr:housenumber") or "").strip()
+        street = f"{tags['addr:street']} {house}".strip()
+    elif tags.get("addr:place"):
+        street = str(tags.get("addr:place") or "").strip()
+    city = str(
+        tags.get("addr:city")
+        or tags.get("addr:town")
+        or tags.get("addr:village")
+        or tags.get("addr:municipality")
+        or ""
+    ).strip()
+    postcode = str(tags.get("addr:postcode") or "").strip()
+    return street, city, postcode
+
+
+def _osm_contact_from_tags(tags: Dict[str, Any]) -> tuple[str, str, str]:
+    phone = str(tags.get("phone") or tags.get("contact:phone") or tags.get("contact:mobile") or "").strip()
+    email = str(tags.get("email") or tags.get("contact:email") or "").strip()
+    website = str(tags.get("website") or tags.get("contact:website") or tags.get("url") or "").strip()
+    return phone, email, website
+
+
+def _osm_shop_type(tags: Dict[str, Any]) -> str:
+    shop = str(tags.get("shop") or "").lower()
+    amenity = str(tags.get("amenity") or "").lower()
+    craft = str(tags.get("craft") or "").lower()
+    name = str(tags.get("name") or "").lower()
+    if amenity == "vehicle_inspection" or "stk" in name or "technick" in name:
+        return "stk"
+    if "emis" in name and "stk" not in name:
+        return "emis"
+    if shop == "tyres" or "pneu" in name:
+        return "pneu"
+    if shop in {"motorcycle_repair", "motorcycle"} or "motocykl" in name or "motork" in name:
+        return "moto"
+    if (
+        str(tags.get("hgv") or "").lower() in {"yes", "designated"}
+        or str(tags.get("service:vehicle:truck") or "").lower() == "yes"
+        or "kamion" in name
+        or "náklad" in name
+        or "tir" in name
+    ):
+        return "truck"
+    if shop in {"car_repair", "car"} or amenity == "car_repair" or craft == "car_repair":
+        return "auto"
+    return "auto"
+
+
+def _google_place_shop_type(name: str, types: list[Any], keyword_hint: str = "") -> str:
+    name_l = str(name or "").lower()
+    types_l = [str(t or "").lower() for t in types]
+    hint = str(keyword_hint or "").lower()
+    if "stk" in name_l or "technick" in name_l or "emis" in hint:
+        return "stk"
+    if "emis" in name_l:
+        return "emis"
+    if "pneu" in name_l or "pneu" in hint or "tyre" in name_l:
+        return "pneu"
+    if "moto" in name_l or "motocykl" in name_l or "motork" in hint:
+        return "moto"
+    if "kamion" in name_l or "náklad" in name_l or "tir" in name_l or "kamion" in hint:
+        return "truck"
+    if "car_repair" in types_l:
+        return "auto"
+    return "auto"
+
+
+def _fetch_google_places_in_radius(ref_lat: float, ref_lon: float, radius_km: float) -> list[Dict[str, Any]]:
+    if not GOOGLE_MAPS_API_KEY:
+        return []
+    radius_m = min(50000, max(500, int(float(radius_km) * 1000)))
+    searches: list[Dict[str, str]] = [
+        {"type": "car_repair", "keyword": ""},
+        {"type": "", "keyword": "pneuservis"},
+        {"type": "", "keyword": "STK emise technická kontrola"},
+        {"type": "", "keyword": "autoservis motocykl"},
+        {"type": "", "keyword": "servis nákladních vozidel kamion"},
+    ]
+    rows: list[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for spec in searches:
+        params: Dict[str, str] = {
+            "location": f"{ref_lat},{ref_lon}",
+            "radius": str(radius_m),
+            "key": GOOGLE_MAPS_API_KEY,
+            "language": "cs",
+        }
+        if spec.get("type"):
+            params["type"] = spec["type"]
+        if spec.get("keyword"):
+            params["keyword"] = spec["keyword"]
+        request_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?" + urlencode(params)
+        try:
+            req = UrlRequest(
+                request_url,
+                headers={"Accept": "application/json", "User-Agent": f"{APP_SERVER_PRODUCT_TOKEN}-GooglePlaces/1.0"},
+            )
+            with urlopen(req, timeout=_SERVICE_GEOLOOKUP_TIMEOUT_SEC) as response:
+                body = response.read().decode("utf-8", errors="ignore")
+            data = json.loads(body)
+        except Exception:
+            continue
+        if not isinstance(data, dict) or str(data.get("status") or "") not in {"OK", "ZERO_RESULTS"}:
+            continue
+        results = data.get("results")
+        if not isinstance(results, list):
+            continue
+        hint = str(spec.get("keyword") or spec.get("type") or "")
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            place_id = str(item.get("place_id") or "").strip()
+            if not place_id or place_id in seen_ids:
+                continue
+            geometry = item.get("geometry") if isinstance(item.get("geometry"), dict) else {}
+            loc = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
+            lat = _safe_float(loc.get("lat"))
+            lon = _safe_float(loc.get("lng"))
+            if lat is None or lon is None:
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            types = item.get("types") if isinstance(item.get("types"), list) else []
+            shop_type = _google_place_shop_type(name, types, hint)
+            address = str(item.get("vicinity") or item.get("formatted_address") or "").strip()
+            seen_ids.add(place_id)
+            rows.append(
+                {
+                    "google_place_id": place_id,
+                    "osm_id": f"google/{place_id}",
+                    "name": name,
+                    "lat": round(lat, 6),
+                    "lon": round(lon, 6),
+                    "street": "",
+                    "city": "",
+                    "postcode": "",
+                    "address": address,
+                    "phone": None,
+                    "email": None,
+                    "website": None,
+                    "shop_type": shop_type,
+                    "tags": {"source": "google", "types": types},
+                    "source": "google",
+                }
+            )
+    return rows
+
+
+def _serpapi_maps_zoom_for_radius(radius_km: float) -> str:
+    radius = float(radius_km)
+    if radius <= 10:
+        return "14z"
+    if radius <= 25:
+        return "13z"
+    if radius <= 50:
+        return "12z"
+    if radius <= 100:
+        return "11z"
+    return "10z"
+
+
+def _serpapi_shop_type(title: str, type_label: str, query_hint: str) -> str:
+    hay = f"{title} {type_label} {query_hint}".lower()
+    if "stk" in hay or "technick" in hay or "emis" in hay:
+        return "stk"
+    if "pneu" in hay:
+        return "pneu"
+    if "moto" in hay or "motocykl" in hay:
+        return "moto"
+    if "kamion" in hay or "náklad" in hay or "tir" in hay:
+        return "truck"
+    return "auto"
+
+
+def _fetch_serpapi_google_maps_workshops(ref_lat: float, ref_lon: float, radius_km: float) -> list[Dict[str, Any]]:
+    """Servisy z Google Maps přes SerpAPI (stejná data jako v Google Maps pro ČR)."""
+    api_key = VEHICLE_IMAGE_API_KEY
+    if not api_key:
+        return []
+    endpoint = VEHICLE_IMAGE_SERPAPI_ENDPOINT or "https://serpapi.com/search.json"
+    zoom = _serpapi_maps_zoom_for_radius(radius_km)
+    ll = f"@{ref_lat},{ref_lon},{zoom}"
+    queries = [
+        "autoservis",
+        "pneuservis",
+        "STK emise technická kontrola",
+        "motoservis",
+        "servis nákladních vozidel",
+    ]
+    rows: list[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for query in queries:
+        params = {
+            "engine": "google_maps",
+            "q": query,
+            "ll": ll,
+            "hl": "cs",
+            "gl": "cz",
+            "api_key": api_key,
+        }
+        request_url = f"{endpoint}?{urlencode(params)}"
+        try:
+            req = UrlRequest(
+                request_url,
+                headers={"Accept": "application/json", "User-Agent": f"{APP_SERVER_PRODUCT_TOKEN}-SerpApiGoogleMaps/1.0"},
+            )
+            with urlopen(req, timeout=12.0) as response:
+                body = response.read().decode("utf-8", errors="ignore")
+            data = json.loads(body)
+        except Exception:
+            continue
+        local = data.get("local_results") if isinstance(data, dict) else None
+        if isinstance(local, dict):
+            local = local.get("places") or []
+        if not isinstance(local, list):
+            continue
+        for item in local:
+            if not isinstance(item, dict):
+                continue
+            place_id = str(item.get("place_id") or item.get("data_id") or "").strip()
+            gps = item.get("gps_coordinates") if isinstance(item.get("gps_coordinates"), dict) else {}
+            lat = _safe_float(gps.get("latitude"))
+            lon = _safe_float(gps.get("longitude"))
+            if lat is None or lon is None:
+                continue
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            dedupe_key = place_id or f"{title}:{round(lat, 4)}:{round(lon, 4)}"
+            if dedupe_key in seen_ids:
+                continue
+            type_label = str(item.get("type") or "").strip()
+            shop_type = _serpapi_shop_type(title, type_label, query)
+            address = str(item.get("address") or "").strip()
+            phone = str(item.get("phone") or "").strip() or None
+            website = str(item.get("website") or "").strip() or None
+            seen_ids.add(dedupe_key)
+            rows.append(
+                {
+                    "google_place_id": place_id or None,
+                    "osm_id": f"google-maps/{dedupe_key}",
+                    "name": title,
+                    "lat": round(lat, 6),
+                    "lon": round(lon, 6),
+                    "street": "",
+                    "city": "",
+                    "postcode": "",
+                    "address": address,
+                    "phone": phone,
+                    "email": None,
+                    "website": website,
+                    "shop_type": shop_type,
+                    "tags": {"source": "google_maps", "type": type_label, "rating": item.get("rating")},
+                    "source": "google_maps",
+                }
+            )
+    return rows
+
+
+def _osm_workshop_display_name(tags: Dict[str, Any]) -> str:
+    name = str(tags.get("name") or tags.get("operator") or "").strip()
+    if name:
+        return name
+    shop_type = _osm_shop_type(tags)
+    labels = {
+        "pneu": "Pneuservis",
+        "stk": "STK / emise",
+        "emis": "Emise",
+        "moto": "Motoservis",
+        "truck": "Servis nákladních vozidel",
+        "auto": "Autoservis",
+    }
+    base = labels.get(shop_type, "Autoservis")
+    street, city, _postcode = _osm_address_from_tags(tags)
+    if city and street:
+        return f"{base} {street}, {city}"
+    if city:
+        return f"{base} {city}"
+    if street:
+        return f"{base} {street}"
+    return base
+
+
+def _append_unique_workshops(
+    workshops: list[Dict[str, Any]],
+    incoming: list[Dict[str, Any]],
+    ref_lat: float,
+    ref_lon: float,
+    rmax: float,
+) -> None:
+    existing_coords = [
+        (float(item.get("lat")), float(item.get("lon")))
+        for item in workshops
+        if item.get("lat") is not None and item.get("lon") is not None
+    ]
+    for row in incoming:
+        lat = _safe_float(row.get("lat"))
+        lon = _safe_float(row.get("lon"))
+        if lat is None or lon is None:
+            continue
+        duplicate = False
+        for elat, elon in existing_coords:
+            if _haversine_km(lat, lon, elat, elon) <= 0.15:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        distance_km = _haversine_km(ref_lat, ref_lon, lat, lon)
+        if distance_km > rmax:
+            continue
+        workshops.append({**row, "distance_km": distance_km})
+        existing_coords.append((lat, lon))
+
+
+def _fetch_osm_workshops_in_bbox(south: float, west: float, north: float, east: float) -> list[Dict[str, Any]]:
+    query = (
+        f"[out:json][timeout:25];("
+        f'node["shop"="car_repair"]({south},{west},{north},{east});'
+        f'way["shop"="car_repair"]({south},{west},{north},{east});'
+        f'node["shop"="tyres"]({south},{west},{north},{east});'
+        f'way["shop"="tyres"]({south},{west},{north},{east});'
+        f'node["shop"="motorcycle_repair"]({south},{west},{north},{east});'
+        f'way["shop"="motorcycle_repair"]({south},{west},{north},{east});'
+        f'node["shop"="motorcycle"]({south},{west},{north},{east});'
+        f'way["shop"="motorcycle"]({south},{west},{north},{east});'
+        f'node["amenity"="car_repair"]({south},{west},{north},{east});'
+        f'way["amenity"="car_repair"]({south},{west},{north},{east});'
+        f'node["amenity"="vehicle_inspection"]({south},{west},{north},{east});'
+        f'way["amenity"="vehicle_inspection"]({south},{west},{north},{east});'
+        f'node["craft"="car_repair"]({south},{west},{north},{east});'
+        f'way["craft"="car_repair"]({south},{west},{north},{east});'
+        f'node["shop"="car_repair"]["hgv"~"."]({south},{west},{north},{east});'
+        f'way["shop"="car_repair"]["hgv"~"."]({south},{west},{north},{east});'
+        f'node["shop"="car_repair"]["service:vehicle:truck"="yes"]({south},{west},{north},{east});'
+        f'way["shop"="car_repair"]["service:vehicle:truck"="yes"]({south},{west},{north},{east});'
+        ");out center;"
+    )
+    req = UrlRequest(
+        _OVERPASS_INTERPRETER_URL,
+        data=urlencode({"data": query}).encode("utf-8"),
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": f"{APP_SERVER_PRODUCT_TOKEN}-ExternalWorkshops/1.0",
+        },
+        method="POST",
+    )
+    with urlopen(req, timeout=_OVERPASS_TIMEOUT_SEC) as response:
+        body = response.read().decode("utf-8", errors="ignore")
+    data = json.loads(body)
+    elements = data.get("elements") if isinstance(data, dict) else None
+    if not isinstance(elements, list):
+        return []
+
+    rows: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for element in elements:
+        if not isinstance(element, dict):
+            continue
+        el_type = str(element.get("type") or "")
+        el_id = element.get("id")
+        if not el_type or el_id is None:
+            continue
+        osm_id = f"{el_type}/{el_id}"
+        if osm_id in seen:
+            continue
+        tags = element.get("tags") if isinstance(element.get("tags"), dict) else {}
+        name = _osm_workshop_display_name(tags)
+        lat, lon = _osm_element_coordinates(element)
+        if lat is None or lon is None:
+            continue
+        street, city, postcode = _osm_address_from_tags(tags)
+        phone, email, website = _osm_contact_from_tags(tags)
+        seen.add(osm_id)
+        rows.append(
+            {
+                "osm_id": osm_id,
+                "name": name,
+                "lat": round(lat, 6),
+                "lon": round(lon, 6),
+                "street": street,
+                "city": city,
+                "postcode": postcode,
+                "address": ", ".join(part for part in (street, " ".join(p for p in (postcode, city) if p)) if part),
+                "phone": phone or None,
+                "email": email or None,
+                "website": website or None,
+                "shop_type": _osm_shop_type(tags),
+                "tags": tags,
+            }
+        )
+    return rows
+
+
+def _reverse_geocode_cache_get(key: str) -> Optional[str]:
+    if key not in _REVERSE_GEO_CACHE:
+        return None
+    return _REVERSE_GEO_CACHE.get(key) or None
+
+
+def _reverse_geocode_cache_set(key: str, value: str) -> None:
+    if len(_REVERSE_GEO_CACHE) >= _REVERSE_GEO_CACHE_MAX_ITEMS:
+        oldest = next(iter(_REVERSE_GEO_CACHE))
+        _REVERSE_GEO_CACHE.pop(oldest, None)
+    _REVERSE_GEO_CACHE[key] = value
+
+
+def _nominatim_reverse_address_line(lat: float, lon: float) -> Optional[str]:
+    key = f"{round(lat, 4)}:{round(lon, 4)}"
+    if key in _REVERSE_GEO_CACHE:
+        cached = _REVERSE_GEO_CACHE.get(key) or ""
+        return cached or None
+    _respect_nominatim_interval()
+    try:
+        request_url = (
+            "https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=cs"
+            f"&lat={quote(str(lat))}&lon={quote(str(lon))}"
+        )
+        req = UrlRequest(
+            request_url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": f"{APP_SERVER_PRODUCT_TOKEN}-ServicesReverseAddress/1.0",
+            },
+        )
+        with urlopen(req, timeout=_SERVICE_GEOLOOKUP_TIMEOUT_SEC) as response:
+            body = response.read().decode("utf-8", errors="ignore")
+        data = json.loads(body)
+        if not isinstance(data, dict):
+            _reverse_geocode_cache_set(key, "")
+            return None
+        addr = data.get("address") if isinstance(data.get("address"), dict) else {}
+        road = str(addr.get("road") or addr.get("pedestrian") or addr.get("retail") or "").strip()
+        house = str(addr.get("house_number") or "").strip()
+        postcode = str(addr.get("postcode") or "").strip()
+        city = str(
+            addr.get("city")
+            or addr.get("town")
+            or addr.get("village")
+            or addr.get("municipality")
+            or addr.get("county")
+            or ""
+        ).strip()
+        street = f"{road} {house}".strip() if road else ""
+        line = ", ".join(part for part in (street, " ".join(p for p in (postcode, city) if p)) if part)
+        if not line:
+            line = str(data.get("display_name") or "").strip()
+        _reverse_geocode_cache_set(key, line)
+        return line or None
+    except Exception:
+        _reverse_geocode_cache_set(key, "")
+        return None
+
+
+def _nominatim_reverse_label(lat: float, lon: float) -> Optional[str]:
+    _respect_nominatim_interval()
+    try:
+        request_url = (
+            "https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=cs"
+            f"&lat={quote(str(lat))}&lon={quote(str(lon))}"
+        )
+        req = UrlRequest(
+            request_url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": f"{APP_SERVER_PRODUCT_TOKEN}-ServicesReverseGeocode/1.0",
+            },
+        )
+        with urlopen(req, timeout=_SERVICE_GEOLOOKUP_TIMEOUT_SEC) as response:
+            body = response.read().decode("utf-8", errors="ignore")
+        data = json.loads(body)
+        if not isinstance(data, dict):
+            return None
+        addr = data.get("address") if isinstance(data.get("address"), dict) else {}
+        city = str(
+            addr.get("city")
+            or addr.get("town")
+            or addr.get("village")
+            or addr.get("municipality")
+            or addr.get("county")
+            or ""
+        ).strip()
+        if city:
+            return f"{city}, Česká republika"
+        display = str(data.get("display_name") or "").strip()
+        return display or None
     except Exception:
         return None
 
@@ -1307,6 +1854,13 @@ def get_services_discovery(
 
     ref_lat = reference_coords[0] if reference_coords else None
     ref_lon = reference_coords[1] if reference_coords else None
+    reference_label: Optional[str] = None
+    if reference_coords and ref_lat is not None and ref_lon is not None:
+        ref_key = f"{round(ref_lat, 4)}:{round(ref_lon, 4)}"
+        if reference_source == "profile_address":
+            reference_label = _build_service_address(current_user)
+        elif reference_source in {"browser", "explore_place"}:
+            reference_label = _REVERSE_GEO_CACHE.get(ref_key) or None
 
     rows = []
     used_new_lookups = 0
@@ -1382,11 +1936,78 @@ def get_services_discovery(
             "linked_total": sum(1 for item in rows if bool(item.get("is_linked"))),
             "reference_source": reference_source if reference_coords else "none",
             "reference_coordinates": {"lat": ref_lat, "lon": ref_lon} if reference_coords else None,
+            "reference_label": reference_label,
             "distance_sorted": bool(reference_coords),
             "discovery_radius_km": eff_radius,
             "within_radius_filter": bool(apply_radius),
         },
         "services": rows,
+    }
+
+
+@router.get("/external-workshops")
+def get_external_workshops_nearby(
+    current_user: Customer = Depends(get_current_user),
+    ref_lat: float = Query(..., ge=-90, le=90, description="Referenční zeměpisná šířka"),
+    ref_lon: float = Query(..., ge=-180, le=180, description="Referenční zeměpisná délka"),
+    radius_km: float = Query(
+        _DEFAULT_OWNER_DISCOVERY_RADIUS_KM,
+        ge=1,
+        le=150,
+        description="Poloměr hledání servisů z vlastního katalogu (km).",
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Legacy alias – servisy v okolí z vlastní DB vrstvy (service_locations).
+    SerpAPI / Google Places se nepoužívají jako zdroj katalogu.
+    """
+    _ = current_user
+    from ..schema_management import assert_module_ready
+    from ..service_map.search_service import search_service_locations
+
+    rmax = float(radius_km)
+    try:
+        assert_module_ready(db, "service_map", detail_prefix="Servisní mapa není připravená")
+        items, total, _meta = search_service_locations(db, lat=ref_lat, lng=ref_lon, radius_km=rmax, limit=200)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Servisní katalog není dostupný: {exc}") from exc
+
+    workshops: list[Dict[str, Any]] = []
+    for item in items:
+        workshops.append(
+            {
+                "osm_id": f"db-{item['id']}",
+                "name": item.get("name"),
+                "lat": item.get("lat"),
+                "lon": item.get("lng"),
+                "city": item.get("city"),
+                "address": item.get("address_text"),
+                "phone": item.get("phone"),
+                "website": item.get("website"),
+                "shop_type": item.get("category"),
+                "distance_km": item.get("distance_km"),
+                "source": item.get("source_type"),
+                "verification_status": item.get("verification_status"),
+            }
+        )
+
+    ref_key = f"{round(ref_lat, 4)}:{round(ref_lon, 4)}"
+    reference_label = _REVERSE_GEO_CACHE.get(ref_key) or None
+
+    return {
+        "meta": {
+            "total": total,
+            "radius_km": rmax,
+            "reference_coordinates": {"lat": ref_lat, "lon": ref_lon},
+            "reference_label": reference_label,
+            "source": "service_map_db",
+            "deprecated": True,
+            "use_instead": "/api/v1/service-map/search",
+        },
+        "workshops": workshops,
     }
 
 

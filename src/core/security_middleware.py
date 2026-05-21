@@ -305,23 +305,25 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         
         # CSP - kompatibilní se stávajícími skripty a API voláními
         if ENVIRONMENT == "production":
-            # Produkce: povolit embed jen z toozservis.cz domén, API volání na hub.toozservis.cz
             csp = (
                 "default-src 'self' https://hub.toozservis.cz; "
                 "img-src 'self' data: https: blob:; "
                 "style-src 'self' 'unsafe-inline'; "
-                "script-src 'self' 'unsafe-inline'; "
-                "connect-src 'self' https://hub.toozservis.cz https://api.dataovozidlech.cz https://ares.gov.cz; "
+                "script-src 'self' 'unsafe-inline' https://maps.googleapis.com; "
+                "connect-src 'self' https://hub.toozservis.cz https://api.dataovozidlech.cz https://ares.gov.cz https://maps.googleapis.com https://*.googleapis.com; "
+                "frame-src 'self' https://maps.google.com https://www.google.com https://*.google.com; "
+                "child-src 'self' https://maps.google.com https://www.google.com https://*.google.com; "
                 "frame-ancestors 'self' https://www.toozservis.cz https://toozservis.cz;"
             )
         else:
-            # Development: povolit všechny (pro testování)
             csp = (
                 "default-src 'self'; "
                 "img-src 'self' data: https: blob:; "
-                "style-src 'self' 'unsafe-inline'; "
-                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+                "script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://unpkg.com; "
                 "connect-src 'self' http://localhost:* https:; "
+                "frame-src 'self' https://maps.google.com https://www.google.com https://*.google.com; "
+                "child-src 'self' https://maps.google.com https://www.google.com https://*.google.com; "
                 "frame-ancestors *;"
             )
         

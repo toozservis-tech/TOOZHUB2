@@ -377,6 +377,14 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
     "admin_audit": {
         "tables": {"developer_action_audit_logs", "admin_customer_change_events"},
     },
+    "service_map": {
+        "tables": {
+            "service_locations",
+            "service_location_sources",
+            "service_location_claims",
+            "service_location_reports",
+        },
+    },
 }
 
 

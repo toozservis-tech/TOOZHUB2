@@ -4,7 +4,7 @@ Servisní faktury (Fáze 1): draft / issued / cancelled, číslování při vyst
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +29,7 @@ from ..models import (
 )
 from ..reports.service_invoice_pdf import render_service_invoice_pdf
 from ..schema_management import assert_module_ready
+from ..user_in_app_notifications import notify_owner_service_invoice_issued
 from src.modules.licensing.service import assert_service_invoice_monthly_quota
 from .auth import get_current_user
 from .service_dashboard import _resolve_owner_and_vehicle
@@ -404,6 +405,7 @@ def _clean_invoice_extra(value: Optional[dict[str, Any]]) -> dict[str, Any]:
         "customer_state",
         "customer_email",
         "manual_non_vehicle_invoice",
+        "user_issued_invoice",
     }
     cleaned: dict[str, Any] = {}
     for key in allowed_scalars:
@@ -465,6 +467,18 @@ def _fakturyweb_date(value: Any, fallback: Optional[datetime] = None) -> Optiona
     if raw:
         return raw[:10]
     return _date_only(fallback)
+
+
+def _parse_invoice_datetime(value: Any, fallback: Optional[datetime] = None) -> datetime:
+    raw = str(value or "").strip()
+    if raw:
+        try:
+            if len(raw) == 10:
+                return datetime.fromisoformat(f"{raw}T00:00:00")
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            pass
+    return fallback or datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _pdf_payload(
@@ -855,6 +869,12 @@ def update_service_invoice(
         inv.customer_id = cust_id
     if "vehicle_id" in fields_set:
         inv.vehicle_id = int(payload.vehicle_id) if payload.vehicle_id else None
+        merged_extra = _parse_invoice_extra(inv.extra_json)
+        if inv.vehicle_id is None:
+            merged_extra["manual_non_vehicle_invoice"] = True
+        else:
+            merged_extra.pop("manual_non_vehicle_invoice", None)
+        inv.extra_json = _invoice_extra_json(merged_extra)
     if "service_record_id" in fields_set:
         inv.service_record_id = int(payload.service_record_id) if payload.service_record_id is not None else None
     if "work_order_id" in fields_set:
@@ -933,14 +953,17 @@ def issue_service_invoice(
     inv.invoice_number = _allocate_invoice_number(db, tenant_id=int(inv.tenant_id))
     inv.status = "issued"
     extra = _parse_invoice_extra(inv.extra_json)
-    issue_date = _fakturyweb_date(extra.get("issue_date"))
-    if issue_date:
-        try:
-            inv.issued_at = datetime.fromisoformat(issue_date)
-        except Exception:
-            inv.issued_at = datetime.utcnow()
-    else:
-        inv.issued_at = datetime.utcnow()
+    if not str(extra.get("variable_symbol") or "").strip() and inv.invoice_number:
+        digits = "".join(ch for ch in str(inv.invoice_number) if ch.isdigit())
+        if digits:
+            extra["variable_symbol"] = digits[-10:]
+            inv.extra_json = _invoice_extra_json(extra)
+    inv.issued_at = _parse_invoice_datetime(extra.get("issue_date"))
+    vehicle = (
+        db.query(VehicleModel).filter(VehicleModel.id == int(inv.vehicle_id)).first()
+        if inv.vehicle_id is not None
+        else None
+    )
     db.flush()
     _audit(
         db,
@@ -951,6 +974,13 @@ def issue_service_invoice(
             "invoice_number": inv.invoice_number,
             "service_record_id": int(inv.service_record_id) if inv.service_record_id is not None else None,
         },
+    )
+    notify_owner_service_invoice_issued(
+        db,
+        owner_customer_id=int(inv.customer_id),
+        service=current_user,
+        vehicle=vehicle,
+        invoice=inv,
     )
     db.commit()
     db.refresh(inv)

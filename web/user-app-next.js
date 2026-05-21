@@ -17,7 +17,6 @@
     originalShowVehicleDetail: null,
     modalEscBound: false,
     viewOverride: null,
-    invoiceSubRoute: null,
     remindersTipHidden: false,
     serviceHistoryLimit: 8,
     serviceHistoryFilters: { vehicle: 'all', period: '2y', type: 'all', service: 'all', docStatus: 'all' },
@@ -41,7 +40,6 @@
     servicesMapSearchQ: '',
     servicesMapVerifiedOnly: false,
     servicesMapBounds: null,
-    servicesMapBoundsKey: '',
     servicesMapHint: '',
     servicesMapTotal: 0,
     servicesMapBoundsDebounce: null,
@@ -169,6 +167,7 @@
       vehiclesTab: 'vehicles',
       remindersTab: 'reminders',
       documentsTab: 'documents',
+      invoicesTab: 'invoices',
       servicesDirectoryTab: 'servicesDirectory',
       accountTab: 'account',
       supportTab: 'support',
@@ -722,7 +721,6 @@
       STATE.servicesOsmRows = STATE.servicesMapRows.map(mapApiItemToCatalogRow);
       if (silent && STATE.servicesMapRuntime?.map) {
         updateServicesMapMarkers(STATE.latestData || {});
-        refreshServicesDirectoryList(STATE.latestData || {});
         return;
       }
     } catch (err) {
@@ -735,7 +733,7 @@
     } finally {
       if (osmToken !== STATE.servicesOsmLoadToken) return;
       STATE.servicesOsmLoading = false;
-      if (!silent && STATE.latestData && getActiveView() === 'servicesDirectory') {
+      if (STATE.latestData && getActiveView() === 'servicesDirectory') {
         renderShell(STATE.latestData);
       }
     }
@@ -765,8 +763,6 @@
     return {
       id: null,
       location_id: Number(item?.id) || null,
-      lat: Number.isFinite(lat) ? lat : null,
-      lon: Number.isFinite(lng) ? lng : null,
       shop_type: mapApiCategoryToShopType(category),
       category,
       name: item?.name || 'Servis',
@@ -2485,15 +2481,13 @@
 
   async function ensureMapsConfig() {
     if (STATE.mapsConfig !== undefined) return STATE.mapsConfig;
-    const defaultCfg = {
+    STATE.mapsConfig = await safeApi('/api/v1/system/maps-config', {
       provider: 'osm_tiles',
       configured: true,
       tile_url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       attribution: '© OpenStreetMap contributors',
       fallback_message: null,
-    };
-    const payload = await safeApi('/api/v1/system/maps-config', defaultCfg);
-    STATE.mapsConfig = payload && payload.configured === true && payload.tile_url ? payload : defaultCfg;
+    });
     return STATE.mapsConfig;
   }
 
@@ -2545,71 +2539,20 @@
     });
   }
 
-  function servicesMapBoundsKey(bounds) {
-    if (!bounds) return '';
-    const round = (value) => Math.round(Number(value) * 1000) / 1000;
-    return [round(bounds.north), round(bounds.south), round(bounds.east), round(bounds.west)].join(',');
-  }
-
   function scheduleServicesMapBoundsLoad() {
     if (STATE.servicesMapBoundsDebounce) clearTimeout(STATE.servicesMapBoundsDebounce);
     STATE.servicesMapBoundsDebounce = setTimeout(() => {
       const runtime = STATE.servicesMapRuntime;
       if (!runtime?.map || getActiveView() !== 'servicesDirectory') return;
       const b = runtime.map.getBounds();
-      const nextBounds = {
+      STATE.servicesMapBounds = {
         north: b.getNorth(),
         south: b.getSouth(),
         east: b.getEast(),
         west: b.getWest(),
       };
-      const nextKey = servicesMapBoundsKey(nextBounds);
-      if (nextKey && nextKey === STATE.servicesMapBoundsKey) return;
-      STATE.servicesMapBoundsKey = nextKey;
-      STATE.servicesMapBounds = nextBounds;
       void loadServicesOsmData({ silent: true });
     }, 400);
-  }
-
-
-  function refreshServicesDirectoryList(data) {
-    if (getActiveView() !== 'servicesDirectory') return;
-    const source = data || STATE.latestData || {};
-    const allRows = buildMergedServiceCatalog(source);
-    let filtered = filterServicesRows(allRows);
-    if (STATE.servicesDirectorySort === 'name') {
-      filtered = filtered.slice().sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'cs'));
-    }
-    const limit = Number(STATE.servicesDirectoryLimit) || 30;
-    const visible = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-    const radius = Number(STATE.servicesDirectoryRadius) || 50;
-    const nearbyCount = filtered.filter((row) => {
-      const dist = Number(row.distance_km);
-      return Number.isFinite(dist) && dist <= radius;
-    }).length;
-    const head = document.querySelector('.uapp-svc-list-head h2');
-    if (head) head.textContent = `Nalezeno ${nearbyCount || filtered.length} servisů do ${radius} km`;
-    const list = document.querySelector('.uapp-svc-list');
-    if (list) {
-      list.innerHTML = visible.length
-        ? visible.map((service) => renderServicesCard(service)).join('')
-        : '<div class="uapp-svc-empty">V okolí nejsou servisy odpovídající filtrům.</div>';
-    }
-    const section = document.querySelector('.uapp-svc-list-section');
-    const loadMore = section?.querySelector('.uapp-svc-load-more');
-    if (hasMore) {
-      if (!loadMore && section) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'uapp-svc-load-more';
-        btn.setAttribute('data-uapp-action', 'servicesLoadMore');
-        btn.textContent = 'Zobrazit další servisy ▾';
-        section.appendChild(btn);
-      }
-    } else if (loadMore) {
-      loadMore.remove();
-    }
   }
 
   function updateServicesMapMarkers(data) {
@@ -2696,19 +2639,16 @@
     });
     if (cluster) map.addLayer(cluster);
 
-    STATE.servicesMapRuntime = { provider: 'leaflet', map, cluster, markers: rows };
-
     const b = map.getBounds();
-    const initialBounds = {
+    STATE.servicesMapBounds = {
       north: b.getNorth(),
       south: b.getSouth(),
       east: b.getEast(),
       west: b.getWest(),
     };
-    STATE.servicesMapBounds = initialBounds;
-    STATE.servicesMapBoundsKey = servicesMapBoundsKey(initialBounds);
     map.on('moveend', scheduleServicesMapBoundsLoad);
-    void loadServicesOsmData({ silent: true });
+
+    STATE.servicesMapRuntime = { provider: 'leaflet', map, cluster, markers: rows };
   }
 
   async function bindServicesMap(data) {
@@ -2894,10 +2834,9 @@
     });
 
     osmRows.forEach((osmRow) => {
-      const osmKey = osmRow.osm_id ?? osmRow.location_id;
-      if (osmKey != null && matchedOsmIds.has(osmKey)) return;
-      const olat = Number(osmRow.lat ?? osmRow.coordinates?.lat);
-      const olon = Number(osmRow.lon ?? osmRow.coordinates?.lon);
+      if (matchedOsmIds.has(osmRow.osm_id)) return;
+      const olat = Number(osmRow.lat);
+      const olon = Number(osmRow.lon);
       if (!Number.isFinite(olat) || !Number.isFinite(olon)) return;
       const dist = ref
         ? Math.round(haversineKm(ref.lat, ref.lon, olat, olon) * 10) / 10
@@ -2917,9 +2856,7 @@
               : ['Autoservis'];
       merged.push({
         id: null,
-        osm_id: osmRow.osm_id ?? osmRow.location_id ?? null,
-        location_id: osmRow.location_id ?? null,
-        category: osmRow.category || '',
+        osm_id: osmRow.osm_id,
         shop_type: shopType,
         name: osmRow.name || 'Servis',
         street,
@@ -2936,14 +2873,13 @@
         source: 'osm',
         osm_tags: osmRow.tags || {},
         partner_public_profile: { services_offered: servicesOffered },
-        row_key: osmRow.row_key || (osmRow.location_id ? `map-${osmRow.location_id}` : `osm-${osmRow.osm_id || 'x'}`),
+        row_key: `osm-${osmRow.osm_id}`,
       });
     });
 
     return merged
       .filter((row) => {
         if (row.is_linked) return true;
-        if (row.location_id || String(row.row_key || '').startsWith('map-')) return true;
         const dist = Number(row.distance_km);
         if (!Number.isFinite(dist)) return Boolean(row.in_app);
         return dist <= radius;
@@ -3039,7 +2975,7 @@
       if (mapCat === 'verified' && !service.is_verified) return false;
       if (mapCat === 'autoservis' && type.key !== 'indep' && service.category !== 'autoservis') return false;
       if (mapCat === 'pneuservis' && type.key !== 'pneu') return false;
-      if (mapCat === 'stk' && service.category !== 'stk') return false;
+      if (mapCat === 'stk' && service.category !== 'stk' && type.key !== 'stk') return false;
       if (mapCat === 'sme' && service.category !== 'sme') return false;
       if (mapCat === 'truck_service' && type.key !== 'truck') return false;
       if (filters.type && filters.type !== 'all' && type.key !== filters.type) return false;
@@ -3384,7 +3320,7 @@
           STATE.servicesDirectoryLimit = 30;
           STATE.servicesOsmRows = [];
           STATE.servicesMapRows = [];
-          STATE.servicesMapBoundsKey = '';
+          void loadServicesOsmData();
           return render();
         }
         if (key === 'useLocation') {
@@ -3403,7 +3339,7 @@
           STATE.servicesOsmRows = [];
           STATE.servicesMapRows = [];
           if (STATE.servicesSearchDebounce) clearTimeout(STATE.servicesSearchDebounce);
-          STATE.servicesSearchDebounce = setTimeout(() => { void loadServicesOsmData({ silent: true }); }, 450);
+          STATE.servicesSearchDebounce = setTimeout(() => { void loadServicesOsmData(); }, 450);
           return;
         }
         if (key === 'sort') {
@@ -3477,7 +3413,7 @@
           ${navButton('Moje vozidla', ICO.car, 'vehicles', nav === 'vehicles', 0)}
           ${navButton('Servisní historie', ICO.wrench, 'serviceHistory', nav === 'serviceHistory', 0)}
           ${navButton('Připomínky', ICO.bell, 'reminders', nav === 'reminders', reminderBadge)}
-          ${navButton('Dokumenty', ICO.folder, 'documents', nav === 'documents' && STATE.documentsFilters?.category !== 'faktury', 0)}
+          ${navButton('Dokumenty', ICO.folder, 'documents', nav === 'documents', 0)}
           ${navButton('Servisy', ICO.building, 'servicesDirectory', nav === 'servicesDirectory', 0)}
           ${navButton('Faktury', ICO.invoice, 'invoices', nav === 'invoices', 0)}
           ${navButton('Nastavení', ICO.gear, 'account', nav === 'account', 0)}
@@ -3987,16 +3923,18 @@
         ${renderDocumentsPage(data)}
       `;
     }
+    if (view === 'invoices') {
+      return `
+        ${renderTopbar()}
+        <div class="uapp-next-invoices-page" data-testid="user-app-next-invoices">
+          <div id="uappNextInvoicesMount" class="uapp-next-invoices-mount"></div>
+        </div>
+      `;
+    }
     if (view === 'servicesDirectory') {
       return `
         ${renderTopbar()}
         ${renderServicesDirectoryPage(data)}
-      `;
-    }
-    if (view === 'invoices' || view === 'invoiceNew' || view === 'invoiceSettings') {
-      return `
-        ${renderTopbar()}
-        <div id="userInvoicesMount" class="uapp-next-invoices-mount uapp-next-invoices-page" data-testid="user-invoices-mount"></div>
       `;
     }
     if (view === 'home') {
@@ -4031,8 +3969,8 @@
     else if (activeView === 'reminders') testId = 'user-app-next-reminders';
     else if (activeView === 'serviceHistory') testId = 'user-app-next-service-history';
     else if (activeView === 'documents') testId = 'user-app-next-documents';
+    else if (activeView === 'invoices') testId = 'user-app-next-invoices';
     else if (activeView === 'servicesDirectory') testId = 'user-app-next-services';
-    else if (activeView === 'invoices' || activeView === 'invoiceNew' || activeView === 'invoiceSettings') testId = 'user-app-next-invoices';
 
     root.replaceChildren();
     root.innerHTML = `
@@ -4052,21 +3990,8 @@
     document.body.classList.toggle('user-app-next-view-reminders', activeView === 'reminders');
     document.body.classList.toggle('user-app-next-view-service-history', activeView === 'serviceHistory');
     document.body.classList.toggle('user-app-next-view-documents', activeView === 'documents');
+    document.body.classList.toggle('user-app-next-view-invoices', activeView === 'invoices');
     document.body.classList.toggle('user-app-next-view-services', activeView === 'servicesDirectory');
-    document.body.classList.toggle('user-app-next-view-invoices', activeView === 'invoices' || activeView === 'invoiceNew' || activeView === 'invoiceSettings');
-    if (activeView === 'invoices' || activeView === 'invoiceNew' || activeView === 'invoiceSettings') {
-      const invMount = document.getElementById('userInvoicesMount');
-      if (invMount && typeof window.UserInvoicesDashboard?.mountInto === 'function') {
-        if (activeView === 'invoiceNew') {
-          invMount.dataset.invSubRoute = 'new';
-        } else if (activeView === 'invoiceSettings') {
-          invMount.dataset.invSubRoute = 'settings';
-        } else {
-          delete invMount.dataset.invSubRoute;
-        }
-        window.UserInvoicesDashboard.mountInto(invMount);
-      }
-    }
     if (isLegacySection) {
       mountLegacyTabContent(activeView);
     }
@@ -4080,10 +4005,26 @@
       bindServiceHistoryFilters();
     } else if (activeView === 'documents') {
       bindDocumentsFilters();
+    } else if (activeView === 'invoices') {
+      mountInvoicesModule(root);
     } else if (activeView === 'servicesDirectory') {
       bindServicesFilters();
       void bindServicesMap(data);
     }
+  }
+
+  function mountInvoicesModule(root) {
+    const mount = root && root.querySelector('#uappNextInvoicesMount');
+    if (!mount) return;
+    if (typeof window.UserInvoicesDashboard !== 'undefined' && typeof window.UserInvoicesDashboard.mountInto === 'function') {
+      window.UserInvoicesDashboard.mountInto(mount);
+      return;
+    }
+    if (typeof window.loadUserInvoices === 'function') {
+      window.loadUserInvoices(true);
+      return;
+    }
+    mount.innerHTML = '<div class="uapp-doc-empty-state">Modul faktur se nepodařilo načíst. Obnovte stránku.</div>';
   }
 
   function renderShell(data) {
@@ -4641,9 +4582,12 @@
       return render();
     }
     if (name === 'account' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('account'); }
-    if (name === 'invoices') { closeMobileNav(); STATE.viewOverride = 'invoices'; STATE.documentsFilters = { ...STATE.documentsFilters, category: 'all' }; return render(); }
-    if (name === 'invoiceNew') { closeMobileNav(); STATE.viewOverride = 'invoiceNew'; return render(); }
-    if (name === 'invoiceSettings') { closeMobileNav(); STATE.viewOverride = 'invoiceSettings'; return render(); }
+    if (name === 'invoices') {
+      closeMobileNav();
+      STATE.viewOverride = 'invoices';
+      if (hasFn('switchTab')) return window.switchTab('invoices');
+      return render();
+    }
     if (name === 'serviceHistory') { closeMobileNav(); STATE.viewOverride = 'serviceHistory'; return render(); }
     if (name === 'documentsUpload') return openDocumentsUploadFlow(STATE.latestData || {});
     if (name === 'documentsUploadPickerClose') { STATE.documentsUploadPickerOpen = false; return render(); }
@@ -4784,7 +4728,7 @@
       STATE.servicesMapVerifiedOnly = rawId === 'verified';
       STATE.servicesOsmRows = [];
       STATE.servicesMapRows = [];
-      STATE.servicesMapBoundsKey = '';
+      void loadServicesOsmData();
       return render();
     }
     if (name === 'serviceMapReport' && id) {
@@ -4987,6 +4931,9 @@
       const data = await loadData();
       if (token !== STATE.renderToken || !shouldActivate()) return;
       renderShell(data);
+      if (view === 'servicesDirectory') {
+        void loadServicesOsmData();
+      }
     } catch (err) {
       console.error('[USER_APP_NEXT] render failed', err);
       if (token !== STATE.renderToken || !shouldActivate()) return;
@@ -5030,25 +4977,37 @@
       };
     }
 
+    const CANVAS_TAB_TO_VIEW = {
+      home: 'home',
+      vehicles: 'vehicles',
+      reminders: 'reminders',
+      documents: 'documents',
+      invoices: 'invoices',
+      servicesDirectory: 'servicesDirectory',
+      serviceHistory: 'serviceHistory',
+    };
+
     const originalSwitchTab = window.switchTab;
     if (typeof originalSwitchTab === 'function') {
       window.switchTab = function () {
-        const tabName = arguments[0];
-        if (tabName === 'serviceHistory') STATE.viewOverride = 'serviceHistory';
-        else if (tabName === 'documents') STATE.viewOverride = 'documents';
-        else if (tabName === 'servicesDirectory') STATE.viewOverride = 'servicesDirectory';
-        else if (tabName === 'invoices') STATE.viewOverride = 'invoices';
-        else if (tabName === 'invoiceNew') STATE.viewOverride = 'invoiceNew';
-        else if (tabName === 'invoiceSettings') STATE.viewOverride = 'invoiceSettings';
-        else STATE.viewOverride = null;
+        const tabName = String(arguments[0] || '');
+        if (CANVAS_TAB_TO_VIEW[tabName]) {
+          STATE.viewOverride = CANVAS_TAB_TO_VIEW[tabName];
+        } else if (tabName === 'serviceHistory') {
+          STATE.viewOverride = 'serviceHistory';
+        } else {
+          STATE.viewOverride = null;
+        }
         const result = originalSwitchTab.apply(this, arguments);
-        window.setTimeout(() => {
-          if (shouldActivate()) {
-            render();
-          } else {
-            setActiveClass(false);
+        if (shouldActivate()) {
+          setActiveClass(true);
+          if (CANVAS_TAB_TO_VIEW[tabName]) {
+            document.querySelectorAll('#dashboard > .tab-content').forEach((el) => el.classList.remove('active'));
           }
-        }, 0);
+          void render();
+        } else {
+          setActiveClass(false);
+        }
         return result;
       };
     }
@@ -5098,6 +5057,12 @@
     preserveLegacyOverlays();
     installHooks();
     window.setTimeout(() => {
+      if (!shouldActivate() && document.body.classList.contains('route-app-view') && isAuthed() && !isServiceMode()) {
+        const homeTab = document.getElementById('homeTab');
+        if (homeTab && homeTab.classList.contains('active')) {
+          STATE.viewOverride = 'home';
+        }
+      }
       if (shouldActivate()) render();
     }, 0);
   }
