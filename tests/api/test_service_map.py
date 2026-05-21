@@ -293,15 +293,14 @@ def test_claim_verified_other_tenant_goes_admin_review(db_session):
     assert "verified_owner_conflict" in (claim.fraud_flags_json or "")
 
 
-def test_user_app_next_service_map_assets():
-    js = Path(__file__).resolve().parents[2] / "web" / "user-app-next.js"
-    html = Path(__file__).resolve().parents[2] / "web" / "index.html"
-    js_text = js.read_text(encoding="utf-8")
-    html_text = html.read_text(encoding="utf-8")
-    assert "/api/v1/service-map/search" in js_text
-    assert "Mapa není nakonfigurovaná" in js_text
-    assert "markerClusterGroup" in js_text
-    assert "user-app-next.js?v=2026052007" in html_text
+def test_release_candidate_keeps_service_map_backend_only():
+    """The additive release exposes the service-map API without activating staging UI assets."""
+    from src.modules.vehicle_hub.routers_v1 import service_map
+
+    paths = {route.path for route in service_map.router.routes}
+    assert service_map.router.prefix == "/service-map"
+    assert "/service-map/search" in paths
+    assert "/service-map/locations/{location_id}" in paths
 
 
 def test_user_search_excludes_duplicate_verification(db_session):
