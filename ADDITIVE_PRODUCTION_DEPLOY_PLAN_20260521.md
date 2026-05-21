@@ -20,6 +20,41 @@
   - new work-order item/import tables
 - Tests and documentation.
 
+## License and Trial Changes
+
+Preserved production-origin license/trial work:
+
+- Backend 30-day Premium trial activation on first user login is already in the production baseline ancestry.
+- Backend sanity gate fix is already in the production baseline.
+- The release candidate additionally includes:
+  - services tab visibility refresh after license status load,
+  - Premium trial countdown/banner in the license modal.
+
+Files changed for this follow-up:
+
+- `web/index.html`
+- `LICENSE_TRIAL_RELEASE_AUDIT_20260521.md`
+- this deploy plan and the additive audit document.
+
+No new license/trial migration is included. No Comgate recurring flow, prices, paid plan rules, or service plan rules are changed.
+
+Pre-production license smoke after deploy:
+
+```bash
+curl -fsS http://127.0.0.1:8000/api/me -H "Authorization: Bearer <USER_TOKEN>"
+curl -fsS http://127.0.0.1:8000/api/v1/license/status -H "Authorization: Bearer <USER_TOKEN>"
+curl -fsS http://127.0.0.1:8000/api/v1/license/status -H "Authorization: Bearer <SERVICE_TOKEN>"
+curl -fsS http://127.0.0.1:8000/api/v1/system/capabilities -H "Authorization: Bearer <USER_TOKEN>"
+```
+
+Expected:
+
+- existing paid/lifetime users remain paid/lifetime,
+- existing service users remain on service plans,
+- Free users remain Free unless the first-login trial flow applies to a genuinely new trial-eligible user,
+- expired trial users evaluate as Free without data deletion,
+- user invoices remain disabled/excluded.
+
 ## What Will Not Be Deployed
 
 - User invoice backend/frontend.
@@ -116,6 +151,8 @@ Authenticated manual smoke after deploy:
 
 - Existing user login still works.
 - Existing dashboard loads.
+- License modal shows active trial countdown when `trial_active=true`.
+- Existing paid/basic/lifetime/service plans remain unchanged.
 - Vehicles load.
 - Documents load.
 - Reminders load.

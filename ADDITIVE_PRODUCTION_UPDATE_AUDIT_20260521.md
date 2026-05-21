@@ -256,9 +256,45 @@ The staging diff includes service map code, service work-order item/CSV code, in
 ## Static Checks
 
 - `python3 -m compileall src`: PASS.
+- `pytest tests/api/test_license*.py -q`: PASS, `34 passed`.
 - `pytest tests/api/test_service_map.py -q`: PASS, `15 passed`.
 - `pytest tests/api/test_service_work_order_items.py -q`: PASS, `14 passed`.
 - Excluded diff guard: `OK_EXCLUDED_DIFF`.
+
+## License and Trial Changes
+
+Follow-up audit document: `LICENSE_TRIAL_RELEASE_AUDIT_20260521.md`.
+
+What was found:
+
+- `8598eda` (`Start 30 day premium trial on first user login`) was already included through the production baseline ancestry.
+- `04882c7` (`Fix backend sanity gate for CI and stale audit-trail tests.`) was already the release candidate base.
+- `5478147` (`Refresh services tab visibility after license load`) was missing and was added by cherry-pick.
+- `20ede5a` (`Show premium trial countdown in license modal`) was missing and was added by cherry-pick.
+
+Newly added files/changes:
+
+- `web/index.html` only.
+
+No license/trial migration was added. The existing backend trial logic remains the production-origin implementation:
+
+- first login can create a 30-day Premium trial for a new user,
+- expired trial evaluates as Free without deleting data,
+- paid upgrade clears expired trial state,
+- existing paid/service accounts are not converted.
+
+Runtime verification on staging:
+
+- `/api/me`: PASS for user and service.
+- `/api/v1/license/status`: PASS for lifetime, service_free, free, and basic users.
+- `/api/v1/system/capabilities`: PASS.
+- service map and work-order CSV smoke: PASS.
+
+Risks:
+
+- The added license/trial changes are UI visibility/countdown only.
+- Comgate recurring state, prices, paid plans, and user invoices were not changed.
+- User invoice files remain excluded.
 
 ## Decision
 
@@ -266,6 +302,8 @@ Included:
 
 - Service map backend/API, optional authenticated map config, additive DB tables.
 - Service work-order item and CSV backend/API, additive DB tables.
+- Production-origin trial activation backend already in baseline.
+- Production-origin services tab visibility and trial countdown UI.
 - Targeted API tests and service map import documentation.
 
 Excluded:
