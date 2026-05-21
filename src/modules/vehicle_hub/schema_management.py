@@ -236,6 +236,8 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
     "service_dashboard": {
         "tables": {
             "service_work_orders",
+            "service_work_order_items",
+            "service_work_order_csv_imports",
             "service_work_order_audit_logs",
             "service_quotes",
             "service_quote_audit_logs",
@@ -251,6 +253,32 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
                 "source_type",
                 "status",
                 "due_date",
+            },
+            "service_work_order_items": {
+                "work_order_id",
+                "item_type",
+                "quantity",
+                "vat_rate",
+                "sale_price_without_vat",
+                "discount_percent",
+                "note",
+                "source",
+                "deleted_at",
+            },
+            "service_work_order_csv_imports": {
+                "service_id",
+                "work_order_id",
+                "filename",
+                "delimiter",
+                "rows_count",
+                "imported_count",
+                "skipped_count",
+                "duplicate_count",
+                "error_rows_json",
+                "mapping_json",
+                "file_sha256",
+                "created_by",
+                "created_at",
             },
             "service_quotes": {
                 "service_record_id",
@@ -348,6 +376,14 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
     },
     "admin_audit": {
         "tables": {"developer_action_audit_logs", "admin_customer_change_events"},
+    },
+    "service_map": {
+        "tables": {
+            "service_locations",
+            "service_location_sources",
+            "service_location_claims",
+            "service_location_reports",
+        },
     },
 }
 
