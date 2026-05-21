@@ -125,6 +125,7 @@ from src.modules.vehicle_hub.workspace_entitlements import (
     normalize_workspace_entitlements_for_storage,
     normalize_workspace_ui_default_for_storage,
 )
+from src.server.main_helpers import delete_customer_account
 
 
 def _effective_workspace_entitlements_for_admin_summary(role: Optional[str], raw_column: Any) -> List[str]:
@@ -2264,6 +2265,12 @@ class UserSoftRestoreRequest(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=2000)
 
 
+class UserArchivePurgeRequest(BaseModel):
+    customer_ids: List[int] = Field(default_factory=list)
+    purge_all: bool = False
+    confirm_phrase: str = Field(..., min_length=1, max_length=100)
+
+
 class UserPasswordResetRequest(BaseModel):
     new_password: Optional[str] = None
     generate_random: bool = True
@@ -4322,6 +4329,17 @@ def _fetch_deleted_user_archive_rows(db: Session) -> List[DeletedUserArchiveRow]
     return out
 
 
+ARCHIVED_USERS_PURGE_CONFIRM_PHRASE = "VYMAZAT ARCHIV"
+
+
+def _merge_deleted_counts(target: Dict[str, int], source: Dict[str, Any]) -> None:
+    for key, value in (source or {}).items():
+        try:
+            target[key] = int(target.get(key, 0)) + int(value or 0)
+        except (TypeError, ValueError):
+            continue
+
+
 def _restore_archived_service_records_for_vehicle_ids(
     db: Session,
     *,
@@ -4398,6 +4416,99 @@ def get_deleted_users_archive(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chyba při načítání archivu smazaných: {str(e)}")
+
+
+@router.post("/user-archive-purge")
+def purge_deleted_users_archive(
+    payload: UserArchivePurgeRequest,
+    request: FastAPIRequest,
+    email: str = Depends(require_developer_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Trvale odstraní uživatele z archivu soft-delete.
+
+    Cesta odpovídá existujícímu admin UI. Smazání je povoleno pouze pro účty,
+    které už jsou označené jako smazané, a vyžaduje potvrzovací frázi.
+    """
+    try:
+        if (payload.confirm_phrase or "").strip() != ARCHIVED_USERS_PURGE_CONFIRM_PHRASE:
+            raise HTTPException(status_code=400, detail="Potvrzovací fráze nesouhlasí.")
+
+        actor = get_customer_by_email(db, email)
+        actor_id = int(actor.id) if actor and actor.id is not None else None
+
+        requested_ids = sorted({int(raw_id) for raw_id in (payload.customer_ids or []) if int(raw_id) > 0})
+        if not payload.purge_all and not requested_ids:
+            raise HTTPException(status_code=400, detail="Vyberte alespoň jeden účet z archivu.")
+
+        query = db.query(Customer).filter(Customer.is_deleted.is_(True))
+        if payload.purge_all:
+            users = query.order_by(Customer.id.asc()).all()
+        else:
+            users = query.filter(Customer.id.in_(requested_ids)).order_by(Customer.id.asc()).all()
+
+        if actor_id is not None:
+            users = [user for user in users if int(user.id) != actor_id]
+
+        if not users:
+            return {
+                "message": "V archivu nebyl nalezen žádný účet k trvalému odstranění.",
+                "purged": 0,
+                "customer_ids": [],
+                "skipped_ids": requested_ids,
+                "deleted_counts": {},
+            }
+
+        purged_ids = [int(user.id) for user in users if user.id is not None]
+        skipped_ids = sorted(set(requested_ids) - set(purged_ids)) if not payload.purge_all else []
+        deleted_counts: Dict[str, int] = {}
+
+        labels_deleted = (
+            db.query(CustomerDeletionLabel)
+            .filter(CustomerDeletionLabel.customer_id.in_(purged_ids))
+            .delete(synchronize_session=False)
+        )
+        deleted_counts["customer_deletion_labels"] = int(labels_deleted or 0)
+
+        for user in users:
+            counts = delete_customer_account(user, email=user.email or "", db=db)
+            _merge_deleted_counts(deleted_counts, counts)
+
+        db.commit()
+
+        log_developer_action(
+            db,
+            developer_email=email,
+            request=request,
+            action_type="user.archive_purge",
+            target_resource="user_deletion_archive",
+            parameters={
+                "purge_all": bool(payload.purge_all),
+                "requested_customer_ids": requested_ids,
+                "purged_customer_ids": purged_ids,
+                "skipped_customer_ids": skipped_ids,
+                "deleted_counts": deleted_counts,
+            },
+            result="success",
+            status_code=200,
+        )
+
+        return {
+            "message": f"Trvale odstraněno z archivu: {len(purged_ids)}.",
+            "purged": len(purged_ids),
+            "customer_ids": purged_ids,
+            "skipped_ids": skipped_ids,
+            "deleted_counts": deleted_counts,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Chyba při trvalém mazání z archivu: {str(e)}")
 
 
 @router.post("/user-soft-restore")
