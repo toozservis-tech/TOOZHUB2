@@ -23,6 +23,8 @@ from src.modules.vehicle_hub.models import (
     BotCommand,
     Customer,
     CustomerCommand,
+    AdminCustomerChangeEvent,
+    CustomerDeletionLabel,
     CustomerSecuritySettings,
     EmailNotificationLog,
     GlobalAuditLog,
@@ -1099,6 +1101,12 @@ def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
                 vehicle_command_condition,
             )
         )
+    )
+    deleted_counts["admin_customer_change_events"] = bulk_delete(
+        db.query(AdminCustomerChangeEvent).filter(AdminCustomerChangeEvent.customer_id == customer.id)
+    )
+    deleted_counts["customer_deletion_labels"] = bulk_delete(
+        db.query(CustomerDeletionLabel).filter(CustomerDeletionLabel.customer_id == customer.id)
     )
     deleted_counts["service_registration_requests"] = bulk_delete(
         db.query(ServiceRegistrationRequest).filter(

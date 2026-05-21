@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.modules.vehicle_hub.database import Base
-from src.modules.vehicle_hub.models import Customer, CustomerDeletionLabel, Tenant
+from src.modules.vehicle_hub.models import AdminCustomerChangeEvent, Customer, CustomerDeletionLabel, Tenant
 from src.server import admin_api
 
 
@@ -62,7 +62,13 @@ def _seed_admin_and_deleted_user(db_session):
         hash_depth=1,
         email_before="deleted@example.com",
     )
-    db_session.add(label)
+    change_event = AdminCustomerChangeEvent(
+        customer_id=deleted.id,
+        admin_email="developer@example.com",
+        change_key="account.deleted",
+        summary_line="Účet byl archivován",
+    )
+    db_session.add_all([label, change_event])
     db_session.commit()
     return admin, deleted
 
@@ -93,6 +99,7 @@ def test_purge_deleted_user_archive_removes_only_soft_deleted_accounts(
     assert result["deleted_counts"]["customer_deletion_labels"] == 1
     assert db_session.query(Customer).filter(Customer.id == deleted_id).count() == 0
     assert db_session.query(CustomerDeletionLabel).filter(CustomerDeletionLabel.customer_id == deleted_id).count() == 0
+    assert db_session.query(AdminCustomerChangeEvent).filter(AdminCustomerChangeEvent.customer_id == deleted_id).count() == 0
     assert db_session.query(Customer).filter(Customer.id == admin_id).count() == 1
 
 
