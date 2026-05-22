@@ -25,7 +25,7 @@ from urllib.parse import urljoin
 from requests.cookies import RequestsCookieJar
 
 from fastapi import APIRouter, HTTPException, Depends, Body, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, JSONResponse
 from pydantic import BaseModel, Field
 import requests
 from sqlalchemy import func, nullslast
@@ -103,6 +103,11 @@ from ..services.catalog_image_service import (
     resolve_catalog_image_storage_file,
 )
 from ..decoder.models import VinDecodeRequest, VehicleDecodeResponse, VehicleDecodedData
+from ..vin_ownership_guard import (
+    VinAlreadyRegisteredOtherUserError,
+    assert_vin_visible_for_create,
+    vin_other_tenant_block_payload,
+)
 
 logger = logging.getLogger(__name__)
 from .auth import get_current_user, can_access_vehicle
@@ -2698,6 +2703,15 @@ async def preview_from_vin(
     from ..decoder.router import decode_vin_core
 
     vin = str(payload.vin or "").strip().upper().replace(" ", "").replace("-", "")
+    try:
+        assert_vin_visible_for_create(
+            db,
+            getattr(current_user, "tenant_id", None),
+            vin,
+            endpoint="/api/v1/vehicles/preview-from-vin",
+        )
+    except VinAlreadyRegisteredOtherUserError:
+        return JSONResponse(status_code=409, content=vin_other_tenant_block_payload())
     warnings: list[str] = []
     decode_data = None
     if payload.decoded and payload.decoded.make and payload.decoded.model:
@@ -2718,6 +2732,8 @@ async def preview_from_vin(
                 db,
                 current_user,
             )
+        except VinAlreadyRegisteredOtherUserError:
+            return JSONResponse(status_code=409, content=vin_other_tenant_block_payload())
         except Exception as exc:
             logger.warning("[VIN_PREVIEW] decode invocation failed vin=%s error=%s", vin[:6], exc)
             fallback_image = {
@@ -2778,6 +2794,33 @@ async def preview_from_vin(
         current_user=current_user,
     )
     warnings.extend(result.warnings)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        logger.warning("[VIN_PREVIEW] catalog image commit failed vin=%s error=%s", vin[:6], exc)
+        fallback_image = {
+            "id": None,
+            "url": "/web/assets/vehicle-placeholder.svg",
+            "thumbnail_url": "/web/assets/vehicle-placeholder.svg",
+            "source_domain": None,
+            "provider": "disabled",
+            "score": 0,
+            "representative": True,
+            "verified_real_vehicle": False,
+            "license_note": "Ilustrační katalogová fotka – nejde o skutečnou fotku vozidla.",
+        }
+        return VehiclePreviewFromVinResponseV1(
+            ok=False,
+            vin=vin,
+            decoded=result.decoded,
+            catalog_image=fallback_image,
+            alternatives=[],
+            warnings=warnings + ["Katalogovou fotku se nepodařilo uložit."],
+            reason="Catalog image persistence failed",
+            can_regenerate=not _catalog_image_regen_limit_enabled(),
+            remaining_regenerations=999 if not _catalog_image_regen_limit_enabled() else 1,
+        )
     return VehiclePreviewFromVinResponseV1(
         ok=result.ok,
         vin=result.vin,
@@ -3174,6 +3217,14 @@ def create_vehicle(
             current_mileage_km=vehicle_data.current_mileage_km,
             last_stk_mileage_km=vehicle_data.last_stk_mileage_km,
         )
+        guard_result = assert_vin_visible_for_create(
+            db,
+            tenant_id,
+            vehicle_data.vin,
+            endpoint="/api/v1/vehicles",
+            validate=False,
+        )
+        normalized_vin = guard_result.normalized_vin
         
         # KROK 1: Zkontrolovat quota
         from ...licensing.service import assert_vehicle_quota, LicenseError
@@ -3192,7 +3243,6 @@ def create_vehicle(
                 }
             )
         
-        normalized_vin = _normalize_vin(vehicle_data.vin or "")
         if vehicle_data.orv_scan_id and not normalized_vin:
             raise HTTPException(status_code=422, detail="ORV scan vyžaduje potvrzený VIN. Doplňte jej ručně před uložením.")
 
@@ -3385,6 +3435,10 @@ def create_vehicle(
         logger.info(f"[VEHICLE_CREATE] ✅ Vozidlo vytvořeno: id={vehicle.id}")
         _finalize_vehicle_technical_overview(db, vehicle)
         return _vehicle_to_response_payload(vehicle, current_user, db)
+
+    except VinAlreadyRegisteredOtherUserError:
+        db.rollback()
+        return JSONResponse(status_code=409, content=vin_other_tenant_block_payload())
 
     except IntegrityError as e:
         db.rollback()

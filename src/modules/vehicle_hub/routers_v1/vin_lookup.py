@@ -3,12 +3,20 @@ VIN Lookup API v1.0 router
 GET endpoint pro jednoduché VIN lookup
 """
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 
 from ..database import get_db
 from ..decoder.models import VinDecodeRequest, VehicleDecodeResponse
+from ..models import Customer
+from ..routers_v1.auth import get_current_user_optional
+from ..vin_ownership_guard import (
+    VinAlreadyRegisteredOtherUserError,
+    assert_vin_visible_for_create,
+    vin_other_tenant_block_payload,
+)
 
 router = APIRouter(prefix="/vin", tags=["vin-lookup-v1"])
 
@@ -25,7 +33,11 @@ class VinLookupResponse(BaseModel):
 
 
 @router.get("/{vin}", response_model=VinLookupResponse)
-async def lookup_vin(vin: str, db: Session = Depends(get_db)):
+async def lookup_vin(
+    vin: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[Customer] = Depends(get_current_user_optional),
+):
     """
     Jednoduchý VIN lookup endpoint pro auto-fill formulářů
     
@@ -52,10 +64,18 @@ async def lookup_vin(vin: str, db: Session = Depends(get_db)):
     logger.info(f"[VIN_LOOKUP] Processing VIN lookup: {vin_clean[:3]}...{vin_clean[-3:]}")
     
     try:
+        if current_user is not None and getattr(current_user, "tenant_id", None):
+            assert_vin_visible_for_create(
+                db,
+                getattr(current_user, "tenant_id", None),
+                vin_clean,
+                endpoint="/api/v1/vin/{vin}",
+                validate=False,
+            )
         # Použít existující decoder (lazy import pro vyhnutí se cyklu)
         from ..decoder.router import decode_vin_core  # import uvnitř funkce
         decode_request = VinDecodeRequest(vin=vin_clean)
-        decode_response: VehicleDecodeResponse = await decode_vin_core(decode_request, db, None)
+        decode_response: VehicleDecodeResponse = await decode_vin_core(decode_request, db, current_user)
         
         if not decode_response.success or not decode_response.data:
             # Pokud decoder nevrátil data, vrať prázdnou odpověď
@@ -119,6 +139,8 @@ async def lookup_vin(vin: str, db: Session = Depends(get_db)):
             source=source
         )
         
+    except VinAlreadyRegisteredOtherUserError:
+        return JSONResponse(status_code=409, content=vin_other_tenant_block_payload())
     except HTTPException:
         raise
     except Exception as e:

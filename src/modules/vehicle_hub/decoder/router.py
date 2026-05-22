@@ -4,11 +4,17 @@ FastAPI router pro Vehicle Decoder Engine endpointy
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.routers_v1.auth import get_current_user
 from src.modules.vehicle_hub.models import Customer
+from src.modules.vehicle_hub.vin_ownership_guard import (
+    VinAlreadyRegisteredOtherUserError,
+    assert_vin_visible_for_create,
+    vin_other_tenant_block_payload,
+)
 from .models import VinDecodeRequest, PlateDecodeRequest, VehicleDecodeResponse, VehicleDecodedData
 from .vin_decoder import decode_vin_local
 from .mdcr_client import fetch_vehicle_by_vin_from_mdcr
@@ -64,9 +70,16 @@ async def decode_vin_core(
             errors=[f"VIN obsahuje nepovolené znaky: {', '.join(set(invalid_chars))} (I, O, Q nejsou povoleny)"]
         )
 
-    # KROK 1: Zkontrolovat feature flag až po základní validaci vstupu.
-    # Uživatel tak dostane konzistentní chybu vstupu i bez aktivní licence VIN decode.
     if tenant_id:
+        assert_vin_visible_for_create(
+            db,
+            tenant_id,
+            vin,
+            endpoint="/api/vehicles/decode-vin",
+            validate=False,
+        )
+        # KROK 1: Zkontrolovat feature flag až po základní validaci a tenant guardu.
+        # Guard musí být před externími lookupy i před UX logikou auto-fill.
         try:
             assert_feature(db, tenant_id, "vin_decode")
         except HTTPException as e:
@@ -257,7 +270,7 @@ async def decode_vin(
     req: VinDecodeRequest,
     db: Session = Depends(get_db),
     current_user: Customer = Depends(get_current_user),
-) -> VehicleDecodeResponse:
+) -> VehicleDecodeResponse | JSONResponse:
     """
     Dekóduje VIN z více zdrojů (MDČR, EU Open Data, lokální VIN dekódování).
 
@@ -267,7 +280,10 @@ async def decode_vin(
     Returns:
         VehicleDecodeResponse s dekódovanými daty
     """
-    return await decode_vin_core(req, db, current_user)
+    try:
+        return await decode_vin_core(req, db, current_user)
+    except VinAlreadyRegisteredOtherUserError:
+        return JSONResponse(status_code=409, content=vin_other_tenant_block_payload())
 
 
 @router.post("/decode-plate", response_model=VehicleDecodeResponse)
@@ -300,4 +316,3 @@ async def decode_plate(req: PlateDecodeRequest) -> VehicleDecodeResponse:
         data=decoded,
         errors=[]
     )
-
