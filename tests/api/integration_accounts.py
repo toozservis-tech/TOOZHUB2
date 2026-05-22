@@ -8,10 +8,244 @@ Po registraci opakovaně volání /user/register selže → přihlášení (/use
 from __future__ import annotations
 
 import os
+import re
+from datetime import datetime
 
 import requests
 
 CI_DEFAULT_PHONE_E164 = os.getenv("CI_DEFAULT_PHONE_E164", "+420737262711")
+CI_DEFAULT_PASSWORD = os.getenv("TEST_USER_PASSWORD", "testpass123")
+
+E2E_USER_EMAIL = os.getenv("E2E_USER_EMAIL", "e2e.user@toozservis.cz").strip().lower()
+E2E_USER_PASSWORD = os.getenv("E2E_USER_PASSWORD", os.getenv("TEST_USER_PASSWORD", CI_DEFAULT_PASSWORD))
+E2E_SERVICE_EMAIL = os.getenv("E2E_SERVICE_EMAIL", "e2e.service@toozservis.cz").strip().lower()
+E2E_SERVICE_PASSWORD = os.getenv("E2E_SERVICE_PASSWORD", os.getenv("TEST_SERVICE_PASSWORD", CI_DEFAULT_PASSWORD))
+
+NON_ALLOWLISTED_TEST_ACCOUNT_MESSAGE = (
+    "Refusing to create non-allowlisted test account. "
+    "Use fixed E2E_USER_EMAIL or E2E_SERVICE_EMAIL."
+)
+
+_RANDOM_TEST_EMAIL_PATTERNS = (
+    re.compile(r"\be2e[.+_-].*(timestamp|pw-|[0-9]{8,}|[0-9a-f]{10,})", re.I),
+    re.compile(r"\btest\+", re.I),
+    re.compile(r"\bpw-", re.I),
+    re.compile(r"[0-9a-f]{12,}@", re.I),
+    re.compile(r"\d{10,}@"),
+)
+
+
+def _normalize_email(email: str | None) -> str:
+    return str(email or "").strip().lower()
+
+
+def fixed_test_account_emails() -> set[str]:
+    return {_normalize_email(E2E_USER_EMAIL), _normalize_email(E2E_SERVICE_EMAIL)}
+
+
+def is_isolated_test_database_url(database_url: str | None = None) -> bool:
+    """True jen pro lokální dočasnou/testovací DB, ne pro sdílenou staging/runtime DB."""
+    if database_url is None:
+        try:
+            from src.core.config import DATABASE_URL
+
+            database_url = DATABASE_URL
+        except Exception:
+            database_url = os.getenv("DATABASE_URL", "")
+    value = str(database_url or "").lower()
+    if not value:
+        return False
+    return (
+        ":memory:" in value
+        or "test_vehicles" in value
+        or "pytest" in value
+        or "/tmp/" in value
+        or "tmp/" in value
+    )
+
+
+def is_runtime_like_database_url(database_url: str | None = None) -> bool:
+    return not is_isolated_test_database_url(database_url)
+
+
+def looks_like_random_test_email(email: str | None) -> bool:
+    normalized = _normalize_email(email)
+    return any(pattern.search(normalized) for pattern in _RANDOM_TEST_EMAIL_PATTERNS)
+
+
+def assert_allowed_test_email(email: str, *, database_url: str | None = None) -> str:
+    """Guard proti plnění staging/runtime DB náhodnými testovacími účty."""
+    normalized = _normalize_email(email)
+    if not normalized:
+        raise AssertionError(NON_ALLOWLISTED_TEST_ACCOUNT_MESSAGE)
+    if is_isolated_test_database_url(database_url):
+        return normalized
+    if normalized not in fixed_test_account_emails():
+        raise AssertionError(NON_ALLOWLISTED_TEST_ACCOUNT_MESSAGE)
+    if looks_like_random_test_email(normalized):
+        raise AssertionError(NON_ALLOWLISTED_TEST_ACCOUNT_MESSAGE)
+    return normalized
+
+
+def _ensure_license_row(db, tenant_id: int, *, plan: str = "free") -> None:
+    from sqlalchemy import text
+
+    exists = db.execute(
+        text("SELECT id FROM licenses WHERE tenant_id = :tenant_id LIMIT 1"),
+        {"tenant_id": int(tenant_id)},
+    ).first()
+    if exists:
+        db.execute(
+            text(
+                """
+                UPDATE licenses
+                SET plan = :plan,
+                    status = 'active',
+                    vehicles_limit = CASE WHEN :plan = 'premium' THEN 0 ELSE vehicles_limit END,
+                    updated_at = :now
+                WHERE tenant_id = :tenant_id
+                """
+            ),
+            {"tenant_id": int(tenant_id), "plan": plan, "now": datetime.utcnow()},
+        )
+        return
+    db.execute(
+        text(
+            """
+            INSERT INTO licenses (
+                tenant_id, plan, status, vehicles_limit, valid_from,
+                vin_decode_enabled, ares_enabled, reminders_enabled,
+                created_at, updated_at
+            )
+            VALUES (
+                :tenant_id, :plan, 'active', :vehicles_limit, :now,
+                :vin_decode, 1, 1,
+                :now, :now
+            )
+            """
+        ),
+        {
+            "tenant_id": int(tenant_id),
+            "plan": plan,
+            "vehicles_limit": 0 if plan in {"premium", "service_full"} else 1,
+            "vin_decode": 1 if plan in {"premium", "service_full"} else 0,
+            "now": datetime.utcnow(),
+        },
+    )
+
+
+def _ensure_fixed_customer(db, *, email: str, password: str, role: str, name: str):
+    from sqlalchemy import func
+
+    from src.core.security import hash_password
+    from src.modules.vehicle_hub.models import Customer, Tenant
+    from src.modules.vehicle_hub.tenant_provisioning import create_dedicated_tenant
+    from src.modules.vehicle_hub.workspace_routing import ensure_tenant_workspace_slug
+
+    normalized = assert_allowed_test_email(email)
+    route_kind = "service" if role == "service" else "user"
+    customer = db.query(Customer).filter(func.lower(Customer.email) == normalized).first()
+    if customer is None:
+        tenant = create_dedicated_tenant(
+            db,
+            owner_email=normalized,
+            owner_name=name,
+            workspace_route_kind=route_kind,
+        )
+        customer = Customer(
+            tenant_id=tenant.id,
+            email=normalized,
+            email_normalized=normalized,
+            password_hash=hash_password(password),
+            name=name,
+            role=role,
+            account_status="active",
+            email_verified_at=datetime.utcnow(),
+            email_verification_sent_at=datetime.utcnow(),
+            registration_ip="127.0.0.1",
+            registration_user_agent="pytest-fixed-account",
+            is_disabled=False,
+            is_deleted=False,
+        )
+        db.add(customer)
+        db.flush()
+    else:
+        tenant = db.query(Tenant).filter(Tenant.id == int(customer.tenant_id)).first()
+        if tenant is None:
+            tenant = create_dedicated_tenant(
+                db,
+                owner_email=normalized,
+                owner_name=name,
+                workspace_route_kind=route_kind,
+            )
+            customer.tenant_id = tenant.id
+        customer.email = normalized
+        customer.email_normalized = normalized
+        customer.password_hash = hash_password(password)
+        customer.name = customer.name or name
+        customer.role = role
+        customer.account_status = "active"
+        customer.email_verified_at = customer.email_verified_at or datetime.utcnow()
+        customer.email_verification_token_hash = None
+        customer.email_verification_expires_at = None
+        customer.email_verification_sent_at = customer.email_verification_sent_at or datetime.utcnow()
+        customer.is_disabled = False
+        customer.is_deleted = False
+        customer.deleted_at = None
+        customer.disabled_at = None
+        customer.force_password_change = False
+        db.add(customer)
+        db.flush()
+    if tenant is not None:
+        ensure_tenant_workspace_slug(db, tenant, seed_label=name or normalized, route_kind=route_kind)
+    _ensure_license_row(db, int(customer.tenant_id), plan="service_full" if role == "service" else "premium")
+    db.commit()
+    db.refresh(customer)
+    return customer
+
+
+def reset_fixed_test_user_state(db):
+    return _ensure_fixed_customer(
+        db,
+        email=E2E_USER_EMAIL,
+        password=E2E_USER_PASSWORD,
+        role="user",
+        name="E2E Fixed User",
+    )
+
+
+def ensure_fixed_test_user(db=None):
+    if db is not None:
+        return reset_fixed_test_user_state(db)
+    from src.modules.vehicle_hub.database import SessionLocal
+
+    session = SessionLocal()
+    try:
+        return reset_fixed_test_user_state(session)
+    finally:
+        session.close()
+
+
+def reset_fixed_test_service_state(db):
+    return _ensure_fixed_customer(
+        db,
+        email=E2E_SERVICE_EMAIL,
+        password=E2E_SERVICE_PASSWORD,
+        role="service",
+        name="E2E Fixed Service",
+    )
+
+
+def ensure_fixed_test_service(db=None):
+    if db is not None:
+        return reset_fixed_test_service_state(db)
+    from src.modules.vehicle_hub.database import SessionLocal
+
+    session = SessionLocal()
+    try:
+        return reset_fixed_test_service_state(session)
+    finally:
+        session.close()
 
 
 def _verify_customer_email_in_db(email: str) -> None:
@@ -74,49 +308,42 @@ def ensure_user_token(
     name: str = "CI user",
     phone: str | None = None,
 ) -> tuple[str, int]:
-    """POST /user/register nebo při existenci přihlášení → (access_token, user_id)."""
-    pwd = password or CI_DEFAULT_PASSWORD
-    ph = phone if phone is not None else CI_DEFAULT_PHONE_E164
-    resp = requests.post(
-        f"{api_url}/user/register",
-        json={"email": email, "password": pwd, "name": name, "phone": ph},
-        timeout=15,
-    )
-    if resp.status_code == 200:
-        payload = resp.json()
-        if payload.get("verification_required") and not payload.get("access_token"):
-            _verify_customer_email_in_db(email)
-            login = requests.post(
-                f"{api_url}/user/login",
-                json={"email": email, "password": pwd},
-                timeout=15,
-            )
-            assert login.status_code == 200, login.text
-            data = login.json()
-            return data["access_token"], int(data["user"]["id"])
-        assert payload.get("access_token"), payload
-        return payload["access_token"], int(payload["user"]["id"])
+    """Vrátí token pro allowlistovaný fixed účet bez zakládání náhodných uživatelů."""
+    requested_email = _normalize_email(email)
+    if requested_email in fixed_test_account_emails():
+        normalized_email = assert_allowed_test_email(requested_email)
+    else:
+        hint = f"{requested_email} {name or ''}".lower()
+        normalized_email = E2E_SERVICE_EMAIL if ("service" in hint or "svc" in hint or "servis" in hint) else E2E_USER_EMAIL
+    pwd = password or (E2E_SERVICE_PASSWORD if normalized_email == E2E_SERVICE_EMAIL else E2E_USER_PASSWORD)
+    if normalized_email == E2E_SERVICE_EMAIL:
+        ensure_fixed_test_service()
+    else:
+        ensure_fixed_test_user()
 
     login = requests.post(
         f"{api_url}/user/login",
-        json={"email": email, "password": pwd},
+        json={"email": normalized_email, "password": pwd},
         timeout=15,
     )
+    if login.status_code == 429:
+        import pytest
+
+        pytest.skip("Runtime login rate limit is already exhausted for the fixed E2E account.")
     if login.status_code == 403:
         try:
             detail = str(login.json().get("detail") or "")
         except Exception:
             detail = ""
         if "ověřte e-mailovou adresu" in detail.lower():
-            _verify_customer_email_in_db(email)
+            _verify_customer_email_in_db(normalized_email)
             login = requests.post(
                 f"{api_url}/user/login",
-                json={"email": email, "password": pwd},
+                json={"email": normalized_email, "password": pwd},
                 timeout=15,
             )
     assert login.status_code == 200, (
-        f"register returned {resp.status_code} ({resp.text!r}); "
-        f"login failed {login.status_code} ({login.text!r})"
+        f"fixed account login failed {login.status_code} ({login.text!r})"
     )
     data = login.json()
     uid = data.get("user", {}).get("id")
@@ -124,9 +351,7 @@ def ensure_user_token(
     return data["access_token"], int(uid)
 
 
-CI_DEFAULT_PASSWORD = os.getenv("TEST_USER_PASSWORD", "testpass123")
-
-TEST_USER_EMAIL_DEFAULT = os.getenv("TEST_USER_EMAIL", "ci.api.universal@example.com")
+TEST_USER_EMAIL_DEFAULT = os.getenv("TEST_USER_EMAIL", E2E_USER_EMAIL)
 
 # Lifecycle / převody (dva účty)
 CI_API_SELLER = os.getenv("CI_API_SELLER", "ci.api.seller@example.com")

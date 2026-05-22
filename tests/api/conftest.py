@@ -13,8 +13,7 @@ sys.path.insert(0, str(project_root))
 from tests.api.integration_accounts import (
     CI_DEFAULT_PASSWORD,
     TEST_USER_EMAIL_DEFAULT,
-    _verify_customer_email_in_db,
-    CI_DEFAULT_PHONE_E164,
+    ensure_fixed_test_user,
 )
 
 # Testovací konfigurace
@@ -42,31 +41,13 @@ def test_db_url():
 def auth_token(api_url):
     """
     Získat auth token pro testy.
-    Vytvoří testovacího uživatele pokud neexistuje.
+    Používá fixed E2E účet; nevytváří náhodné účty při každém běhu.
     """
-    # Preferovat registraci - vrací token bez nutnosti login pokusu (šetří rate limit /user/login)
     try:
-        response = requests.post(
-            f"{api_url}/user/register",
-            json={
-                "email": TEST_USER_EMAIL,
-                "password": TEST_USER_PASSWORD,
-                "name": "API Test User",
-                "phone": CI_DEFAULT_PHONE_E164,
-            },
-            timeout=5
-        )
-        if response.status_code == 200:
-            data = response.json()
-            tok = data.get("access_token")
-            if data.get("verification_required") and not tok:
-                _verify_customer_email_in_db(TEST_USER_EMAIL)
-            else:
-                return tok
+        ensure_fixed_test_user()
     except Exception:
         pass
 
-    # Pokud uživatel existuje, zkusit login
     try:
         response = requests.post(
             f"{api_url}/user/login",

@@ -50,23 +50,15 @@ export function isReadOnly(): boolean {
  */
 export function getTestCredentials(): { email: string; password: string } {
   return {
-    email: process.env.E2E_EMAIL || 'e2e.toozhub@example.com',
-    password: process.env.E2E_PASSWORD || 'E2eTest123!',
+    email: process.env.E2E_USER_EMAIL || process.env.E2E_EMAIL || 'e2e.user@toozservis.cz',
+    password: process.env.E2E_USER_PASSWORD || process.env.E2E_PASSWORD || 'testpass123',
   };
-}
-
-let generatedLoginUserCounter = 0;
-
-function getIsolatedDefaultEmail(): string {
-  generatedLoginUserCounter += 1;
-  const runId = process.env.PW_TEST_RUN_ID || String(Date.now());
-  return `e2e.toozhub+pw-${runId}-${generatedLoginUserCounter}@example.com`;
 }
 
 /** Servisní účet pro E2E — musí existovat v DB (schválený servisní login). */
 export function getServiceTestCredentials(): { email: string; password: string } | null {
-  const email = (process.env.E2E_SERVICE_EMAIL || '').trim();
-  const password = (process.env.E2E_SERVICE_PASSWORD || '').trim();
+  const email = (process.env.E2E_SERVICE_EMAIL || 'e2e.service@toozservis.cz').trim();
+  const password = (process.env.E2E_SERVICE_PASSWORD || 'testpass123').trim();
   if (!email || !password) {
     return null;
   }
@@ -81,20 +73,22 @@ export async function ensureTestUser(page: any, email?: string, password?: strin
   const credentials = getTestCredentials();
   const targetEmail = email || credentials.email;
   const targetPassword = password || credentials.password;
+  const allowed = new Set([
+    (process.env.E2E_USER_EMAIL || 'e2e.user@toozservis.cz').toLowerCase(),
+    (process.env.E2E_SERVICE_EMAIL || 'e2e.service@toozservis.cz').toLowerCase(),
+  ]);
+  if (!allowed.has(targetEmail.trim().toLowerCase())) {
+    throw new Error('Refusing to create non-allowlisted test account. Use fixed E2E_USER_EMAIL or E2E_SERVICE_EMAIL.');
+  }
 
-  const response = await page.request.post('/user/register', {
-    data: {
-      email: targetEmail,
-      password: targetPassword,
-      name: 'E2E Test User',
-    },
+  const response = await page.request.post('/user/login', {
+    data: { email: targetEmail, password: targetPassword },
   });
-
-  if (response.status() === 200 || response.status() === 400) {
+  if (response.status() === 200) {
     return;
   }
 
-  throw new Error(`Unable to ensure test user. HTTP ${response.status()}`);
+  throw new Error(`Unable to use fixed test user. HTTP ${response.status()}`);
 }
 
 /**
@@ -102,11 +96,7 @@ export async function ensureTestUser(page: any, email?: string, password?: strin
  */
 export async function loginUser(page: any, email?: string, password?: string): Promise<void> {
   const credentials = getTestCredentials();
-  const targetEmail =
-    email ||
-    (process.env.E2E_ISOLATED_LOGIN_USERS === '1' || process.env.E2E_ISOLATED_LOGIN_USERS === 'true'
-      ? getIsolatedDefaultEmail()
-      : credentials.email);
+  const targetEmail = email || credentials.email;
   const targetPassword = password || credentials.password;
 
   await ensureTestUser(page, targetEmail, targetPassword);

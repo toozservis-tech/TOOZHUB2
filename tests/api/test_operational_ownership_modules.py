@@ -69,6 +69,14 @@ def db_context(tmp_path: Path):
         db.refresh(user)
         db.refresh(service)
 
+        license_row = licensing_service.get_or_create_license(db, tenant.id)
+        license_row.plan = "premium"
+        license_row.status = "active"
+        license_row.vehicles_limit = 0
+        license_row.vin_decode_enabled = True
+        db.add(license_row)
+        db.commit()
+
         yield {
             "db": db,
             "tenant": tenant,

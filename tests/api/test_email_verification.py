@@ -4,7 +4,6 @@ Testy ověření e-mailu (P0 registrace) — stránka, API endpoint, audit bez p
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from uuid import uuid4
 
 import pytest
 import requests
@@ -16,10 +15,10 @@ from src.modules.vehicle_hub.registration_security import (
 )
 from src.server.bootstrap import create_app
 from tests.api.integration_accounts import (
-    CI_DEFAULT_PASSWORD,
-    CI_DEFAULT_PHONE_E164,
+    E2E_USER_EMAIL,
+    E2E_USER_PASSWORD,
+    ensure_fixed_test_user,
     plant_email_verification_token_for_test,
-    release_customer_emails_for_re_register,
 )
 
 
@@ -42,31 +41,18 @@ def test_verify_html_still_returns_200(client: TestClient):
 
 
 def test_verify_email_valid_token_marks_account_verified(client: TestClient):
-    email = f"ci.p0.email-verify.{uuid4().hex[:12]}@example.com"
-    password = CI_DEFAULT_PASSWORD
-    try:
-        reg = client.post(
-            "/user/register",
-            json={
-                "email": email,
-                "password": password,
-                "name": "P0 Verify Test",
-                "phone": CI_DEFAULT_PHONE_E164,
-            },
-        )
-        assert reg.status_code == 200, reg.text
-        assert reg.json().get("verification_required") is True
+    email = E2E_USER_EMAIL
+    password = E2E_USER_PASSWORD
+    ensure_fixed_test_user()
 
-        raw_token = plant_email_verification_token_for_test(email)
-        verify = client.post("/user/verify-email", json={"token": raw_token})
-        assert verify.status_code == 200, verify.text
-        assert verify.json().get("verified") is True
+    raw_token = plant_email_verification_token_for_test(email)
+    verify = client.post("/user/verify-email", json={"token": raw_token})
+    assert verify.status_code == 200, verify.text
+    assert verify.json().get("verified") is True
 
-        login = client.post("/user/login", json={"email": email, "password": password})
-        assert login.status_code == 200, login.text
-        assert login.json().get("access_token")
-    finally:
-        release_customer_emails_for_re_register([email])
+    login = client.post("/user/login", json={"email": email, "password": password})
+    assert login.status_code == 200, login.text
+    assert login.json().get("access_token")
 
 
 def test_verify_email_invalid_token_safe_400(client: TestClient):
@@ -82,73 +68,47 @@ def test_verify_email_invalid_token_safe_400(client: TestClient):
 
 
 def test_verify_email_replay_does_not_500(client: TestClient):
-    email = f"ci.p0.email-replay.{uuid4().hex[:12]}@example.com"
-    password = CI_DEFAULT_PASSWORD
-    try:
-        reg = client.post(
-            "/user/register",
-            json={
-                "email": email,
-                "password": password,
-                "name": "P0 Replay Test",
-                "phone": CI_DEFAULT_PHONE_E164,
-            },
-        )
-        assert reg.status_code == 200, reg.text
-        raw_token = plant_email_verification_token_for_test(email)
+    email = E2E_USER_EMAIL
+    ensure_fixed_test_user()
+    raw_token = plant_email_verification_token_for_test(email)
 
-        first = client.post("/user/verify-email", json={"token": raw_token})
-        assert first.status_code == 200, first.text
+    first = client.post("/user/verify-email", json={"token": raw_token})
+    assert first.status_code == 200, first.text
 
-        second = client.post("/user/verify-email", json={"token": raw_token})
-        assert second.status_code == 200, second.text
-        assert second.json().get("already_verified") is True
-        assert second.status_code != 500
-    finally:
-        release_customer_emails_for_re_register([email])
+    second = client.post("/user/verify-email", json={"token": raw_token})
+    assert second.status_code == 200, second.text
+    assert second.json().get("already_verified") is True
+    assert second.status_code != 500
 
 
 def test_verify_email_expired_token_safe_400(client: TestClient):
-    email = f"ci.p0.email-expired.{uuid4().hex[:12]}@example.com"
-    password = CI_DEFAULT_PASSWORD
+    email = E2E_USER_EMAIL
     raw_token = generate_email_verification_secret()
+    ensure_fixed_test_user()
+
+    from sqlalchemy import func
+
+    from src.modules.vehicle_hub.database import SessionLocal
+    from src.modules.vehicle_hub.models import Customer
+
+    db = SessionLocal()
     try:
-        reg = client.post(
-            "/user/register",
-            json={
-                "email": email,
-                "password": password,
-                "name": "P0 Expired Test",
-                "phone": CI_DEFAULT_PHONE_E164,
-            },
-        )
-        assert reg.status_code == 200, reg.text
-
-        from sqlalchemy import func
-
-        from src.modules.vehicle_hub.database import SessionLocal
-        from src.modules.vehicle_hub.models import Customer
-
-        db = SessionLocal()
-        try:
-            c = db.query(Customer).filter(func.lower(Customer.email) == email.lower()).first()
-            assert c is not None
-            c.email_verification_token_hash = hash_email_verification_token(raw_token)
-            c.email_verification_expires_at = datetime.utcnow() - timedelta(minutes=1)
-            c.email_verified_at = None
-            c.account_status = "pending_email_verification"
-            db.commit()
-        finally:
-            db.close()
-
-        r = client.post("/user/verify-email", json={"token": raw_token})
-        assert r.status_code == 400
-        assert r.status_code != 500
-        detail = r.json().get("detail")
-        if isinstance(detail, dict):
-            assert detail.get("code") == "token_expired"
+        c = db.query(Customer).filter(func.lower(Customer.email) == email.lower()).first()
+        assert c is not None
+        c.email_verification_token_hash = hash_email_verification_token(raw_token)
+        c.email_verification_expires_at = datetime.utcnow() - timedelta(minutes=1)
+        c.email_verified_at = None
+        c.account_status = "pending_email_verification"
+        db.commit()
     finally:
-        release_customer_emails_for_re_register([email])
+        db.close()
+
+    r = client.post("/user/verify-email", json={"token": raw_token})
+    assert r.status_code == 400
+    assert r.status_code != 500
+    detail = r.json().get("detail")
+    if isinstance(detail, dict):
+        assert detail.get("code") == "token_expired"
 
 
 def test_verify_email_missing_token_validation_not_500(client: TestClient):
@@ -171,51 +131,39 @@ def test_email_verification_e2e_smoke(api_url):
     except Exception:
         pytest.skip("API server nedostupný")
 
-    email = f"ci.p0.e2e-verify.{uuid4().hex[:12]}@example.com"
-    password = CI_DEFAULT_PASSWORD
-    try:
-        reg = requests.post(
-            f"{api_url}/user/register",
-            json={
-                "email": email,
-                "password": password,
-                "name": "P0 E2E Verify",
-                "phone": CI_DEFAULT_PHONE_E164,
-            },
-            timeout=15,
-        )
-        assert reg.status_code == 200, reg.text
-        assert reg.json().get("verification_required") is True
+    email = E2E_USER_EMAIL
+    password = E2E_USER_PASSWORD
+    ensure_fixed_test_user()
 
-        blocked = requests.post(
-            f"{api_url}/user/login",
-            json={"email": email, "password": password},
-            timeout=15,
-        )
-        assert blocked.status_code == 403
+    raw_token = plant_email_verification_token_for_test(email)
+    blocked = requests.post(
+        f"{api_url}/user/login",
+        json={"email": email, "password": password},
+        timeout=15,
+    )
+    if blocked.status_code == 429:
+        pytest.skip("Runtime login rate limit is already exhausted for the fixed E2E account.")
+    assert blocked.status_code == 403
 
-        raw_token = plant_email_verification_token_for_test(email)
-        verify = requests.post(
-            f"{api_url}/user/verify-email",
-            json={"token": raw_token},
-            timeout=15,
-        )
-        assert verify.status_code == 200, verify.text
+    verify = requests.post(
+        f"{api_url}/user/verify-email",
+        json={"token": raw_token},
+        timeout=15,
+    )
+    assert verify.status_code == 200, verify.text
 
-        login = requests.post(
-            f"{api_url}/user/login",
-            json={"email": email, "password": password},
-            timeout=15,
-        )
-        assert login.status_code == 200, login.text
-        token = login.json()["access_token"]
+    login = requests.post(
+        f"{api_url}/user/login",
+        json={"email": email, "password": password},
+        timeout=15,
+    )
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
 
-        me = requests.get(
-            f"{api_url}/api/me",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=15,
-        )
-        assert me.status_code == 200, me.text
-        assert me.json().get("authenticated") is True
-    finally:
-        release_customer_emails_for_re_register([email])
+    me = requests.get(
+        f"{api_url}/api/me",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=15,
+    )
+    assert me.status_code == 200, me.text
+    assert me.json().get("authenticated") is True
