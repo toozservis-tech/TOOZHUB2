@@ -331,8 +331,8 @@ def _register_exception_handler(app: FastAPI) -> None:
         return JSONResponse(
             status_code=500,
             content={
-                "detail": f"Interní chyba serveru: {str(exc)}",
-                "type": type(exc).__name__,
+                "detail": "Funkci se nepodařilo načíst. Zkuste to prosím znovu nebo kontaktujte podporu.",
+                "code": "INTERNAL_SERVER_ERROR",
                 "path": request.url.path,
             },
         )

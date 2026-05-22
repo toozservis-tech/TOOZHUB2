@@ -76,6 +76,32 @@ def test_index_html_exports_sync_user_tab_url_history():
     assert "window.syncUserTabUrlHistory = syncUserTabUrlHistory;" in content
 
 
+def test_index_html_license_ui_uses_effective_trial_plan():
+    content = _read("index.html")
+    assert "function getEffectiveLicensePlanKey" in content
+    assert "license?.effective_plan" in content
+    assert "Premium trial – zbývá" in content
+    assert "effective_plan: lic.effective_plan || lic.plan || 'free'" in content
+
+
+def test_index_html_sanitizes_runtime_sql_errors():
+    content = _read("index.html")
+    assert "function sanitizeUiErrorMessage" in content
+    assert "sqlite" in content
+    assert "no such column" in content
+    assert "Funkci se nepodařilo načíst. Zkuste to prosím znovu nebo kontaktujte podporu." in content
+    assert "showVinError(errorMsg)" in content
+    assert "VIN se nepodařilo načíst: ' + errorMsg" not in content
+
+
+def test_index_html_locked_feature_messages_are_specific():
+    content = _read("index.html")
+    assert "Tato funkce je dostupná v licenci Premium. Pro automatické načtení údajů z VIN" in content
+    assert "Dokumenty a PDF exporty jsou dostupné od licence Basic." in content
+    assert "Objednání servisu je dostupné od licence Basic." in content
+    assert "Servisní partneři a mapa servisů jsou dostupní v licenci Premium." in content
+
+
 def test_tutorial_hub_open_modal():
     assert "window.openHowToHubModal = function openHowToHubModal" in _read("tutorial-hub.js")
 

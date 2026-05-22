@@ -163,6 +163,8 @@ def get_license_plan_base(plan: Optional[str]) -> str:
     normalized_plan = str(plan or "").strip().lower()
     if normalized_plan.startswith("service_"):
         normalized_plan = normalized_plan[len("service_"):]
+    if normalized_plan == "premium_trial":
+        return "premium"
     if normalized_plan in {"free", "basic", "premium", "lifetime", "full"}:
         return normalized_plan
     return "free"
@@ -200,6 +202,8 @@ def effective_service_license_storage_plan(plan: Optional[str]) -> str:
 
 def get_license_plan_public_label(plan: Optional[str]) -> str:
     normalized_plan = str(plan or "").strip().lower()
+    if normalized_plan == "premium_trial":
+        return "Premium trial"
     metadata = LICENSE_PLAN_METADATA.get(normalized_plan)
     if metadata and metadata.get("label"):
         return str(metadata["label"])
@@ -211,6 +215,7 @@ PLAN_LIMITS = {
     "free": 1,
     "basic": 3,
     "premium": 0,  # 0 = unlimited
+    "premium_trial": 0,
     "lifetime": 0,  # neomezeně, administrátorské přidělení
     "service_free": 1,
     "service_full": 0,
@@ -224,7 +229,8 @@ FREE_SERVICE_RECORDS_LIMIT = 1
 FREE_ACTIVE_MANUAL_REMINDERS_LIMIT = 1
 USER_INITIAL_TRIAL_DAYS = 30
 USER_INITIAL_TRIAL_PLAN = "premium"
-USER_INITIAL_TRIAL_SOURCE = "registration_first_login"
+USER_INITIAL_TRIAL_EFFECTIVE_PLAN = "premium_trial"
+USER_INITIAL_TRIAL_SOURCE = "first_verified_login"
 
 # Servisní FREE: technické kvóty (oddělené od uživatelských tarifů zákazníka)
 SERVICE_FREE_MAX_CUSTOMER_LINKS = 3
@@ -363,7 +369,7 @@ def effective_license_plan_for_runtime(
         )
         return "free"
     if pairing == "user" and normalized_plan == "free" and is_initial_user_trial_active(license_obj, now):
-        return USER_INITIAL_TRIAL_PLAN
+        return USER_INITIAL_TRIAL_EFFECTIVE_PLAN
     return normalized_plan
 
 
@@ -456,7 +462,7 @@ def activate_initial_user_trial_on_first_login(
         action="initial_trial_eligible",
         customer=customer,
         tenant_id=int(tenant_id),
-        plan=USER_INITIAL_TRIAL_PLAN,
+        plan=USER_INITIAL_TRIAL_EFFECTIVE_PLAN,
         trial_ends_at=trial_ends_at,
     )
     license_obj.trial_started_at = current_now
@@ -471,7 +477,7 @@ def activate_initial_user_trial_on_first_login(
         action="initial_trial_activated",
         customer=customer,
         tenant_id=int(tenant_id),
-        plan=USER_INITIAL_TRIAL_PLAN,
+        plan=USER_INITIAL_TRIAL_EFFECTIVE_PLAN,
         trial_ends_at=trial_ends_at,
     )
     return license_obj
@@ -672,6 +678,17 @@ PLAN_FEATURES = {
         "sharing_with_service_enabled": False,
     },
     "premium": {
+        "vin_decode_enabled": True,
+        "ares_enabled": True,
+        "reminders_enabled": True,
+        "reservations_enabled": True,
+        "vehicle_history_enabled": True,
+        "documents_enabled": True,
+        "costs_tracking_enabled": True,
+        "statistics_enabled": True,
+        "sharing_with_service_enabled": True,
+    },
+    "premium_trial": {
         "vin_decode_enabled": True,
         "ares_enabled": True,
         "reminders_enabled": True,
@@ -992,10 +1009,7 @@ def assert_feature(db: Session, tenant_id: int, feature_name: str) -> None:
         if not bool(features.get("documents_enabled", False)):
             raise LicenseError(
                 code="FEATURE_DISABLED",
-                message=(
-                    "Export dokumentů a PDF není ve vašem tarifu povolen. "
-                    "Upgradujte na BASIC nebo PREMIUM."
-                ),
+                message="Dokumenty a PDF exporty jsou dostupné od licence Basic.",
                 details={
                     "feature_name": "documents",
                     "plan": license_obj.plan,
@@ -1009,10 +1023,7 @@ def assert_feature(db: Session, tenant_id: int, feature_name: str) -> None:
         if not bool(features.get("reservations_enabled", False)):
             raise LicenseError(
                 code="FEATURE_DISABLED",
-                message=(
-                    "Objednání servisu není ve vašem tarifu povoleno. "
-                    "Upgradujte na BASIC nebo PREMIUM."
-                ),
+                message="Objednání servisu je dostupné od licence Basic.",
                 details={
                     "feature_name": "reservations",
                     "plan": license_obj.plan,
@@ -1041,9 +1052,15 @@ def assert_feature(db: Session, tenant_id: int, feature_name: str) -> None:
     is_enabled = bool(features.get(column_name, getattr(license_obj, column_name, False)))
     
     if not is_enabled:
+        message = "Tato funkce je dostupná po zakoupení odpovídající licence."
+        if feature_name == "vin_decode":
+            message = (
+                "Tato funkce je dostupná v licenci Premium. Pro automatické načtení údajů z VIN "
+                "si aktivujte Premium licenci nebo využijte zkušební Premium verzi."
+            )
         raise LicenseError(
             code="FEATURE_DISABLED",
-            message=f"Feature '{feature_name}' není povoleno pro váš plán ({license_obj.plan})",
+            message=message,
             details={
                 "feature_name": feature_name,
                 "plan": license_obj.plan,
@@ -1091,7 +1108,7 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
         getattr(license_obj, "trial_used_at", None)
         and trial_valid_to
         and current_now <= trial_valid_to
-        and normalized_plan == USER_INITIAL_TRIAL_PLAN
+        and normalized_plan == USER_INITIAL_TRIAL_EFFECTIVE_PLAN
     )
     trial_days_remaining = None
     if trial_valid_to:
@@ -1103,6 +1120,7 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
         "trial_active": trial_active,
         "trial_days_remaining": trial_days_remaining,
         "stored_plan": stored_plan,
+        "effective_plan": normalized_plan,
         "valid_to": license_obj.valid_to.isoformat() if license_obj.valid_to else None,
         "trial_started_at": (
             license_obj.trial_started_at.isoformat() if getattr(license_obj, "trial_started_at", None) else None
@@ -1111,7 +1129,7 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
         "trial_used_at": license_obj.trial_used_at.isoformat() if getattr(license_obj, "trial_used_at", None) else None,
         "trial_plan": getattr(license_obj, "trial_plan", None),
         "tenant_id": str(tenant_id),
-        "plan": normalized_plan,
+        "plan": stored_plan,
         "plan_base": get_license_plan_base(normalized_plan),
         "plan_workspace_kind": get_license_plan_workspace_kind(normalized_plan),
         "plan_public_label": get_license_plan_public_label(normalized_plan),

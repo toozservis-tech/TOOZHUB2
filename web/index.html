@@ -38678,12 +38678,16 @@
                 if (requestSeq !== addVehicleCatalogPreviewRequestSeq) {
                     return null;
                 }
+                if (isVinOtherUserBlock(error)) {
+                    applyVinOtherUserBlock(vinClean);
+                    return null;
+                }
                 const message = String(error && error.message ? error.message : error || '');
                 console.warn('[CATALOG_IMAGE] Preview z VIN se nepodařilo načíst:', message);
                 if (vinStatusEl) {
                     vinStatusEl.textContent = 'Ilustrační katalogovou fotku se nepodařilo načíst.';
                 }
-                showAlert(`Ilustrační katalogovou fotku se nepodařilo načíst: ${message}`, 'warning');
+                showAlert('Ilustrační katalogovou fotku se nepodařilo načíst.', 'warning');
                 return null;
             }
         }
@@ -44553,11 +44557,28 @@
             return 1;
         }
 
+        function getEffectiveLicensePlanKey(license) {
+            return normalizeLicensePlanKey(
+                license?.effective_plan
+                || (license?.trial_active ? 'premium_trial' : '')
+                || license?.plan
+                || currentLicensePlanForUi
+                || 'free'
+            );
+        }
+
+        function getLicenseTrialDisplayLabel(license) {
+            if (!license || !license.trial_active) return '';
+            const days = Number(license.trial_days_remaining);
+            const dayText = Number.isFinite(days) ? `${days} dní` : '30 dní';
+            return `Premium trial – zbývá ${dayText}`;
+        }
+
         function getNormalizedLicenseFlags(license) {
             const fallback = window.__licenseFlags && typeof window.__licenseFlags === 'object'
                 ? window.__licenseFlags
                 : {};
-            const plan = normalizeLicensePlanKey(license?.plan || currentLicensePlanForUi || 'free');
+            const plan = getEffectiveLicensePlanKey(license);
             const planRank = getLicensePlanRank(plan);
             const flags = {
                 vinEnabled: isFeatureEnabled(license, 'vin_decode_enabled') || !!fallback.vinEnabled || planRank >= 3,
@@ -44592,17 +44613,17 @@
                 documents: {
                     sectionLabel: 'Dokumenty',
                     targetPlan: 'basic',
-                    message: 'Dokumenty, PDF výstupy a podklady k vozidlu jsou dostupné od verze Basic.',
+                    message: getLicenseLockedMessage('documents'),
                 },
                 reservations: {
                     sectionLabel: 'Objednání servisu',
                     targetPlan: 'basic',
-                    message: 'Objednání termínu do servisu a správa vlastních servisních návštěv jsou dostupné od verze Basic.',
+                    message: getLicenseLockedMessage('reservations'),
                 },
                 servicesDirectory: {
                     sectionLabel: 'Servisní partneři',
                     targetPlan: 'premium',
-                    message: 'Sdílení vozidla se servisem a správa servisních partnerů jsou dostupné od verze Premium.',
+                    message: getLicenseLockedMessage('servicesDirectory'),
                 },
                 costs: {
                     sectionLabel: 'Náklady a statistiky',
@@ -44612,7 +44633,7 @@
                 vin: {
                     sectionLabel: 'Automatické VIN',
                     targetPlan: 'premium',
-                    message: 'Automatické načtení údajů z VIN je dostupné od verze Premium.',
+                    message: getLicenseLockedMessage('vin'),
                 },
             };
             return map[normalized] || defaults;
@@ -44623,7 +44644,7 @@
             const targetPlan = normalizeLicensePlanKey(options.targetPlan || meta.targetPlan);
             const planLabel = targetPlan === 'premium' ? 'Premium' : 'Basic';
             const sectionLabel = String(options.sectionLabel || meta.sectionLabel || 'Tato sekce');
-            showAlert(`${sectionLabel}: ${meta.message} Pro zpřístupnění pokračujte na licenci ${planLabel}.`, 'info');
+            showAlert(`${sectionLabel}: ${meta.message}`, 'info');
             openLicenseModal();
         }
 
@@ -44662,7 +44683,7 @@
 
         function applyLicenseToUI(license) {
             const flags = getNormalizedLicenseFlags(license);
-            currentLicensePlanForUi = normalizeLicensePlanKey(license?.plan || currentLicensePlanForUi || 'free');
+            currentLicensePlanForUi = getEffectiveLicensePlanKey(license);
             window.__licenseFlags = flags;
             
             const vinInput = document.getElementById('vehicleVin');
@@ -44749,6 +44770,7 @@
         function normalizeLicensePlanKey(plan) {
             const normalized = String(plan || '').trim().toLowerCase();
             const basePlan = normalized.startsWith('service_') ? normalized.slice(8) : normalized;
+            if (basePlan === 'premium_trial') return 'premium';
             if (basePlan === 'basic' || basePlan === 'premium' || basePlan === 'free' || basePlan === 'lifetime') {
                 return basePlan;
             }
@@ -44765,6 +44787,7 @@
         }
 
         function formatLicensePlanDisplayName(plan, workspaceKind = null) {
+            if (String(plan || '').trim().toLowerCase() === 'premium_trial') return 'Premium trial';
             const basePlan = normalizeLicensePlanKey(plan);
             const kind = getLicensePlanWorkspaceKind(plan, workspaceKind);
             if (kind === 'service') {
@@ -45817,7 +45840,8 @@
                 return;
             }
 
-            const workspaceKind = getLicensePlanWorkspaceKind(license?.plan || '', getActiveWorkspaceMode());
+            const effectivePlan = license?.effective_plan || (license?.trial_active ? 'premium_trial' : license?.plan);
+            const workspaceKind = getLicensePlanWorkspaceKind(license?.plan || effectivePlan || '', getActiveWorkspaceMode());
             applyLicenseCatalogPresentation(workspaceKind);
             updateServiceLicenseGlobalBanner(license);
 
@@ -45834,7 +45858,8 @@
                 return;
             }
 
-            const planLabel = formatLicensePlanDisplayName(license?.plan || 'free', workspaceKind).toUpperCase();
+            const trialLabel = getLicenseTrialDisplayLabel(license);
+            const planLabel = (trialLabel || formatLicensePlanDisplayName(effectivePlan || 'free', workspaceKind)).toUpperCase();
             const plan = planLabel;
             const tenantCurrent = Number(license.vehicles_current ?? 0);
             const userCurrentRaw = license.vehicles_current_user;
@@ -45864,7 +45889,7 @@
             }
             
             const quickItems = document.querySelectorAll('.license-quick-item');
-            const normalizedQuickPlan = normalizeLicensePlanKey(license.plan || '');
+            const normalizedQuickPlan = normalizeLicensePlanKey(effectivePlan || '');
             const isLifetimeQuick = normalizedQuickPlan === 'lifetime' || !!license.is_lifetime;
             quickItems.forEach(item => {
                 const itemPlan = normalizeLicensePlanKey(item.getAttribute('data-plan') || '');
@@ -46024,11 +46049,12 @@
             
             if (!currentBadge || !currentDetails) return;
             
-            const rawPlan = (license.plan || "unknown").toLowerCase();
+            const effectivePlan = license?.effective_plan || (license?.trial_active ? 'premium_trial' : license?.plan);
+            const rawPlan = (effectivePlan || license.plan || "unknown").toLowerCase();
             const workspaceKind = getLicensePlanWorkspaceKind(rawPlan, getActiveWorkspaceMode());
             applyLicenseCatalogPresentation(workspaceKind);
             const plan = normalizeLicensePlanKey(rawPlan);
-            const planUpper = formatLicensePlanDisplayName(rawPlan, workspaceKind).toUpperCase();
+            const planUpper = (getLicenseTrialDisplayLabel(license) || formatLicensePlanDisplayName(rawPlan, workspaceKind)).toUpperCase();
             currentLicensePlanForUi = plan;
             currentLicenseSubscriptionForUi = license?.subscription && typeof license.subscription === 'object'
                 ? license.subscription
@@ -46281,14 +46307,15 @@
                 'premium': { bg: '#fef3c7', border: '#fde68a', text: '#92400e' }
             };
             
-            const basePlan = normalizeLicensePlanKey(license?.plan || 'free');
-            const workspaceKind = getLicensePlanWorkspaceKind(license?.plan || '', getActiveWorkspaceMode());
+            const effectivePlan = license?.effective_plan || (license?.trial_active ? 'premium_trial' : license?.plan);
+            const basePlan = normalizeLicensePlanKey(effectivePlan || 'free');
+            const workspaceKind = getLicensePlanWorkspaceKind(license?.plan || effectivePlan || '', getActiveWorkspaceMode());
             const colors = planColors[basePlan] || planColors.free;
             badge.style.background = colors.bg;
             badge.style.borderColor = colors.border;
             
             // Plan text
-            const planText = formatLicensePlanDisplayName(license?.plan || 'free', workspaceKind).toUpperCase();
+            const planText = (getLicenseTrialDisplayLabel(license) || formatLicensePlanDisplayName(effectivePlan || 'free', workspaceKind)).toUpperCase();
             const statusText = license.status === 'active' ? 'active' : license.status;
             planEl.textContent = workspaceKind === 'service'
                 ? `Licence servisu: ${planText} (${statusText})`
@@ -46727,7 +46754,7 @@
             const extras = model?.extras && typeof model.extras === 'object' ? model.extras : {};
             const license = model?.license && typeof model.license === 'object' ? model.license : null;
             const licenseFlags = getNormalizedLicenseFlags(license);
-            const licensePlan = normalizeLicensePlanKey(license?.plan || currentLicensePlanForUi || 'free');
+            const licensePlan = getEffectiveLicensePlanKey(license);
             const dataGapCount = missingMainPhoto + recordsMissingHistory;
             const attentionCount = attentionItems.length;
             const healthState = attentionCount > 0 || dataGapCount > 0
@@ -47471,6 +47498,11 @@
                     const cnt = lic.vehicles_count != null ? lic.vehicles_count : lic.vehicles_current;
                     licenseSummary = {
                         plan: lic.plan || 'free',
+                        effective_plan: lic.effective_plan || lic.plan || 'free',
+                        trial_active: !!lic.trial_active,
+                        trial_days_remaining: lic.trial_days_remaining,
+                        trial_started_at: lic.trial_started_at,
+                        trial_ends_at: lic.trial_ends_at,
                         vehicles_count: cnt != null ? Number(cnt) : 0,
                         license_limit: lic.license_limit,
                         is_over_limit: !!lic.is_over_limit,
@@ -48896,9 +48928,11 @@
         let vinAbortController = null;
         let vinDebounceTimeout = null;
         let vinLastFetched = '';
+        let vinGuardBlockedValue = '';
+        let vinLookupRequestSeq = 0;
         
         // Zobrazení chyby pod VIN inputem
-        function showVinError(message) {
+        function showVinError(message, options = {}) {
             const vinInput = document.getElementById('vehicleVin');
             if (!vinInput) return;
             
@@ -48917,18 +48951,131 @@
             errorDiv.textContent = message;
             vinInput.parentElement.appendChild(errorDiv);
             
-            // Automaticky odstranit po 5 sekundách
-            setTimeout(() => {
-                if (errorDiv.parentElement) {
-                    errorDiv.remove();
-                }
-            }, 5000);
+            if (!options.persist) {
+                setTimeout(() => {
+                    if (errorDiv.parentElement) {
+                        errorDiv.remove();
+                    }
+                }, 5000);
+            }
+        }
+
+        function isVinOtherUserBlock(errorOrPayload) {
+            const payload = errorOrPayload && (errorOrPayload.payload || errorOrPayload);
+            const detail = payload && payload.detail && typeof payload.detail === 'object' ? payload.detail : null;
+            const code = payload?.code || payload?.error?.code || detail?.code;
+            return code === 'VIN_ALREADY_REGISTERED_OTHER_USER'
+                || (errorOrPayload && errorOrPayload.status === 409 && String(errorOrPayload.message || '').includes('jiným uživatelem'));
+        }
+
+        function getLicenseLockedMessage(featureKey) {
+            const key = String(featureKey || '').trim();
+            if (key === 'vin') {
+                return 'Tato funkce je dostupná v licenci Premium. Pro automatické načtení údajů z VIN si aktivujte Premium licenci nebo využijte zkušební Premium verzi.';
+            }
+            if (key === 'documents') {
+                return 'Dokumenty a PDF exporty jsou dostupné od licence Basic.';
+            }
+            if (key === 'reservations') {
+                return 'Objednání servisu je dostupné od licence Basic.';
+            }
+            if (key === 'servicesDirectory') {
+                return 'Servisní partneři a mapa servisů jsou dostupní v licenci Premium.';
+            }
+            return 'Tato funkce je dostupná po zakoupení odpovídající licence.';
+        }
+
+        function isTechnicalBackendErrorMessage(message) {
+            const text = String(message || '').toLowerCase();
+            return text.includes('sqlite')
+                || text.includes('operationalerror')
+                || text.includes('no such column')
+                || text.includes('sqlalchemy')
+                || text.includes('traceback')
+                || text.includes('stack trace')
+                || text.includes('internal server error');
+        }
+
+        function sanitizeUiErrorMessage(errorOrMessage, options = {}) {
+            const payload = errorOrMessage && (errorOrMessage.payload || errorOrMessage);
+            const detail = payload && payload.detail;
+            const detailObj = detail && typeof detail === 'object' ? detail : null;
+            const code = payload?.code || payload?.error?.code || detailObj?.code;
+            const rawMessage = String(
+                detailObj?.message
+                || payload?.message
+                || (typeof detail === 'string' ? detail : '')
+                || errorOrMessage?.message
+                || errorOrMessage
+                || ''
+            );
+            if (code === 'FEATURE_DISABLED' || code === 'LICENSE_REQUIRED') {
+                return getLicenseLockedMessage(options.featureKey);
+            }
+            if (options.featureKey && /licen|license|tarif|plánu|planu|premium|basic/i.test(rawMessage)) {
+                return getLicenseLockedMessage(options.featureKey);
+            }
+            if (isTechnicalBackendErrorMessage(rawMessage)) {
+                return 'Funkci se nepodařilo načíst. Zkuste to prosím znovu nebo kontaktujte podporu.';
+            }
+            return rawMessage || 'Funkci se nepodařilo načíst. Zkuste to prosím znovu nebo kontaktujte podporu.';
+        }
+
+        function setAddVehicleSubmitDisabled(disabled) {
+            const btn = document.querySelector('[data-testid="btn-add-vehicle"]');
+            if (btn) btn.disabled = !!disabled;
+        }
+
+        function clearVinPrefilledVehicleFields() {
+            [
+                'vehiclePlate',
+                'vehicleBrand',
+                'vehicleType',
+                'vehicleEngineCode',
+                'vehicleMaxPower',
+                'vehicleTyres',
+                'vehicleAdditionalNotes',
+                'vehicleInspectionDate',
+                'vehicleModel',
+                'vehicleYear',
+                'vehicleEngine',
+                'vehicleCatalogImageId',
+                'vehicleCatalogImageUrl',
+            ].forEach((id) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.value = '';
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+            clearVehicleCatalogPreviewState();
+            const vinStatusEl = document.getElementById('vinStatus');
+            if (vinStatusEl) vinStatusEl.textContent = '';
+        }
+
+        function applyVinOtherUserBlock(vinClean) {
+            vinGuardBlockedValue = String(vinClean || '').trim().toUpperCase().replace(/[\s-]/g, '');
+            addVehicleCatalogPreviewRequestSeq += 1;
+            clearVinPrefilledVehicleFields();
+            setAddVehicleSubmitDisabled(true);
+            showVinError(
+                'Vozidlo s tímto VIN je již evidováno v aplikaci pod jiným uživatelem.',
+                { persist: true },
+            );
+        }
+
+        function clearVinOtherUserBlockIfChanged(vinClean) {
+            const value = String(vinClean || '').trim().toUpperCase().replace(/[\s-]/g, '');
+            if (vinGuardBlockedValue && value !== vinGuardBlockedValue) {
+                vinGuardBlockedValue = '';
+                setAddVehicleSubmitDisabled(false);
+            }
         }
         
         // Načtení dat z VIN (nová verze s GET endpointem)
         async function loadVinData(vin) {
             if (window.__licenseFlags && window.__licenseFlags.vinEnabled === false) {
-                showAlert('VIN dekódování je dostupné od plánu PREMIUM.', 'info');
+                showVinError(getLicenseLockedMessage('vin'), { persist: true });
                 return;
             }
             console.log('[VIN] ========================================');
@@ -48940,6 +49087,7 @@
             }
             
             const vinClean = vin.trim().toUpperCase().replace(/[\s-]/g, '');
+            clearVinOtherUserBlockIfChanged(vinClean);
             console.log('[VIN] Cleaned VIN:', vinClean);
             
             // Validace VIN
@@ -48961,6 +49109,7 @@
                 vinAbortController.abort();
             }
             vinAbortController = new AbortController();
+            const requestSeq = ++vinLookupRequestSeq;
             
             // Odstranit předchozí chybu
             const vinInput = document.getElementById('vehicleVin');
@@ -48982,6 +49131,10 @@
                 
                 // Volat decoder endpoint pro kompletní data
                 const response = await apiCall(endpoint, 'POST', { vin: vinClean }, vinAbortController.signal);
+                if (requestSeq !== vinLookupRequestSeq || vinGuardBlockedValue === vinClean) {
+                    console.log('[VIN] Ignoring stale/blocked VIN response');
+                    return;
+                }
                 console.log('[VIN] API response status: OK');
                 console.log('[VIN] API response:', response);
                 
@@ -49250,13 +49403,17 @@
                     showVinError('VIN dekodér nevrátil žádná data');
                 }
             } catch (error) {
+                if (isVinOtherUserBlock(error)) {
+                    applyVinOtherUserBlock(vinClean);
+                    return;
+                }
                 console.error('[VIN] ========================================');
                 console.error('[VIN] ERROR occurred:', error);
                 console.error('[VIN] Error name:', error.name);
                 console.error('[VIN] Error message:', error.message);
                 console.error('[VIN] Error stack:', error.stack);
                 
-                let errorMsg = error.message || 'Neznámá chyba';
+                let errorMsg = sanitizeUiErrorMessage(error, { featureKey: 'vin' });
                 
                 // Zlepšit chybové zprávy
                 if (error.name === 'AbortError') {
@@ -49272,9 +49429,9 @@
                 } else if (errorMsg.includes('Timeout') || errorMsg.includes('časový limit')) {
                     console.error('[VIN] Timeout - Request took too long');
                     errorMsg = 'Timeout při načítání dat z VIN. Zkuste to prosím znovu.';
-                } else if (errorMsg.includes('500') || errorMsg.includes('Server')) {
+                } else if (error.status === 500 || errorMsg.includes('500') || errorMsg.includes('Server')) {
                     console.error('[VIN] 500 - Server error');
-                    errorMsg = 'Chyba serveru při dekódování VIN. Zkuste to prosím později.';
+                    errorMsg = 'Funkci se nepodařilo načíst. Zkuste to prosím znovu nebo kontaktujte podporu.';
                 } else if (errorMsg.includes('CORS') || errorMsg.includes('CORS')) {
                     console.error('[VIN] CORS error - Cross-origin request blocked');
                     errorMsg = 'CORS chyba - zkontrolujte konfiguraci serveru.';
@@ -49284,7 +49441,7 @@
                 }
                 
                 console.error('[VIN] Final error message:', errorMsg);
-                showVinError('VIN se nepodařilo načíst: ' + errorMsg);
+                showVinError(errorMsg);
             }
         }
 
@@ -49573,7 +49730,7 @@
 
         async function refreshExistingVehicleFromVin(vehicleId) {
             if (window.__licenseFlags && window.__licenseFlags.vinEnabled === false) {
-                showAlert('VIN dekódování je dostupné od plánu PREMIUM.', 'info');
+                showAlert(getLicenseLockedMessage('vin'), 'info');
                 return;
             }
             const vid = Number(vehicleId);
@@ -49635,7 +49792,7 @@
                 }
             } catch (error) {
                 console.error('[VIN refresh vehicle]', error);
-                showAlert(`Obnovení z VIN se nepodařilo: ${error?.message || 'Neznámá chyba'}`, 'error');
+                showAlert(sanitizeUiErrorMessage(error, { featureKey: 'vin' }), 'error');
             }
         }
 
@@ -50372,6 +50529,11 @@
             console.log('[ADD VEHICLE] Current user:', currentUser);
             
             const vin = document.getElementById('vehicleVin').value.trim();
+            const vinCleanForGuard = vin.trim().toUpperCase().replace(/[\s-]/g, '');
+            if (vinGuardBlockedValue && vinCleanForGuard === vinGuardBlockedValue) {
+                applyVinOtherUserBlock(vinCleanForGuard);
+                return;
+            }
             const plateInput = document.getElementById('vehiclePlate');
             const nameInput = document.getElementById('vehicleName');
             const stkInput = document.getElementById('vehicleStkDate');
@@ -50595,6 +50757,10 @@
                 }
             } catch (error) {
                 console.error('[ADD VEHICLE] Error:', error);
+                if (isVinOtherUserBlock(error)) {
+                    applyVinOtherUserBlock(vin);
+                    return;
+                }
 
                 try {
                     document.dispatchEvent(
@@ -57508,6 +57674,7 @@
                 vinInput.addEventListener('input', (e) => {
                     const vin = e.target.value.trim().toUpperCase().replace(/[\s-]/g, '');
                     e.target.value = vin;
+                    clearVinOtherUserBlockIfChanged(vin);
                     
                     // Zrušit předchozí debounce
                     if (vinDebounceTimeout) {
@@ -66615,27 +66782,45 @@
       let vinAbort = null;
       async function lookupVin(vin){
         const base = getApiBaseUrl();
-        const url = `${base}/api/v1/vin/${encodeURIComponent(vin)}`;
+        const url = `${base}/api/vehicles/decode-vin`;
 
         if (vinAbort) vinAbort.abort();
         vinAbort = new AbortController();
 
         console.log("[VIN] lookup ->", url);
         try {
-          const res = await fetch(url, { method:"GET", headers:{Accept:"application/json"}, signal: vinAbort.signal });
+          const headers = { "Content-Type":"application/json", Accept:"application/json" };
+          if (accessToken) {
+            headers.Authorization = `Bearer ${accessToken}`;
+          } else if (currentUser && currentUser.email) {
+            headers["X-User-Email"] = currentUser.email;
+          }
+          const res = await fetch(url, {
+            method:"POST",
+            headers,
+            credentials:"include",
+            body: JSON.stringify({ vin }),
+            signal: vinAbort.signal
+          });
           const text = await res.text();
           let data=null; 
           try{ data=JSON.parse(text); }catch(e){}
 
           // Debug tracking
-          trackDebugRequest('GET', url, res.status, text);
+          trackDebugRequest('POST', url, res.status, text);
 
           console.log("[VIN] status:", res.status, "body:", text.slice(0,200));
-          if (!res.ok) throw new Error((data && data.detail) ? data.detail : text.slice(0,200));
-          return data || {};
+          if (!res.ok) {
+            const err = new Error((data && (data.message || data.detail?.message || data.detail)) ? (data.message || data.detail?.message || data.detail) : text.slice(0,200));
+            err.status = res.status;
+            err.payload = data;
+            throw err;
+          }
+          if (data && data.success === false) throw new Error((data.errors || []).join(", ") || "VIN dekodér nevrátil data");
+          return (data && data.data) || data || {};
         } catch (error) {
           // Debug tracking i pro chyby
-          trackDebugRequest('GET', url, 0, error.message);
+          trackDebugRequest('POST', url, 0, error.message);
           throw error;
         }
       }
@@ -66685,6 +66870,10 @@
             try { 
               fillVin(await lookupVin(vin)); 
             } catch(e){ 
+              if (isVinOtherUserBlock(e)) {
+                applyVinOtherUserBlock(vin);
+                return;
+              }
               console.warn("[VIN] error:", e.message); 
             }
           }, 500);

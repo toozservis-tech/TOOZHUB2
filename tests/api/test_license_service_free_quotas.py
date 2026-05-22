@@ -286,12 +286,16 @@ def test_first_login_activates_user_premium_trial(db_session):
     assert trial is not None
     assert trial.plan == "free"
     assert trial.trial_plan == "premium"
+    assert trial.trial_source == "first_verified_login"
     assert trial.trial_started_at == start
     assert trial.trial_used_at == start
     assert trial.trial_ends_at == start + timedelta(days=30)
     status = get_license_status(db, int(t.id), u.email)
-    assert status["plan"] == "premium"
+    assert status["plan"] == "free"
+    assert status["effective_plan"] == "premium_trial"
     assert status["trial_active"] is True
+    assert status["trial_started_at"] == start.isoformat()
+    assert status["trial_ends_at"] == (start + timedelta(days=30)).isoformat()
     assert status["is_expired_trial"] is False
     assert db.query(GlobalAuditLog).filter(GlobalAuditLog.action == "initial_trial_activated").count() == 1
 
@@ -347,7 +351,7 @@ def test_expired_user_trial_behaves_as_free_without_data_loss(db_session):
     lic.trial_used_at = start
     lic.trial_ends_at = datetime.utcnow() - timedelta(days=1)
     lic.trial_plan = "premium"
-    lic.trial_source = "registration_first_login"
+    lic.trial_source = "first_verified_login"
     db.add(
         lic
     )
@@ -365,6 +369,7 @@ def test_expired_user_trial_behaves_as_free_without_data_loss(db_session):
     status = get_license_status(db, int(t.id), u.email)
     assert status["stored_plan"] == "free"
     assert status["plan"] == "free"
+    assert status["effective_plan"] == "free"
     assert status["is_expired_trial"] is True
     assert status["vehicles_current"] == 2
     assert status["is_over_limit"] is True
@@ -409,7 +414,9 @@ def test_paid_premium_user_is_not_overwritten_by_trial(db_session):
     db.refresh(lic)
     assert lic.plan == "premium"
     assert lic.trial_used_at is None
-    assert get_license_status(db, int(t.id), u.email)["plan"] == "premium"
+    status = get_license_status(db, int(t.id), u.email)
+    assert status["plan"] == "premium"
+    assert status["effective_plan"] == "premium"
 
 
 def test_lifetime_user_is_not_overwritten_by_trial(db_session):
@@ -471,7 +478,9 @@ def test_feature_gating_during_and_after_trial(db_session):
     activate_initial_user_trial_on_first_login(db, u, license_obj=lic, now=start)
     db.commit()
 
-    assert get_license_status(db, int(t.id), u.email)["plan"] == "premium"
+    status = get_license_status(db, int(t.id), u.email)
+    assert status["plan"] == "free"
+    assert status["effective_plan"] == "premium_trial"
     assert_feature(db, int(t.id), "vin_decode")
     assert_feature(db, int(t.id), "documents")
     assert_feature(db, int(t.id), "reservations")
@@ -480,11 +489,31 @@ def test_feature_gating_during_and_after_trial(db_session):
     db.commit()
     status = get_license_status(db, int(t.id), u.email)
     assert status["plan"] == "free"
+    assert status["effective_plan"] == "free"
     assert status["vehicles_limit"] == 1
     assert status["trial_active"] is False
     assert status["is_expired_trial"] is True
     with pytest.raises(LicenseError):
         assert_feature(db, int(t.id), "documents")
+
+
+def test_locked_feature_messages_are_user_safe(db_session):
+    db = db_session
+    t, _u, _lic = _seed_registered_user_free(db, suffix="locked-messages")
+
+    with pytest.raises(LicenseError) as vin_error:
+        assert_feature(db, int(t.id), "vin_decode")
+    assert "Tato funkce je dostupná v licenci Premium" in str(vin_error.value.detail)
+    assert "sqlite" not in str(vin_error.value.detail).lower()
+    assert "no such column" not in str(vin_error.value.detail).lower()
+
+    with pytest.raises(LicenseError) as docs_error:
+        assert_feature(db, int(t.id), "documents")
+    assert str(docs_error.value.detail) == "Dokumenty a PDF exporty jsou dostupné od licence Basic."
+
+    with pytest.raises(LicenseError) as reservations_error:
+        assert_feature(db, int(t.id), "reservations")
+    assert str(reservations_error.value.detail) == "Objednání servisu je dostupné od licence Basic."
 
 
 def test_paid_upgrade_keeps_paid_plan_after_expired_trial(db_session):
@@ -503,5 +532,6 @@ def test_paid_upgrade_keeps_paid_plan_after_expired_trial(db_session):
     lic = db.query(License).filter(License.tenant_id == int(t.id)).first()
     assert lic.valid_to is None
     assert status["plan"] == "premium"
+    assert status["effective_plan"] == "premium"
     assert status["trial_active"] is False
     assert status["is_expired_trial"] is False

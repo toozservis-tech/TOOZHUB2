@@ -152,10 +152,9 @@ def _enforce_free_service_record_limit(
     user_email: Optional[str],
 ) -> None:
     license_status = get_license_status(db, tenant_id, user_email)
-    plan_raw = str(license_status.get("plan") or "").strip().lower()
     plan_base = str(license_status.get("plan_base") or "").strip().lower()
     # Servisní ZÁKLADní má omezení jako osobní Free (1 záznam), uživatelské Basic+ bez limitu záznamů zde.
-    if plan_raw != "free" and plan_base != "free":
+    if plan_base != "free":
         return
 
     records_count = int(

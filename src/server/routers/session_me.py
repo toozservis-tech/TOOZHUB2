@@ -56,6 +56,9 @@ class ApiMeAuthenticatedResponse(BaseModel):
     default_app_path: str
     role: str
     license_plan: Optional[str] = None
+    license_effective_plan: Optional[str] = None
+    license_trial_active: bool = False
+    license_trial_ends_at: Optional[str] = None
     license_status: Optional[str] = None
     permissions: dict[str, Any] = Field(default_factory=dict)
 
@@ -110,12 +113,18 @@ def api_me(
     db.refresh(tenant)
 
     lic_plan: Optional[str] = None
+    lic_effective_plan: Optional[str] = None
+    lic_trial_active = False
+    lic_trial_ends_at: Optional[str] = None
     lic_status: Optional[str] = None
     try:
         from src.modules.licensing.service import get_license_status
 
         lic = get_license_status(db, int(customer.tenant_id), user_email=customer.email)
         lic_plan = str(lic.get("plan") or "") or None
+        lic_effective_plan = str(lic.get("effective_plan") or lic.get("plan") or "") or None
+        lic_trial_active = bool(lic.get("trial_active"))
+        lic_trial_ends_at = str(lic.get("trial_ends_at") or "") or None
         lic_status = str(lic.get("status") or "") or None
     except Exception:
         pass
@@ -197,6 +206,9 @@ def api_me(
         default_app_path=default_path,
         role=str(customer.role or "user"),
         license_plan=lic_plan,
+        license_effective_plan=lic_effective_plan,
+        license_trial_active=lic_trial_active,
+        license_trial_ends_at=lic_trial_ends_at,
         license_status=lic_status,
         permissions={
             "force_password_change": bool(getattr(customer, "force_password_change", False)),

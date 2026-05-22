@@ -118,6 +118,7 @@ class LicenseStatusResponse(BaseModel):
     """Response s informacemi o licenci"""
     tenant_id: str
     plan: str
+    effective_plan: Optional[str] = None
     status: str
     vehicles_limit: int
     vehicles_current: int
@@ -132,6 +133,10 @@ class LicenseStatusResponse(BaseModel):
     plan_public_label: Optional[str] = None
     stored_plan: Optional[str] = None
     valid_to: Optional[str] = None
+    trial_started_at: Optional[str] = None
+    trial_ends_at: Optional[str] = None
+    trial_used_at: Optional[str] = None
+    trial_plan: Optional[str] = None
     trial_active: bool = False
     trial_days_remaining: Optional[int] = None
     is_expired_trial: bool = False
@@ -1112,7 +1117,7 @@ def _finalize_license_http_payload(
     status: Dict[str, Any],
 ) -> Dict[str, Any]:
     subscription = _get_subscription(db, tenant_id)
-    sub_payload = _serialize_subscription(subscription, license_plan=status.get("plan", "free"))
+    sub_payload = _serialize_subscription(subscription, license_plan=status.get("effective_plan") or status.get("plan", "free"))
     merged = dict(status)
     merged["subscription"] = sub_payload
     merged["license_banner"] = _compute_license_ui_banner(status=merged, subscription_payload=sub_payload)
