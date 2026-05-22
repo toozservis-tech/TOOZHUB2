@@ -50,10 +50,76 @@ def _calculate_totp(secret: str, unix_time: int | None = None) -> str:
 
 def _register_user(api_url: str, email: str | None = None, password: str | None = None):
     """Zajistí účet (register nebo login) a vrátí normalizovaný email + token."""
+    from datetime import datetime
+
+    from sqlalchemy import func, text
+
+    from src.core.security import hash_password
+    from src.modules.vehicle_hub.database import SessionLocal
+    from src.modules.vehicle_hub.models import Customer
+    from src.modules.vehicle_hub.tenant_provisioning import create_dedicated_tenant
+
     pwd = password if password is not None else CI_DEFAULT_PASSWORD
-    raw = email or CI_AUTH_SHARED
-    token, _uid = ensure_user_token(api_url, raw.strip(), password=pwd, name="Auth CI")
-    return raw.strip().lower(), pwd, token, {}
+    raw = email or f"ci.auth.shared.{uuid4().hex[:12]}@example.com"
+    normalized = raw.strip().lower()
+    db = SessionLocal()
+    try:
+        customer = db.query(Customer).filter(func.lower(Customer.email) == normalized).first()
+        if customer is None:
+            tenant = create_dedicated_tenant(db, owner_email=normalized, owner_name="Auth CI")
+            customer = Customer(
+                tenant_id=tenant.id,
+                email=normalized,
+                password_hash=hash_password(pwd),
+                name="Auth CI",
+                role="user",
+                account_status="active",
+                email_verified_at=datetime.utcnow(),
+                email_verification_sent_at=datetime.utcnow(),
+                registration_ip="127.0.0.1",
+                registration_user_agent="pytest",
+            )
+            db.add(customer)
+            db.flush()
+            exists = db.execute(
+                text("SELECT id FROM licenses WHERE tenant_id = :tenant_id LIMIT 1"),
+                {"tenant_id": int(tenant.id)},
+            ).first()
+            if not exists:
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO licenses (
+                            tenant_id, plan, status, vehicles_limit, valid_from,
+                            vin_decode_enabled, ares_enabled, reminders_enabled,
+                            created_at, updated_at
+                        )
+                        VALUES (
+                            :tenant_id, 'free', 'active', 1, :now,
+                            0, 1, 1,
+                            :now, :now
+                        )
+                        """
+                    ),
+                    {"tenant_id": int(tenant.id), "now": datetime.utcnow()},
+                )
+            db.commit()
+            db.refresh(customer)
+        elif customer.email_verified_at is None:
+            customer.email_verified_at = datetime.utcnow()
+            customer.account_status = "active"
+            db.commit()
+    finally:
+        db.close()
+
+    login = requests.post(
+        f"{api_url}/user/login",
+        json={"email": normalized, "password": pwd},
+        timeout=15,
+    )
+    assert login.status_code == 200, login.text
+    data = login.json()
+    return normalized, pwd, data["access_token"], {}
 
 
 def test_register_success(api_url):
@@ -222,7 +288,7 @@ def test_login_nonexistent_user(api_url):
 
 def test_login_case_insensitive_email(api_url):
     """Přihlášení by mělo ignorovat velikost písmen v emailu"""
-    mixed_case_email = CI_CASE_USER
+    mixed_case_email = f"ci.auth.case.{uuid4().hex[:12]}@example.com"
     _, password, _, _ = _register_user(api_url, email=mixed_case_email)
 
     response = requests.post(
@@ -482,7 +548,8 @@ def test_password_reset_invalidates_previous_jwt(api_url):
 
 def test_login_role_mismatch_returns_403(api_url):
     """Přihlášení uživatele v režimu service musí vrátit 403."""
-    email, password, _, _ = _register_user(api_url)
+    email = f"ci.auth.role-mismatch.{uuid4().hex[:12]}@example.com"
+    email, password, _, _ = _register_user(api_url, email=email)
 
     response = requests.post(
         f"{api_url}/user/login",
@@ -499,8 +566,9 @@ def test_login_role_mismatch_returns_403(api_url):
 
 def test_login_with_two_factor_flow(api_url):
     """Kompletní 2FA flow: setup -> enable -> login challenge -> verify."""
-    clear_customer_totp_in_db(CI_AUTH_2FA)
-    email, password, token, _ = _register_user(api_url, email=CI_AUTH_2FA)
+    email_for_2fa = f"ci.auth.2fa.{uuid4().hex[:12]}@example.com"
+    clear_customer_totp_in_db(email_for_2fa)
+    email, password, token, _ = _register_user(api_url, email=email_for_2fa)
     headers = {"Authorization": f"Bearer {token}"}
 
     setup_response = requests.post(

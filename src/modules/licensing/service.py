@@ -13,6 +13,7 @@ from src.core.env_aliases import env_prefer_new
 
 from ..vehicle_hub.models import (
     Customer,
+    GlobalAuditLog,
     License,
     LicenseSubscription,
     ServiceCustomerLink,
@@ -23,6 +24,7 @@ from ..vehicle_hub.models import (
     VehicleServiceLink,
 )
 from ..vehicle_hub.database import Base
+from ..vehicle_hub.audit_log import write_global_audit_log
 from ..vehicle_hub.ownership import get_customer_by_email, get_owned_vehicle_ids
 
 logger = logging.getLogger(__name__)
@@ -222,6 +224,7 @@ FREE_SERVICE_RECORDS_LIMIT = 1
 FREE_ACTIVE_MANUAL_REMINDERS_LIMIT = 1
 USER_INITIAL_TRIAL_DAYS = 30
 USER_INITIAL_TRIAL_PLAN = "premium"
+USER_INITIAL_TRIAL_SOURCE = "registration_first_login"
 
 # Servisní FREE: technické kvóty (oddělené od uživatelských tarifů zákazníka)
 SERVICE_FREE_MAX_CUSTOMER_LINKS = 3
@@ -244,16 +247,94 @@ def _license_valid_to_expired(license_obj: License, now: Optional[datetime] = No
     return current_now > valid_to
 
 
-def is_expired_user_trial(license_obj: License, now: Optional[datetime] = None) -> bool:
-    """Placený uživatelský plán s `valid_to` po expiraci se chová jako FREE.
+def is_initial_user_trial_active(license_obj: License, now: Optional[datetime] = None) -> bool:
+    trial_ends_at = getattr(license_obj, "trial_ends_at", None)
+    trial_used_at = getattr(license_obj, "trial_used_at", None)
+    trial_plan = str(getattr(license_obj, "trial_plan", "") or "").strip().lower()
+    if trial_plan != USER_INITIAL_TRIAL_PLAN or trial_used_at is None or trial_ends_at is None:
+        return False
+    current_now = now or datetime.utcnow()
+    return current_now <= trial_ends_at
 
-    Používáme existující sloupce `licenses.valid_from/valid_to`, abychom nemuseli
-    zavádět novou tabulku pro první 30denní trial.
-    """
+
+def is_expired_user_trial(license_obj: License, now: Optional[datetime] = None) -> bool:
+    trial_ends_at = getattr(license_obj, "trial_ends_at", None)
+    trial_used_at = getattr(license_obj, "trial_used_at", None)
+    if trial_used_at is None or trial_ends_at is None:
+        return False
+    current_now = now or datetime.utcnow()
+    return current_now > trial_ends_at
+
+
+def _paid_user_plan_is_active(license_obj: License, *, now: Optional[datetime] = None) -> bool:
     plan = normalize_license_plan_key(getattr(license_obj, "plan", None), "user") or "free"
+    if plan == "lifetime":
+        return True
     if plan not in {"basic", "premium"}:
         return False
-    return _license_valid_to_expired(license_obj, now)
+    return not _license_valid_to_expired(license_obj, now)
+
+
+def _write_initial_trial_audit(
+    db: Session,
+    *,
+    action: str,
+    customer: Optional[Customer],
+    tenant_id: Optional[int],
+    plan: str,
+    trial_ends_at: Optional[datetime] = None,
+    reason: Optional[str] = None,
+    dedupe: bool = False,
+) -> None:
+    if dedupe and tenant_id is not None:
+        exists = (
+            db.query(GlobalAuditLog.id)
+            .filter(
+                GlobalAuditLog.tenant_id == int(tenant_id),
+                GlobalAuditLog.entity_type == "license",
+                GlobalAuditLog.action == action,
+            )
+            .first()
+        )
+        if exists:
+            return
+    metadata = {
+        "event_type": action,
+        "timestamp": datetime.utcnow().isoformat(),
+        "plan": plan,
+    }
+    if trial_ends_at is not None:
+        metadata["trial_ends_at"] = trial_ends_at.isoformat()
+    if reason:
+        metadata["reason"] = reason
+    write_global_audit_log(
+        db,
+        entity_type="license",
+        entity_id=None,
+        action=action,
+        actor_user_id=int(customer.id) if customer is not None and getattr(customer, "id", None) else None,
+        actor_role=str(getattr(customer, "role", "") or "") if customer is not None else None,
+        tenant_id=int(tenant_id) if tenant_id is not None else None,
+        metadata=metadata,
+    )
+
+
+def _skip_initial_trial(
+    db: Session,
+    *,
+    customer: Optional[Customer],
+    tenant_id: Optional[int],
+    plan: str = "free",
+    reason: str,
+) -> None:
+    _write_initial_trial_audit(
+        db,
+        action="initial_trial_skipped",
+        customer=customer,
+        tenant_id=tenant_id,
+        plan=plan,
+        reason=reason,
+    )
 
 
 def effective_license_plan_for_runtime(
@@ -268,9 +349,132 @@ def effective_license_plan_for_runtime(
         normalize_license_plan_key(effective_service_license_storage_plan(license_obj.plan), pairing)
         or "free"
     )
-    if pairing == "user" and is_expired_user_trial(license_obj, now):
+    if pairing == "user" and _paid_user_plan_is_active(license_obj, now=now):
+        return normalized_plan
+    if pairing == "user" and normalized_plan == "free" and is_expired_user_trial(license_obj, now):
+        _write_initial_trial_audit(
+            db,
+            action="initial_trial_expired_effective_free",
+            customer=None,
+            tenant_id=tenant_id,
+            plan="free",
+            trial_ends_at=getattr(license_obj, "trial_ends_at", None),
+            dedupe=True,
+        )
         return "free"
+    if pairing == "user" and normalized_plan == "free" and is_initial_user_trial_active(license_obj, now):
+        return USER_INITIAL_TRIAL_PLAN
     return normalized_plan
+
+
+def activate_initial_user_trial_on_first_login(
+    db: Session,
+    customer: Customer,
+    *,
+    tenant: Optional[Tenant] = None,
+    license_obj: Optional[License] = None,
+    now: Optional[datetime] = None,
+    previous_last_login_at: Optional[datetime] = None,
+) -> Optional[License]:
+    """Zapne první 30denní Premium trial po ověření e-mailu a prvním loginu."""
+    current_now = now or datetime.utcnow()
+    if not customer or str(getattr(customer, "role", "user") or "user").strip().lower() != "user":
+        _skip_initial_trial(
+            db,
+            customer=customer,
+            tenant_id=getattr(customer, "tenant_id", None),
+            reason="not_user_role",
+        )
+        return None
+    tenant_id = getattr(customer, "tenant_id", None)
+    if not tenant_id:
+        _skip_initial_trial(db, customer=customer, tenant_id=None, reason="missing_tenant")
+        return None
+    if ADMIN_FORCE_PREMIUM and is_admin_tenant(int(tenant_id)):
+        _skip_initial_trial(db, customer=customer, tenant_id=int(tenant_id), reason="admin_force_premium")
+        return None
+    if getattr(customer, "email_verified_at", None) is None:
+        _skip_initial_trial(db, customer=customer, tenant_id=int(tenant_id), reason="email_not_verified")
+        return None
+    original_last_login_at = (
+        previous_last_login_at if previous_last_login_at is not None else getattr(customer, "last_login_at", None)
+    )
+    if original_last_login_at is not None:
+        _skip_initial_trial(db, customer=customer, tenant_id=int(tenant_id), reason="not_first_login")
+        return None
+    if str(getattr(customer, "account_status", "") or "").strip().lower() != "active":
+        _skip_initial_trial(db, customer=customer, tenant_id=int(tenant_id), reason="account_not_active")
+        return None
+    if getattr(customer, "email_verification_sent_at", None) is None:
+        _skip_initial_trial(db, customer=customer, tenant_id=int(tenant_id), reason="not_registration_email_flow")
+        return None
+
+    tenant = tenant or db.query(Tenant).filter(Tenant.id == int(tenant_id)).first()
+    if tenant is not None and str(getattr(tenant, "workspace_route_kind", "") or "").strip().lower() == "service":
+        _skip_initial_trial(db, customer=customer, tenant_id=int(tenant_id), reason="service_tenant")
+        return None
+
+    license_obj = license_obj or get_or_create_license(db, int(tenant_id))
+    stored_plan = normalize_license_plan_key(
+        effective_service_license_storage_plan(getattr(license_obj, "plan", None)),
+        pairing_role_for_tenant_license(db, int(tenant_id)),
+    ) or "free"
+    if stored_plan == "lifetime":
+        _skip_initial_trial(db, customer=customer, tenant_id=int(tenant_id), plan=stored_plan, reason="lifetime")
+        return None
+    if stored_plan != "free" or _paid_user_plan_is_active(license_obj, now=current_now):
+        _skip_initial_trial(
+            db,
+            customer=customer,
+            tenant_id=int(tenant_id),
+            plan=stored_plan,
+            reason="paid_or_non_free_license",
+        )
+        return None
+    if getattr(license_obj, "valid_to", None) is not None:
+        _skip_initial_trial(
+            db,
+            customer=customer,
+            tenant_id=int(tenant_id),
+            plan=stored_plan,
+            reason="license_valid_to_present",
+        )
+        return None
+    if getattr(license_obj, "trial_used_at", None) is not None:
+        _skip_initial_trial(
+            db,
+            customer=customer,
+            tenant_id=int(tenant_id),
+            plan=stored_plan,
+            reason="trial_already_used",
+        )
+        return None
+
+    trial_ends_at = current_now + timedelta(days=USER_INITIAL_TRIAL_DAYS)
+    _write_initial_trial_audit(
+        db,
+        action="initial_trial_eligible",
+        customer=customer,
+        tenant_id=int(tenant_id),
+        plan=USER_INITIAL_TRIAL_PLAN,
+        trial_ends_at=trial_ends_at,
+    )
+    license_obj.trial_started_at = current_now
+    license_obj.trial_ends_at = trial_ends_at
+    license_obj.trial_used_at = current_now
+    license_obj.trial_source = USER_INITIAL_TRIAL_SOURCE
+    license_obj.trial_plan = USER_INITIAL_TRIAL_PLAN
+    license_obj.updated_at = current_now
+    db.add(license_obj)
+    _write_initial_trial_audit(
+        db,
+        action="initial_trial_activated",
+        customer=customer,
+        tenant_id=int(tenant_id),
+        plan=USER_INITIAL_TRIAL_PLAN,
+        trial_ends_at=trial_ends_at,
+    )
+    return license_obj
 
 
 def activate_initial_user_trial(
@@ -279,39 +483,7 @@ def activate_initial_user_trial(
     *,
     now: Optional[datetime] = None,
 ) -> Optional[License]:
-    """Zapne první 30denní plnou trial licenci při prvním úspěšném přihlášení.
-
-    Aktivuje se jen pro běžné uživatelské účty, které ještě nemají `last_login_at`
-    a dosud jsou na FREE plánu. Placené/ručně nastavené licence nepřepisujeme.
-    """
-    if not customer or str(getattr(customer, "role", "user") or "user").strip().lower() != "user":
-        return None
-    tenant_id = getattr(customer, "tenant_id", None)
-    if not tenant_id:
-        return None
-    if ADMIN_FORCE_PREMIUM and is_admin_tenant(int(tenant_id)):
-        return None
-    if getattr(customer, "last_login_at", None) is not None:
-        return None
-
-    license_obj = get_or_create_license(db, int(tenant_id))
-    current_plan = effective_license_plan_for_runtime(db, license_obj, int(tenant_id), now=now)
-    if current_plan != "free":
-        return None
-
-    current_now = now or datetime.utcnow()
-    features = PLAN_FEATURES[USER_INITIAL_TRIAL_PLAN]
-    license_obj.plan = USER_INITIAL_TRIAL_PLAN
-    license_obj.status = "active"
-    license_obj.vehicles_limit = PLAN_LIMITS[USER_INITIAL_TRIAL_PLAN]
-    license_obj.valid_from = current_now
-    license_obj.valid_to = current_now + timedelta(days=USER_INITIAL_TRIAL_DAYS)
-    license_obj.vin_decode_enabled = bool(features["vin_decode_enabled"])
-    license_obj.ares_enabled = bool(features.get("ares_enabled", True))
-    license_obj.reminders_enabled = bool(features["reminders_enabled"])
-    license_obj.updated_at = current_now
-    db.add(license_obj)
-    return license_obj
+    return activate_initial_user_trial_on_first_login(db, customer, now=now)
 
 
 def _normalized_service_workspace_plan(db: Session, service_customer_id: int) -> Optional[str]:
@@ -866,7 +1038,7 @@ def assert_feature(db: Session, tenant_id: int, feature_name: str) -> None:
         )
     
     column_name = feature_map[feature_name]
-    is_enabled = getattr(license_obj, column_name, False)
+    is_enabled = bool(features.get(column_name, getattr(license_obj, column_name, False)))
     
     if not is_enabled:
         raise LicenseError(
@@ -908,9 +1080,19 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
     vehicles_remaining = None if is_unl else max(0, tier_limit - tenant_vehicle_count)
 
     current_now = datetime.utcnow()
-    trial_valid_to = license_obj.valid_to if stored_plan in {"basic", "premium"} else None
-    is_expired_trial = bool(trial_valid_to and current_now > trial_valid_to and normalized_plan == "free")
-    trial_active = bool(trial_valid_to and current_now <= trial_valid_to and stored_plan in {"basic", "premium"})
+    trial_valid_to = getattr(license_obj, "trial_ends_at", None)
+    is_expired_trial = bool(
+        getattr(license_obj, "trial_used_at", None)
+        and trial_valid_to
+        and current_now > trial_valid_to
+        and normalized_plan == "free"
+    )
+    trial_active = bool(
+        getattr(license_obj, "trial_used_at", None)
+        and trial_valid_to
+        and current_now <= trial_valid_to
+        and normalized_plan == USER_INITIAL_TRIAL_PLAN
+    )
     trial_days_remaining = None
     if trial_valid_to:
         trial_days_remaining = max(0, (trial_valid_to.date() - current_now.date()).days)
@@ -922,6 +1104,12 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
         "trial_days_remaining": trial_days_remaining,
         "stored_plan": stored_plan,
         "valid_to": license_obj.valid_to.isoformat() if license_obj.valid_to else None,
+        "trial_started_at": (
+            license_obj.trial_started_at.isoformat() if getattr(license_obj, "trial_started_at", None) else None
+        ),
+        "trial_ends_at": trial_valid_to.isoformat() if trial_valid_to else None,
+        "trial_used_at": license_obj.trial_used_at.isoformat() if getattr(license_obj, "trial_used_at", None) else None,
+        "trial_plan": getattr(license_obj, "trial_plan", None),
         "tenant_id": str(tenant_id),
         "plan": normalized_plan,
         "plan_base": get_license_plan_base(normalized_plan),

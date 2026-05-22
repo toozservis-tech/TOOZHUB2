@@ -44,7 +44,7 @@ from src.modules.vehicle_hub.registration_security import (
     normalize_validate_phone_e164,
 )
 from src.modules.vehicle_hub.tenant_provisioning import create_dedicated_tenant, ensure_default_license_for_tenant
-from src.modules.licensing.service import activate_initial_user_trial
+from src.modules.licensing.service import activate_initial_user_trial_on_first_login
 from src.server.main_helpers import (
     ForgotPasswordRequest,
     LoginResponse,
@@ -688,6 +688,7 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
                 detail="Nejdříve ověřte e-mailovou adresu.",
             )
 
+        original_last_login_at = customer.last_login_at
         requested_role = (login_data.expected_role or "").strip().lower()
         if requested_role in {"user", "service"}:
             from src.modules.vehicle_hub.workspace_entitlements import effective_workspace_kinds
@@ -751,7 +752,11 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
                 challenge_expires_in=expires_in,
             )
 
-        activate_initial_user_trial(db, customer)
+        activate_initial_user_trial_on_first_login(
+            db,
+            customer,
+            previous_last_login_at=original_last_login_at,
+        )
         touch_customer_last_login(customer)
         db.commit()
         access_token = create_access_token(data={"sub": customer.email, "sv": customer_session_version(customer)})
@@ -871,8 +876,13 @@ def verify_login_two_factor(
         )
         raise HTTPException(status_code=401, detail="Neplatný 2FA kód")
 
+    original_last_login_at = customer.last_login_at
     pop_2fa_login_challenge(payload.challenge_token)
-    activate_initial_user_trial(db, customer)
+    activate_initial_user_trial_on_first_login(
+        db,
+        customer,
+        previous_last_login_at=original_last_login_at,
+    )
     touch_customer_last_login(customer)
     db.commit()
     access_token = create_access_token(data={"sub": customer.email, "sv": customer_session_version(customer)})

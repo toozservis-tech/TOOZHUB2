@@ -1240,6 +1240,11 @@ class License(Base):
     
     valid_from = Column(DateTime, nullable=False, default=datetime.utcnow)
     valid_to = Column(DateTime, nullable=True)
+    trial_started_at = Column(DateTime, nullable=True)
+    trial_ends_at = Column(DateTime, nullable=True)
+    trial_used_at = Column(DateTime, nullable=True)
+    trial_source = Column(String(64), nullable=True)
+    trial_plan = Column(String(32), nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
