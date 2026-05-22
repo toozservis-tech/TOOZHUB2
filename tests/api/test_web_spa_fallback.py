@@ -53,6 +53,18 @@ def test_health_still_json(client: TestClient):
     assert "application/json" in (r.headers.get("content-type") or "")
 
 
+def test_verify_email_page_returns_html(client: TestClient):
+    r = client.get("/web/verify-email.html")
+    assert r.status_code == 200
+    assert "text/html" in (r.headers.get("content-type") or "").lower()
+
+
+def test_verify_document_page_returns_html(client: TestClient):
+    r = client.get("/web/verify.html")
+    assert r.status_code == 200
+    assert "text/html" in (r.headers.get("content-type") or "").lower()
+
+
 def test_existing_web_static_file_served(client: TestClient):
     r = client.get("/web/storage_migration.js")
     assert r.status_code == 200

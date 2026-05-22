@@ -1020,10 +1020,28 @@ S pozdravem,
         traceback.print_exc()
 
 
+def _verify_email_audit_details(*, token_hash: str, reason: str | None = None, **extra) -> dict:
+    """Audit metadata — nikdy plaintext token, jen hash digest."""
+    payload: dict = {"token_hash": token_hash}
+    if reason:
+        payload["reason"] = reason
+    payload.update(extra)
+    return payload
+
+
 @router.post("/user/verify-email")
 def verify_email_token(payload: VerifyEmailRequest, request: Request, db=Depends(get_db)):
     """Jednorázové ověření e-mailu — token jen jako vstup, v DB je hash."""
-    th = hash_email_verification_token(payload.token.strip())
+    token = payload.token.strip()
+    th = hash_email_verification_token(token)
+
+    log_security_event(
+        event_type="email_verification_started",
+        request=request,
+        endpoint="/user/verify-email",
+        details=_verify_email_audit_details(token_hash=th),
+    )
+
     customer = (
         db.query(Customer)
         .filter(
@@ -1032,20 +1050,67 @@ def verify_email_token(payload: VerifyEmailRequest, request: Request, db=Depends
         .first()
     )
     if not customer:
+        log_security_event(
+            event_type="email_verification_failed",
+            request=request,
+            endpoint="/user/verify-email",
+            details=_verify_email_audit_details(token_hash=th, reason="token_not_found"),
+        )
         raise HTTPException(
             status_code=400,
-            detail="Neplatný nebo již použitý ověřovací odkaz.",
+            detail={
+                "code": "token_invalid",
+                "message": "Neplatný nebo již použitý ověřovací odkaz.",
+            },
         )
+
+    if customer.email_verified_at is not None:
+        log_security_event(
+            event_type="email_verification_success",
+            request=request,
+            user_email=customer.email,
+            customer_id=customer.id,
+            tenant_id=customer.tenant_id,
+            endpoint="/user/verify-email",
+            details=_verify_email_audit_details(
+                token_hash=th,
+                account_status=customer.account_status,
+                already_verified=True,
+            ),
+        )
+        return {
+            "verified": True,
+            "already_verified": True,
+            "message": "Účet je již ověřen. Můžete se přihlásit.",
+        }
+
     if customer.email_verification_expires_at and datetime.utcnow() > customer.email_verification_expires_at:
+        log_security_event(
+            event_type="email_verification_failed",
+            request=request,
+            user_email=customer.email,
+            customer_id=customer.id,
+            tenant_id=customer.tenant_id,
+            endpoint="/user/verify-email",
+            details=_verify_email_audit_details(token_hash=th, reason="token_expired"),
+        )
         raise HTTPException(
             status_code=400,
-            detail="Ověřovací odkaz vypršel. Požádejte o nový pomocí tlačítka pro opětovné odeslání.",
+            detail={
+                "code": "token_expired",
+                "message": "Ověřovací odkaz vypršel. Požádejte o nový pomocí tlačítka pro opětovné odeslání.",
+            },
         )
+
     customer.email_verified_at = datetime.utcnow()
     customer.account_status = "active"
-    customer.email_verification_token_hash = None
     customer.email_verification_expires_at = None
     db.commit()
+
+    success_details = _verify_email_audit_details(
+        token_hash=th,
+        account_status=customer.account_status,
+    )
     log_security_event(
         event_type="email_verified",
         request=request,
@@ -1053,7 +1118,16 @@ def verify_email_token(payload: VerifyEmailRequest, request: Request, db=Depends
         customer_id=customer.id,
         tenant_id=customer.tenant_id,
         endpoint="/user/verify-email",
-        details={"account_status": customer.account_status},
+        details=success_details,
+    )
+    log_security_event(
+        event_type="email_verification_success",
+        request=request,
+        user_email=customer.email,
+        customer_id=customer.id,
+        tenant_id=customer.tenant_id,
+        endpoint="/user/verify-email",
+        details=success_details,
     )
     return {"verified": True, "message": "E-mail byl ověřen. Nyní se můžete přihlásit."}
 

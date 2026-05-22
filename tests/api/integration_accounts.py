@@ -37,6 +37,35 @@ def _verify_customer_email_in_db(email: str) -> None:
         db.close()
 
 
+def plant_email_verification_token_for_test(email: str, raw_token: str | None = None) -> str:
+    """Nastaví známý ověřovací token pro integrační testy (hash v DB, ne plaintext)."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import func
+
+    from src.modules.vehicle_hub.database import SessionLocal
+    from src.modules.vehicle_hub.models import Customer
+    from src.modules.vehicle_hub.registration_security import (
+        generate_email_verification_secret,
+        hash_email_verification_token,
+    )
+
+    raw = raw_token or generate_email_verification_secret()
+    db = SessionLocal()
+    try:
+        c = db.query(Customer).filter(func.lower(Customer.email) == str(email).strip().lower()).first()
+        if not c:
+            raise RuntimeError(f"Customer not found for email verification test: {email}")
+        c.email_verified_at = None
+        c.account_status = "pending_email_verification"
+        c.email_verification_token_hash = hash_email_verification_token(raw)
+        c.email_verification_expires_at = datetime.utcnow() + timedelta(minutes=30)
+        db.commit()
+    finally:
+        db.close()
+    return raw
+
+
 def ensure_user_token(
     api_url: str,
     email: str,
