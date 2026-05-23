@@ -193,14 +193,31 @@
   }
 
   function showFeatureLock(featureKey) {
+    const message = getUserAppLockedMessage(featureKey);
     if (typeof window.showDashboardUpgradePrompt === 'function') {
       window.showDashboardUpgradePrompt(featureKey);
       return;
     }
-    alert('Tato sekce vyžaduje vyšší licenci.');
+    alert(message);
   }
 
   window.canAccessFeature = canAccessFeature;
+
+  function getUserAppLockedMessage(featureKey) {
+    if (typeof window.getLicenseLockedMessage === 'function') {
+      try { return window.getLicenseLockedMessage(featureKey); } catch (_) {}
+    }
+    const key = String(featureKey || '').trim();
+    if (key === 'vin' || key === 'vin_mdcr_decode') {
+      return 'Tato funkce je dostupná v licenci Premium. Pro automatické načtení údajů z VIN si aktivujte Premium licenci.';
+    }
+    if (key === 'documents') return 'Dokumenty a PDF exporty jsou dostupné od licence Basic.';
+    if (key === 'reservations') return 'Objednání servisu je dostupné od licence Basic.';
+    if (key === 'servicesDirectory' || key === 'service_discovery' || key === 'service_partners') {
+      return 'Servisní partneři a mapa servisů jsou dostupní v licenci Premium.';
+    }
+    return 'Tato funkce je dostupná po zakoupení odpovídající licence.';
+  }
 
   function getSidebarLockFlags() {
     return {

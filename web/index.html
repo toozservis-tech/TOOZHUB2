@@ -33088,6 +33088,87 @@
     <!-- Security Protection - Anti-debugging a ochrana kódu -->
     <!-- DOČASNĚ ÚPLNĚ ZAKÁZÁNO - způsobovalo zmizení aplikace -->
     <!-- <script src="security_protection.js"></script> -->
+    <style>
+        .cookie-consent {
+            position: fixed;
+            left: 16px;
+            right: 16px;
+            bottom: 16px;
+            z-index: 2147483000;
+            display: grid;
+            gap: 12px;
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 16px;
+            border: 1px solid rgba(148, 163, 184, 0.42);
+            border-radius: 14px;
+            background: #ffffff;
+            color: #0f172a;
+            box-shadow: 0 18px 48px rgba(15, 23, 42, 0.2);
+        }
+        .cookie-consent[hidden] {
+            display: none;
+        }
+        .cookie-consent__head {
+            display: grid;
+            gap: 4px;
+        }
+        .cookie-consent__title {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 800;
+        }
+        .cookie-consent__text,
+        .cookie-consent__settings {
+            margin: 0;
+            color: #475569;
+            font-size: 0.9rem;
+            line-height: 1.45;
+        }
+        .cookie-consent__settings {
+            display: none;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: #f8fafc;
+        }
+        .cookie-consent.is-settings-open .cookie-consent__settings {
+            display: block;
+        }
+        .cookie-consent__actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+        .cookie-consent__btn {
+            min-height: 38px;
+            border: 1px solid #cbd5e1;
+            border-radius: 9px;
+            background: #ffffff;
+            color: #0f172a;
+            padding: 8px 12px;
+            font: inherit;
+            font-size: 0.9rem;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .cookie-consent__btn--primary {
+            border-color: #2563eb;
+            background: #2563eb;
+            color: #ffffff;
+        }
+        @media (max-width: 560px) {
+            .cookie-consent {
+                left: 10px;
+                right: 10px;
+                bottom: 10px;
+            }
+            .cookie-consent__actions {
+                display: grid;
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -48971,7 +49052,7 @@
         function getLicenseLockedMessage(featureKey) {
             const key = String(featureKey || '').trim();
             if (key === 'vin') {
-                return 'Tato funkce je dostupná v licenci Premium. Pro automatické načtení údajů z VIN si aktivujte Premium licenci nebo využijte zkušební Premium verzi.';
+                return 'Tato funkce je dostupná v licenci Premium. Pro automatické načtení údajů z VIN si aktivujte Premium licenci.';
             }
             if (key === 'documents') {
                 return 'Dokumenty a PDF exporty jsou dostupné od licence Basic.';
@@ -48984,6 +49065,7 @@
             }
             return 'Tato funkce je dostupná po zakoupení odpovídající licence.';
         }
+        window.getLicenseLockedMessage = getLicenseLockedMessage;
 
         function isTechnicalBackendErrorMessage(message) {
             const text = String(message || '').toLowerCase();
@@ -48997,6 +49079,7 @@
         }
 
         function sanitizeUiErrorMessage(errorOrMessage, options = {}) {
+            const fallbackMessage = options.fallback || 'Funkci se nepodařilo načíst. Zkuste to prosím znovu nebo kontaktujte podporu.';
             const payload = errorOrMessage && (errorOrMessage.payload || errorOrMessage);
             const detail = payload && payload.detail;
             const detailObj = detail && typeof detail === 'object' ? detail : null;
@@ -49016,9 +49099,9 @@
                 return getLicenseLockedMessage(options.featureKey);
             }
             if (isTechnicalBackendErrorMessage(rawMessage)) {
-                return 'Funkci se nepodařilo načíst. Zkuste to prosím znovu nebo kontaktujte podporu.';
+                return fallbackMessage;
             }
-            return rawMessage || 'Funkci se nepodařilo načíst. Zkuste to prosím znovu nebo kontaktujte podporu.';
+            return rawMessage || fallbackMessage;
         }
 
         function setAddVehicleSubmitDisabled(disabled) {
@@ -66076,7 +66159,12 @@
                 document.getElementById('supportMessage').value = '';
                 showAlert('Podpora byla kontaktována.', 'success');
             } catch (error) {
-                showFormError('supportResult', `Nepodařilo se odeslat požadavek: ${error.message}`);
+                showFormError(
+                    'supportResult',
+                    sanitizeUiErrorMessage(error, {
+                        fallback: 'Požadavek se nepodařilo odeslat. Zkuste to prosím znovu nebo kontaktujte podporu.'
+                    })
+                );
             } finally {
                 if (submitBtn) {
                     submitBtn.disabled = false;
@@ -68825,6 +68913,78 @@
           } catch (_) {}
         }
       });
+    </script>
+
+    <script>
+      (function () {
+        const COOKIE_CONSENT_KEY = 'sprava_vozidel_cookie_consent_v1';
+
+        function getCookieConsentChoice() {
+          try {
+            return localStorage.getItem(COOKIE_CONSENT_KEY) || '';
+          } catch (_) {
+            return '';
+          }
+        }
+
+        function saveCookieConsentChoice(choice) {
+          try {
+            localStorage.setItem(COOKIE_CONSENT_KEY, JSON.stringify({
+              choice,
+              accepted_at: new Date().toISOString(),
+              analytics: choice === 'all',
+            }));
+          } catch (_) {}
+        }
+
+        function closeCookieConsent(choice) {
+          saveCookieConsentChoice(choice);
+          const banner = document.getElementById('cookieConsentBanner');
+          if (banner) banner.hidden = true;
+        }
+
+        function renderCookieConsentBanner() {
+          if (getCookieConsentChoice()) return;
+          if (document.getElementById('cookieConsentBanner')) return;
+          const banner = document.createElement('aside');
+          banner.id = 'cookieConsentBanner';
+          banner.className = 'cookie-consent';
+          banner.setAttribute('role', 'dialog');
+          banner.setAttribute('aria-live', 'polite');
+          banner.setAttribute('aria-label', 'Nastavení cookies');
+          banner.innerHTML = `
+            <div class="cookie-consent__head">
+              <p class="cookie-consent__title">Cookies a soukromí</p>
+              <p class="cookie-consent__text">Používáme nezbytné cookies pro přihlášení, bezpečnost a provoz aplikace.</p>
+            </div>
+            <p class="cookie-consent__settings" id="cookieConsentSettings">
+              Marketingové ani analytické cookies aktuálně nepoužíváme a nepřidáváme externí tracking.
+            </p>
+            <div class="cookie-consent__actions">
+              <button type="button" class="cookie-consent__btn" data-cookie-consent="necessary">Přijmout nezbytné</button>
+              <button type="button" class="cookie-consent__btn" data-cookie-consent="settings" aria-controls="cookieConsentSettings">Nastavení</button>
+              <button type="button" class="cookie-consent__btn cookie-consent__btn--primary" data-cookie-consent="all">Přijmout vše</button>
+            </div>
+          `;
+          banner.addEventListener('click', function (event) {
+            const btn = event.target && event.target.closest ? event.target.closest('[data-cookie-consent]') : null;
+            if (!btn) return;
+            const action = btn.getAttribute('data-cookie-consent');
+            if (action === 'settings') {
+              banner.classList.toggle('is-settings-open');
+              return;
+            }
+            if (action === 'necessary' || action === 'all') {
+              closeCookieConsent(action);
+            }
+          });
+          document.body.appendChild(banner);
+        }
+
+        window.renderCookieConsentBanner = renderCookieConsentBanner;
+        window.getCookieConsentChoice = getCookieConsentChoice;
+        document.addEventListener('DOMContentLoaded', renderCookieConsentBanner);
+      })();
     </script>
     
     <!-- AI Features JavaScript -->

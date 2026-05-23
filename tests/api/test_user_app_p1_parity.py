@@ -96,7 +96,7 @@ def test_index_html_sanitizes_runtime_sql_errors():
 
 def test_index_html_locked_feature_messages_are_specific():
     content = _read("index.html")
-    assert "Tato funkce je dostupná v licenci Premium. Pro automatické načtení údajů z VIN" in content
+    assert "Tato funkce je dostupná v licenci Premium. Pro automatické načtení údajů z VIN si aktivujte Premium licenci." in content
     assert "Dokumenty a PDF exporty jsou dostupné od licence Basic." in content
     assert "Objednání servisu je dostupné od licence Basic." in content
     assert "Servisní partneři a mapa servisů jsou dostupní v licenci Premium." in content
@@ -108,3 +108,64 @@ def test_tutorial_hub_open_modal():
 
 def test_tutorial_hub_close_modal():
     assert "window.closeHowToHubModal = function closeHowToHubModal" in _read("tutorial-hub.js")
+
+
+def test_cookie_consent_banner_contract():
+    content = _read("index.html")
+    assert "COOKIE_CONSENT_KEY = 'sprava_vozidel_cookie_consent_v1'" in content
+    assert "Používáme nezbytné cookies pro přihlášení, bezpečnost a provoz aplikace." in content
+    assert "Přijmout nezbytné" in content
+    assert "Přijmout vše" in content
+    assert "Nastavení" in content
+    assert "Marketingové ani analytické cookies aktuálně nepoužíváme" in content
+    assert "google-analytics" not in content.lower()
+    assert "googletagmanager" not in content.lower()
+
+
+def test_cookie_consent_persists_choice_and_does_not_block_auth():
+    content = _read("index.html")
+    assert "localStorage.setItem(COOKIE_CONSENT_KEY" in content
+    assert "document.body.appendChild(banner)" in content
+    assert "document.addEventListener('DOMContentLoaded', renderCookieConsentBanner)" in content
+    assert "z-index: 2147483000" in content
+    assert "loginForm" in content
+    assert "registerForm" in content
+
+
+def test_service_history_deep_link_contract():
+    index = _read("index.html")
+    app = _read("user-app-next.js")
+    assert "if (s === 'service-history') return 'serviceHistory';" in index
+    assert "if (t === 'servicehistory') return 'service-history';" in index
+    assert "syncUserTabUrlHistory('serviceHistory')" in app
+    assert "user-app-next-view-service-history" in app
+    assert "data-testid=\"user-app-next-service-history\"" in app
+
+
+def test_support_navigation_uses_existing_flow_and_safe_error():
+    index = _read("index.html")
+    app = _read("user-app-next.js")
+    assert "loadSupportPanel(false)" in index
+    assert "handleSendSupportRequest" in index
+    assert "Požadavek byl odeslán na podporu." in index
+    assert "sanitizeUiErrorMessage(error" in index
+    assert "Nepodařilo se odeslat požadavek: ${error.message}" not in index
+    assert "Podpora" in app
+    assert "navButton('Podpora', ICO.support, 'support'" in app
+
+
+def test_user_app_next_lock_messages_are_specific_and_safe():
+    content = _read("user-app-next.js")
+    assert "function getUserAppLockedMessage" in content
+    assert "Tato funkce je dostupná v licenci Premium. Pro automatické načtení údajů z VIN si aktivujte Premium licenci." in content
+    assert "Dokumenty a PDF exporty jsou dostupné od licence Basic." in content
+    assert "Objednání servisu je dostupné od licence Basic." in content
+    assert "Servisní partneři a mapa servisů jsou dostupní v licenci Premium." in content
+
+
+def test_trial_effective_plan_unlocks_premium_features():
+    content = _read("index.html")
+    assert "license?.effective_plan" in content
+    assert "license?.trial_active ? 'premium_trial'" in content
+    assert "planRank >= 3" in content
+    assert "if (plan === 'free')" in content
