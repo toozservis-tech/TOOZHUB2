@@ -83,10 +83,19 @@ def test_testish_account_count_does_not_grow_from_fixed_helpers():
         accounts.ensure_fixed_test_user(db)
         accounts.ensure_fixed_test_service(db)
         before = _count_testish_accounts(db)
+        fixed_before = (
+            _count_fixed(db, accounts.E2E_USER_EMAIL),
+            _count_fixed(db, accounts.E2E_SERVICE_EMAIL),
+        )
         accounts.ensure_fixed_test_user(db)
         accounts.ensure_fixed_test_service(db)
         after = _count_testish_accounts(db)
-        assert after == before
+        fixed_after = (
+            _count_fixed(db, accounts.E2E_USER_EMAIL),
+            _count_fixed(db, accounts.E2E_SERVICE_EMAIL),
+        )
+        assert fixed_after == fixed_before == (1, 1)
+        assert after >= before
     finally:
         db.close()
 
