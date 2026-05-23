@@ -123,6 +123,9 @@ class Customer(Base):
     email_normalized = Column(String(320), nullable=True, index=True)
     phone_normalized = Column(String(32), nullable=True, index=True)
 
+    # Uživatelské preference nastavení (JSON blob, verze 1)
+    user_preferences = Column(JSON, nullable=True)
+
 
 class CustomerDeletionLabel(Base):
     """Označení smazaného účtu v archivu (#N, ##N) podle pořadí smazání daného čísla."""
@@ -932,6 +935,59 @@ class ServiceWorkOrderAuditLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+class ServiceWorkOrderItem(Base):
+    """Položka servisní zakázky: práce, materiál nebo ostatní náklad."""
+    __tablename__ = "service_work_order_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    work_order_id = Column(Integer, ForeignKey("service_work_orders.id"), nullable=False, index=True)
+    service_customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)
+
+    item_type = Column(String(32), nullable=False, index=True)
+    name = Column(String(512), nullable=False)
+    code = Column(String(128), nullable=True, index=True)
+    quantity = Column(Float, nullable=False, default=1)
+    unit = Column(String(32), nullable=False, default="ks")
+    vat_rate = Column(Float, nullable=False, default=21)
+    purchase_price_without_vat = Column(Float, nullable=True)
+    sale_price_without_vat = Column(Float, nullable=False, default=0)
+    discount_percent = Column(Float, nullable=False, default=0)
+    note = Column(Text, nullable=True)
+    mechanic_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    source = Column(String(32), nullable=False, default="manual", index=True)
+    created_by = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class ServiceWorkOrderCsvImport(Base):
+    """Auditní hlavička CSV importu dílů do servisní zakázky."""
+    __tablename__ = "service_work_order_csv_imports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    service_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    work_order_id = Column(Integer, ForeignKey("service_work_orders.id"), nullable=False, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)
+
+    filename = Column(String(255), nullable=True)
+    delimiter = Column(String(8), nullable=False)
+    rows_count = Column(Integer, nullable=False, default=0)
+    imported_count = Column(Integer, nullable=False, default=0)
+    skipped_count = Column(Integer, nullable=False, default=0)
+    duplicate_count = Column(Integer, nullable=False, default=0)
+    error_rows_json = Column(Text, nullable=True)
+    mapping_json = Column(Text, nullable=True)
+    file_sha256 = Column(String(64), nullable=False, index=True)
+    created_by = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 class ServiceQuote(Base):
     """Cenová nabídka navázaná na existující servisní zakázku nebo záznam."""
     __tablename__ = "service_quotes"
@@ -1240,11 +1296,6 @@ class License(Base):
     
     valid_from = Column(DateTime, nullable=False, default=datetime.utcnow)
     valid_to = Column(DateTime, nullable=True)
-    trial_started_at = Column(DateTime, nullable=True)
-    trial_ends_at = Column(DateTime, nullable=True)
-    trial_used_at = Column(DateTime, nullable=True)
-    trial_source = Column(String(64), nullable=True)
-    trial_plan = Column(String(32), nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -1857,3 +1908,94 @@ class SupportMessage(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     session = relationship("SupportSession", back_populates="messages")
+
+
+class ServiceLocation(Base):
+    """Veřejný katalog servisních míst (mapa servisů) – odděleno od dat vozidel a majitelů."""
+
+    __tablename__ = "service_locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_type = Column(String(32), nullable=False, index=True)
+    source_external_id = Column(String(128), nullable=True, index=True)
+    name = Column(String(255), nullable=False)
+    normalized_name = Column(String(255), nullable=True, index=True)
+    category = Column(String(32), nullable=False, index=True)
+    lat = Column(Float, nullable=False, index=True)
+    lng = Column(Float, nullable=False, index=True)
+    address_text = Column(String(512), nullable=True)
+    street = Column(String(255), nullable=True)
+    city = Column(String(128), nullable=True, index=True)
+    postal_code = Column(String(16), nullable=True)
+    region = Column(String(128), nullable=True)
+    district = Column(String(128), nullable=True)
+    phone = Column(String(64), nullable=True)
+    email = Column(String(255), nullable=True)
+    website = Column(String(512), nullable=True)
+    opening_hours = Column(Text, nullable=True)
+    services_json = Column(Text, nullable=True)
+    vehicle_scope_json = Column(Text, nullable=True)
+    verification_status = Column(String(32), nullable=False, default="imported", index=True)
+    confidence_score = Column(Float, nullable=True)
+    last_imported_at = Column(DateTime, nullable=True)
+    last_verified_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    linked_service_tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    sources = relationship("ServiceLocationSource", back_populates="service_location", cascade="all, delete-orphan")
+    claims = relationship("ServiceLocationClaim", back_populates="service_location", cascade="all, delete-orphan")
+    reports = relationship("ServiceLocationReport", back_populates="service_location", cascade="all, delete-orphan")
+
+
+class ServiceLocationSource(Base):
+    __tablename__ = "service_location_sources"
+
+    id = Column(Integer, primary_key=True, index=True)
+    service_location_id = Column(Integer, ForeignKey("service_locations.id"), nullable=False, index=True)
+    source_type = Column(String(32), nullable=False)
+    source_external_id = Column(String(128), nullable=True)
+    raw_payload_hash = Column(String(64), nullable=True, index=True)
+    raw_payload_json = Column(Text, nullable=True)
+    import_batch_id = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    service_location = relationship("ServiceLocation", back_populates="sources")
+
+
+class ServiceLocationClaim(Base):
+    __tablename__ = "service_location_claims"
+
+    id = Column(Integer, primary_key=True, index=True)
+    service_location_id = Column(Integer, ForeignKey("service_locations.id"), nullable=False, index=True)
+    service_tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    claim_status = Column(String(32), nullable=False, default="pending", index=True)
+    claim_method = Column(String(32), nullable=True)
+    ico = Column(String(16), nullable=True)
+    dic = Column(String(16), nullable=True)
+    business_name = Column(String(255), nullable=True)
+    submitted_by_user_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    approved_by_admin_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    approved_at = Column(DateTime, nullable=True)
+    fraud_flags_json = Column(Text, nullable=True)
+    audit_hash = Column(String(64), nullable=True)
+
+    service_location = relationship("ServiceLocation", back_populates="claims")
+
+
+class ServiceLocationReport(Base):
+    __tablename__ = "service_location_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    service_location_id = Column(Integer, ForeignKey("service_locations.id"), nullable=False, index=True)
+    report_type = Column(String(32), nullable=False)
+    report_text = Column(Text, nullable=True)
+    reported_by_user_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    status = Column(String(32), nullable=False, default="open", index=True)
+    resolved_by_admin_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+
+    service_location = relationship("ServiceLocation", back_populates="reports")

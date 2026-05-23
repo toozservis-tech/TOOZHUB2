@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="/web/app.css" />
     <link rel="stylesheet" href="/web/inline-styles.css" />
     <link rel="stylesheet" href="/web/service-shell.css?v=2026050720" />
-    <link rel="stylesheet" href="/web/user-app-next.css?v=202605215" />
+    <link rel="stylesheet" href="/web/user-app-next.css?v=202605234" />
     <style>
         * {
             margin: 0;
@@ -12803,6 +12803,22 @@
             background: rgba(238, 242, 255, 0.55) !important;
             display: grid;
             gap: 8px;
+        }
+
+        #licenseModal .license-trial-banner {
+            margin: 0 0 10px !important;
+            padding: 11px 12px !important;
+            border: 1px solid #93c5fd !important;
+            border-left: 4px solid #2563eb !important;
+            border-radius: 12px !important;
+            background: #eff6ff !important;
+            color: #1e3a8a !important;
+            font-size: 0.86rem !important;
+            line-height: 1.45 !important;
+        }
+
+        #licenseModal .license-trial-banner strong {
+            color: #172554 !important;
         }
 
         #licenseModal .license-subscription-head {
@@ -33088,87 +33104,6 @@
     <!-- Security Protection - Anti-debugging a ochrana kódu -->
     <!-- DOČASNĚ ÚPLNĚ ZAKÁZÁNO - způsobovalo zmizení aplikace -->
     <!-- <script src="security_protection.js"></script> -->
-    <style>
-        .cookie-consent {
-            position: fixed;
-            left: 16px;
-            right: 16px;
-            bottom: 16px;
-            z-index: 2147483000;
-            display: grid;
-            gap: 12px;
-            max-width: 760px;
-            margin: 0 auto;
-            padding: 16px;
-            border: 1px solid rgba(148, 163, 184, 0.42);
-            border-radius: 14px;
-            background: #ffffff;
-            color: #0f172a;
-            box-shadow: 0 18px 48px rgba(15, 23, 42, 0.2);
-        }
-        .cookie-consent[hidden] {
-            display: none;
-        }
-        .cookie-consent__head {
-            display: grid;
-            gap: 4px;
-        }
-        .cookie-consent__title {
-            margin: 0;
-            font-size: 1rem;
-            font-weight: 800;
-        }
-        .cookie-consent__text,
-        .cookie-consent__settings {
-            margin: 0;
-            color: #475569;
-            font-size: 0.9rem;
-            line-height: 1.45;
-        }
-        .cookie-consent__settings {
-            display: none;
-            padding: 10px 12px;
-            border-radius: 10px;
-            background: #f8fafc;
-        }
-        .cookie-consent.is-settings-open .cookie-consent__settings {
-            display: block;
-        }
-        .cookie-consent__actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            justify-content: flex-end;
-        }
-        .cookie-consent__btn {
-            min-height: 38px;
-            border: 1px solid #cbd5e1;
-            border-radius: 9px;
-            background: #ffffff;
-            color: #0f172a;
-            padding: 8px 12px;
-            font: inherit;
-            font-size: 0.9rem;
-            font-weight: 700;
-            cursor: pointer;
-        }
-        .cookie-consent__btn--primary {
-            border-color: #2563eb;
-            background: #2563eb;
-            color: #ffffff;
-        }
-        @media (max-width: 560px) {
-            .cookie-consent {
-                left: 10px;
-                right: 10px;
-                bottom: 10px;
-            }
-            .cookie-consent__actions {
-                display: grid;
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
 </head>
 <body>
     <div class="container">
@@ -33401,7 +33336,7 @@
                 </div>
             </div>
             
-            <!-- Panel „Jak na to“ (návody; hub v /web/tutorial-hub.js) -->
+            <!-- Panel „Jak na to“ (návody; engine v /web/tutorials/tutorial-engine.js) -->
             <div
                 id="howToHubModal"
                 class="vehicle-modal add-vehicle-modal how-to-hub-modal"
@@ -33459,6 +33394,7 @@
                         <button class="license-modal-close" onclick="closeLicenseModal()" title="Zavřít">×</button>
                     </div>
                     <div class="license-modal-body">
+                        <div id="licenseTrialBanner" class="license-trial-banner hidden" role="status"></div>
                         <p id="licenseLifetimeNotice" class="license-lifetime-notice hidden" role="status" hidden></p>
                         <div class="license-plans-section">
                             <h3>Dostupné plány</h3>
@@ -38768,7 +38704,7 @@
                 if (vinStatusEl) {
                     vinStatusEl.textContent = 'Ilustrační katalogovou fotku se nepodařilo načíst.';
                 }
-                showAlert('Ilustrační katalogovou fotku se nepodařilo načíst.', 'warning');
+                showAlert(`Ilustrační katalogovou fotku se nepodařilo načíst: ${message}`, 'warning');
                 return null;
             }
         }
@@ -43042,6 +42978,9 @@
             loginMode = getStoredLoginModePreference();
             const serviceMode = isServiceWorkspaceRole();
             const parsedRoute = parseAppWorkspaceRoute(window.location.pathname);
+            if (parsedRoute && parsedRoute.section === 'settings') {
+                window.__settingsPanel = normalizeSettingsPanelSlug(parsedRoute.settingsPanel);
+            }
             const preferredTabFromRoute = (() => {
                 if (!parsedRoute) return '';
                 if (serviceMode) {
@@ -43409,6 +43348,38 @@
 
         function parseAppWorkspaceRoute(pathname) {
             const norm = normalizePublicPathname(pathname);
+            const settingsMatch = norm.match(/^\/app\/(u|s)\/([^/]+)\/settings(?:\/([a-z0-9-]+))?\/?$/i);
+            if (settingsMatch) {
+                let slugDecoded = settingsMatch[2];
+                try {
+                    slugDecoded = decodeURIComponent(settingsMatch[2]);
+                } catch (e) {
+                    return null;
+                }
+                const panel = String(settingsMatch[3] || 'profile').toLowerCase();
+                return {
+                    routeToken: String(settingsMatch[1]).toLowerCase(),
+                    slug: slugDecoded,
+                    section: 'settings',
+                    settingsPanel: panel,
+                };
+            }
+            const supportRedirect = norm.match(/^\/app\/(u|s)\/([^/]+)\/support\/?$/i);
+            if (supportRedirect) {
+                let slugDecoded = supportRedirect[2];
+                try {
+                    slugDecoded = decodeURIComponent(supportRedirect[2]);
+                } catch (e) {
+                    return null;
+                }
+                return {
+                    routeToken: String(supportRedirect[1]).toLowerCase(),
+                    slug: slugDecoded,
+                    section: 'settings',
+                    settingsPanel: 'support',
+                    redirectFromSupport: true,
+                };
+            }
             const m = norm.match(/^\/app\/(u|s)\/([^/]+)\/([a-z0-9-]+)\/?$/i);
             if (!m) return null;
             let slugDecoded = m[2];
@@ -43424,6 +43395,47 @@
             };
         }
 
+        const SETTINGS_PANEL_SLUGS = new Set([
+            'profile', 'security', 'license', 'notifications', 'garage',
+            'documents', 'billing', 'services-sharing', 'privacy', 'support',
+        ]);
+
+        function normalizeSettingsPanelSlug(panel) {
+            const p = String(panel || 'profile').toLowerCase();
+            return SETTINGS_PANEL_SLUGS.has(p) ? p : 'profile';
+        }
+
+        window.getSettingsPanelFromRoute = function getSettingsPanelFromRoute() {
+            const parsed = parseAppWorkspaceRoute(window.location.pathname);
+            if (parsed && parsed.section === 'settings') {
+                return normalizeSettingsPanelSlug(parsed.settingsPanel);
+            }
+            return normalizeSettingsPanelSlug(window.__settingsPanel || 'profile');
+        };
+
+        window.setSettingsPanelRoute = function setSettingsPanelRoute(panel, options = {}) {
+            const normalized = normalizeSettingsPanelSlug(panel);
+            window.__settingsPanel = normalized;
+            try {
+                if (!isAuthenticated() || !lastWorkspaceMePayload || !lastWorkspaceMePayload.authenticated) return normalized;
+                if (isServiceWorkspaceRole()) return normalized;
+                const slug = lastWorkspaceMePayload.account_slug;
+                if (!slug) return normalized;
+                const routeTok = lastWorkspaceMePayload.workspace_route_kind === 'service' ? 's' : 'u';
+                const nextPath = buildAppWorkspacePath(routeTok, slug, 'settings', normalized);
+                const cur = normalizePublicPathname(window.location.pathname);
+                if (cur === normalizePublicPathname(toBrowserAppPath(nextPath))) return normalized;
+                if (options.replace) {
+                    workspaceHistoryReplace(nextPath);
+                } else {
+                    workspaceHistoryPush(nextPath);
+                }
+            } catch (e) {
+                console.warn('[ROUTER] settings panel URL sync failed', e);
+            }
+            return normalized;
+        };
+
         function userTabFromAppSection(section) {
             const s = String(section || '').toLowerCase();
             if (s === 'dashboard') return 'home';
@@ -43434,7 +43446,6 @@
             if (s === 'documents') return 'documents';
             if (s === 'settings') return 'account';
             if (s === 'support') return 'support';
-            if (s === 'service-history') return 'serviceHistory';
             return 'home';
         }
 
@@ -43448,7 +43459,7 @@
             if (t === 'documents') return 'documents';
             if (t === 'account') return 'settings';
             if (t === 'support') return 'support';
-            if (t === 'servicehistory') return 'service-history';
+            if (t === 'serviceworkspace') return 'dashboard';
             return 'dashboard';
         }
 
@@ -43469,10 +43480,14 @@
         }
 
         // Deep-link /app/u|s/{workspace_slug}/… po přihlášení: navigateToStoredAppAfterAuth. Pro refresh na produkci servírujte /app/* na stejný index jako SPA.
-        function buildAppWorkspacePath(routeToken, slug, section) {
+        function buildAppWorkspacePath(routeToken, slug, section, settingsPanel) {
             const rt = routeToken === 's' ? 's' : 'u';
             const safeSlug = encodeURIComponent(String(slug || '').trim());
             const sec = String(section || 'dashboard').toLowerCase();
+            if (sec === 'settings') {
+                const panel = normalizeSettingsPanelSlug(settingsPanel || window.__settingsPanel || 'profile');
+                return `/app/${rt}/${safeSlug}/settings/${panel}`;
+            }
             return `/app/${rt}/${safeSlug}/${sec}`;
         }
 
@@ -43678,8 +43693,29 @@
                 return;
             }
             const tab = userTabFromAppSection(parsed.section);
+            if (parsed.section === 'settings') {
+                window.__settingsPanel = normalizeSettingsPanelSlug(parsed.settingsPanel);
+                const normPath = normalizePublicPathname(window.location.pathname);
+                const hasPanelInUrl = /\/settings\/[a-z0-9-]+\/?$/i.test(normPath);
+                if (!hasPanelInUrl) {
+                    const routeTok = me.workspace_route_kind === 'service' ? 's' : 'u';
+                    workspaceHistoryReplace(buildAppWorkspacePath(routeTok, parsed.slug, 'settings', window.__settingsPanel));
+                }
+                if (parsed.redirectFromSupport) {
+                    const routeTok = me.workspace_route_kind === 'service' ? 's' : 'u';
+                    workspaceHistoryReplace(buildAppWorkspacePath(routeTok, parsed.slug, 'settings', 'support'));
+                }
+            }
             if (typeof switchTab === 'function') {
                 switchTab(tab, { skipUnsavedGuard: !!options.skipUnsavedGuard });
+            }
+            if (parsed.section === 'settings' && typeof window.UserSettings !== 'undefined' && typeof window.UserSettings.onRoutePanel === 'function') {
+                const panel = window.__settingsPanel;
+                if (!document.body.classList.contains('user-app-next-active')) {
+                    window.setTimeout(() => {
+                        void window.UserSettings.onRoutePanel(panel);
+                    }, 0);
+                }
             }
         }
 
@@ -43691,7 +43727,16 @@
                 if (!slug) return;
                 const routeTok = lastWorkspaceMePayload.workspace_route_kind === 'service' ? 's' : 'u';
                 const sec = userAppSectionFromTab(tab);
-                const nextPath = buildAppWorkspacePath(routeTok, slug, sec);
+                let nextPath;
+                if (sec === 'settings') {
+                    const panel = typeof getSettingsPanelFromRoute === 'function'
+                        ? getSettingsPanelFromRoute()
+                        : normalizeSettingsPanelSlug(window.__settingsPanel || 'profile');
+                    window.__settingsPanel = panel;
+                    nextPath = buildAppWorkspacePath(routeTok, slug, 'settings', panel);
+                } else {
+                    nextPath = buildAppWorkspacePath(routeTok, slug, sec);
+                }
                 const cur = normalizePublicPathname(window.location.pathname);
                 if (cur === normalizePublicPathname(toBrowserAppPath(nextPath))) return;
                 if (options.replace) {
@@ -44638,28 +44683,11 @@
             return 1;
         }
 
-        function getEffectiveLicensePlanKey(license) {
-            return normalizeLicensePlanKey(
-                license?.effective_plan
-                || (license?.trial_active ? 'premium_trial' : '')
-                || license?.plan
-                || currentLicensePlanForUi
-                || 'free'
-            );
-        }
-
-        function getLicenseTrialDisplayLabel(license) {
-            if (!license || !license.trial_active) return '';
-            const days = Number(license.trial_days_remaining);
-            const dayText = Number.isFinite(days) ? `${days} dní` : '30 dní';
-            return `Premium trial – zbývá ${dayText}`;
-        }
-
         function getNormalizedLicenseFlags(license) {
             const fallback = window.__licenseFlags && typeof window.__licenseFlags === 'object'
                 ? window.__licenseFlags
                 : {};
-            const plan = getEffectiveLicensePlanKey(license);
+            const plan = normalizeLicensePlanKey(license?.plan || currentLicensePlanForUi || 'free');
             const planRank = getLicensePlanRank(plan);
             const flags = {
                 vinEnabled: isFeatureEnabled(license, 'vin_decode_enabled') || !!fallback.vinEnabled || planRank >= 3,
@@ -44694,17 +44722,17 @@
                 documents: {
                     sectionLabel: 'Dokumenty',
                     targetPlan: 'basic',
-                    message: getLicenseLockedMessage('documents'),
+                    message: 'Dokumenty, PDF výstupy a podklady k vozidlu jsou dostupné od verze Basic.',
                 },
                 reservations: {
                     sectionLabel: 'Objednání servisu',
                     targetPlan: 'basic',
-                    message: getLicenseLockedMessage('reservations'),
+                    message: 'Objednání termínu do servisu a správa vlastních servisních návštěv jsou dostupné od verze Basic.',
                 },
                 servicesDirectory: {
                     sectionLabel: 'Servisní partneři',
                     targetPlan: 'premium',
-                    message: getLicenseLockedMessage('servicesDirectory'),
+                    message: 'Sdílení vozidla se servisem a správa servisních partnerů jsou dostupné od verze Premium.',
                 },
                 costs: {
                     sectionLabel: 'Náklady a statistiky',
@@ -44714,7 +44742,7 @@
                 vin: {
                     sectionLabel: 'Automatické VIN',
                     targetPlan: 'premium',
-                    message: getLicenseLockedMessage('vin'),
+                    message: 'Automatické načtení údajů z VIN je dostupné od verze Premium.',
                 },
             };
             return map[normalized] || defaults;
@@ -44725,7 +44753,7 @@
             const targetPlan = normalizeLicensePlanKey(options.targetPlan || meta.targetPlan);
             const planLabel = targetPlan === 'premium' ? 'Premium' : 'Basic';
             const sectionLabel = String(options.sectionLabel || meta.sectionLabel || 'Tato sekce');
-            showAlert(`${sectionLabel}: ${meta.message}`, 'info');
+            showAlert(`${sectionLabel}: ${meta.message} Pro zpřístupnění pokračujte na licenci ${planLabel}.`, 'info');
             openLicenseModal();
         }
 
@@ -44764,8 +44792,12 @@
 
         function applyLicenseToUI(license) {
             const flags = getNormalizedLicenseFlags(license);
-            currentLicensePlanForUi = getEffectiveLicensePlanKey(license);
+            currentLicensePlanForUi = normalizeLicensePlanKey(license?.plan || currentLicensePlanForUi || 'free');
             window.__licenseFlags = flags;
+
+            if (typeof setDashboardTabVisibility === 'function' && typeof shouldShowServicesDirectoryTab === 'function') {
+                setDashboardTabVisibility('servicesDirectory', shouldShowServicesDirectoryTab());
+            }
             
             const vinInput = document.getElementById('vehicleVin');
             if (vinInput) {
@@ -44851,7 +44883,6 @@
         function normalizeLicensePlanKey(plan) {
             const normalized = String(plan || '').trim().toLowerCase();
             const basePlan = normalized.startsWith('service_') ? normalized.slice(8) : normalized;
-            if (basePlan === 'premium_trial') return 'premium';
             if (basePlan === 'basic' || basePlan === 'premium' || basePlan === 'free' || basePlan === 'lifetime') {
                 return basePlan;
             }
@@ -44868,7 +44899,6 @@
         }
 
         function formatLicensePlanDisplayName(plan, workspaceKind = null) {
-            if (String(plan || '').trim().toLowerCase() === 'premium_trial') return 'Premium trial';
             const basePlan = normalizeLicensePlanKey(plan);
             const kind = getLicensePlanWorkspaceKind(plan, workspaceKind);
             if (kind === 'service') {
@@ -45516,6 +45546,19 @@
             });
         }
 
+        function isActiveUserTrialLicense(license) {
+            return !!(license && license.trial_active && normalizeLicensePlanKey(license.plan || '') === 'premium');
+        }
+
+        function getTrialDaysRemainingLabel(license) {
+            const raw = Number(license?.trial_days_remaining);
+            if (!Number.isFinite(raw)) return '';
+            const days = Math.max(0, Math.floor(raw));
+            if (days === 1) return 'zbývá 1 den';
+            if (days >= 2 && days <= 4) return `zbývají ${days} dny`;
+            return `zbývá ${days} dní`;
+        }
+
         function formatCreditBalanceHalers(value) {
             const raw = Number(value || 0);
             if (!Number.isFinite(raw)) return '0 Kč';
@@ -45534,7 +45577,7 @@
             return { label: 'Neznámý stav', color: '#334155', bg: '#e2e8f0', border: '#cbd5e1' };
         }
 
-        function renderLicenseSubscriptionPanel(subscription, licensePlan) {
+        function renderLicenseSubscriptionPanel(subscription, licensePlan, license) {
             const panel = document.getElementById('licenseSubscriptionPanel');
             const statusBadge = document.getElementById('licenseSubscriptionStatusBadge');
             const summary = document.getElementById('licenseSubscriptionSummary');
@@ -45543,6 +45586,7 @@
             const resumeBtn = document.getElementById('licenseSubscriptionResumeBtn');
             const changePlanSelect = document.getElementById('licenseSubscriptionChangePlanSelect');
             const changePlanBtn = document.getElementById('licenseSubscriptionChangePlanBtn');
+            const changePlanWrap = changePlanSelect?.closest('.license-subscription-change');
             if (!panel || !statusBadge || !summary || !notice || !cancelBtn || !resumeBtn || !changePlanSelect || !changePlanBtn) {
                 return;
             }
@@ -45550,6 +45594,35 @@
             const normalizedPlan = normalizeLicensePlanKey(licensePlan || 'free');
             const payload = subscription && typeof subscription === 'object' ? subscription : null;
             currentLicenseSubscriptionForUi = payload;
+            const isTrial = isActiveUserTrialLicense(license);
+            if (isTrial) {
+                const daysLabel = getTrialDaysRemainingLabel(license);
+                const validTo = formatSubscriptionDate(license?.valid_to);
+                panel.classList.remove('hidden');
+                statusBadge.textContent = daysLabel ? `Trial · ${daysLabel}` : 'Trial';
+                statusBadge.style.color = '#1e3a8a';
+                statusBadge.style.background = '#dbeafe';
+                statusBadge.style.borderColor = '#93c5fd';
+                summary.innerHTML = `
+                    <strong>Zkušební období Premium:</strong> aktivní<br>
+                    <strong>Konec trialu:</strong> ${validTo}${daysLabel ? ` • ${daysLabel}` : ''}<br>
+                    <strong>Co se stane potom:</strong> účet se přepne do FREE režimu bez ztráty dat.<br>
+                    <strong>Platba:</strong> zatím není aktivní; pro pokračování po trialu vyberte a zaplaťte licenci.
+                `;
+                notice.textContent = license?.license_banner?.message || 'Běží zkušební období plné verze. Před koncem vyberte placenou licenci, pokud chcete pokračovat bez omezení.';
+                notice.classList.remove('hidden', 'notice-warning', 'notice-danger');
+                notice.classList.add('notice-info');
+                cancelBtn.classList.add('hidden');
+                cancelBtn.disabled = true;
+                resumeBtn.classList.add('hidden');
+                resumeBtn.disabled = true;
+                changePlanSelect.disabled = true;
+                changePlanBtn.disabled = true;
+                changePlanBtn.textContent = 'Trial běží';
+                if (changePlanWrap) changePlanWrap.classList.add('hidden');
+                return;
+            }
+            if (changePlanWrap) changePlanWrap.classList.remove('hidden');
             if (!payload || normalizedPlan === 'free' || normalizedPlan === 'lifetime') {
                 panel.classList.add('hidden');
                 notice.classList.add('hidden');
@@ -45921,8 +45994,7 @@
                 return;
             }
 
-            const effectivePlan = license?.effective_plan || (license?.trial_active ? 'premium_trial' : license?.plan);
-            const workspaceKind = getLicensePlanWorkspaceKind(license?.plan || effectivePlan || '', getActiveWorkspaceMode());
+            const workspaceKind = getLicensePlanWorkspaceKind(license?.plan || '', getActiveWorkspaceMode());
             applyLicenseCatalogPresentation(workspaceKind);
             updateServiceLicenseGlobalBanner(license);
 
@@ -45939,9 +46011,10 @@
                 return;
             }
 
-            const trialLabel = getLicenseTrialDisplayLabel(license);
-            const planLabel = (trialLabel || formatLicensePlanDisplayName(effectivePlan || 'free', workspaceKind)).toUpperCase();
+            const planLabel = formatLicensePlanDisplayName(license?.plan || 'free', workspaceKind).toUpperCase();
             const plan = planLabel;
+            const isTrial = isActiveUserTrialLicense(license);
+            const trialDaysLabel = getTrialDaysRemainingLabel(license);
             const tenantCurrent = Number(license.vehicles_current ?? 0);
             const userCurrentRaw = license.vehicles_current_user;
             const hasUserCurrent = userCurrentRaw !== null
@@ -45953,7 +46026,9 @@
             const hasDifferentUserCount = hasUserCurrent && userCurrent !== tenantCurrent;
             
             labelEl.textContent = workspaceKind === 'service' ? `Licence servisu: ${plan}` : `Licence: ${plan}`;
-            currentEl.textContent = workspaceKind === 'service' ? `Aktuální servisní plán: ${plan}` : `Aktuální plán: ${plan}`;
+            currentEl.textContent = isTrial
+                ? `Trial Premium: ${trialDaysLabel || 'aktivní'}`
+                : (workspaceKind === 'service' ? `Aktuální servisní plán: ${plan}` : `Aktuální plán: ${plan}`);
             
             if (unlimited || limit === 0) {
                 if (hasDifferentUserCount) {
@@ -45970,7 +46045,7 @@
             }
             
             const quickItems = document.querySelectorAll('.license-quick-item');
-            const normalizedQuickPlan = normalizeLicensePlanKey(effectivePlan || '');
+            const normalizedQuickPlan = normalizeLicensePlanKey(license.plan || '');
             const isLifetimeQuick = normalizedQuickPlan === 'lifetime' || !!license.is_lifetime;
             quickItems.forEach(item => {
                 const itemPlan = normalizeLicensePlanKey(item.getAttribute('data-plan') || '');
@@ -46130,17 +46205,28 @@
             
             if (!currentBadge || !currentDetails) return;
             
-            const effectivePlan = license?.effective_plan || (license?.trial_active ? 'premium_trial' : license?.plan);
-            const rawPlan = (effectivePlan || license.plan || "unknown").toLowerCase();
+            const rawPlan = (license.plan || "unknown").toLowerCase();
             const workspaceKind = getLicensePlanWorkspaceKind(rawPlan, getActiveWorkspaceMode());
             applyLicenseCatalogPresentation(workspaceKind);
             const plan = normalizeLicensePlanKey(rawPlan);
-            const planUpper = (getLicenseTrialDisplayLabel(license) || formatLicensePlanDisplayName(rawPlan, workspaceKind)).toUpperCase();
+            const planUpper = formatLicensePlanDisplayName(rawPlan, workspaceKind).toUpperCase();
+            const isTrial = isActiveUserTrialLicense(license);
+            const trialDaysLabel = getTrialDaysRemainingLabel(license);
             currentLicensePlanForUi = plan;
             currentLicenseSubscriptionForUi = license?.subscription && typeof license.subscription === 'object'
                 ? license.subscription
                 : null;
             const isLifetimePlan = plan === 'lifetime' || !!license.is_lifetime;
+            const trialBannerEl = document.getElementById('licenseTrialBanner');
+            if (trialBannerEl) {
+                if (isTrial) {
+                    trialBannerEl.innerHTML = `<strong>Běží 30denní zkušební období Premium.</strong> ${escapeHtml(trialDaysLabel || 'Trial je aktivní')}. Konec: ${escapeHtml(formatSubscriptionDate(license.valid_to))}. Po skončení se účet přepne do FREE režimu bez ztráty dat.`;
+                    trialBannerEl.classList.remove('hidden');
+                } else {
+                    trialBannerEl.innerHTML = '';
+                    trialBannerEl.classList.add('hidden');
+                }
+            }
             const lifetimeNoticeEl = document.getElementById('licenseLifetimeNotice');
             const plansSectionEl = document.querySelector('#licenseModal .license-plans-section');
             if (lifetimeNoticeEl) {
@@ -46183,7 +46269,9 @@
                 planBadge.className = `license-plan-badge plan-${plan}`;
             }
             if (statusBadge) {
-                statusBadge.textContent = status === 'active' ? 'Aktivní' : status;
+                statusBadge.textContent = isTrial
+                    ? (trialDaysLabel ? `Trial: ${trialDaysLabel}` : 'Trial aktivní')
+                    : (status === 'active' ? 'Aktivní' : status);
                 statusBadge.className = `license-status-badge status-${status}`;
             }
             
@@ -46215,6 +46303,9 @@
             if (license.reminders_enabled) features.push('Připomínky');
 
             const detailChunks = [`<span class="license-detail-item">${vehicleSummary}</span>`];
+            if (isTrial) {
+                detailChunks.push(`<span class="license-detail-item">Trial Premium: ${escapeHtml(trialDaysLabel || 'aktivní')} · konec ${escapeHtml(formatSubscriptionDate(license.valid_to))}</span>`);
+            }
             if (features.length > 0) {
                 const visibleFeatures = features.slice(0, 2);
                 const extraFeatures = Math.max(0, features.length - visibleFeatures.length);
@@ -46264,7 +46355,7 @@
                     resetLicenseLegalConsent();
                 }
             } else {
-                renderLicenseSubscriptionPanel(currentLicenseSubscriptionForUi, currentLicensePlanForUi);
+                renderLicenseSubscriptionPanel(currentLicenseSubscriptionForUi, currentLicensePlanForUi, license);
             }
 
             // Ceny a payment-ready stav se dopočítají podle aktivní konfigurace Comgate.
@@ -46388,15 +46479,14 @@
                 'premium': { bg: '#fef3c7', border: '#fde68a', text: '#92400e' }
             };
             
-            const effectivePlan = license?.effective_plan || (license?.trial_active ? 'premium_trial' : license?.plan);
-            const basePlan = normalizeLicensePlanKey(effectivePlan || 'free');
-            const workspaceKind = getLicensePlanWorkspaceKind(license?.plan || effectivePlan || '', getActiveWorkspaceMode());
+            const basePlan = normalizeLicensePlanKey(license?.plan || 'free');
+            const workspaceKind = getLicensePlanWorkspaceKind(license?.plan || '', getActiveWorkspaceMode());
             const colors = planColors[basePlan] || planColors.free;
             badge.style.background = colors.bg;
             badge.style.borderColor = colors.border;
             
             // Plan text
-            const planText = (getLicenseTrialDisplayLabel(license) || formatLicensePlanDisplayName(effectivePlan || 'free', workspaceKind)).toUpperCase();
+            const planText = formatLicensePlanDisplayName(license?.plan || 'free', workspaceKind).toUpperCase();
             const statusText = license.status === 'active' ? 'active' : license.status;
             planEl.textContent = workspaceKind === 'service'
                 ? `Licence servisu: ${planText} (${statusText})`
@@ -46835,7 +46925,7 @@
             const extras = model?.extras && typeof model.extras === 'object' ? model.extras : {};
             const license = model?.license && typeof model.license === 'object' ? model.license : null;
             const licenseFlags = getNormalizedLicenseFlags(license);
-            const licensePlan = getEffectiveLicensePlanKey(license);
+            const licensePlan = normalizeLicensePlanKey(license?.plan || currentLicensePlanForUi || 'free');
             const dataGapCount = missingMainPhoto + recordsMissingHistory;
             const attentionCount = attentionItems.length;
             const healthState = attentionCount > 0 || dataGapCount > 0
@@ -47579,11 +47669,6 @@
                     const cnt = lic.vehicles_count != null ? lic.vehicles_count : lic.vehicles_current;
                     licenseSummary = {
                         plan: lic.plan || 'free',
-                        effective_plan: lic.effective_plan || lic.plan || 'free',
-                        trial_active: !!lic.trial_active,
-                        trial_days_remaining: lic.trial_days_remaining,
-                        trial_started_at: lic.trial_started_at,
-                        trial_ends_at: lic.trial_ends_at,
                         vehicles_count: cnt != null ? Number(cnt) : 0,
                         license_limit: lic.license_limit,
                         is_over_limit: !!lic.is_over_limit,
@@ -49049,61 +49134,6 @@
                 || (errorOrPayload && errorOrPayload.status === 409 && String(errorOrPayload.message || '').includes('jiným uživatelem'));
         }
 
-        function getLicenseLockedMessage(featureKey) {
-            const key = String(featureKey || '').trim();
-            if (key === 'vin') {
-                return 'Tato funkce je dostupná v licenci Premium. Pro automatické načtení údajů z VIN si aktivujte Premium licenci.';
-            }
-            if (key === 'documents') {
-                return 'Dokumenty a PDF exporty jsou dostupné od licence Basic.';
-            }
-            if (key === 'reservations') {
-                return 'Objednání servisu je dostupné od licence Basic.';
-            }
-            if (key === 'servicesDirectory') {
-                return 'Servisní partneři a mapa servisů jsou dostupní v licenci Premium.';
-            }
-            return 'Tato funkce je dostupná po zakoupení odpovídající licence.';
-        }
-        window.getLicenseLockedMessage = getLicenseLockedMessage;
-
-        function isTechnicalBackendErrorMessage(message) {
-            const text = String(message || '').toLowerCase();
-            return text.includes('sqlite')
-                || text.includes('operationalerror')
-                || text.includes('no such column')
-                || text.includes('sqlalchemy')
-                || text.includes('traceback')
-                || text.includes('stack trace')
-                || text.includes('internal server error');
-        }
-
-        function sanitizeUiErrorMessage(errorOrMessage, options = {}) {
-            const fallbackMessage = options.fallback || 'Funkci se nepodařilo načíst. Zkuste to prosím znovu nebo kontaktujte podporu.';
-            const payload = errorOrMessage && (errorOrMessage.payload || errorOrMessage);
-            const detail = payload && payload.detail;
-            const detailObj = detail && typeof detail === 'object' ? detail : null;
-            const code = payload?.code || payload?.error?.code || detailObj?.code;
-            const rawMessage = String(
-                detailObj?.message
-                || payload?.message
-                || (typeof detail === 'string' ? detail : '')
-                || errorOrMessage?.message
-                || errorOrMessage
-                || ''
-            );
-            if (code === 'FEATURE_DISABLED' || code === 'LICENSE_REQUIRED') {
-                return getLicenseLockedMessage(options.featureKey);
-            }
-            if (options.featureKey && /licen|license|tarif|plánu|planu|premium|basic/i.test(rawMessage)) {
-                return getLicenseLockedMessage(options.featureKey);
-            }
-            if (isTechnicalBackendErrorMessage(rawMessage)) {
-                return fallbackMessage;
-            }
-            return rawMessage || fallbackMessage;
-        }
-
         function setAddVehicleSubmitDisabled(disabled) {
             const btn = document.querySelector('[data-testid="btn-add-vehicle"]');
             if (btn) btn.disabled = !!disabled;
@@ -49158,7 +49188,7 @@
         // Načtení dat z VIN (nová verze s GET endpointem)
         async function loadVinData(vin) {
             if (window.__licenseFlags && window.__licenseFlags.vinEnabled === false) {
-                showVinError(getLicenseLockedMessage('vin'), { persist: true });
+                showAlert('VIN dekódování je dostupné od plánu PREMIUM.', 'info');
                 return;
             }
             console.log('[VIN] ========================================');
@@ -49496,7 +49526,7 @@
                 console.error('[VIN] Error message:', error.message);
                 console.error('[VIN] Error stack:', error.stack);
                 
-                let errorMsg = sanitizeUiErrorMessage(error, { featureKey: 'vin' });
+                let errorMsg = error.message || 'Neznámá chyba';
                 
                 // Zlepšit chybové zprávy
                 if (error.name === 'AbortError') {
@@ -49512,9 +49542,9 @@
                 } else if (errorMsg.includes('Timeout') || errorMsg.includes('časový limit')) {
                     console.error('[VIN] Timeout - Request took too long');
                     errorMsg = 'Timeout při načítání dat z VIN. Zkuste to prosím znovu.';
-                } else if (error.status === 500 || errorMsg.includes('500') || errorMsg.includes('Server')) {
+                } else if (errorMsg.includes('500') || errorMsg.includes('Server')) {
                     console.error('[VIN] 500 - Server error');
-                    errorMsg = 'Funkci se nepodařilo načíst. Zkuste to prosím znovu nebo kontaktujte podporu.';
+                    errorMsg = 'Chyba serveru při dekódování VIN. Zkuste to prosím později.';
                 } else if (errorMsg.includes('CORS') || errorMsg.includes('CORS')) {
                     console.error('[VIN] CORS error - Cross-origin request blocked');
                     errorMsg = 'CORS chyba - zkontrolujte konfiguraci serveru.';
@@ -49524,7 +49554,7 @@
                 }
                 
                 console.error('[VIN] Final error message:', errorMsg);
-                showVinError(errorMsg);
+                showVinError('VIN se nepodařilo načíst: ' + errorMsg);
             }
         }
 
@@ -49813,7 +49843,7 @@
 
         async function refreshExistingVehicleFromVin(vehicleId) {
             if (window.__licenseFlags && window.__licenseFlags.vinEnabled === false) {
-                showAlert(getLicenseLockedMessage('vin'), 'info');
+                showAlert('VIN dekódování je dostupné od plánu PREMIUM.', 'info');
                 return;
             }
             const vid = Number(vehicleId);
@@ -49875,7 +49905,7 @@
                 }
             } catch (error) {
                 console.error('[VIN refresh vehicle]', error);
-                showAlert(sanitizeUiErrorMessage(error, { featureKey: 'vin' }), 'error');
+                showAlert(`Obnovení z VIN se nepodařilo: ${error?.message || 'Neznámá chyba'}`, 'error');
             }
         }
 
@@ -66159,12 +66189,7 @@
                 document.getElementById('supportMessage').value = '';
                 showAlert('Podpora byla kontaktována.', 'success');
             } catch (error) {
-                showFormError(
-                    'supportResult',
-                    sanitizeUiErrorMessage(error, {
-                        fallback: 'Požadavek se nepodařilo odeslat. Zkuste to prosím znovu nebo kontaktujte podporu.'
-                    })
-                );
+                showFormError('supportResult', `Nepodařilo se odeslat požadavek: ${error.message}`);
             } finally {
                 if (submitBtn) {
                     submitBtn.disabled = false;
@@ -68914,83 +68939,11 @@
         }
       });
     </script>
-
-    <script>
-      (function () {
-        const COOKIE_CONSENT_KEY = 'sprava_vozidel_cookie_consent_v1';
-
-        function getCookieConsentChoice() {
-          try {
-            return localStorage.getItem(COOKIE_CONSENT_KEY) || '';
-          } catch (_) {
-            return '';
-          }
-        }
-
-        function saveCookieConsentChoice(choice) {
-          try {
-            localStorage.setItem(COOKIE_CONSENT_KEY, JSON.stringify({
-              choice,
-              accepted_at: new Date().toISOString(),
-              analytics: choice === 'all',
-            }));
-          } catch (_) {}
-        }
-
-        function closeCookieConsent(choice) {
-          saveCookieConsentChoice(choice);
-          const banner = document.getElementById('cookieConsentBanner');
-          if (banner) banner.hidden = true;
-        }
-
-        function renderCookieConsentBanner() {
-          if (getCookieConsentChoice()) return;
-          if (document.getElementById('cookieConsentBanner')) return;
-          const banner = document.createElement('aside');
-          banner.id = 'cookieConsentBanner';
-          banner.className = 'cookie-consent';
-          banner.setAttribute('role', 'dialog');
-          banner.setAttribute('aria-live', 'polite');
-          banner.setAttribute('aria-label', 'Nastavení cookies');
-          banner.innerHTML = `
-            <div class="cookie-consent__head">
-              <p class="cookie-consent__title">Cookies a soukromí</p>
-              <p class="cookie-consent__text">Používáme nezbytné cookies pro přihlášení, bezpečnost a provoz aplikace.</p>
-            </div>
-            <p class="cookie-consent__settings" id="cookieConsentSettings">
-              Marketingové ani analytické cookies aktuálně nepoužíváme a nepřidáváme externí tracking.
-            </p>
-            <div class="cookie-consent__actions">
-              <button type="button" class="cookie-consent__btn" data-cookie-consent="necessary">Přijmout nezbytné</button>
-              <button type="button" class="cookie-consent__btn" data-cookie-consent="settings" aria-controls="cookieConsentSettings">Nastavení</button>
-              <button type="button" class="cookie-consent__btn cookie-consent__btn--primary" data-cookie-consent="all">Přijmout vše</button>
-            </div>
-          `;
-          banner.addEventListener('click', function (event) {
-            const btn = event.target && event.target.closest ? event.target.closest('[data-cookie-consent]') : null;
-            if (!btn) return;
-            const action = btn.getAttribute('data-cookie-consent');
-            if (action === 'settings') {
-              banner.classList.toggle('is-settings-open');
-              return;
-            }
-            if (action === 'necessary' || action === 'all') {
-              closeCookieConsent(action);
-            }
-          });
-          document.body.appendChild(banner);
-        }
-
-        window.renderCookieConsentBanner = renderCookieConsentBanner;
-        window.getCookieConsentChoice = getCookieConsentChoice;
-        document.addEventListener('DOMContentLoaded', renderCookieConsentBanner);
-      })();
-    </script>
     
     <!-- AI Features JavaScript -->
     <script src="/web/ai-features.js"></script>
-    <script src="/web/tutorial-hub.js?v=20260521"></script>
-    <script src="/web/user-app-next.js?v=20260521p1"></script>
+    <script src="/web/user-app-next.js?v=202605234settings"></script>
+    <script src="/web/user-settings.js?v=202605234settings"></script>
     <script src="/web/service-shell.js?v=2026050720"></script>
 </body>
 </html>

@@ -14,6 +14,7 @@
     attentionItems: [],
     legacyDetailReadyFor: null,
     legacyMount: { tabId: null },
+    settingsPanel: 'profile',
     originalShowVehicleDetail: null,
     modalEscBound: false,
     viewOverride: null,
@@ -153,7 +154,6 @@
   }
 
   const LEGACY_SECTION_META = {
-    account: { tabId: 'accountTab', testId: 'user-app-next-account' },
     support: { tabId: 'supportTab', testId: 'user-app-next-support' },
     reservations: { tabId: 'reservationsTab', testId: 'user-app-next-reservations' },
   };
@@ -248,6 +248,9 @@
     if (!document.body.classList.contains('route-app-view') || !isAuthed() || isServiceMode()) {
       return null;
     }
+    if (/\/settings(?:\/|$)/i.test(String(window.location.pathname || ''))) {
+      return 'settings';
+    }
     const appShell = document.getElementById('app-shell');
     if (!appShell || appShell.hidden) return null;
     const viewByTabId = {
@@ -256,8 +259,8 @@
       remindersTab: 'reminders',
       documentsTab: 'documents',
       servicesDirectoryTab: 'servicesDirectory',
-      accountTab: 'account',
-      supportTab: 'support',
+      accountTab: 'settings',
+      supportTab: 'settings',
       reservationsTab: 'reservations',
     };
     if (USER_INVOICES_ENABLED) viewByTabId.invoicesTab = 'invoices';
@@ -3515,8 +3518,7 @@
           ${navButton('Dokumenty', ICO.folder, 'documents', nav === 'documents', 0, locks.documents)}
           ${navButton('Servisy', ICO.building, 'servicesDirectory', nav === 'servicesDirectory', 0, locks.servicesDirectory)}
           ${USER_INVOICES_ENABLED ? navButton('Faktury', ICO.invoice, 'invoices', nav === 'invoices', 0, false) : ''}
-          ${navButton('Podpora', ICO.support, 'support', nav === 'support', 0, false)}
-          ${navButton('Nastavení', ICO.gear, 'account', nav === 'account', 0, false)}
+          ${navButton('Nastavení', ICO.gear, 'settings', nav === 'settings', 0, false)}
         </nav>
         <div class="uapp-next-sidebar-bottom">
           <button type="button" class="uapp-next-help-card" data-uapp-action="help">
@@ -4040,6 +4042,11 @@
         ${renderServicesDirectoryPage(data)}
       `;
     }
+    if (view === 'settings') {
+      return `
+        <div class="uapp-next-settings-mount" id="uappNextSettingsMount" data-testid="user-app-next-settings-root"></div>
+      `;
+    }
     if (view === 'home') {
       return `
         ${renderTopbar()}
@@ -4074,6 +4081,7 @@
     else if (activeView === 'documents') testId = 'user-app-next-documents';
     else if (activeView === 'invoices') testId = 'user-app-next-invoices';
     else if (activeView === 'servicesDirectory') testId = 'user-app-next-services';
+    else if (activeView === 'settings') testId = 'user-app-next-settings';
     else if (activeView === 'reservations') testId = 'user-app-next-reservations';
     else if (activeView === 'support') testId = 'user-app-next-support';
 
@@ -4097,6 +4105,7 @@
     document.body.classList.toggle('user-app-next-view-documents', activeView === 'documents');
     document.body.classList.toggle('user-app-next-view-invoices', activeView === 'invoices');
     document.body.classList.toggle('user-app-next-view-services', activeView === 'servicesDirectory');
+    document.body.classList.toggle('user-app-next-view-settings', activeView === 'settings');
     document.body.classList.toggle('user-app-next-view-reservations', activeView === 'reservations');
     document.body.classList.toggle('user-app-next-view-support', activeView === 'support');
     if (isLegacySection) {
@@ -4117,6 +4126,16 @@
     } else if (activeView === 'servicesDirectory') {
       bindServicesFilters();
       void bindServicesMap(data);
+    } else if (activeView === 'settings') {
+      const settingsMount = root.querySelector('#uappNextSettingsMount');
+      if (settingsMount && typeof window.UserSettings !== 'undefined') {
+        const panel = hasFn('getSettingsPanelFromRoute') ? window.getSettingsPanelFromRoute() : 'profile';
+        if (settingsMount.querySelector('.uapp-settings-page') && typeof window.UserSettings.onRoutePanel === 'function') {
+          void window.UserSettings.onRoutePanel(panel);
+        } else if (typeof window.UserSettings.mount === 'function') {
+          void window.UserSettings.mount(settingsMount);
+        }
+      }
     }
   }
 
@@ -4687,11 +4706,18 @@
     if (name === 'servicesDirectory') return navigateLicensedTab('servicesDirectory', 'servicesDirectory');
     if (name === 'support') {
       closeMobileNav();
-      STATE.viewOverride = 'support';
-      if (hasFn('switchTab')) return window.switchTab('support');
+      STATE.viewOverride = 'settings';
+      if (hasFn('setSettingsPanelRoute')) window.setSettingsPanelRoute('support');
+      if (hasFn('switchTab')) return window.switchTab('account');
       return render();
     }
-    if (name === 'account' && hasFn('switchTab')) { closeMobileNav(); STATE.viewOverride = null; return window.switchTab('account'); }
+    if (name === 'settings' || name === 'account') {
+      closeMobileNav();
+      STATE.viewOverride = 'settings';
+      if (hasFn('setSettingsPanelRoute')) window.setSettingsPanelRoute('profile', { replace: name === 'settings' });
+      if (hasFn('switchTab')) return window.switchTab('account');
+      return render();
+    }
     if (name === 'invoices') {
       if (!USER_INVOICES_ENABLED) return null;
       closeMobileNav();
@@ -4946,7 +4972,11 @@
     if (name === 'remindersTipClose') { STATE.remindersTipHidden = true; return render(); }
     if (name === 'help') {
       if (hasFn('openHowToHubModal')) return window.openHowToHubModal();
-      if (hasFn('switchTab')) return window.switchTab('support');
+      closeMobileNav();
+      STATE.viewOverride = 'settings';
+      if (hasFn('setSettingsPanelRoute')) window.setSettingsPanelRoute('support');
+      if (hasFn('switchTab')) return window.switchTab('account');
+      return render();
     }
     if (name === 'collapse') return document.body.classList.toggle('user-app-next-sidebar-collapsed');
     if (name === 'addVehicle') {
@@ -5100,7 +5130,8 @@
       vehicles: 'vehicles',
       reminders: 'reminders',
       reservations: 'reservations',
-      support: 'support',
+      account: 'settings',
+      support: 'settings',
       documents: 'documents',
       servicesDirectory: 'servicesDirectory',
       serviceHistory: 'serviceHistory',
