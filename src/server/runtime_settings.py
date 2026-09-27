@@ -12,6 +12,7 @@ from threading import Lock
 from typing import Any, Dict
 
 from src.core.config import DATA_DIR
+from src.core.file_storage import cached_file
 
 ADMIN_SETTINGS_FILE = DATA_DIR / "admin_settings.json"
 
@@ -47,7 +48,7 @@ def load_runtime_settings(*, force_reload: bool = False) -> Dict[str, Dict[str, 
     """
     global _settings_cache_mtime_ns, _settings_cache
 
-    settings_path = Path(ADMIN_SETTINGS_FILE)
+    settings_path = cached_file(Path(ADMIN_SETTINGS_FILE), refresh=force_reload)
     if not settings_path.exists():
         with _cache_lock:
             _settings_cache = {}

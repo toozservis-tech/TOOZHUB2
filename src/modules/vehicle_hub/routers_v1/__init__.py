@@ -9,6 +9,7 @@ from . import (
     service_records,
     analytics,
     service_intake,
+    repair_photos,
     reservations,
     reminders,
     reminder_settings,
@@ -32,6 +33,7 @@ api_router.include_router(vehicles.router)
 api_router.include_router(service_records.router)
 api_router.include_router(analytics.router)  # Náklady, kategorie, měsíční trendy
 api_router.include_router(service_intake.router)
+api_router.include_router(repair_photos.router)
 api_router.include_router(reservations.router)
 api_router.include_router(reminders.router)
 api_router.include_router(reminder_settings.router)  # Nastavení připomínek

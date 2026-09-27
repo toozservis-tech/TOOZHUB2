@@ -4,10 +4,12 @@ Kompletní CRUD operace pro automatické i ruční připomínky
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, inspect
 from typing import List, Optional
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
+from uuid import uuid4
+from ..ownership import get_owned_vehicle, get_owned_vehicle_rows
 
 from src.core.branding import APP_DISPLAY_NAME
 
@@ -183,9 +185,7 @@ def get_reminders(
         reminders = []
         
         # Načíst všechna vozidla uživatele
-        vehicles = db.query(VehicleModel).filter(
-            VehicleModel.user_email == current_user.email
-        ).all()
+        vehicles = get_owned_vehicle_rows(db, current_user)
         
         today = date.today()
         thirty_days_later = today + timedelta(days=30)
@@ -315,7 +315,7 @@ def get_reminders(
             # Zkontrolovat, zda tabulka Reminder existuje
             try:
                 inspector = inspect(db.bind)
-                table_names = [table.name for table in inspector.get_table_names()]
+                table_names = inspector.get_table_names()
                 if 'reminders' in table_names:
                     # Filtrovat podle customer_id a tenant_id (pokud existuje)
                     query = db.query(ReminderModel).filter(
@@ -349,10 +349,7 @@ def get_reminders(
         for reminder in manual_reminders:
             vehicle_name = "Obecná připomínka"
             if reminder.vehicle_id:
-                vehicle = db.query(VehicleModel).filter(
-                    VehicleModel.id == reminder.vehicle_id,
-                    VehicleModel.user_email == current_user.email
-                ).first()
+                vehicle = get_owned_vehicle(db, current_user, reminder.vehicle_id)
                 if vehicle:
                     vehicle_name = vehicle.nickname or vehicle.plate or f"{vehicle.brand} {vehicle.model}" or "Vozidlo"
             
@@ -366,7 +363,10 @@ def get_reminders(
                 notify_at=reminder.notify_at,
                 notification_method=_normalize_notification_method(reminder.notification_method, strict=False),
                 is_manual=True,
-                is_completed=reminder.is_completed
+                is_completed=reminder.is_completed,
+                is_recurring=is_recurring_reminder(reminder),
+                recurrence_group_id=reminder.recurrence_group_id,
+                recurrence_index=reminder.recurrence_index
             ))
         
         # Seřadit podle notify_at (pokud je), jinak due_date
@@ -409,10 +409,7 @@ def create_reminder(
 
         # Ověřit, že vozidlo patří uživateli (pokud je zadáno)
         if reminder_data.vehicle_id:
-            vehicle = db.query(VehicleModel).filter(
-                VehicleModel.id == reminder_data.vehicle_id,
-                VehicleModel.user_email == current_user.email
-            ).first()
+            vehicle = get_owned_vehicle(db, current_user, reminder_data.vehicle_id)
             
             if not vehicle:
                 raise HTTPException(status_code=404, detail="Vozidlo nenalezeno nebo nemáte oprávnění")
@@ -436,6 +433,9 @@ def create_reminder(
         notify_at_base = _to_naive_utc(reminder_data.notify_at)
         notification_method = _normalize_notification_method(reminder_data.notification_method)
 
+        recurring = repeat_count > 0 and repeat_interval > 0 and bool(reminder_data.due_date or notify_at_base)
+        recurrence_group_id = uuid4().hex if recurring else None
+
         def add_reminder(due_date_val, notify_at_val):
             r = ReminderModel(
                 tenant_id=tenant_id,
@@ -448,11 +448,13 @@ def create_reminder(
                 notification_method=notification_method,
                 last_notified_at=None,
                 is_completed=False,
-                is_manual=True
+                is_manual=True,
+                recurrence_group_id=recurrence_group_id,
+                recurrence_index=len(reminders_created) if recurring else None,
+                repeat_interval_days=repeat_interval if recurring else None,
             )
             db.add(r)
-            db.commit()
-            db.refresh(r)
+            db.flush()
             reminders_created.append(r)
             return r
 
@@ -466,6 +468,9 @@ def create_reminder(
                 next_due = base_due + timedelta(days=repeat_interval * i) if base_due else None
                 next_notify_at = notify_at_base + timedelta(days=repeat_interval * i) if notify_at_base else None
                 add_reminder(next_due, next_notify_at)
+
+        db.commit()
+        db.refresh(first)
 
         # Odeslat email notifikaci při vytvoření připomínky (pokud je to povoleno)
         try:
@@ -497,7 +502,10 @@ def create_reminder(
             notify_at=first.notify_at,
             notification_method=_normalize_notification_method(first.notification_method, strict=False),
             is_manual=True,
-            is_completed=first.is_completed
+            is_completed=first.is_completed,
+            is_recurring=is_recurring_reminder(first),
+            recurrence_group_id=first.recurrence_group_id,
+            recurrence_index=first.recurrence_index
         )
     except HTTPException:
         raise
@@ -538,10 +546,7 @@ def update_reminder(
             reminder.type = reminder_update.type
         if "vehicle_id" in update_payload:
             if reminder_update.vehicle_id:
-                vehicle = db.query(VehicleModel).filter(
-                    VehicleModel.id == reminder_update.vehicle_id,
-                    VehicleModel.user_email == current_user.email
-                ).first()
+                vehicle = get_owned_vehicle(db, current_user, reminder_update.vehicle_id)
                 if not vehicle:
                     raise HTTPException(status_code=404, detail="Vozidlo nenalezeno nebo nemáte oprávnění")
                 reminder.vehicle_id = reminder_update.vehicle_id
@@ -558,7 +563,7 @@ def update_reminder(
         if "notification_method" in update_payload:
             reminder.notification_method = _normalize_notification_method(reminder_update.notification_method)
         if "is_completed" in update_payload:
-            reminder.is_completed = reminder_update.is_completed
+            apply_reminder_completion_update(reminder, reminder_update.is_completed)
 
         if reset_last_notified:
             reminder.last_notified_at = None
@@ -583,7 +588,10 @@ def update_reminder(
             notify_at=reminder.notify_at,
             notification_method=_normalize_notification_method(reminder.notification_method, strict=False),
             is_manual=True,
-            is_completed=reminder.is_completed
+            is_completed=reminder.is_completed,
+            is_recurring=is_recurring_reminder(reminder),
+            recurrence_group_id=reminder.recurrence_group_id,
+            recurrence_index=reminder.recurrence_index
         )
     except HTTPException:
         raise

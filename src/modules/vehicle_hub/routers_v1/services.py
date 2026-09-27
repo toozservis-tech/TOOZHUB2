@@ -900,3 +900,40 @@ def get_services_discovery(
         },
         "services": rows,
     }
+
+
+def _area_key(value: str) -> str:
+    import unicodedata
+    return " ".join(unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode().lower().split())
+
+
+@router.get("/area-directory")
+def get_area_directory(city: str, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    """City-level directory; never discloses live customer location or unlinked customers."""
+    city = city.strip()
+    if not city or len(city) > 120:
+        raise HTTPException(status_code=422, detail="Zadejte město (nejvýše 120 znaků).")
+    _ensure_services_schema(db)
+    service_mode = current_user.role == "service"
+    query = db.query(Customer).filter(Customer.is_deleted.is_(False), Customer.is_disabled.is_(False))
+    if service_mode:
+        query = query.join(ServiceCustomerLink, ServiceCustomerLink.customer_id == Customer.id).filter(
+            ServiceCustomerLink.service_customer_id == current_user.id,
+            ServiceCustomerLink.status == "active",
+            Customer.role == "user",
+        )
+    else:
+        query = query.filter(Customer.role == "service", Customer.password_hash.isnot(None))
+        if not _is_admin_role(current_user.role):
+            if not current_user.tenant_id:
+                raise HTTPException(status_code=403, detail="Účet nemá přiřazenou organizaci.")
+            linked = db.query(ServiceCustomerLink.service_customer_id).filter(
+                ServiceCustomerLink.customer_id == current_user.id, ServiceCustomerLink.status == "active")
+            query = query.filter(or_(Customer.tenant_id == current_user.tenant_id, Customer.id.in_(linked)))
+    candidates = query.all()
+    entries = [{"id": item.id, "name": item.name or ("Zákazník" if service_mode else "Servis"),
+                "city": item.city, "phone": item.phone}
+               for item in candidates if _area_key(item.city) == _area_key(city)]
+    entries.sort(key=lambda row: (_area_key(row["name"]), row["id"]))
+    return {"city": city, "kind": "customers" if service_mode else "services", "count": len(entries),
+            "missing_city_count": sum(not (item.city or "").strip() for item in candidates), "entries": entries}

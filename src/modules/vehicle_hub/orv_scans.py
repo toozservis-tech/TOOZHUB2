@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import re
+import shutil
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -147,6 +148,14 @@ def _extract_ocr_text(image_bytes: bytes, file_name: str, mime_type: str | None)
     del file_name, mime_type
     if Image is None or pytesseract is None:
         raise HTTPException(status_code=503, detail="OCR zpracování ORV není na serveru dostupné.")
+    if not shutil.which(pytesseract.pytesseract.tesseract_cmd):
+        raise HTTPException(status_code=503, detail="OCR není na serveru připraveno: chybí Tesseract.")
+    try:
+        languages = set(pytesseract.get_languages(config=""))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="OCR nástroj na serveru není dostupný.") from exc
+    if not {"ces", "eng"}.issubset(languages):
+        raise HTTPException(status_code=503, detail="OCR není na serveru připraveno: chybí česká nebo anglická jazyková data.")
     try:
         with Image.open(BytesIO(image_bytes)) as image:
             normalized = ImageOps.exif_transpose(image) if ImageOps is not None else image

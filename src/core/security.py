@@ -133,7 +133,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     """
     if not JWT_AVAILABLE or jwt is None:
         # Fallback - vrátit jednoduchý token (email)
-        return data.get("sub", "")
+        raise RuntimeError("JWT support is required")
 
     to_encode = data.copy()
     if expires_delta:
@@ -160,7 +160,7 @@ def decode_access_token(token: str) -> Optional[str]:
     """
     if not JWT_AVAILABLE or jwt is None:
         # Fallback - token je přímo email
-        return token if "@" in token else None
+        return None
 
     payload = decode_access_token_payload(token)
     if not payload:
@@ -179,7 +179,7 @@ def decode_access_token_payload(token: str) -> Optional[dict]:
         Dict payload nebo None pokud je token neplatný.
     """
     if not JWT_AVAILABLE or jwt is None:
-        return {"sub": token} if "@" in token else None
+        return None
 
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])

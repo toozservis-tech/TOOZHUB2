@@ -71,6 +71,7 @@ from src.modules.vehicle_hub.tenant_provisioning import (
 )
 from src.modules.vehicle_hub.routers_v1.reminders import apply_reminder_completion_update
 from src.server.runtime_settings import ADMIN_SETTINGS_FILE
+from src.core.file_storage import cached_file, persist_file
 from src.server.control_center_jobs import (
     is_job_paused,
     set_job_paused,
@@ -139,7 +140,7 @@ def _primary_owner_join_sql(
         LEFT JOIN (
             SELECT vehicle_id, MIN(id) AS ownership_id
             FROM vehicle_ownerships
-            WHERE is_active = 1 AND is_primary = 1
+            WHERE is_active = TRUE AND is_primary = TRUE
             GROUP BY vehicle_id
         ) {selector_alias} ON {selector_alias}.vehicle_id = {vehicle_alias}.id
         LEFT JOIN vehicle_ownerships {ownership_alias} ON {ownership_alias}.id = {selector_alias}.ownership_id
@@ -152,7 +153,7 @@ def _customer_vehicle_count_join_sql(*, customer_alias: str = "c", join_alias: s
         LEFT JOIN (
             SELECT customer_id, COUNT(DISTINCT vehicle_id) AS vehicles_count
             FROM vehicle_ownerships
-            WHERE is_active = 1
+            WHERE is_active = TRUE
             GROUP BY customer_id
         ) {join_alias} ON {join_alias}.customer_id = {customer_alias}.id
     """
@@ -630,7 +631,7 @@ def _backup_vehicle_ids_for_customer_scope(
             SELECT DISTINCT vehicle_id
             FROM backupdb.vehicle_ownerships
             WHERE customer_id = ?
-              AND COALESCE(is_active, 1) = 1
+              AND COALESCE(is_active, TRUE) = TRUE
             """,
             (customer_id,),
         ).fetchall()
@@ -1319,6 +1320,7 @@ def get_default_admin_settings() -> Dict[str, Dict[str, Dict[str, Any]]]:
 
 
 def load_admin_settings() -> Dict[str, Dict[str, Dict[str, Any]]]:
+    cached_file(ADMIN_SETTINGS_FILE, refresh=True)
     defaults = get_default_admin_settings()
     if not ADMIN_SETTINGS_FILE.exists():
         return defaults
@@ -1355,8 +1357,7 @@ def load_admin_settings() -> Dict[str, Dict[str, Dict[str, Any]]]:
 
 def save_admin_settings(settings: Dict[str, Dict[str, Dict[str, Any]]]) -> None:
     ADMIN_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(ADMIN_SETTINGS_FILE, "w", encoding="utf-8") as handle:
-        json.dump(settings, handle, ensure_ascii=False, indent=2)
+    persist_file(ADMIN_SETTINGS_FILE, json.dumps(settings, ensure_ascii=False, indent=2).encode("utf-8"), replace=True)
 
 
 # ============= SCHEMAS =============
@@ -1643,6 +1644,84 @@ class StorageCleanupRequest(BaseModel):
     delete_old_backups_days: Optional[int] = 30
 
 
+class AdminDeleteRequest(BaseModel):
+    reason: str
+    confirmation: str
+
+
+def delete_admin_resource(resource: str, resource_id: int, payload: AdminDeleteRequest,
+                          request: FastAPIRequest, email: str, db: Session):
+    """Deletion and its audit entry commit together; accounts retain their relationships."""
+    reason = payload.reason.strip()
+    if not 3 <= len(reason) <= 1000:
+        raise HTTPException(status_code=422, detail="Zadejte důvod odstranění (3 až 1000 znaků).")
+    if payload.confirmation != "ODSTRANIT":
+        raise HTTPException(status_code=422, detail="Odstranění potvrďte slovem ODSTRANIT.")
+    models = {"users": Customer, "services": Customer, "vehicles": Vehicle,
+              "records": ServiceRecord, "reminders": Reminder, "reservations": Reservation}
+    model = models[resource]
+    actor = get_customer_by_email(db, email)
+    if not actor:
+        raise HTTPException(status_code=403, detail="Správce nebyl nalezen.")
+    row = db.query(model).filter(model.id == resource_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Záznam již neexistuje.")
+    if resource == "services" and row.role != "service":
+        raise HTTPException(status_code=400, detail="Tento účet není servis.")
+    if model is Customer:
+        if actor.id == row.id:
+            raise HTTPException(status_code=400, detail="Vlastní přihlášený účet nelze odstranit.")
+        if row.role == "developer_admin" and actor.role != "developer_admin":
+            raise HTTPException(status_code=403, detail="Hlavního správce smí spravovat pouze hlavní správce.")
+        if customer_is_deleted(row):
+            raise HTTPException(status_code=409, detail="Účet je již archivovaný.")
+    # Do not cascade into unreviewed child data. Ownership links can be removed with an empty vehicle.
+    if model is Vehicle:
+        inspector = inspect(db.bind)
+        for table in inspector.get_table_names():
+            if table == "vehicle_ownerships":
+                continue
+            for fk in inspector.get_foreign_keys(table):
+                if fk.get("referred_table") == "vehicles" and fk.get("referred_columns") == ["id"]:
+                    column = fk["constrained_columns"][0]
+                    count = db.execute(text(f'SELECT COUNT(*) FROM "{table}" WHERE "{column}" = :id'), {"id": row.id}).scalar()
+                    if count:
+                        raise HTTPException(status_code=409, detail="Vozidlo má navázané záznamy. Nejprve odstraňte jeho záznamy, rezervace a připomínky; historické vazby mohou vyžadovat archivaci vozidla.")
+    # Move record-specific history into the immutable deletion audit before removing its FK target.
+    record_history = []
+    if model is ServiceRecord and inspect(db.bind).has_table("service_record_audit_logs"):
+        record_history = [dict(item._mapping) for item in db.execute(text("SELECT * FROM service_record_audit_logs WHERE service_record_id = :id"), {"id": row.id})]
+    excluded = {"password_hash", "totp_secret", "totp_secret_encrypted"}
+    snapshot = {column.name: getattr(row, column.name) for column in model.__table__.columns if column.name not in excluded and not any(word in column.name.lower() for word in ["password", "secret", "token"])}
+    try:
+        if model is Customer:
+            alias = build_deleted_alias_email(row.id)
+            _sync_vehicle_user_email_display_for_customer(db, row.id, alias)
+            row.email = alias
+            row.is_deleted = True
+            row.is_disabled = True
+            row.deleted_at = datetime.utcnow()
+            row.disabled_at = datetime.utcnow()
+            increment_customer_session_version(row)
+        else:
+            if record_history:
+                db.execute(text("DELETE FROM service_record_audit_logs WHERE service_record_id = :id"), {"id": row.id})
+            if model is Vehicle:
+                db.query(VehicleOwnership).filter(VehicleOwnership.vehicle_id == row.id).delete(synchronize_session=False)
+            db.delete(row)
+        entry = DeveloperActionAuditLog(
+            developer_id=actor.id, developer_email=email, action_type=resource.rstrip("s") + ".delete",
+            target_resource=f"{resource}:{resource_id}",
+            parameters_json=_json_serialize_for_audit({"reason": reason, "snapshot": snapshot, "record_history": record_history, "soft_deleted": model is Customer}),
+            result="success", status_code=200, request_ip=get_client_ip(request), created_at=datetime.utcnow())
+        db.add(entry)
+        db.commit()
+        return {"message": "Účet byl archivován." if model is Customer else "Záznam byl odstraněn.", "soft_deleted": model is Customer}
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Odstranění se neprovedlo. Záznam má navázané údaje nebo se nepodařilo uložit audit. Data zůstala zachována.")
+
+
 # ============= ENDPOINTS =============
 
 @router.get("/overview", response_model=StatsOverview)
@@ -1677,6 +1756,7 @@ def get_overview(
 def get_all_users(
     limit: int = 50,
     offset: int = 0,
+    include_deleted: bool = False,
     email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db)
 ):
@@ -1740,8 +1820,8 @@ def get_all_users(
                     c.city as city,
                     c.phone as phone,
                     c.created_at as created_at,
-                    COALESCE(c.is_disabled, 0) as is_disabled,
-                    COALESCE(c.is_deleted, 0) as is_deleted,
+                    COALESCE(c.is_disabled, FALSE) as is_disabled,
+                    COALESCE(c.is_deleted, FALSE) as is_deleted,
                     COALESCE(c.session_version, 0) as session_version,
                     COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count,
                     (
@@ -1790,11 +1870,11 @@ def get_all_users(
                     {last_paid_at_sql} as last_paid_at
                 FROM customers c
                 {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
-                WHERE COALESCE(c.is_deleted, 0) = 0
+                WHERE (:include_deleted = 1 OR COALESCE(c.is_deleted, FALSE) = FALSE)
                 GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, vehicle_counts.vehicles_count
                 ORDER BY c.created_at DESC
                 LIMIT :limit OFFSET :offset
-            """), {"limit": limit, "offset": offset})
+            """), {"limit": limit, "offset": offset, "include_deleted": int(include_deleted)})
         else:
             result = db.execute(text(f"""
                 SELECT
@@ -1806,8 +1886,8 @@ def get_all_users(
                     c.city as city,
                     c.phone as phone,
                     c.created_at as created_at,
-                    COALESCE(c.is_disabled, 0) as is_disabled,
-                    COALESCE(c.is_deleted, 0) as is_deleted,
+                    COALESCE(c.is_disabled, FALSE) as is_disabled,
+                    COALESCE(c.is_deleted, FALSE) as is_deleted,
                     COALESCE(c.session_version, 0) as session_version,
                     COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count,
                     {license_plan_sql} as license_plan,
@@ -1816,11 +1896,11 @@ def get_all_users(
                     {last_paid_at_sql} as last_paid_at
                 FROM customers c
                 {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
-                WHERE COALESCE(c.is_deleted, 0) = 0
+                WHERE (:include_deleted = 1 OR COALESCE(c.is_deleted, FALSE) = FALSE)
                 GROUP BY c.id, c.email, c.name, c.role, c.tenant_id, c.city, c.phone, c.created_at, c.is_disabled, c.is_deleted, c.session_version, vehicle_counts.vehicles_count
                 ORDER BY c.created_at DESC
                 LIMIT :limit OFFSET :offset
-            """), {"limit": limit, "offset": offset})
+            """), {"limit": limit, "offset": offset, "include_deleted": int(include_deleted)})
 
         rows = result.fetchall()
         payment_state_by_tenant: Dict[int, Dict[str, Any]] = {}
@@ -2052,69 +2132,12 @@ def update_user(
 @router.delete("/users/{user_id}")
 def delete_user(
     user_id: int,
+    payload: AdminDeleteRequest,
     request: FastAPIRequest,
     email: str = Depends(require_developer_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Bezpečné smazání uživatele (soft-delete + invalidace session)."""
-    try:
-        ensure_customer_account_state_schema(db)
-        actor = get_customer_by_email(db, email)
-        user = db.query(Customer).filter(Customer.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="Uživatel nenalezen")
-
-        if actor and actor.id == user.id:
-            raise HTTPException(status_code=400, detail="Nelze smazat aktuálně přihlášený admin účet.")
-
-        if customer_is_deleted(user):
-            return {"message": f"Účet {user.email} je již smazaný.", "soft_deleted": True}
-
-        previous_email = (user.email or "").strip().lower()
-        deleted_alias = build_deleted_alias_email(user.id)
-
-        # Deprecated compatibility sync: display alias on Vehicle.user_email.
-        # Ownership logic uses vehicle_ownerships and remains intact.
-        _sync_vehicle_user_email_display_for_customer(db, user.id, deleted_alias)
-
-        user.email = deleted_alias
-        user.name = user.name or f"Deleted user #{user.id}"
-        user.is_deleted = True
-        user.is_disabled = True
-        user.deleted_at = datetime.utcnow()
-        user.disabled_at = datetime.utcnow()
-        increment_customer_session_version(user)
-        db.commit()
-
-        log_developer_action(
-            db,
-            developer_email=email,
-            request=request,
-            action_type="user.delete",
-            target_resource=f"user:{user_id}",
-            parameters={
-                "previous_email": previous_email,
-                "deleted_alias": deleted_alias,
-                "by": email.lower(),
-            },
-            result="success",
-            status_code=200,
-        )
-
-        return {
-            "message": f"Uživatel {previous_email} byl bezpečně smazán",
-            "soft_deleted": True,
-            "deleted_alias_email": deleted_alias,
-            "session_version": customer_session_version(user),
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při mazání uživatele: {str(e)}")
+    return delete_admin_resource("users", user_id, payload, request, email, db)
 
 
 @router.get("/users/{user_id}/vehicles", response_model=List[VehicleSummary])
@@ -2148,7 +2171,7 @@ def get_user_vehicles(
             LEFT JOIN service_records sr ON sr.vehicle_id = v.id
             {_primary_owner_join_sql(vehicle_alias="v", selector_alias="uvo_primary", ownership_alias="uvo", owner_alias="owner_customer")}
             WHERE uvo.customer_id = :user_id
-              AND uvo.is_active = 1
+              AND uvo.is_active = TRUE
             GROUP BY v.id, owner_customer.email, v.user_email, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.created_at
             ORDER BY v.created_at DESC
         """), {"user_id": user_id})
@@ -2214,7 +2237,7 @@ def get_user_detail(
             LEFT JOIN service_records sr ON sr.vehicle_id = v.id
             {_primary_owner_join_sql(vehicle_alias="v", selector_alias="udv_primary", ownership_alias="udv_ownership", owner_alias="udv_owner")}
             WHERE udv_ownership.customer_id = :customer_id
-              AND udv_ownership.is_active = 1
+              AND udv_ownership.is_active = TRUE
             GROUP BY
                 v.id, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.engine, v.notes,
                 v.stk_valid_until, v.insurance_provider, v.insurance_valid_until, v.created_at
@@ -2344,7 +2367,7 @@ def get_user_detail(
             JOIN vehicle_ownerships vo
               ON vo.vehicle_id = v.id
              AND vo.customer_id = :customer_id
-             AND vo.is_active = 1
+             AND vo.is_active = TRUE
             ORDER BY sr.performed_at DESC
         """), {"customer_id": user_id})
 
@@ -2766,14 +2789,14 @@ def get_all_services(
                 c.city,
                 c.phone,
                 c.created_at,
-                COALESCE(c.is_disabled, 0) as is_disabled,
-                COALESCE(c.is_deleted, 0) as is_deleted,
+                COALESCE(c.is_disabled, FALSE) as is_disabled,
+                COALESCE(c.is_deleted, FALSE) as is_deleted,
                 COALESCE(c.session_version, 0) as session_version,
                 COALESCE(vehicle_counts.vehicles_count, 0) as vehicles_count
             FROM customers c
             {_customer_vehicle_count_join_sql(customer_alias="c", join_alias="vehicle_counts")}
             WHERE c.role = 'service'
-              AND COALESCE(c.is_deleted, 0) = 0
+              AND COALESCE(c.is_deleted, FALSE) = FALSE
             ORDER BY c.created_at DESC
             LIMIT :limit OFFSET :offset
         """), {"limit": limit, "offset": offset})
@@ -2927,47 +2950,12 @@ def update_service(
 @router.delete("/services/{service_id}")
 def delete_service(
     service_id: int,
+    payload: AdminDeleteRequest,
     request: FastAPIRequest,
     email: str = Depends(require_developer_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Smazání servisu"""
-    try:
-        service = db.query(Customer).filter(Customer.id == service_id).first()
-        if not service:
-            raise HTTPException(status_code=404, detail="Servis nenalezen")
-        
-        if service.role != "service":
-            raise HTTPException(status_code=400, detail="Zadaný uživatel není servis")
-
-        vehicles_count = (
-            db.query(func.count(func.distinct(VehicleOwnership.vehicle_id)))
-            .filter(
-                VehicleOwnership.customer_id == service.id,
-                VehicleOwnership.is_active.is_(True),
-            )
-            .scalar()
-            or 0
-        )
-        if vehicles_count > 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Servis má přiřazeno {vehicles_count} vozidel. Nejprve změňte vlastníka nebo vozidla smažte.",
-            )
-        
-        service_email = service.email
-        db.delete(service)
-        db.commit()
-        
-        return {"message": f"Servis {service_email} byl smazán"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při mazání servisu: {str(e)}")
+    return delete_admin_resource("services", service_id, payload, request, email, db)
 
 
 @router.get("/service-registration-requests", response_model=List[ServiceRegistrationRequestItem])
@@ -3376,43 +3364,12 @@ def update_vehicle(
 @router.delete("/vehicles/{vehicle_id}")
 def delete_vehicle(
     vehicle_id: int,
+    payload: AdminDeleteRequest,
     request: FastAPIRequest,
     email: str = Depends(require_developer_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Smazání vozidla"""
-    try:
-        vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
-        if not vehicle:
-            raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
-        primary_owner = get_primary_vehicle_owner(db, vehicle)
-        db.delete(vehicle)
-        db.commit()
-        log_developer_action(
-            db,
-            developer_email=email,
-            request=request,
-            action_type="vehicle.delete",
-            target_resource=f"vehicle:{vehicle_id}",
-            parameters={
-                "vehicle_id": vehicle_id,
-                "tenant_id": vehicle.tenant_id,
-                "owner_customer_id": primary_owner.id if primary_owner else None,
-                "owner_email": primary_owner.email if primary_owner else None,
-            },
-            result="success",
-            status_code=200,
-        )
-        
-        return {"message": "Vozidlo bylo smazáno"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při mazání vozidla: {str(e)}")
+    return delete_admin_resource("vehicles", vehicle_id, payload, request, email, db)
 
 
 @router.get("/records")
@@ -3729,31 +3686,13 @@ def update_record(
 @router.delete("/records/{record_id}")
 def delete_record(
     record_id: int,
+    payload: AdminDeleteRequest,
     request: FastAPIRequest,
     email: str = Depends(require_developer_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Smazání servisního záznamu"""
-    try:
-        record = db.query(ServiceRecord).filter(ServiceRecord.id == record_id).first()
-        if not record:
-            raise HTTPException(status_code=404, detail="Záznam nenalezen")
-        
-        db.delete(record)
-        db.commit()
-        
-        return {"message": "Záznam byl smazán"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při mazání záznamu: {str(e)}")
+    return delete_admin_resource("records", record_id, payload, request, email, db)
 
-
-# ============= REMINDERS CRUD (ADMIN) =============
 
 @router.patch("/reminders/{reminder_id}")
 def update_reminder_admin(
@@ -3802,29 +3741,13 @@ def update_reminder_admin(
 @router.delete("/reminders/{reminder_id}")
 def delete_reminder_admin(
     reminder_id: int,
+    payload: AdminDeleteRequest,
     request: FastAPIRequest,
     email: str = Depends(require_developer_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Smazání připomínky administrátorem."""
-    try:
-        reminder = db.query(Reminder).filter(Reminder.id == reminder_id).first()
-        if not reminder:
-            raise HTTPException(status_code=404, detail="Připomínka nenalezena")
+    return delete_admin_resource("reminders", reminder_id, payload, request, email, db)
 
-        db.delete(reminder)
-        db.commit()
-        return {"message": "Připomínka byla smazána adminem"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při mazání připomínky: {str(e)}")
-
-
-# ============= RESERVATIONS CRUD (ADMIN) =============
 
 @router.patch("/reservations/{reservation_id}")
 def update_reservation_admin(
@@ -3884,29 +3807,13 @@ def update_reservation_admin(
 @router.delete("/reservations/{reservation_id}")
 def delete_reservation_admin(
     reservation_id: int,
+    payload: AdminDeleteRequest,
     request: FastAPIRequest,
     email: str = Depends(require_developer_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Smazání rezervace administrátorem."""
-    try:
-        reservation = db.query(Reservation).filter(Reservation.id == reservation_id).first()
-        if not reservation:
-            raise HTTPException(status_code=404, detail="Rezervace nenalezena")
+    return delete_admin_resource("reservations", reservation_id, payload, request, email, db)
 
-        db.delete(reservation)
-        db.commit()
-        return {"message": "Rezervace byla smazána adminem"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při mazání rezervace: {str(e)}")
-
-
-# ============= SYSTEM TOOLS =============
 
 @router.post("/reindex")
 def reindex_database(
@@ -4860,7 +4767,7 @@ def get_users_presence(
                           AND s3.event_type IN ('api_activity', 'login_success')
                     ) AS active_session_count
                 FROM customers c
-                WHERE COALESCE(c.is_deleted, 0) = 0
+                WHERE COALESCE(c.is_deleted, FALSE) = FALSE
                 ORDER BY c.created_at DESC
                 LIMIT :limit OFFSET :offset
                 """

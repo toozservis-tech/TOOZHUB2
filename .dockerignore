@@ -1,0 +1,13 @@
+**
+!requirements-server.txt
+!Dockerfile.cloud
+!VERSION
+!src/
+!src/**
+!web/
+!web/**
+!web_admin/
+!web_admin/**
+**/__pycache__/
+**/*.pyc
+**/.env*

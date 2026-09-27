@@ -9,6 +9,7 @@ Funkce:
 - volitelné automatické založení servisního záznamu
 """
 from __future__ import annotations
+from src.core.file_storage import persist_file, cached_file
 
 import base64
 import binascii
@@ -1022,9 +1023,13 @@ def _try_reparse_ingestion_entity(entity: ServiceDocumentIngestion) -> bool:
             source_path = Path(stored_path_raw)
             if not source_path.is_absolute():
                 source_path = SERVICE_DOCS_DIR / source_path
+            if source_path.is_absolute() and "service_workspace_docs" in source_path.parts:
+                source_path = SERVICE_DOCS_DIR / source_path.name
             source_path = source_path.resolve()
             docs_root = SERVICE_DOCS_DIR.resolve()
 
+            if docs_root in source_path.parents:
+                cached_file(source_path)
             if docs_root in source_path.parents and source_path.is_file():
                 raw_content = source_path.read_bytes()
                 extracted_text, warning, engine = _extract_text_from_file(
@@ -1489,7 +1494,7 @@ def _store_uploaded_file(file_name: Optional[str], content: bytes) -> str:
     stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     safe_name = f"doc_{stamp}_{secrets.token_hex(6)}{suffix}"
     target = SERVICE_DOCS_DIR / safe_name
-    target.write_bytes(content)
+    persist_file(target, content)
     return str(target)
 
 
@@ -1530,7 +1535,7 @@ def _store_service_record_attachment(
     safe_stem = _sanitize_file_stem(filename)
     unique_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{safe_stem}_{secrets.token_hex(4)}{extension}"
     target_file = target_dir / unique_name
-    target_file.write_bytes(content)
+    persist_file(target_file, content)
 
     storage_key = target_file.relative_to(SERVICE_RECORD_ATTACHMENTS_DIR).as_posix()
     return {
@@ -2716,6 +2721,12 @@ def create_customer_vehicle(
         assigned_by_customer_id=current_user.id,
     )
 
+    create_or_update_vehicle_service_link(
+        db, tenant_id=vehicle.tenant_id, service_customer_id=current_user.id,
+        owner_customer_id=customer.id, vehicle_id=vehicle.id,
+        approved_by_customer_id=current_user.id, source_type="service_created_vehicle",
+        note="Nové vozidlo založené servisem pro propojeného klienta.",
+    )
     db.commit()
     db.refresh(vehicle)
 

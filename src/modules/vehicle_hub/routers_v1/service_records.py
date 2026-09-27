@@ -2,6 +2,7 @@
 Service Records API v1.0 router
 """
 from __future__ import annotations
+from src.core.file_storage import persist_file, cached_file
 
 from datetime import datetime
 import base64
@@ -155,9 +156,9 @@ def _resolve_attachment_file(relative_key: str) -> Path | None:
         return None
     candidate = (SERVICE_RECORD_ATTACHMENTS_DIR / raw_key).resolve()
     base = SERVICE_RECORD_ATTACHMENTS_DIR.resolve()
-    if not str(candidate).startswith(str(base)):
+    if base not in candidate.parents:
         return None
-    return candidate
+    return cached_file(candidate)
 
 
 def _extract_attachment_file_paths(attachments_raw: str | None) -> list[Path]:
@@ -341,7 +342,7 @@ def _store_attachment_for_vehicle(
     safe_stem = _sanitize_file_stem(filename)
     unique_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{safe_stem}_{secrets.token_hex(4)}{extension}"
     target_file = target_dir / unique_name
-    target_file.write_bytes(content)
+    persist_file(target_file, content)
 
     storage_key = target_file.relative_to(SERVICE_RECORD_ATTACHMENTS_DIR).as_posix()
     return {
@@ -1621,7 +1622,6 @@ def get_service_record(
         # Kontrola přístupu k vozidlu
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
-        forbid_service_record_mutation(current_user)
         
         record = db.query(ServiceRecordModel).filter(
             ServiceRecordModel.id == record_id,
@@ -1662,6 +1662,7 @@ def update_service_record(
     POZOR: Záznamy vytvořené AI asistentem (created_by_ai=True) nelze smazat, pouze upravit.
     """
     try:
+        forbid_service_record_mutation(current_user)
         assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
         # Kontrola přístupu k vozidlu
         if not can_access_vehicle(vehicle_id, current_user, db):
@@ -1741,11 +1742,11 @@ def delete_service_record(
     POZOR: Záznamy vytvořené AI asistentem (created_by_ai=True) nelze archivovat.
     """
     try:
+        forbid_service_record_mutation(current_user)
         assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
         # Kontrola přístupu k vozidlu
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
-        forbid_service_record_mutation(current_user)
 
         record = db.query(ServiceRecordModel).filter(
             ServiceRecordModel.id == record_id,

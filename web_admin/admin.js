@@ -139,6 +139,12 @@ function showSuccess(message) {
 }
 
 async function apiRequest(method, path, body = null) {
+  if (method === "DELETE" && /\/(users|services|vehicles|records|reminders|reservations)\/\d+$/.test(path)) {
+    const reason = window.prompt("Důvod odstranění (3 až 1000 znaků):");
+    if (!reason || reason.trim().length < 3 || reason.trim().length > 1000) throw new Error("Odstranění zrušeno: je nutný platný důvod.");
+    if (window.prompt("Pro potvrzení napište ODSTRANIT:") !== "ODSTRANIT") throw new Error("Odstranění zrušeno.");
+    body = {reason: reason.trim(), confirmation: "ODSTRANIT"};
+  }
   const token = getAuthToken();
   const headers = {
     "Accept": "application/json",
@@ -148,7 +154,7 @@ async function apiRequest(method, path, body = null) {
     headers["Authorization"] = `Bearer ${token}`;
   }
   
-  if (body && (method === "POST" || method === "PATCH" || method === "PUT")) {
+  if (body && (method === "POST" || method === "PATCH" || method === "PUT" || method === "DELETE")) {
     headers["Content-Type"] = "application/json";
   }
   

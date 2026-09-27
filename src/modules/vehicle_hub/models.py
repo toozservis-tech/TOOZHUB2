@@ -975,3 +975,34 @@ class CustomerCommand(Base):
     
     # Vztahy
     vehicle = relationship("Vehicle", foreign_keys=[vehicle_id])
+
+
+class RepairPhotoSession(Base):
+    """A distinct repair visit, not a mutable vehicle cover photo."""
+    __tablename__ = "repair_photo_sessions"
+    id = Column(Integer, primary_key=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False, index=True)
+    service_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    client_id = Column(String(36), nullable=False)
+    __table_args__ = (UniqueConstraint("service_id", "client_id", name="uq_repair_session_client"),)
+
+
+class RepairEvidencePhoto(Base):
+    __tablename__ = "repair_evidence_photos"
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey("repair_photo_sessions.id"), nullable=False, index=True)
+    author_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    author_name = Column(String, nullable=False)
+    phase = Column(String(10), nullable=False)
+    note = Column(Text, nullable=False, default="")
+    source = Column(String(10), nullable=False)
+    captured_at = Column(DateTime, nullable=True)
+    uploaded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    sha256 = Column(String(64), nullable=False)
+    file_path = Column(String, nullable=False)
+    mime_type = Column(String(30), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    client_id = Column(String(36), nullable=False)
+    __table_args__ = (UniqueConstraint("session_id", "client_id", name="uq_repair_photo_client"),)

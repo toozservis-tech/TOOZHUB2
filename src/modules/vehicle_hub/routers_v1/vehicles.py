@@ -2,6 +2,7 @@
 Vehicles API v1.0 router
 """
 from __future__ import annotations
+from src.core.file_storage import persist_file, cached_file
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -9,6 +10,7 @@ import base64
 import binascii
 import html
 from io import BytesIO
+from html.parser import HTMLParser
 import json
 import mimetypes
 from pathlib import Path
@@ -259,16 +261,45 @@ def _extract_captcha_src(page_html: str) -> str | None:
     return None
 
 
+class _VisibleResponseText(HTMLParser):
+    """Ignore hidden DevExpress validation placeholders and script strings."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        style = re.sub(r"\s+", "", attributes.get("style", "").lower())
+        hidden = (tag in {"script", "style", "template"}
+                  or "hidden" in attributes
+                  or "display:none" in style or "visibility:hidden" in style
+                  or "visibility:collapse" in style)
+        if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+            self.stack.append((tag, hidden or any(item[1] for item in self.stack)))
+
+    def handle_startendtag(self, tag, attrs):
+        pass
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                break
+
+    def handle_data(self, data):
+        if not any(item[1] for item in self.stack):
+            self.parts.append(data)
+
+
 def _contains_captcha_error(page_html: str) -> bool:
-    decoded = html.unescape(page_html or "").lower()
-    normalized_ascii = (
-        unicodedata.normalize("NFKD", decoded).encode("ascii", "ignore").decode("ascii")
-    )
-    return (
-        "špatně opsaný kód z obrázku" in decoded
-        or "spatne opsany kod z obrazku" in normalized_ascii
-        or "submitted code is incorrect" in decoded
-    )
+    parser = _VisibleResponseText()
+    parser.feed(page_html or "")
+    decoded = " ".join(" ".join(parser.parts).lower().split())
+    normalized_ascii = unicodedata.normalize("NFKD", decoded).encode("ascii", "ignore").decode("ascii")
+    return ("špatně opsaný kód z obrázku" in decoded
+            or "spatne opsany kod z obrazku" in normalized_ascii
+            or "submitted code is incorrect" in decoded)
 
 
 def _parse_km_value(raw: str | None) -> int | None:
@@ -694,7 +725,7 @@ def _create_tachometer_session(
                 _TACHOMETER_CHALLENGE_STORE[session_id] = {
                     "created_at": datetime.utcnow(),
                     "request_verification_token": token,
-                    "cookies": requests.utils.dict_from_cookiejar(session.cookies),
+                    "cookies": session.cookies.copy(),
                     "expected_vin": expected_vin,
                     "vehicle_id": vehicle_id,
                 }
@@ -745,7 +776,7 @@ def _lookup_tachometer_with_session(
     try:
         with _build_tachometer_session() as session:
             cookie_dict = challenge.get("cookies", {})
-            if isinstance(cookie_dict, dict):
+            if isinstance(cookie_dict, (dict, requests.cookies.RequestsCookieJar)):
                 session.cookies.update(cookie_dict)
             session.headers.update(
                 {
@@ -1101,8 +1132,9 @@ def _get_vehicle_photo_file(photo_path: str | None) -> Path | None:
         return None
     base = VEHICLE_PHOTOS_DIR.resolve()
     candidate = (VEHICLE_PHOTOS_DIR / str(photo_path)).resolve()
-    if not str(candidate).startswith(str(base)):
+    if base not in candidate.parents:
         return None
+    cached_file(candidate)
     if not candidate.is_file():
         return None
     return candidate
@@ -2032,6 +2064,11 @@ def get_vehicles(
                 .filter(
                     VehicleModel.user_email == current_user.email,
                     VehicleModel.tenant_id == tenant_id,
+                    # Compatibility only for vehicles with no ownership history.
+                    # Never recreate an explicitly released or transferred assignment.
+                    ~db.query(VehicleOwnership.id).filter(
+                        VehicleOwnership.vehicle_id == VehicleModel.id
+                    ).exists(),
                 )
                 .all()
             )
@@ -2524,7 +2561,7 @@ def upload_vehicle_photo(
 
     filename = f"photo_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(6)}.jpg"
     target_file = target_dir / filename
-    target_file.write_bytes(normalized_content)
+    persist_file(target_file, normalized_content)
 
     previous_file = _get_vehicle_photo_file(getattr(vehicle, "photo_path", None))
     vehicle.photo_path = target_file.relative_to(VEHICLE_PHOTOS_DIR).as_posix()
