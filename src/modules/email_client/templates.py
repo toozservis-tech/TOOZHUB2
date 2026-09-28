@@ -94,18 +94,20 @@ def render_email_layout(
 ) -> str:
     panel_html = "".join(panels or [])
     paragraph_html = "".join(
-        f'<p style="margin:0 0 14px; color:#334155; font-size:15px; line-height:1.7;">{html_multiline(paragraph)}</p>'
+        f'<p style="margin:0 0 14px; color:#334155; font-size:16px; line-height:1.8;">{html_multiline(paragraph)}</p>'
         for paragraph in (paragraphs or [])
         if str(paragraph or "").strip()
     )
     cta_html = ""
     if cta_label and cta_url:
         cta_html = f"""
-        <div style="margin:24px 0 10px; text-align:center;">
-          <a href="{escape(cta_url, quote=True)}" style="display:inline-block; background:#be185d; color:#ffffff; text-decoration:none; font-weight:700; padding:17px 30px; border-radius:12px;border-bottom:3px solid #831843;">
-            {escape(cta_label)}
-          </a>
-        </div>
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:28px auto 18px;border-collapse:separate;">
+          <tr><td bgcolor="#19283d" style="border-radius:8px;border:1px solid #31435a;border-left:5px solid #db2777;">
+            <a href="{escape(cta_url, quote=True)}" style="display:block;padding:18px 26px;color:#ffffff;text-decoration:none;font-size:16px;line-height:24px;font-weight:600;letter-spacing:0.2px;">
+              {escape(cta_label)} <span aria-hidden="true" style="color:#f9a8d4;padding-left:22px;font-size:22px;">&#8594;</span>
+            </a>
+          </td></tr>
+        </table>
         <div style="text-align:center; color:#64748b; font-size:12px; line-height:1.6; margin:10px 0 0;">
           Pokud tlačítko nefunguje, otevřete odkaz ručně:<br>
           <a href="{escape(cta_url, quote=True)}" style="color:#9d174d; word-break:break-all;overflow-wrap:anywhere;">{escape(cta_url)}</a>
@@ -119,14 +121,14 @@ def render_email_layout(
 <html lang="cs"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light"><title>{escape(title)} · {escape(APP_DISPLAY_NAME)}</title>
 <style>@media only screen and (max-width:600px){{.outer{{padding:16px 8px!important}}.content{{padding:26px 20px!important}}.headline{{font-size:28px!important}}}}</style></head>
-<body style="margin:0;padding:0;background:#f0ebf1;font-family:Arial,Helvetica,sans-serif;color:#17263b;">
+<body style="margin:0;padding:0;background:#f0ebf1;font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#17263b;">
 <div style="display:none;font-size:1px;color:#eef1f5;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">{escape(subtitle)}</div>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f0ebf1"><tr><td class="outer" align="center" style="padding:40px 16px;">
 <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;border-collapse:separate;">
 <tr><td class="content" bgcolor="#21172c" style="padding:32px 36px 36px;border-radius:24px 24px 0 0;background-image:linear-gradient(125deg,#17263b 0%,#321b38 65%,#701b46 100%);">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="70" style="vertical-align:middle;"><img src="{escape(build_app_url("/web/assets/toozservis-logo-icon.png"), quote=True)}" width="56" height="56" alt="" style="display:block;border:0;"></td><td style="vertical-align:middle;color:#ffffff;font-size:23px;font-weight:bold;letter-spacing:-0.5px;">{escape(APP_DISPLAY_NAME)}<br><span style="font-size:11px;color:#d6baca;font-weight:normal;letter-spacing:1px;">DIGITÁLNÍ SERVISNÍ PŘEHLED</span></td></tr></table>
 <table role="presentation" cellspacing="0" cellpadding="0" style="margin-top:32px;"><tr><td style="background:#54304d;border:1px solid #80506b;border-radius:20px;padding:7px 12px;color:#ffd3e4;font-size:10px;font-weight:bold;letter-spacing:1.7px;">VŠE DŮLEŽITÉ NA JEDNOM MÍSTĚ</td></tr></table>
-<h1 class="headline" style="margin:20px 0 12px;color:#ffffff;font-size:38px;line-height:1.13;letter-spacing:-1px;">{escape(title)}</h1>
+<h1 class="headline" style="margin:20px 0 12px;color:#ffffff;font-size:36px;line-height:1.2;letter-spacing:-0.8px;font-weight:600;">{escape(title)}</h1>
 <p style="margin:0;color:#eadce6;font-size:16px;line-height:1.6;">{escape(subtitle)}</p>
 </td></tr>
 <tr><td height="5" bgcolor="#be185d" style="height:5px;background-image:linear-gradient(90deg,#a21caf,#e11d48,#fb7185);font-size:0;">&nbsp;</td></tr>
