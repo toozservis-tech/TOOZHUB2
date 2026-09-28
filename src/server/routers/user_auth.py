@@ -717,8 +717,9 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db=Depends
             subject=f"Obnovení hesla – {APP_DISPLAY_NAME}",
             body=f"Pro obnovu hesla otevřete {reset_url}\nOdkaz platí 30 minut a lze jej použít jen jednou. Pokud jste o obnovu nežádali, e-mail ignorujte.",
             html_body=render_email_layout(
-                title="Obnovení hesla", subtitle="Bezpečná změna hesla", intro="Dobrý den,",
-                paragraphs=["Odkaz platí 30 minut a lze jej použít jen jednou. Pokud jste o obnovu nežádali, e-mail ignorujte."],
+                title="Obnovení hesla", subtitle="Nové heslo. Bezpečný přístup k vašemu účtu.", intro="Dobrý den,",
+                paragraphs=["Obdrželi jsme žádost o změnu hesla. Pro nastavení nového hesla použijte tlačítko níže."],
+                panels=[render_panel(title="Platnost odkazu", message="Odkaz platí 30 minut a lze jej použít pouze jednou. Pokud jste o změnu nežádali, tento e-mail ignorujte.")],
                 cta_label="Obnovit heslo", cta_url=reset_url, accent="#f59e0b",
             ),
         )

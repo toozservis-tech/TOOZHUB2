@@ -29,8 +29,8 @@ def render_rows(rows: Sequence[tuple[str, object]]) -> str:
         rendered.append(
             f"""
             <tr>
-              <td style="padding:10px 0; color:#64748b; font-size:13px; width:38%; vertical-align:top;">{escape(str(label))}</td>
-              <td style="padding:10px 0; color:#0f172a; font-size:14px; font-weight:600;">{safe_value}</td>
+              <td style="padding:10px 0; color:#64748b; font-size:13px; width:38%;padding-right:12px; vertical-align:top;">{escape(str(label))}</td>
+              <td style="padding:10px 0; color:#0f172a; font-size:14px; font-weight:600;word-break:break-word;overflow-wrap:anywhere;">{safe_value}</td>
             </tr>
             """
         )
@@ -102,48 +102,39 @@ def render_email_layout(
     if cta_label and cta_url:
         cta_html = f"""
         <div style="margin:24px 0 10px; text-align:center;">
-          <a href="{escape(cta_url, quote=True)}" style="display:inline-block; background:{accent}; color:#111827; text-decoration:none; font-weight:700; padding:14px 22px; border-radius:14px;">
+          <a href="{escape(cta_url, quote=True)}" style="display:inline-block; background:#ff9300; color:#17263b; text-decoration:none; font-weight:700; padding:14px 22px; border-radius:10px;">
             {escape(cta_label)}
           </a>
         </div>
         <div style="text-align:center; color:#64748b; font-size:12px; line-height:1.6; margin:10px 0 0;">
           Pokud tlačítko nefunguje, otevřete odkaz ručně:<br>
-          <a href="{escape(cta_url, quote=True)}" style="color:#2563eb; word-break:break-all;">{escape(cta_url)}</a>
+          <a href="{escape(cta_url, quote=True)}" style="color:#2563eb; word-break:break-all;overflow-wrap:anywhere;">{escape(cta_url)}</a>
         </div>
         """
     safe_footer_note = html_multiline(
         footer_note
         or f"Tento e-mail byl odeslán z aplikace {APP_DISPLAY_NAME}. Pokud jste tuto akci neočekávali, zkontrolujte svůj účet nebo kontaktujte podporu."
     )
-    return f"""
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{escape(title)} · {APP_DISPLAY_NAME}</title>
-</head>
-<body style="margin:0; padding:24px 12px; background:#eef2ff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <div style="max-width:680px; margin:0 auto;">
-    <div style="background:linear-gradient(180deg, #111827 0%, #1f2937 100%); border-radius:28px; padding:28px; box-shadow:0 20px 60px rgba(15,23,42,0.22);">
-      <div style="display:inline-block; background:rgba(245,158,11,0.16); color:#fbbf24; border:1px solid rgba(251,191,36,0.28); padding:7px 12px; border-radius:999px; font-size:12px; font-weight:700; letter-spacing:0.02em;">
-        {escape(APP_DISPLAY_NAME)}
-      </div>
-      <h1 style="margin:18px 0 6px; color:#ffffff; font-size:30px; line-height:1.2;">{escape(title)}</h1>
-      <p style="margin:0 0 24px; color:#cbd5e1; font-size:15px; line-height:1.6;">{escape(subtitle)}</p>
-
-      <div style="background:#ffffff; border-radius:22px; padding:24px;">
-        <p style="margin:0 0 14px; color:#0f172a; font-size:15px; line-height:1.7;">{html_multiline(intro)}</p>
-        {paragraph_html}
-        {panel_html}
-        {cta_html}
-      </div>
-
-      <div style="padding:16px 6px 4px; text-align:center; color:#cbd5e1; font-size:12px; line-height:1.7;">
-        {safe_footer_note}
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-"""
+    return f"""<!DOCTYPE html>
+<html lang="cs"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light"><title>{escape(title)} · {escape(APP_DISPLAY_NAME)}</title>
+<style>@media only screen and (max-width:600px){{.outer{{padding:16px 8px!important}}.content{{padding:26px 20px!important}}.headline{{font-size:28px!important}}}}</style></head>
+<body style="margin:0;padding:0;background:#eef1f5;font-family:Arial,Helvetica,sans-serif;color:#17263b;">
+<div style="display:none;font-size:1px;color:#eef1f5;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">{escape(subtitle)}</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#eef1f5"><tr><td class="outer" align="center" style="padding:40px 16px;">
+<table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;border-collapse:separate;">
+<tr><td bgcolor="#17263b" style="padding:28px 32px;border-radius:18px 18px 0 0;border-bottom:4px solid #ff9300;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="color:#ffffff;font-size:27px;font-weight:800;letter-spacing:-1px;">TooZ<span style="color:#ffad32;">Hub</span></td><td align="right" style="color:#cbd5e1;font-size:11px;line-height:1.5;">VAŠE VOZIDLA.<br>VŠE POD KONTROLOU.</td></tr></table>
+</td></tr>
+<tr><td class="content" bgcolor="#ffffff" style="padding:34px 36px 36px;border-left:1px solid #dfe5ec;border-right:1px solid #dfe5ec;">
+<p style="margin:0 0 12px;color:#785000;font-size:11px;font-weight:bold;letter-spacing:1.6px;text-transform:uppercase;">ZPRÁVA Z APLIKACE</p>
+<h1 class="headline" style="margin:0 0 12px;color:#17263b;font-size:32px;line-height:1.18;letter-spacing:-0.6px;">{escape(title)}</h1>
+<p style="margin:0 0 26px;padding-bottom:24px;border-bottom:1px solid #e5e9ef;color:#617087;font-size:16px;line-height:1.6;">{escape(subtitle)}</p>
+<p style="margin:0 0 14px;color:#17263b;font-size:16px;line-height:1.7;">{html_multiline(intro)}</p>
+{paragraph_html}{panel_html}{cta_html}
+</td></tr>
+<tr><td bgcolor="#f8fafc" style="padding:22px 30px;border:1px solid #dfe5ec;border-top:1px solid #e5e9ef;border-radius:0 0 18px 18px;">
+<p style="margin:0;color:#617087;font-size:12px;line-height:1.7;">{safe_footer_note}</p>
+<p style="margin:14px 0 0;color:#17263b;font-size:12px;line-height:1.7;">Potřebujete poradit? <a href="mailto:info@toozservis.cz" style="color:#17263b;font-weight:bold;text-decoration:underline;">info@toozservis.cz</a></p>
+</td></tr><tr><td align="center" style="padding:22px 12px;color:#748196;font-size:11px;line-height:1.7;">TooZHub · Digitální servisní přehled<br>Vozidla · Servisní historie · Připomínky</td></tr>
+</table></td></tr></table></body></html>"""

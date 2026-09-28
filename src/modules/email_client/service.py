@@ -76,6 +76,13 @@ class EmailService:
         if not self.is_configured():
             raise ValueError("Email není nakonfigurován. Nastavte SMTP údaje v konfiguraci.")
         
+        # Every outgoing message has the same branded HTML alternative.
+        if not message.html_body:
+            message.html_body = render_email_layout(
+                title=message.subject, subtitle="Informace z vašeho digitálního servisního přehledu.",
+                intro="", paragraphs=[message.body],
+            )
+
         if self.resend_api_key:
             payload = {"from": self.from_email, "to": message.to, "subject": message.subject, "text": message.body}
             if message.html_body:
