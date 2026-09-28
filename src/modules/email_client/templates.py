@@ -125,13 +125,13 @@ def render_email_layout(
 <div style="display:none;font-size:1px;color:#eef1f5;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">{escape(subtitle)}</div>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f0ebf1"><tr><td class="outer" align="center" style="padding:40px 16px;">
 <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;border-collapse:separate;">
-<tr><td class="content" bgcolor="#21172c" style="padding:32px 36px 36px;border-radius:24px 24px 0 0;background-image:linear-gradient(125deg,#17263b 0%,#321b38 65%,#701b46 100%);">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="70" style="vertical-align:middle;"><img src="{escape(build_app_url("/web/assets/toozservis-logo-icon.png"), quote=True)}" width="56" height="56" alt="" style="display:block;border:0;"></td><td style="vertical-align:middle;color:#ffffff;font-size:23px;font-weight:bold;letter-spacing:-0.5px;">{escape(APP_DISPLAY_NAME)}<br><span style="font-size:11px;color:#d6baca;font-weight:normal;letter-spacing:1px;">DIGITÁLNÍ SERVISNÍ PŘEHLED</span></td></tr></table>
-<table role="presentation" cellspacing="0" cellpadding="0" style="margin-top:32px;"><tr><td style="background:#54304d;border:1px solid #80506b;border-radius:20px;padding:7px 12px;color:#ffd3e4;font-size:10px;font-weight:bold;letter-spacing:1.7px;">VŠE DŮLEŽITÉ NA JEDNOM MÍSTĚ</td></tr></table>
-<h1 class="headline" style="margin:20px 0 12px;color:#ffffff;font-size:36px;line-height:1.2;letter-spacing:-0.8px;font-weight:600;">{escape(title)}</h1>
-<p style="margin:0;color:#eadce6;font-size:16px;line-height:1.6;">{escape(subtitle)}</p>
+<tr><td class="content" bgcolor="#fce7ef" style="padding:32px 36px 36px;border-radius:24px 24px 0 0;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="70" style="vertical-align:middle;"><img src="{escape(build_app_url("/web/assets/toozservis-logo-icon.png"), quote=True)}" width="56" height="56" alt="" style="display:block;border:0;"></td><td style="vertical-align:middle;color:#351b30;font-size:23px;font-weight:bold;letter-spacing:-0.5px;">{escape(APP_DISPLAY_NAME)}<br><span style="font-size:11px;color:#634555;font-weight:normal;letter-spacing:1px;">DIGITÁLNÍ SERVISNÍ PŘEHLED</span></td></tr></table>
+<table role="presentation" cellspacing="0" cellpadding="0" style="margin-top:32px;"><tr><td style="background:#ffffff;border:1px solid #e5b5c9;border-radius:20px;padding:7px 12px;color:#7a204d;font-size:10px;font-weight:bold;letter-spacing:1.7px;">VŠE DŮLEŽITÉ NA JEDNOM MÍSTĚ</td></tr></table>
+<h1 class="headline" style="margin:20px 0 12px;color:#351b30;font-size:36px;line-height:1.2;letter-spacing:-0.8px;font-weight:600;">{escape(title)}</h1>
+<p style="margin:0;color:#634555;font-size:16px;line-height:1.6;">{escape(subtitle)}</p>
 </td></tr>
-<tr><td height="5" bgcolor="#be185d" style="height:5px;background-image:linear-gradient(90deg,#a21caf,#e11d48,#fb7185);font-size:0;">&nbsp;</td></tr>
+<tr><td height="5" bgcolor="#be185d" style="height:5px;font-size:0;">&nbsp;</td></tr>
 <tr><td class="content" bgcolor="#ffffff" style="padding:32px 36px 36px;border-left:1px solid #e8dfe7;border-right:1px solid #e8dfe7;">
 <p style="margin:0 0 14px;color:#17263b;font-size:16px;line-height:1.7;">{html_multiline(intro)}</p>
 {paragraph_html}{panel_html}{cta_html}
