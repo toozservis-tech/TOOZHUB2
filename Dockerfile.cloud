@@ -9,6 +9,6 @@ COPY web ./web
 COPY web_admin ./web_admin
 COPY VERSION ./VERSION
 RUN useradd --create-home appuser \
-    && install -d -o appuser -g appuser /app/public_share
+    && install -d -o appuser -g appuser /app/public_share /app/backups /app/logs
 USER appuser
 CMD ["sh", "-c", "exec uvicorn src.server.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
