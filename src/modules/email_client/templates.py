@@ -124,7 +124,7 @@ def render_email_layout(
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#eef1f5"><tr><td class="outer" align="center" style="padding:40px 16px;">
 <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;border-collapse:separate;">
 <tr><td bgcolor="#17263b" style="padding:28px 32px;border-radius:18px 18px 0 0;border-bottom:4px solid #ff9300;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="color:#ffffff;font-size:27px;font-weight:800;letter-spacing:-1px;">TooZ<span style="color:#ffad32;">Hub</span></td><td align="right" style="color:#cbd5e1;font-size:11px;line-height:1.5;">VAŠE VOZIDLA.<br>VŠE POD KONTROLOU.</td></tr></table>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="color:#ffffff;font-size:27px;font-weight:800;letter-spacing:-1px;"><img src="{escape(build_app_url("/web/assets/toozservis-logo-icon.png"), quote=True)}" width="56" height="56" alt="" style="display:inline-block;vertical-align:middle;border:0;margin-right:12px;"> <span style="vertical-align:middle;font-size:23px;letter-spacing:-0.5px;">{escape(APP_DISPLAY_NAME)}</span></td><td align="right" style="color:#cbd5e1;font-size:11px;line-height:1.5;">VAŠE VOZIDLA.<br>VŠE POD KONTROLOU.</td></tr></table>
 </td></tr>
 <tr><td class="content" bgcolor="#ffffff" style="padding:34px 36px 36px;border-left:1px solid #dfe5ec;border-right:1px solid #dfe5ec;">
 <p style="margin:0 0 12px;color:#785000;font-size:11px;font-weight:bold;letter-spacing:1.6px;text-transform:uppercase;">ZPRÁVA Z APLIKACE</p>
@@ -136,5 +136,5 @@ def render_email_layout(
 <tr><td bgcolor="#f8fafc" style="padding:22px 30px;border:1px solid #dfe5ec;border-top:1px solid #e5e9ef;border-radius:0 0 18px 18px;">
 <p style="margin:0;color:#617087;font-size:12px;line-height:1.7;">{safe_footer_note}</p>
 <p style="margin:14px 0 0;color:#17263b;font-size:12px;line-height:1.7;">Potřebujete poradit? <a href="mailto:info@toozservis.cz" style="color:#17263b;font-weight:bold;text-decoration:underline;">info@toozservis.cz</a></p>
-</td></tr><tr><td align="center" style="padding:22px 12px;color:#748196;font-size:11px;line-height:1.7;">TooZHub · Digitální servisní přehled<br>Vozidla · Servisní historie · Připomínky</td></tr>
+</td></tr><tr><td align="center" style="padding:22px 12px;color:#748196;font-size:11px;line-height:1.7;">{escape(APP_DISPLAY_NAME)} · Digitální servisní přehled<br>Vozidla · Servisní historie · Připomínky</td></tr>
 </table></td></tr></table></body></html>"""
