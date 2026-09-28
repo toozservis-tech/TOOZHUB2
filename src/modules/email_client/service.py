@@ -11,6 +11,7 @@ import httpx
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
+from email.mime.image import MIMEImage
 from email import encoders
 from typing import Optional, List
 from pathlib import Path
@@ -19,6 +20,7 @@ from dataclasses import dataclass
 from src.core.branding import APP_DISPLAY_NAME
 from src.core.config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
 from src.modules.email_client.templates import build_app_url, render_email_layout, render_panel
+from html import escape
 
 
 @dataclass
@@ -83,10 +85,17 @@ class EmailService:
                 intro="", paragraphs=[message.body],
             )
 
+        logo_url = escape(build_app_url("/web/assets/toozservis-logo-icon.png"), quote=True)
+        logo_data = None
+        html_body = message.html_body
+        if html_body and logo_url in html_body:
+            logo_data = (Path(__file__).resolve().parents[3] / "web/assets/toozservis-logo-icon.png").read_bytes()
+            html_body = html_body.replace(logo_url, "cid:sprava-vozidel-logo")
+
         if self.resend_api_key:
             payload = {"from": self.from_email, "to": message.to, "subject": message.subject, "text": message.body}
-            if message.html_body:
-                payload["html"] = message.html_body
+            if html_body:
+                payload["html"] = html_body
             for field in ("cc", "bcc"):
                 if getattr(message, field):
                     payload[field] = getattr(message, field)
@@ -95,6 +104,11 @@ class EmailService:
                     {"filename": path.name, "content": base64.b64encode(path.read_bytes()).decode("ascii")}
                     for path in message.attachments
                 ]
+            if logo_data:
+                payload.setdefault("attachments", []).append({
+                    "filename": "sprava-vozidel-logo.png", "content_id": "sprava-vozidel-logo",
+                    "content": base64.b64encode(logo_data).decode("ascii"),
+                })
             with httpx.Client(timeout=20) as client:
                 response = client.post("https://api.resend.com/emails", json=payload,
                     headers={"Authorization": "Bearer " + self.resend_api_key})
@@ -103,7 +117,9 @@ class EmailService:
             return True
 
         # Vytvořit zprávu
-        msg = MIMEMultipart("alternative")
+        msg = MIMEMultipart("mixed")
+        alternatives = MIMEMultipart("alternative")
+        msg.attach(alternatives)
         msg["From"] = self.from_email
         msg["To"] = ", ".join(message.to)
         msg["Subject"] = message.subject
@@ -112,11 +128,18 @@ class EmailService:
             msg["Cc"] = ", ".join(message.cc)
         
         # Přidat text body
-        msg.attach(MIMEText(message.body, "plain", "utf-8"))
+        alternatives.attach(MIMEText(message.body, "plain", "utf-8"))
         
         # Přidat HTML body (pokud existuje)
-        if message.html_body:
-            msg.attach(MIMEText(message.html_body, "html", "utf-8"))
+        if html_body:
+            related = MIMEMultipart("related")
+            related.attach(MIMEText(html_body, "html", "utf-8"))
+            if logo_data:
+                logo = MIMEImage(logo_data, _subtype="png")
+                logo.add_header("Content-ID", "<sprava-vozidel-logo>")
+                logo.add_header("Content-Disposition", "inline", filename="sprava-vozidel-logo.png")
+                related.attach(logo)
+            alternatives.attach(related)
         
         # Přidat přílohy
         if message.attachments:

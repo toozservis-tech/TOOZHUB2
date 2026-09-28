@@ -15,6 +15,11 @@ class EmailTransport(unittest.TestCase):
             self.assertTrue(service.send_simple_email('user@example.com','Test','Test body'))
             self.assertEqual(post.call_args.args[0],'https://api.resend.com/emails')
             self.assertEqual(post.call_args.kwargs['json']['from'],'Test <noreply@example.com>')
+            payload = post.call_args.kwargs['json']
+            self.assertIn('cid:sprava-vozidel-logo', payload['html'])
+            self.assertEqual(payload['attachments'][0]['content_id'], 'sprava-vozidel-logo')
+            import base64
+            self.assertTrue(base64.b64decode(payload['attachments'][0]['content']).startswith(b'\x89PNG'))
             post.return_value=httpx.Response(403,text='provider details must stay private')
             with self.assertRaisesRegex(RuntimeError,'HTTP 403') as error:
                 service.send_simple_email('user@example.com','Test','Test body')
