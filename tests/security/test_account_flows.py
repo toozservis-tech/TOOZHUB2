@@ -113,6 +113,15 @@ class AccountFlows(unittest.TestCase):
             for path in ['/health/config','/api/_debug/routes','/api/_debug/db_stats']:
                 self.assertEqual(self.client.get(path,headers=headers).status_code,404)
 
+    def test_password_change_invalidates_pending_two_factor_challenge(self):
+        self.register()
+        challenge={'email':'user@example.com','session_version':0,'expires_at':__import__('time').time()+60,'attempts':0}
+        with self.Session() as db:
+            db.query(Customer).one().session_version=1;db.commit()
+        with patch.object(user_auth,'get_2fa_login_challenge',return_value=challenge):
+            response=self.client.post('/user/login/2fa',json={'challenge_token':'x'*43,'code':'123456'})
+        self.assertEqual(response.status_code,401,response.text)
+
     def test_change_password_revokes_old_session(self):
         r=self.register();headers={'Authorization':'Bearer '+r.json()['access_token']}
         changed=self.client.put('/user/change-password',headers=headers,json={'current_password':PASSWORD,'new_password':'Changed-password-789!'})

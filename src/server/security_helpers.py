@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 from src.core.branding import APP_DISPLAY_NAME
 from src.modules.vehicle_hub.models import Customer, CustomerSecuritySettings
+from src.modules.vehicle_hub.account_state import customer_session_version
 
 
 _pending_2fa_logins: dict[str, dict] = {}
@@ -42,6 +43,7 @@ def create_2fa_login_challenge(customer: Customer, expected_role: str | None = N
         "email": customer.email,
         "tenant_id": customer.tenant_id,
         "customer_id": customer.id,
+        "session_version": customer_session_version(customer),
         "expected_role": expected_role or "",
         "attempts": 0,
         "expires_at": expires_at,

@@ -615,6 +615,10 @@ def verify_login_two_factor(
         pop_2fa_login_challenge(payload.challenge_token)
         raise HTTPException(status_code=403, detail="Účet je dočasně pozastaven.")
 
+    if challenge.get("session_version") != customer_session_version(customer):
+        pop_2fa_login_challenge(payload.challenge_token)
+        raise HTTPException(401, "Přihlášení bylo ukončeno. Přihlaste se znovu.")
+
     expected_role = str(challenge.get("expected_role") or "").strip().lower()
     customer_role = (customer.role or "user").strip().lower()
     if expected_role == "service" and customer_role not in {"service", "admin", "developer_admin"}:
