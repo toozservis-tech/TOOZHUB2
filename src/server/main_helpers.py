@@ -61,7 +61,7 @@ except ImportError:
 
 class UserRegister(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=256)
     name: Optional[str] = None
     ico: Optional[str] = None
     dic: Optional[str] = None
@@ -74,7 +74,7 @@ class UserRegister(BaseModel):
 
 class ServiceRegisterRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=256)
     ico: str = Field(min_length=8, max_length=16)
     service_name: str = Field(min_length=2, max_length=200)
     responsible_person: str = Field(min_length=2, max_length=200)
@@ -95,7 +95,7 @@ class ServiceRegisterResponse(BaseModel):
 
 class UserLogin(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=256)
     expected_role: Optional[str] = None
 
 
@@ -224,8 +224,8 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str
+    token: str = Field(min_length=32, max_length=128)
+    new_password: str = Field(min_length=1, max_length=256)
 
 
 def normalize_email(email: str) -> str:

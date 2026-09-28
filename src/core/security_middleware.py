@@ -72,6 +72,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if "content-security-policy" not in (k.lower() for k in response.headers.keys()):
             response.headers["Content-Security-Policy"] = csp
         
+        if request.url.path.startswith(("/user/", "/admin-api/", "/api/v1/")) or request.url.path == "/reset-password.html":
+            response.headers["Cache-Control"] = "no-store"
         # Hide server info (ASCII token; avoid raw stack identifiers in headers)
         response.headers["Server"] = APP_SERVER_PRODUCT_TOKEN
         

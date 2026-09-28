@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 import secrets
+import hashlib
+import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -12,7 +14,7 @@ from sqlalchemy import func
 from src.core.config import ENVIRONMENT, PUBLIC_API_BASE_URL
 from src.core.branding import APP_DISPLAY_NAME
 from src.core.rate_limiter import rate_limiter
-from src.core.security import create_access_token, hash_password, needs_rehash, verify_password
+from src.core.security import create_access_token, hash_password, needs_rehash, verify_password, validate_new_password
 from src.modules.email_client.templates import build_app_url, render_email_layout, render_panel
 from src.modules.vehicle_hub.account_state import (
     customer_is_deleted,
@@ -53,15 +55,35 @@ from src.server.security_tracking import extract_client_ip, log_security_event
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _limit_auth(request: Request, action: str, email: str = "", calls: int = 5, period: int = 900):
+    # Account and IP budgets are independent, so changing one cannot bypass both.
+    ip = request.client.host if request.client else "unknown"
+    keys = [(f"{action}:ip:{ip}", calls * 4)]
+    if email:
+        keys.append((f"{action}:account:{hashlib.sha256(email.encode()).hexdigest()}", calls))
+    for key, limit in keys:
+        if not rate_limiter.check_rate_limit(key, limit, period):
+            raise HTTPException(429, "Příliš mnoho pokusů. Zkuste to později.", headers={"Retry-After": str(period)})
+
+
+def _validate_password(password: str):
+    try:
+        validate_new_password(password)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
 
 
 @router.post("/user/register", response_model=RegisterTokenResponse)
-def register_user(user_data: UserRegister, db=Depends(get_db)):
+def register_user(user_data: UserRegister, request: Request, db=Depends(get_db)):
+    _limit_auth(request, "register", calls=5)
     normalized_email = normalize_email(user_data.email)
     normalized_ico = normalize_ico(user_data.ico)
 
-    if not user_data.password or len(user_data.password) < 6:
-        raise HTTPException(status_code=400, detail="Heslo musí mít alespoň 6 znaků")
+    _validate_password(user_data.password)
 
     existing = get_customer_by_email(db, normalized_email)
     if existing:
@@ -194,12 +216,12 @@ S pozdravem,
 
 
 @router.post("/user/register/service-request", response_model=ServiceRegisterResponse)
-def register_service_request(payload: ServiceRegisterRequest, db=Depends(get_db)):
+def register_service_request(payload: ServiceRegisterRequest, request: Request, db=Depends(get_db)):
+    _limit_auth(request, "register-service", calls=5)
     normalized_email = normalize_email(payload.email)
     ico_digits = normalize_ico(payload.ico) or ""
 
-    if not payload.password or len(payload.password) < 6:
-        raise HTTPException(status_code=400, detail="Heslo musí mít alespoň 6 znaků")
+    _validate_password(payload.password)
     if len(ico_digits) != 8:
         raise HTTPException(status_code=400, detail="IČO musí obsahovat přesně 8 číslic")
 
@@ -354,6 +376,7 @@ def register_service_request(payload: ServiceRegisterRequest, db=Depends(get_db)
 @router.post("/user/login", response_model=LoginResponse)
 def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
     normalized_email = normalize_email(login_data.email)
+    _limit_auth(request, "login-global", normalized_email, calls=10, period=300)
     masked = normalized_email[:2] + "***" + normalized_email[-1:] if len(normalized_email) > 3 else "***"
     print(f"[LOGIN] Request received for {masked} (path={request.url.path})")
     try:
@@ -547,7 +570,7 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
         print(f"[LOGIN ERROR] Traceback:\n{error_details}")
         raise HTTPException(
             status_code=500,
-            detail=f"Interní chyba serveru: {str(exc)}",
+            detail="Přihlášení se nepodařilo dokončit. Zkuste to později.",
         ) from exc
 
 
@@ -663,128 +686,45 @@ def get_ares_data(
 
 @router.post("/user/forgot-password")
 @router.post("/user/request-password-reset")
-def forgot_password(payload: ForgotPasswordRequest, db=Depends(get_db)):
+def forgot_password(payload: ForgotPasswordRequest, request: Request, db=Depends(get_db)):
     from src.modules.email_client.service import EmailService
 
     normalized_email = normalize_email(payload.email)
-    customer = get_customer_by_email(db, normalized_email)
-
-    if not customer:
-        return {"message": "Pokud email existuje, byl odeslán reset odkaz"}
-
-    target_email = customer.email
-    reset_token = secrets.token_urlsafe(32)
-    reset_token_expires = datetime.utcnow() + timedelta(hours=24)
-
-    customer.reset_token = reset_token
-    customer.reset_token_expires = reset_token_expires
-    db.commit()
-
-    reset_url = f"{PUBLIC_API_BASE_URL}/reset-password.html?token={reset_token}"
-
-    email_sent = False
-    email_error = None
+    _limit_auth(request, "password-recovery", normalized_email, calls=3)
     email_service = EmailService()
+    # Report a global outage identically for every address; never claim delivery.
+    if not email_service.is_configured():
+        raise HTTPException(503, "Obnova hesla je dočasně nedostupná. Kontaktujte podporu.")
+    result = {"message": "Pokud existuje aktivní účet s tímto e-mailem, obdržíte odkaz pro obnovu hesla."}
+    customer = get_customer_by_email(db, normalized_email)
+    if not customer or customer_is_deleted(customer) or customer_is_disabled(customer):
+        return result
 
+    token = secrets.token_urlsafe(32)
+    digest = "sha256:" + hashlib.sha256(token.encode()).hexdigest()
+    customer.reset_token = digest
+    customer.reset_token_expires = datetime.utcnow() + timedelta(minutes=30)
+    db.commit()
+    # Fragment stays out of HTTP access logs and Referer headers.
+    reset_url = f"{PUBLIC_API_BASE_URL.rstrip('/')}/reset-password.html#token={token}"
     try:
-        print("[RESET] Kontroluji email konfiguraci...")
-        print(f"[RESET] SMTP_HOST: {email_service.host}")
-        print(f"[RESET] SMTP_PORT: {email_service.port}")
-        print(f"[RESET] SMTP_USER: {'***' if email_service.username else '(není nastaveno)'}")
-        print(f"[RESET] SMTP_FROM: {email_service.from_email}")
-        print(f"[RESET] SMTP configured: {email_service.is_configured()}")
-
-        if email_service.is_configured():
-            print(f"[RESET] Pokusím se odeslat email na: {target_email}")
-            email_body = f"""
-Dobrý den,
-
-obdrželi jsme žádost o obnovení hesla k vašemu účtu v aplikaci {APP_DISPLAY_NAME}.
-
-Pro vytvoření nového hesla klikněte na následující odkaz:
-{reset_url}
-
-Tento odkaz je platný 24 hodin.
-
-Pokud jste tento požadavek nevytvořili, ignorujte tento email.
-
-S pozdravem,
-{APP_DISPLAY_NAME}
-"""
-            html_body = render_email_layout(
-                title="Obnovení hesla",
-                subtitle="Požadavek na změnu hesla k vašemu účtu.",
-                intro="Dobrý den,",
-                paragraphs=[
-                    f"obdrželi jsme žádost o obnovení hesla k vašemu účtu v aplikaci {APP_DISPLAY_NAME}.",
-                    "Odkaz je platný 24 hodin. Pokud jste o změnu hesla nežádali, tento e-mail ignorujte.",
-                ],
-                panels=[
-                    render_panel(
-                        title="Bezpečnostní informace",
-                        rows=[
-                            ("Platnost odkazu", "24 hodin"),
-                            ("Účet", target_email),
-                        ],
-                        accent="#ef4444",
-                        tone="#fef2f2",
-                    )
-                ],
-                cta_label="Obnovit heslo",
-                cta_url=reset_url,
-                accent="#f59e0b",
-            )
-            try:
-                email_service.send_simple_email(
-                    to=target_email,
-                    subject=f"Obnovení hesla - {APP_DISPLAY_NAME}",
-                    body=email_body,
-                    html_body=html_body,
-                )
-                email_sent = True
-                print(f"[RESET] OK: Email uspesne odeslan na: {target_email}")
-            except Exception as email_ex:
-                email_error = str(email_ex)
-                print(f"[RESET] ERROR: Chyba pri odesilani emailu: {email_error}")
-                import traceback
-                traceback.print_exc()
-        else:
-            print("[RESET] WARNING: Email NENI nakonfigurovan (chybi SMTP udaje)")
-            print(f"[RESET] Reset URL (pro testování): {reset_url}")
-            print("[RESET] Nastavte v .env souboru: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD")
-    except Exception as exc:
-        email_error = str(exc)
-        print(f"[RESET] ERROR: Neocekavana chyba: {email_error}")
-        import traceback
-        traceback.print_exc()
-
-    if email_sent:
-        return {"message": "Pokud email existuje, byl odeslán reset odkaz", "email_sent": True}
-    if email_error:
-        error_message = "Email nebyl odeslán."
-        if "authentication failed" in email_error.lower() or "535" in email_error:
-            error_message = "Chyba autentizace SMTP - zkontrolujte uživatelské jméno a heslo v .env souboru."
-        elif "connection" in email_error.lower() or "timeout" in email_error.lower():
-            error_message = "Chyba připojení k SMTP serveru - zkontrolujte SMTP_HOST a SMTP_PORT."
-        else:
-            error_message = f"Email nebyl odeslán: {email_error}"
-
-        response = {
-            "message": error_message,
-            "email_sent": False,
-        }
-        if ENVIRONMENT != "production":
-            response["reset_url"] = reset_url
-            response["error_detail"] = email_error
-        return response
-
-    response = {
-        "message": "Email není nakonfigurován. Nastavte SMTP údaje v .env souboru.",
-        "email_sent": False,
-    }
-    if ENVIRONMENT != "production":
-        response["reset_url"] = reset_url
-    return response
+        email_service.send_simple_email(
+            to=customer.email,
+            subject=f"Obnovení hesla – {APP_DISPLAY_NAME}",
+            body=f"Pro obnovu hesla otevřete {reset_url}\nOdkaz platí 30 minut a lze jej použít jen jednou. Pokud jste o obnovu nežádali, e-mail ignorujte.",
+            html_body=render_email_layout(
+                title="Obnovení hesla", subtitle="Bezpečná změna hesla", intro="Dobrý den,",
+                paragraphs=["Odkaz platí 30 minut a lze jej použít jen jednou. Pokud jste o obnovu nežádali, e-mail ignorujte."],
+                cta_label="Obnovit heslo", cta_url=reset_url, accent="#f59e0b",
+            ),
+        )
+    except Exception:
+        # Do not expose provider errors, credentials, addresses or reset links.
+        logger.error("Password recovery delivery failed")
+        db.query(Customer).filter(Customer.id == customer.id, Customer.reset_token == digest).update(
+            {Customer.reset_token: None, Customer.reset_token_expires: None}, synchronize_session=False)
+        db.commit()
+    return result
 
 
 @router.get("/reset-password.html", response_class=HTMLResponse)
@@ -796,20 +736,20 @@ def reset_password_page():
 
 
 @router.post("/user/reset-password")
-def reset_password(payload: ResetPasswordRequest, db=Depends(get_db)):
-    if not payload.new_password or len(payload.new_password) < 6:
-        raise HTTPException(status_code=400, detail="Heslo musí mít alespoň 6 znaků")
-
+def reset_password(payload: ResetPasswordRequest, request: Request, db=Depends(get_db)):
+    _limit_auth(request, "password-reset", calls=10)
+    _validate_password(payload.new_password)
+    digest = "sha256:" + hashlib.sha256(payload.token.encode()).hexdigest()
+    # Lock the row: concurrent submissions cannot consume the same token twice.
     customer = db.query(Customer).filter(
-        Customer.reset_token == payload.token,
+        Customer.reset_token == digest,
         Customer.reset_token_expires > datetime.utcnow(),
-    ).first()
-    if not customer:
-        raise HTTPException(status_code=400, detail="Neplatný nebo expirovaný reset token")
-
+    ).with_for_update().first()
+    if not customer or customer_is_deleted(customer) or customer_is_disabled(customer):
+        raise HTTPException(400, "Neplatný nebo expirovaný odkaz. Požádejte o nový.")
     customer.password_hash = hash_password(payload.new_password)
     customer.reset_token = None
     customer.reset_token_expires = None
+    customer.session_version = customer_session_version(customer) + 1
     db.commit()
-
-    return {"message": "Heslo bylo úspěšně změněno"}
+    return {"message": "Heslo bylo změněno. Přihlaste se novým heslem na všech zařízeních."}

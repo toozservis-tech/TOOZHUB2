@@ -7,6 +7,7 @@ from fastapi import HTTPException, Request
 from typing import Callable
 from collections import defaultdict
 import time
+from threading import RLock
 from datetime import datetime, timedelta
 
 
@@ -15,6 +16,8 @@ class RateLimiter:
     
     def __init__(self):
         self.storage = defaultdict(list)
+        self._lock = RLock()
+        self._last_cleanup = 0.0
     
     def check_rate_limit(
         self,
@@ -33,22 +36,22 @@ class RateLimiter:
         Returns:
             True pokud je limit v pořádku, False pokud byl překročen
         """
-        now = time.time()
-        
-        # Vyčistit staré záznamy
-        self.storage[key] = [
-            timestamp for timestamp in self.storage[key]
-            if now - timestamp < period
-        ]
-        
-        # Kontrola limitu
-        if len(self.storage[key]) >= max_calls:
-            return False
-        
-        # Přidat aktuální požadavek
-        self.storage[key].append(now)
-        return True
-    
+        with self._lock:
+            now = time.monotonic()
+            if now - self._last_cleanup > 60:
+                # Auth windows are at most one day. Bound stale key retention.
+                stale = [k for k, v in self.storage.items() if not v or now - v[-1] > 86400]
+                for old_key in stale:
+                    del self.storage[old_key]
+                self._last_cleanup = now
+            if key not in self.storage and len(self.storage) >= 50000:
+                return False
+            self.storage[key] = [t for t in self.storage[key] if now - t < period]
+            if len(self.storage[key]) >= max_calls:
+                return False
+            self.storage[key].append(now)
+            return True
+
     def clear(self, key: str = None):
         """Vyčistí rate limit pro klíč nebo všechny"""
         if key:

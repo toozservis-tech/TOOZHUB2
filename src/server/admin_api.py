@@ -1691,7 +1691,7 @@ def delete_admin_resource(resource: str, resource_id: int, payload: AdminDeleteR
     record_history = []
     if model is ServiceRecord and inspect(db.bind).has_table("service_record_audit_logs"):
         record_history = [dict(item._mapping) for item in db.execute(text("SELECT * FROM service_record_audit_logs WHERE service_record_id = :id"), {"id": row.id})]
-    excluded = {"password_hash", "totp_secret", "totp_secret_encrypted"}
+    excluded = {"password_hash", "reset_token", "totp_secret", "totp_secret_encrypted"}
     snapshot = {column.name: getattr(row, column.name) for column in model.__table__.columns if column.name not in excluded and not any(word in column.name.lower() for word in ["password", "secret", "token"])}
     try:
         if model is Customer:
@@ -3031,7 +3031,7 @@ def approve_service_registration_request(
         if not reviewer:
             raise HTTPException(status_code=404, detail="Developer/Admin účet nebyl nalezen")
 
-        req = db.query(ServiceRegistrationRequest).filter(ServiceRegistrationRequest.id == request_id).first()
+        req = db.query(ServiceRegistrationRequest).filter(ServiceRegistrationRequest.id == request_id).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Žádost nebyla nalezena")
         if req.status != "pending":
@@ -3127,7 +3127,7 @@ def reject_service_registration_request(
         if not reviewer:
             raise HTTPException(status_code=404, detail="Developer/Admin účet nebyl nalezen")
 
-        req = db.query(ServiceRegistrationRequest).filter(ServiceRegistrationRequest.id == request_id).first()
+        req = db.query(ServiceRegistrationRequest).filter(ServiceRegistrationRequest.id == request_id).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Žádost nebyla nalezena")
         if req.status != "pending":

@@ -4,6 +4,10 @@ Email Client Service - služba pro odesílání emailů
 from __future__ import annotations
 
 import smtplib
+import os
+import ssl
+import base64
+import httpx
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -48,11 +52,12 @@ class EmailService:
             self.password = password.strip().strip('"').strip("'")
         else:
             self.password = None
-        self.from_email = from_email
+        self.from_email = os.getenv("EMAIL_FROM", from_email)
+        self.resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
     
     def is_configured(self) -> bool:
         """Zkontroluje, zda je email správně nakonfigurován"""
-        return bool(self.username and self.password and self.host)
+        return bool(self.from_email and (self.resend_api_key or (self.username and self.password and self.host)))
     
     def send_email(self, message: EmailMessage) -> bool:
         """
@@ -71,6 +76,25 @@ class EmailService:
         if not self.is_configured():
             raise ValueError("Email není nakonfigurován. Nastavte SMTP údaje v konfiguraci.")
         
+        if self.resend_api_key:
+            payload = {"from": self.from_email, "to": message.to, "subject": message.subject, "text": message.body}
+            if message.html_body:
+                payload["html"] = message.html_body
+            for field in ("cc", "bcc"):
+                if getattr(message, field):
+                    payload[field] = getattr(message, field)
+            if message.attachments:
+                payload["attachments"] = [
+                    {"filename": path.name, "content": base64.b64encode(path.read_bytes()).decode("ascii")}
+                    for path in message.attachments
+                ]
+            with httpx.Client(timeout=20) as client:
+                response = client.post("https://api.resend.com/emails", json=payload,
+                    headers={"Authorization": "Bearer " + self.resend_api_key})
+            if not response.is_success:
+                raise RuntimeError(f"Email provider rejected request (HTTP {response.status_code})")
+            return True
+
         # Vytvořit zprávu
         msg = MIMEMultipart("alternative")
         msg["From"] = self.from_email
@@ -105,7 +129,7 @@ class EmailService:
             if self.port == 465:
                 # SSL připojení pro port 465
                 print(f"[EMAIL] Connecting to {self.host}:{self.port} using SMTP_SSL")
-                with smtplib.SMTP_SSL(self.host, self.port, timeout=30) as server:
+                with smtplib.SMTP_SSL(self.host, self.port, timeout=30, context=ssl.create_default_context()) as server:
                     print(f"[EMAIL] Connected, authenticating as {self.username}")
                     server.login(self.username, self.password)
                     print(f"[EMAIL] Authenticated, sending email to {len(all_recipients)} recipient(s)")
@@ -116,7 +140,7 @@ class EmailService:
                 print(f"[EMAIL] Connecting to {self.host}:{self.port} using SMTP + STARTTLS")
                 with smtplib.SMTP(self.host, self.port, timeout=30) as server:
                     print(f"[EMAIL] Connected, starting TLS")
-                    server.starttls()
+                    server.starttls(context=ssl.create_default_context())
                     print(f"[EMAIL] TLS started, authenticating as {self.username}")
                     server.login(self.username, self.password)
                     print(f"[EMAIL] Authenticated, sending email to {len(all_recipients)} recipient(s)")

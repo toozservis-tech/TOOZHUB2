@@ -4,6 +4,7 @@ Bezpečnostní modul pro Správu vozidel
 - JWT tokeny pro autentizaci
 """
 import hashlib
+import hmac
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -29,6 +30,15 @@ except ImportError:
 from .config import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET_KEY
 
 
+def validate_new_password(password: str) -> None:
+    if len(password) < 12:
+        raise ValueError("Nové heslo musí mít alespoň 12 znaků.")
+    if len(password.encode("utf-8")) > 72:
+        raise ValueError("Heslo je příliš dlouhé (nejvýše 72 bajtů UTF-8).")
+    if password.lower() in {"123456789012", "password1234", "qwerty123456", "heslo12345678"} or len(set(password)) < 4:
+        raise ValueError("Zvolte méně snadno uhodnutelné heslo.")
+
+
 def hash_password(password: str) -> str:
     """
     Hashuje heslo pomocí bcrypt (pokud je dostupný) nebo SHA256 jako fallback.
@@ -47,6 +57,9 @@ def hash_password(password: str) -> str:
     if len(password) < 6:
         raise ValueError("Heslo musí mít alespoň 6 znaků")
 
+    if len(password.encode("utf-8")) > 72:
+        raise ValueError("Heslo je příliš dlouhé (nejvýše 72 bajtů UTF-8).")
+
     if BCRYPT_AVAILABLE and bcrypt:
         # Použít bcrypt přímo
         password_bytes = password.encode("utf-8")
@@ -54,9 +67,8 @@ def hash_password(password: str) -> str:
         hashed = bcrypt.hashpw(password_bytes, salt)
         return hashed.decode("utf-8")
     else:
-        # Fallback na SHA256 (méně bezpečné, ale funkční)
-        print("[SECURITY] WARNING: bcrypt není dostupný, používám SHA256")
-        return hashlib.sha256(password.encode()).hexdigest()
+        raise RuntimeError("bcrypt support is required")
+
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -94,7 +106,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     elif len(hashed_password) == 64:
         # SHA256 hash (legacy)
         sha256_hash = hashlib.sha256(plain_password.encode()).hexdigest()
-        return sha256_hash == hashed_password
+        return hmac.compare_digest(sha256_hash, hashed_password)
     else:
         # Neznámý formát
         return False
@@ -182,7 +194,7 @@ def decode_access_token_payload(token: str) -> Optional[dict]:
         return None
 
     try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM], options={"require": ["exp", "iat", "sub"]})
         if not isinstance(payload, dict):
             return None
         return payload

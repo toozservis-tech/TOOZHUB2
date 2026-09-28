@@ -318,6 +318,8 @@ def health_check():
 @router.get("/health/config")
 @router.options("/health/config")
 def health_config():
+    if ENVIRONMENT == "production":
+        raise HTTPException(404, "Nenalezeno")
     try:
         from src.core.config_validator import validate_config
 
@@ -359,6 +361,8 @@ def get_version():
 
 @router.get("/api/_debug/routes")
 def debug_routes(request: Request, current_user_email: str = Depends(get_current_user_email)):
+    if ENVIRONMENT == "production":
+        raise HTTPException(404, "Nenalezeno")
     routes_list = []
     for route in request.app.routes:
         if hasattr(route, "path") and hasattr(route, "methods"):
@@ -381,7 +385,10 @@ def debug_db_stats(
     current_user_email: str = Depends(get_current_user_email),
     db=Depends(get_db),
 ):
-    db_url = DATABASE_URL
+    if ENVIRONMENT == "production":
+        raise HTTPException(404, "Nenalezeno")
+    from sqlalchemy.engine import make_url
+    db_url = make_url(DATABASE_URL).render_as_string(hide_password=True)
     cwd = str(Path.cwd())
 
     if db_url.startswith("sqlite"):

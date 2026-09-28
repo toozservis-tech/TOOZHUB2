@@ -8,7 +8,9 @@ from starlette.background import BackgroundTask
 
 from src.core.auth import get_current_user_email
 from src.core.branding import APP_DISPLAY_NAME
-from src.core.security import hash_password, verify_password
+from src.core.security import hash_password, verify_password, validate_new_password
+from src.modules.vehicle_hub.account_state import customer_session_version
+from src.server.routers.user_auth import _limit_auth
 from src.modules.email_client.templates import render_email_layout, render_panel
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer
@@ -186,13 +188,19 @@ def change_password(
     if not customer.password_hash:
         raise HTTPException(status_code=400, detail="Uživatel nemá nastavené heslo")
 
+    _limit_auth(request, "change-password", email, calls=5)
     if not verify_password(password_data.current_password, customer.password_hash):
         raise HTTPException(status_code=400, detail="Neplatné současné heslo")
 
-    if not password_data.new_password or len(password_data.new_password) < 6:
-        raise HTTPException(status_code=400, detail="Nové heslo musí mít alespoň 6 znaků")
+    try:
+        validate_new_password(password_data.new_password)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     customer.password_hash = hash_password(password_data.new_password)
+    customer.session_version = customer_session_version(customer) + 1
+    customer.reset_token = None
+    customer.reset_token_expires = None
     db.commit()
 
     email_sent = False
@@ -261,7 +269,7 @@ S pozdravem,
     if email_sent:
         response_message += " a potvrzovací email byl odeslán"
     elif email_error:
-        response_message += f" (email nebyl odeslán: {email_error})"
+        response_message += " (potvrzovací e-mail se nepodařilo odeslat)"
     else:
         response_message += " (email není nakonfigurován)"
 
