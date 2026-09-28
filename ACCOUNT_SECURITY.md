@@ -20,7 +20,7 @@ Validation:
 
 Still required before calling this production-ready:
 - Configure a verified email sender/provider and test actual inbox delivery and browser reset end-to-end. No provider key is currently configured. Email ownership verification is not yet enforced for user registration.
-- Rotate the database password because the old diagnostic route could disclose it to authenticated accounts. The route is now closed; historical access has not been ruled out.
+- The database password was rotated through Supabase on 2026-09-28 and Render was updated. The old diagnostic route is closed; historical access has not been ruled out. Keep this incident in the security review.
 - The limiter and 2FA challenges are per-process and reset on restart. Shared persistent throttling is required before horizontal scaling; this does not claim DDoS protection.
 - Full application-wide authorization/dependency audit, mandatory administrator MFA enrollment, and a tested scheduled database backup/restore policy remain separate work. This is not certification of the entire legacy application.
 
