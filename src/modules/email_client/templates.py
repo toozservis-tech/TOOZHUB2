@@ -43,8 +43,8 @@ def render_panel(
     rows: Sequence[tuple[str, object]] | None = None,
     message: str | None = None,
     raw_html: str | None = None,
-    accent: str = "#f59e0b",
-    tone: str = "#fff7ed",
+    accent: str = "#be185d",
+    tone: str = "#fff1f6",
 ) -> str:
     rows_html = ""
     if rows:
@@ -102,13 +102,13 @@ def render_email_layout(
     if cta_label and cta_url:
         cta_html = f"""
         <div style="margin:24px 0 10px; text-align:center;">
-          <a href="{escape(cta_url, quote=True)}" style="display:inline-block; background:#ff9300; color:#17263b; text-decoration:none; font-weight:700; padding:14px 22px; border-radius:10px;">
+          <a href="{escape(cta_url, quote=True)}" style="display:inline-block; background:#be185d; color:#ffffff; text-decoration:none; font-weight:700; padding:17px 30px; border-radius:12px;border-bottom:3px solid #831843;">
             {escape(cta_label)}
           </a>
         </div>
         <div style="text-align:center; color:#64748b; font-size:12px; line-height:1.6; margin:10px 0 0;">
           Pokud tlačítko nefunguje, otevřete odkaz ručně:<br>
-          <a href="{escape(cta_url, quote=True)}" style="color:#2563eb; word-break:break-all;overflow-wrap:anywhere;">{escape(cta_url)}</a>
+          <a href="{escape(cta_url, quote=True)}" style="color:#9d174d; word-break:break-all;overflow-wrap:anywhere;">{escape(cta_url)}</a>
         </div>
         """
     safe_footer_note = html_multiline(
@@ -119,21 +119,22 @@ def render_email_layout(
 <html lang="cs"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light"><title>{escape(title)} · {escape(APP_DISPLAY_NAME)}</title>
 <style>@media only screen and (max-width:600px){{.outer{{padding:16px 8px!important}}.content{{padding:26px 20px!important}}.headline{{font-size:28px!important}}}}</style></head>
-<body style="margin:0;padding:0;background:#eef1f5;font-family:Arial,Helvetica,sans-serif;color:#17263b;">
+<body style="margin:0;padding:0;background:#f0ebf1;font-family:Arial,Helvetica,sans-serif;color:#17263b;">
 <div style="display:none;font-size:1px;color:#eef1f5;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">{escape(subtitle)}</div>
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#eef1f5"><tr><td class="outer" align="center" style="padding:40px 16px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f0ebf1"><tr><td class="outer" align="center" style="padding:40px 16px;">
 <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;border-collapse:separate;">
-<tr><td bgcolor="#17263b" style="padding:28px 32px;border-radius:18px 18px 0 0;border-bottom:4px solid #ff9300;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="color:#ffffff;font-size:27px;font-weight:800;letter-spacing:-1px;"><img src="{escape(build_app_url("/web/assets/toozservis-logo-icon.png"), quote=True)}" width="56" height="56" alt="" style="display:inline-block;vertical-align:middle;border:0;margin-right:12px;"> <span style="vertical-align:middle;font-size:23px;letter-spacing:-0.5px;white-space:nowrap;">{escape(APP_DISPLAY_NAME)}</span></td></tr></table>
+<tr><td class="content" bgcolor="#21172c" style="padding:32px 36px 36px;border-radius:24px 24px 0 0;background-image:linear-gradient(125deg,#17263b 0%,#321b38 65%,#701b46 100%);">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="70" style="vertical-align:middle;"><img src="{escape(build_app_url("/web/assets/toozservis-logo-icon.png"), quote=True)}" width="56" height="56" alt="" style="display:block;border:0;"></td><td style="vertical-align:middle;color:#ffffff;font-size:23px;font-weight:bold;letter-spacing:-0.5px;">{escape(APP_DISPLAY_NAME)}<br><span style="font-size:11px;color:#d6baca;font-weight:normal;letter-spacing:1px;">DIGITÁLNÍ SERVISNÍ PŘEHLED</span></td></tr></table>
+<table role="presentation" cellspacing="0" cellpadding="0" style="margin-top:32px;"><tr><td style="background:#54304d;border:1px solid #80506b;border-radius:20px;padding:7px 12px;color:#ffd3e4;font-size:10px;font-weight:bold;letter-spacing:1.7px;">VŠE DŮLEŽITÉ NA JEDNOM MÍSTĚ</td></tr></table>
+<h1 class="headline" style="margin:20px 0 12px;color:#ffffff;font-size:38px;line-height:1.13;letter-spacing:-1px;">{escape(title)}</h1>
+<p style="margin:0;color:#eadce6;font-size:16px;line-height:1.6;">{escape(subtitle)}</p>
 </td></tr>
-<tr><td class="content" bgcolor="#ffffff" style="padding:34px 36px 36px;border-left:1px solid #dfe5ec;border-right:1px solid #dfe5ec;">
-<p style="margin:0 0 12px;color:#785000;font-size:11px;font-weight:bold;letter-spacing:1.6px;text-transform:uppercase;">ZPRÁVA Z APLIKACE</p>
-<h1 class="headline" style="margin:0 0 12px;color:#17263b;font-size:32px;line-height:1.18;letter-spacing:-0.6px;">{escape(title)}</h1>
-<p style="margin:0 0 26px;padding-bottom:24px;border-bottom:1px solid #e5e9ef;color:#617087;font-size:16px;line-height:1.6;">{escape(subtitle)}</p>
+<tr><td height="5" bgcolor="#be185d" style="height:5px;background-image:linear-gradient(90deg,#a21caf,#e11d48,#fb7185);font-size:0;">&nbsp;</td></tr>
+<tr><td class="content" bgcolor="#ffffff" style="padding:32px 36px 36px;border-left:1px solid #e8dfe7;border-right:1px solid #e8dfe7;">
 <p style="margin:0 0 14px;color:#17263b;font-size:16px;line-height:1.7;">{html_multiline(intro)}</p>
 {paragraph_html}{panel_html}{cta_html}
 </td></tr>
-<tr><td bgcolor="#f8fafc" style="padding:22px 30px;border:1px solid #dfe5ec;border-top:1px solid #e5e9ef;border-radius:0 0 18px 18px;">
+<tr><td bgcolor="#fbf5f9" style="padding:22px 30px;border:1px solid #dfe5ec;border-top:1px solid #e5e9ef;border-radius:0 0 18px 18px;">
 <p style="margin:0;color:#617087;font-size:12px;line-height:1.7;">{safe_footer_note}</p>
 <p style="margin:14px 0 0;color:#17263b;font-size:12px;line-height:1.7;">Potřebujete poradit? <a href="mailto:info@toozservis.cz" style="color:#17263b;font-weight:bold;text-decoration:underline;">info@toozservis.cz</a></p>
 </td></tr><tr><td align="center" style="padding:22px 12px;color:#748196;font-size:11px;line-height:1.7;">{escape(APP_DISPLAY_NAME)} · Digitální servisní přehled<br>Vozidla · Servisní historie · Připomínky</td></tr>
