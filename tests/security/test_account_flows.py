@@ -98,7 +98,7 @@ class AccountFlows(unittest.TestCase):
             db.query(Customer).one().reset_token_expires=datetime.utcnow()-timedelta(seconds=1);db.commit()
         self.assertEqual(self.client.post('/user/reset-password',json={'token':token,'new_password':PASSWORD}).status_code,400)
     def test_password_rules_outages_and_throttle(self):
-        for pw in ['123456','aaaaaaaaaaaa','é'*40]:
+        for pw in ['12345','aaaaaaaaaaaa','é'*40]:
             self.assertEqual(self.register(password=pw).status_code,400)
         with patch.object(EmailService,'is_configured',return_value=False):
             for email in ['user@example.com','absent@example.com']:

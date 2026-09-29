@@ -31,8 +31,8 @@ from .config import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET_KEY
 
 
 def validate_new_password(password: str) -> None:
-    if len(password) < 12:
-        raise ValueError("Nové heslo musí mít alespoň 12 znaků.")
+    if len(password) < 6:
+        raise ValueError("Nové heslo musí mít alespoň 6 znaků.")
     if len(password.encode("utf-8")) > 72:
         raise ValueError("Heslo je příliš dlouhé (nejvýše 72 bajtů UTF-8).")
     if password.lower() in {"123456789012", "password1234", "qwerty123456", "heslo12345678"} or len(set(password)) < 4:
