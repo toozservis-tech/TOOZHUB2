@@ -2439,54 +2439,26 @@ async function loadAuditLog() {
 // SYSTEM TOOLS
 // ============================================
 
-async function runReindex() {
-  const resultEl = document.getElementById('reindex-result');
-  if (!resultEl) return;
-  
-  resultEl.innerHTML = '<div class="loading">Probíhá reindexace...</div>';
-  
+async function runDatabaseCheck(endpoint, resultId) {
+  const resultEl = document.getElementById(resultId);
+  if (!resultEl || resultEl.dataset.busy === '1') return;
+  resultEl.dataset.busy = '1';
+  resultEl.textContent = 'Probíhá kontrola, vyčkejte…';
   try {
-    const result = await apiRequest('POST', '/admin-api/reindex');
-    const results = Array.isArray(result?.results) ? result.results : [];
-    resultEl.innerHTML = `
-      <div style="color: #28a745;">
-        <strong>✓ ${result?.message || 'Reindexace dokončena'}</strong>
-        ${results.length > 0 ? `
-        <ul style="margin-top: 8px; padding-left: 20px;">
-          ${results.map(r => `<li>${r}</li>`).join('')}
-        </ul>
-        ` : ''}
-      </div>
-    `;
-    loadOverview(); // Aktualizovat statistiky
-  } catch (error) {
-    resultEl.innerHTML = `<div style="color: #dc3545;">Chyba: ${error.message}</div>`;
-  }
+    const result = await apiRequest('POST', endpoint);
+    resultEl.replaceChildren();
+    const heading = document.createElement('strong');
+    heading.textContent = result.message;
+    heading.style.color = result.success ? '#20553d' : '#9a4e12';
+    resultEl.append(heading);
+    const list = document.createElement('ul');
+    for (const row of result.results || []) { const item=document.createElement('li');item.textContent=row;list.append(item); }
+    resultEl.append(list);
+  } catch (error) { resultEl.textContent = `Kontrolu se nepodařilo dokončit: ${error.message}`; }
+  finally { delete resultEl.dataset.busy; }
 }
-
-async function runRepair() {
-  const resultEl = document.getElementById('repair-result');
-  if (!resultEl) return;
-  
-  resultEl.innerHTML = '<div class="loading">Probíhá oprava...</div>';
-  
-  try {
-    const result = await apiRequest('POST', '/admin-api/repair');
-    const results = Array.isArray(result?.results) ? result.results : [];
-    resultEl.innerHTML = `
-      <div style="color: #28a745;">
-        <strong>✓ ${result?.message || 'Oprava dokončena'}</strong>
-        ${results.length > 0 ? `
-        <ul style="margin-top: 8px; padding-left: 20px;">
-          ${results.map(r => `<li>${r}</li>`).join('')}
-        </ul>
-        ` : ''}
-      </div>
-    `;
-  } catch (error) {
-    resultEl.innerHTML = `<div style="color: #dc3545;">Chyba: ${error.message}</div>`;
-  }
-}
+async function runReindex() { return runDatabaseCheck('/admin-api/reindex', 'reindex-result'); }
+async function runRepair() { return runDatabaseCheck('/admin-api/repair', 'repair-result'); }
 
 async function loadDbInfo() {
   const resultEl = document.getElementById('db-info-result');
@@ -2498,10 +2470,10 @@ async function loadDbInfo() {
     const info = await apiRequest('GET', '/admin-api/db-info');
     resultEl.innerHTML = `
       <div>
-        <p><strong>Cesta k databázi:</strong><br>${info.db_path}</p>
+        <p><strong>Úložiště:</strong><br>${escapeHtml(info.db_path)}</p>
         <p><strong>Počet tabulek:</strong> ${info.table_count}</p>
         ${info.total_size_kb ? `<p><strong>Velikost:</strong> ${info.total_size_kb.toFixed(2)} KB</p>` : ''}
-        <p><strong>Tabulky:</strong><br>${info.tables.join(', ')}</p>
+        <p><strong>Tabulky:</strong><br>${escapeHtml(info.tables.join(', '))}</p>
       </div>
     `;
   } catch (error) {
@@ -2956,7 +2928,7 @@ function setControlCenterHealthChip(id, label, status) {
   } else if (normalized === 'error') {
     el.classList.add('is-alert');
   }
-  el.textContent = `${label}: ${String(status || '-').toUpperCase()}`;
+  el.textContent = `${label}: ${{ok:'v pořádku',warning:'prověřit',error:'chyba'}[normalized] || 'neověřeno'}`;
 }
 
 function parseIsoDate(value) {
@@ -3100,14 +3072,14 @@ function renderControlCenterPriorities(metrics) {
   if (metrics.healthTone === 'alert') {
     priorities.push({
       tone: 'alert',
-      text: 'System health hlásí chybu. Zkontrolujte komponenty.',
+      text: 'Systém hlásí chybu. Otevřete podrobnosti kontroly.',
       moduleId: 'cc-module-health',
       detailsId: 'cc-health-details',
     });
   } else if (metrics.healthTone === 'warn') {
     priorities.push({
       tone: 'warn',
-      text: 'System health má varování. Ověřte konfiguraci a workers.',
+      text: 'Některé součásti systému vyžadují kontrolu. Otevřete jejich přehled.',
       moduleId: 'cc-module-health',
       detailsId: 'cc-health-details',
     });
@@ -3125,7 +3097,7 @@ function renderControlCenterPriorities(metrics) {
   if (metrics.securityAlerts > 0) {
     priorities.push({
       tone: 'alert',
-      text: `Security alerty: ${formatNumber(metrics.securityAlerts)} (brute-force / blokace).`,
+      text: `Bezpečnostní upozornění: ${formatNumber(metrics.securityAlerts)} (opakovaná chybná přihlášení a blokace).`,
       moduleId: 'cc-module-security',
       detailsId: 'cc-security-details',
     });
@@ -3144,8 +3116,8 @@ function renderControlCenterPriorities(metrics) {
     priorities.push({
       tone: metrics.backupTone === 'alert' ? 'alert' : 'warn',
       text: metrics.backupTone === 'alert'
-        ? 'Backup není dostupný nebo je nevalidní.'
-        : 'Backup je starší než doporučené okno.',
+        ? 'Místní záloha není dostupná. Cloudovou zálohu v tomto přehledu nelze ověřit.'
+        : 'Poslední místní záloha je starší než 72 hodin.',
       moduleId: 'cc-module-backups',
       detailsId: 'cc-backups-details',
     });
@@ -3154,7 +3126,7 @@ function renderControlCenterPriorities(metrics) {
   if (metrics.pausedJobs > 0) {
     priorities.push({
       tone: 'warn',
-      text: `Pozastavené joby: ${formatNumber(metrics.pausedJobs)}.`,
+      text: `Pozastavené automatické kontroly: ${formatNumber(metrics.pausedJobs)}.`,
       moduleId: 'cc-module-jobs',
       detailsId: 'cc-jobs-details',
     });
@@ -3273,7 +3245,7 @@ function renderControlCenterDashboard() {
     + Number(dirs?.logs?.total_bytes || 0)
     + Number(dirs?.backups?.total_bytes || 0);
 
-  let healthTone = 'ok';
+  let healthTone = controlCenterDataState.health ? 'ok' : 'warn';
   const healthStatuses = Object.values(healthComponents)
     .map((item) => String(item?.status || '').toLowerCase())
     .filter(Boolean);
@@ -3290,7 +3262,7 @@ function renderControlCenterDashboard() {
   const presenceTone = suspiciousPresence > 0 ? 'warn' : (onlineUsers > 0 ? 'ok' : 'warn');
   const securityTone = securityAlerts > 0 ? 'alert' : (rateLimited24h > 0 ? 'warn' : 'ok');
   const backupTone = !backupHealthy ? 'alert' : (backupStale ? 'warn' : 'ok');
-  const jobsTone = (pausedJobs > 0 || emailFailed24h > 0) ? 'warn' : 'ok';
+  const jobsTone = (!jobs.length || runningJobs < jobs.length || emailFailed24h > 0) ? 'warn' : 'ok';
   const notificationsTone = notificationsCapability && notificationsCapability.available === false
     ? 'warn'
     : (notifications.length === 0 ? 'warn' : 'ok');
@@ -3302,8 +3274,8 @@ function renderControlCenterDashboard() {
   setControlCenterKpi('cc-kpi-expired-licenses', formatNumber(expiredLicenses), expiredLicenses > 0 ? 'warn' : 'ok');
   setControlCenterKpi('cc-kpi-failed-payments', formatNumber(failedPayments), failedPayments > 0 ? 'alert' : 'ok');
   setControlCenterKpi('cc-kpi-security-alerts', formatNumber(securityAlerts), securityAlerts > 0 ? 'alert' : 'ok');
-  setControlCenterKpi('cc-kpi-backup-status', backupHealthy ? 'OK' : 'NONE', backupTone);
-  setControlCenterText('cc-kpi-backup-time', latestBackupTime ? formatShortDateTime(latestBackupTime) : 'Bez backupu');
+  setControlCenterKpi('cc-kpi-backup-status', backupHealthy ? 'OK' : 'Není', backupTone);
+  setControlCenterText('cc-kpi-backup-time', latestBackupTime ? formatShortDateTime(latestBackupTime) : 'Bez místní zálohy');
   setControlCenterText('cc-kpi-last-updated', `Naposledy: ${formatShortDateTime(controlCenterDataState.lastUpdatedAt)}`);
 
   setControlCenterText('cc-users-total', formatNumber(users.length));
@@ -3332,7 +3304,7 @@ function renderControlCenterDashboard() {
   setControlCenterText('cc-backup-latest-status', backupHealthy ? 'OK' : 'Nedostupný');
   setControlCenterText('cc-backup-latest-time', latestBackupTime ? formatShortDateTime(latestBackupTime) : '-');
   setControlCenterText('cc-backup-count', formatNumber(backupCount));
-  setControlCenterText('cc-backup-restore-warning', 'Dangerous');
+  setControlCenterText('cc-backup-restore-warning', 'Vyžaduje potvrzení');
 
   setControlCenterText('cc-jobs-running', formatNumber(runningJobs));
   setControlCenterText('cc-jobs-paused', formatNumber(pausedJobs));
@@ -3341,8 +3313,8 @@ function renderControlCenterDashboard() {
 
   setControlCenterText('cc-notifications-active', formatNumber(activeNotifications));
   setControlCenterText('cc-notifications-total', formatNumber(notifications.length));
-  setControlCenterText('cc-notifications-severity-preview', 'info');
-  setControlCenterText('cc-notifications-target-preview', (document.getElementById('cc-broadcast-target-type')?.value || 'all'));
+  setControlCenterText('cc-notifications-severity-preview', 'Běžné oznámení');
+  setControlCenterText('cc-notifications-target-preview', ({all:'Všichni',user:'Vybraný účet',tenant:'Organizace',plan:'Podle tarifu'}[document.getElementById('cc-broadcast-target-type')?.value] || 'Všichni'));
 
   setControlCenterText('cc-audit-count', formatNumber(auditItems.length));
   setControlCenterText('cc-audit-last-critical', lastCriticalAudit
@@ -3352,40 +3324,40 @@ function renderControlCenterDashboard() {
   setControlCenterText('cc-infra-api-hits', apiTop ? `${apiTop.endpoint || '-'}: ${formatNumber(apiTop.hits || 0)}` : '-');
   setControlCenterText('cc-infra-webhooks-failed', formatNumber(webhookFailed));
   setControlCenterText('cc-infra-storage', storageTotalBytes > 0 ? `${(storageTotalBytes / (1024 * 1024)).toFixed(1)} MB` : '-');
-  setControlCenterText('cc-infra-cleanup-preview', controlCenterDataState?.storageCleanupPreview?.reclaimed_human || '-');
+  setControlCenterText('cc-infra-cleanup-preview', controlCenterDataState.storageCleanupPreview ? `${formatNumber(Number(controlCenterDataState.storageCleanupPreview.old_logs_count || 0) + Number(controlCenterDataState.storageCleanupPreview.old_backups_count || 0))} souborů` : 'Neprověřeno');
 
-  setControlCenterStatusChip('cc-module-health-status', healthTone, healthTone === 'ok' ? 'Healthy' : (healthTone === 'warn' ? 'Warning' : 'Error'));
+  setControlCenterStatusChip('cc-module-health-status', healthTone, healthTone === 'ok' ? 'V pořádku' : (healthTone === 'warn' ? 'Upozornění' : 'Chyba'));
   setControlCenterStatusChip(
     'cc-module-payments-status',
     paymentsTone,
     subscriptionsCapability && subscriptionsCapability.available === false
-      ? 'Disabled until migration'
-      : (paymentsTone === 'ok' ? 'Stable' : (paymentsTone === 'warn' ? 'Attention' : 'Critical'))
+      ? 'Nedostupné na serveru'
+      : (paymentsTone === 'ok' ? 'Bez hlášených potíží' : (paymentsTone === 'warn' ? 'Zkontrolovat' : 'Chyba'))
   );
-  setControlCenterStatusChip('cc-module-users-status', usersTone, usersTone === 'ok' ? 'Stable' : 'Attention');
-  setControlCenterStatusChip('cc-module-presence-status', presenceTone, presenceTone === 'ok' ? 'Normal' : 'Attention');
-  setControlCenterStatusChip('cc-module-security-status', securityTone, securityTone === 'ok' ? 'Normal' : (securityTone === 'warn' ? 'Warning' : 'Alert'));
-  setControlCenterStatusChip('cc-module-backups-status', backupTone, backupTone === 'ok' ? 'Safe' : (backupTone === 'warn' ? 'Stale' : 'No backup'));
-  setControlCenterStatusChip('cc-module-jobs-status', jobsTone, jobsTone === 'ok' ? 'Running' : 'Attention');
+  setControlCenterStatusChip('cc-module-users-status', usersTone, usersTone === 'ok' ? 'Bez hlášených potíží' : 'Zkontrolovat');
+  setControlCenterStatusChip('cc-module-presence-status', presenceTone, presenceTone === 'ok' ? 'Bez hlášených potíží' : 'Zkontrolovat');
+  setControlCenterStatusChip('cc-module-security-status', securityTone, securityTone === 'ok' ? 'Bez hlášených potíží' : (securityTone === 'warn' ? 'Upozornění' : 'Prověřit'));
+  setControlCenterStatusChip('cc-module-backups-status', backupTone, backupTone === 'ok' ? 'Záloha dostupná' : (backupTone === 'warn' ? 'Stará záloha' : 'Bez místní zálohy'));
+  setControlCenterStatusChip('cc-module-jobs-status', jobsTone, jobsTone === 'ok' ? 'Automatika zapnutá' : 'Zkontrolovat');
   setControlCenterStatusChip(
     'cc-module-notifications-status',
     notificationsTone,
     notificationsCapability && notificationsCapability.available === false
-      ? 'Disabled until migration'
-      : (notificationsTone === 'ok' ? 'Active' : 'Empty')
+      ? 'Nedostupné na serveru'
+      : (notificationsTone === 'ok' ? 'Aktivní' : 'Bez záznamů')
   );
   if (adminAuditCapability && adminAuditCapability.available === false) {
     setControlCenterText('cc-audit-preview', 'Audit actions disabled until migration');
   }
-  setControlCenterStatusChip('cc-module-audit-status', auditTone, auditTone === 'ok' ? 'Clean' : 'Review');
-  setControlCenterStatusChip('cc-module-infra-status', infraTone, infraTone === 'ok' ? 'Stable' : 'Warning');
+  setControlCenterStatusChip('cc-module-audit-status', auditTone, auditTone === 'ok' ? 'Bez hlášených potíží' : 'Zkontrolovat');
+  setControlCenterStatusChip('cc-module-infra-status', infraTone, infraTone === 'ok' ? 'Bez hlášených potíží' : 'Upozornění');
 
-  setControlCenterHealthChip('cc-health-chip-api', 'API', healthComponents?.api?.status);
-  setControlCenterHealthChip('cc-health-chip-database', 'DB', healthComponents?.database?.status);
-  setControlCenterHealthChip('cc-health-chip-email', 'Email', healthComponents?.email_service?.status);
-  setControlCenterHealthChip('cc-health-chip-payments', 'Payments', healthComponents?.payment_gateway?.status);
-  setControlCenterHealthChip('cc-health-chip-workers', 'Workers', healthComponents?.background_jobs?.status);
-  setControlCenterHealthChip('cc-health-chip-storage', 'Storage', backupHealthy ? 'ok' : 'warning');
+  setControlCenterHealthChip('cc-health-chip-api', 'Server', healthComponents?.api?.status);
+  setControlCenterHealthChip('cc-health-chip-database', 'Databáze', healthComponents?.database?.status);
+  setControlCenterHealthChip('cc-health-chip-email', 'E-maily', healthComponents?.email_service?.status);
+  setControlCenterHealthChip('cc-health-chip-payments', 'Platby', healthComponents?.payment_gateway?.status);
+  setControlCenterHealthChip('cc-health-chip-workers', 'Automatika', healthComponents?.background_jobs?.status);
+  setControlCenterHealthChip('cc-health-chip-storage', 'Místní zálohy', backupHealthy ? 'ok' : 'warning');
 
   renderControlCenterPriorities({
     healthTone,
@@ -3406,32 +3378,32 @@ function summarizeControlCenterPayload(elementId, payload) {
     case 'cc-health-result': {
       const components = payload.components || {};
       const statuses = Object.values(components).map((item) => String(item?.status || 'unknown').toLowerCase());
-      if (statuses.length === 0) return 'Health data načtena.';
-      if (statuses.some((status) => status === 'error')) return 'Health obsahuje chybu. Otevřete detail.';
-      if (statuses.some((status) => status === 'warning')) return 'Health obsahuje varování. Ověřte detail.';
-      return 'System health je v pořádku.';
+      if (statuses.length === 0) return 'Stav systému nebyl dostupný.';
+      if (statuses.some((status) => status === 'error')) return 'Byla zjištěna chyba systému. Otevřete podrobnosti.';
+      if (statuses.some((status) => status === 'warning')) return 'Některé součásti vyžadují kontrolu. Otevřete podrobnosti.';
+      return 'Dostupné kontroly systému jsou v pořádku.';
     }
     case 'cc-payments-result': {
       const summary = payload.summary || {};
       const liveCount = Number(summary?.live?.count || 0);
       const testCount = Number(summary?.test?.count || 0);
       const livePaid = Number(summary?.live?.paid_count || 0);
-      return `Načteno plateb: ${formatNumber(payload.count ?? payload.items?.length ?? 0)}. LIVE ${formatNumber(liveCount)} (paid ${formatNumber(livePaid)}), TEST ${formatNumber(testCount)}.`;
+      return `Načteno plateb: ${formatNumber(payload.count ?? payload.items?.length ?? 0)}. Skutečné ${formatNumber(liveCount)} (zaplaceno ${formatNumber(livePaid)}), testovací ${formatNumber(testCount)}.`;
     }
     case 'cc-presence-result':
-      return `Načteno presence záznamů: ${formatNumber(payload.count ?? payload.items?.length ?? 0)}.`;
+      return `Načteno záznamů přihlášení: ${formatNumber(payload.count ?? payload.items?.length ?? 0)}.`;
     case 'cc-security-result':
-      return `Aktivní blokace: ${formatNumber(payload?.summary?.blocked_ips_active || 0)}, failed 24h: ${formatNumber(payload?.summary?.failed_logins_24h || 0)}.`;
+      return `Aktivní blokace: ${formatNumber(payload?.summary?.blocked_ips_active || 0)}, neúspěšná přihlášení za 24 hodin: ${formatNumber(payload?.summary?.failed_logins_24h || 0)}.`;
     case 'cc-backup-result':
-      return payload.message || `Načteno backupů: ${formatNumber(payload.items?.length ?? 0)}.`;
+      return payload.message || `Načteno místních záloh: ${formatNumber(payload.items?.length ?? 0)}.`;
     case 'cc-infra-result':
-      return payload.message || 'Infrastrukturní data načtena.';
+      return payload.message || 'Údaje o provozu byly aktualizovány.';
     case 'cc-ops-result':
-      return payload.message || 'Jobs/email data načtena.';
+      return payload.message || 'Údaje o automatice a e-mailech byly aktualizovány.';
     case 'cc-logs-result':
-      return payload.message || 'Audit/log data načtena.';
+      return payload.message || 'Historie správy byla aktualizována.';
     case 'cc-notifications-result':
-      return payload.message || `Načteno notifikací: ${formatNumber(payload.count ?? payload.items?.length ?? 0)}.`;
+      return payload.message || `Načteno oznámení: ${formatNumber(payload.count ?? payload.items?.length ?? 0)}.`;
     default:
       return payload.message || 'Operace dokončena.';
   }
@@ -4417,7 +4389,7 @@ async function loadControlCenterUserInsight() {
         .slice(0, 20),
     );
     setControlCenterResult('cc-insight-result', data);
-    setControlCenterStatusChip('cc-module-users-status', data?.user?.is_disabled ? 'warn' : 'ok', data?.user?.is_disabled ? 'Disabled' : 'Ready');
+    setControlCenterStatusChip('cc-module-users-status', data?.user?.is_disabled ? 'warn' : 'ok', data?.user?.is_disabled ? 'Účet pozastaven' : 'Účet povolen');
   } catch (error) {
     controlCenterCurrentInsight = null;
     setControlCenterState('insight', null);

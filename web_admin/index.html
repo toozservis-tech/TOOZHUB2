@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SprávaVozidel – Administrace</title>
   <link rel="stylesheet" href="admin.css?v=20260929" />
-  <link rel="stylesheet" href="workspace.css?v=20260929" />
+  <link rel="stylesheet" href="workspace.css?v=20260929-2" />
 </head>
 <body>
   <!-- Přihlašovací obrazovka -->
@@ -244,21 +244,21 @@
           </div>
           <div class="tools-grid">
             <div class="tool-card">
-              <h3>🔍 Reindexace</h3>
-              <p>Přepočítá počty a validuje vazby v databázi</p>
-              <button class="btn-secondary" onclick="runReindex()">Spustit reindexaci</button>
+              <h3>🔍 Struktura databáze</h3>
+              <p>Prohlédne dostupné tabulky a indexy používané pro vyhledávání.</p>
+              <button class="btn-secondary" onclick="runReindex()"><strong>Prověřit databázové indexy</strong><small>Zkontroluje strukturu pro rychlé vyhledávání. Data nepřepisuje.</small></button>
               <div id="reindex-result" class="tool-result"></div>
             </div>
             <div class="tool-card">
-              <h3>🔧 Oprava databáze</h3>
-              <p>Provede základní kontrolu a opravu databáze</p>
-              <button class="btn-secondary" onclick="runRepair()">Spustit opravu</button>
+              <h3>🔗 Vazby mezi údaji</h3>
+              <p>Ověří odkazy mezi tabulkami a vypíše nalezené chybějící vazby. Opravy dat se nespouštějí automaticky.</p>
+              <button class="btn-secondary" onclick="runRepair()"><strong>Zkontrolovat vazby dat</strong><small>Vyhledá záznamy odkazující na neexistující data. Nic nemaže.</small></button>
               <div id="repair-result" class="tool-result"></div>
             </div>
             <div class="tool-card">
               <h3>📊 Informace o databázi</h3>
               <p>Zobrazí informace o velikosti, tabulkách a schématu</p>
-              <button class="btn-secondary" onclick="loadDbInfo()">Načíst informace</button>
+              <button class="btn-secondary" onclick="loadDbInfo()"><strong>Zobrazit přehled databáze</strong><small>Ukáže typ úložiště, velikost a seznam částí databáze.</small></button>
               <div id="db-info-result" class="tool-result"></div>
             </div>
           </div>
@@ -268,12 +268,12 @@
         <section id="section-settings" class="content-section">
           <div class="section-header">
             <h1>Nastavení aplikace</h1>
-            <button class="btn-primary" onclick="initDefaultSettings()">Inicializovat výchozí nastavení</button>
+            <button class="btn-primary" onclick="initDefaultSettings()"><strong>Doplnit chybějící nastavení</strong><small>Vytvoří pouze chybějící položky; existující hodnoty zachová.</small></button>
           </div>
-          
+
           <div id="settings-loading" class="loading">Načítání nastavení...</div>
           <div id="settings-error" class="error hidden"></div>
-          
+
           <div id="settings-content" class="settings-content hidden">
             <!-- Tabs pro kategorie -->
             <div class="settings-tabs">
@@ -308,15 +308,15 @@
                 <span class="tab-icon">🖥️</span> Systémové
               </button>
             </div>
-            
+
             <!-- Obsah kategorií -->
             <div id="settings-categories" class="settings-categories">
               <!-- Naplní se JavaScriptem -->
             </div>
-            
+
             <div class="settings-footer">
-              <button class="btn-primary" onclick="saveAllSettings()">Uložit všechna nastavení</button>
-              <button class="btn-secondary" onclick="resetSettingsCategory()">Obnovit kategorii</button>
+              <button class="btn-primary" onclick="saveAllSettings()"><strong>Uložit změny nastavení</strong><small>Zapíše upravené hodnoty. Před uložením zobrazí potvrzení.</small></button>
+              <button class="btn-secondary" onclick="resetSettingsCategory()"><strong>Zahodit neuložené změny</strong><small>V této kategorii vrátí poslední načtené hodnoty.</small></button>
             </div>
           </div>
         </section>
@@ -326,13 +326,13 @@
           <div class="section-header section-header-control-center">
             <div>
               <h1>Řídicí centrum</h1>
-              <p class="cc-section-subtitle">Operační konzole: nejdřív stav a priority, detaily až na vyžádání.</p>
+              <p class="cc-section-subtitle">Správa provozu krok za krokem. Každé tlačítko vysvětluje svůj účinek; změny potvrďte až po kontrole vybraných údajů.</p>
             </div>
-            <button class="btn-primary" type="button" onclick="refreshControlCenterOverview()">Obnovit panel</button>
+            <button class="btn-primary" type="button" onclick="refreshControlCenterOverview()"><strong>Aktualizovat celý přehled</strong><small>Znovu načte údaje ze serveru. Nic nemění.</small></button>
           </div>
           <div id="cc-details-backdrop" class="cc-details-backdrop" onclick="closeAllControlCenterDetails()"></div>
 
-          <section class="cc-executive-layer" aria-label="Executive overview">
+          <section class="cc-executive-layer" aria-label="Přehled provozu">
             <div class="cc-kpi-grid">
               <article class="cc-kpi-card">
                 <span class="cc-kpi-label">Aktivní uživatelé</span>
@@ -352,12 +352,12 @@
               <article class="cc-kpi-card">
                 <span class="cc-kpi-label">Neúspěšné platby</span>
                 <strong id="cc-kpi-failed-payments" class="cc-kpi-value">-</strong>
-                <span class="cc-kpi-hint">Poslední feed</span>
+                <span class="cc-kpi-hint">Poslední evidované platby</span>
               </article>
               <article class="cc-kpi-card">
                 <span class="cc-kpi-label">Bezpečnostní upozornění</span>
                 <strong id="cc-kpi-security-alerts" class="cc-kpi-value">-</strong>
-                <span class="cc-kpi-hint">Brute-force + blokace</span>
+                <span class="cc-kpi-hint">Opakovaná chybná přihlášení a blokace</span>
               </article>
               <article class="cc-kpi-card">
                 <span class="cc-kpi-label">Poslední záloha</span>
@@ -382,7 +382,7 @@
               <div class="cc-module-head">
                 <div>
                   <h3>🩺 Stav systému</h3>
-                  <p>API, DB, e-mail, platby, workers a storage.</p>
+                  <p>Dostupnost aplikace, databáze, e-mailů a automatických kontrol.</p>
                 </div>
                 <span id="cc-module-health-status" class="cc-status-chip">Neznámý stav</span>
               </div>
@@ -395,15 +395,15 @@
                 <span id="cc-health-chip-storage" class="cc-health-chip">Storage: -</span>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterHealth()">Načíst health</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-health-details')">Zobrazit detail</button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterHealth()"><strong>Zkontrolovat dostupnost</strong><small>Prověří spojení, databázi, e-maily a nastavení služeb.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-health-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
-              <div id="cc-health-result" class="cc-module-result">Čeká na načtení health dat.</div>
+              <div id="cc-health-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-health-details" class="cc-module-details">
-                <summary>Detail systémového health</summary>
+                <summary>Podrobnosti dostupnosti</summary>
                 <div id="cc-health-table" class="tool-table-wrap"></div>
                 <details class="cc-technical-details">
-                  <summary>Technický detail (JSON)</summary>
+                  <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-health-technical" class="tool-result cc-technical-result"></pre>
                 </details>
               </details>
@@ -418,35 +418,35 @@
                 <span id="cc-module-payments-status" class="cc-status-chip">Neznámý stav</span>
               </div>
               <div class="cc-metric-grid">
-                <div class="cc-metric-item"><span>LIVE paid today</span><strong id="cc-payments-paid-today">-</strong></div>
-                <div class="cc-metric-item"><span>LIVE paid count</span><strong id="cc-payments-live-paid-count">-</strong></div>
-                <div class="cc-metric-item"><span>LIVE failed</span><strong id="cc-payments-failed">-</strong></div>
-                <div class="cc-metric-item"><span>LIVE refunds</span><strong id="cc-payments-refunds">-</strong></div>
-                <div class="cc-metric-item"><span>LIVE attention</span><strong id="cc-payments-attention">-</strong></div>
-                <div class="cc-metric-item"><span>LIVE / TEST tx</span><strong id="cc-payments-live-test-ratio">-</strong></div>
+                <div class="cc-metric-item"><span>Dnes uhrazeno</span><strong id="cc-payments-paid-today">-</strong></div>
+                <div class="cc-metric-item"><span>Uhrazené platby</span><strong id="cc-payments-live-paid-count">-</strong></div>
+                <div class="cc-metric-item"><span>Neúspěšné platby</span><strong id="cc-payments-failed">-</strong></div>
+                <div class="cc-metric-item"><span>Vrácené platby</span><strong id="cc-payments-refunds">-</strong></div>
+                <div class="cc-metric-item"><span>K prověření</span><strong id="cc-payments-attention">-</strong></div>
+                <div class="cc-metric-item"><span>Skutečné / testovací</span><strong id="cc-payments-live-test-ratio">-</strong></div>
               </div>
               <div class="cc-live-feed">
                 <div class="cc-live-feed-head">
-                  <span>Poslední LIVE platby</span>
+                  <span>Poslední skutečné platby</span>
                   <strong id="cc-payments-live-last">-</strong>
                 </div>
-                <div id="cc-payments-live-feed" class="cc-live-feed-list">Čeká na načtení plateb.</div>
+                <div id="cc-payments-live-feed" class="cc-live-feed-list">Údaje se zobrazí po načtení ze serveru.</div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterPayments()">Načíst platby</button>
-                <button class="btn-secondary" type="button" onclick="runControlCenterPaymentResync()">Spustit resync</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterProblemUsers()">Filtrovat problémové uživatele</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-payments-details')">Otevřít detail plateb</button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterPayments()"><strong>Aktualizovat platby</strong><small>Načte poslední evidované platby a jejich stavy.</small></button>
+                <button class="btn-secondary" type="button" onclick="runControlCenterPaymentResync()"><strong>Zpracovat předplatné</strong><small>Provede obnovy licencí; může odeslat upozornění i vyvolat opakovanou platbu.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterProblemUsers()"><strong>Zobrazit účty k prověření</strong><small>Vyfiltruje účty s neplatnou licencí nebo neuhrazenou platbou.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-payments-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
-              <div id="cc-payments-result" class="cc-module-result">Čeká na načtení plateb.</div>
+              <div id="cc-payments-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-payments-details" class="cc-module-details">
                 <summary>Detail plateb a uživatelů s problémem</summary>
                 <div class="cc-inline-filters">
-                  <label for="cc-payments-filter-env">Env</label>
+                  <label for="cc-payments-filter-env">Typ platby</label>
                   <select id="cc-payments-filter-env">
-                    <option value="all">ALL</option>
-                    <option value="live">LIVE</option>
-                    <option value="test">TEST</option>
+                    <option value="all">Všechny</option>
+                    <option value="live">Skutečné platby</option>
+                    <option value="test">Zkušební platby</option>
                   </select>
                   <label for="cc-payments-filter-state">Stav</label>
                   <select id="cc-payments-filter-state">
@@ -454,15 +454,15 @@
                     <option value="success">Úspěšné</option>
                     <option value="failed">Neúspěšné</option>
                     <option value="attention">Vyžaduje akci</option>
-                    <option value="refunded">Refund</option>
+                    <option value="refunded">Vrácené</option>
                   </select>
-                  <input id="cc-payments-filter-query" type="text" placeholder="Hledat email / transId / plan" />
+                  <input id="cc-payments-filter-query" type="text" placeholder="Hledat e-mail, platbu nebo tarif" />
                 </div>
                 <div id="cc-payments-summary" class="tool-table-wrap"></div>
                 <div id="cc-payments-table" class="tool-table-wrap"></div>
                 <div id="cc-problem-users-table" class="tool-table-wrap"></div>
                 <details class="cc-technical-details">
-                  <summary>Technický detail (JSON)</summary>
+                  <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-payments-technical" class="tool-result cc-technical-result"></pre>
                 </details>
               </details>
@@ -472,58 +472,58 @@
               <div class="cc-module-head">
                 <div>
                   <h3>👥 Uživatelé</h3>
-                  <p>Rychlé zásahy na konkrétním účtu: insight, relace, přístup a licence.</p>
+                  <p>Vyberte účet podle jména nebo e-mailu a spravujte jeho přístup a tarif.</p>
                 </div>
                 <span id="cc-module-users-status" class="cc-status-chip">Neznámý stav</span>
               </div>
               <div class="cc-metric-grid">
                 <div class="cc-metric-item"><span>Uživatelé</span><strong id="cc-users-total">-</strong></div>
-                <div class="cc-metric-item"><span>Disabled</span><strong id="cc-users-disabled">-</strong></div>
-                <div class="cc-metric-item"><span>Expired licence</span><strong id="cc-users-expired">-</strong></div>
+                <div class="cc-metric-item"><span>Pozastavené účty</span><strong id="cc-users-disabled">-</strong></div>
+                <div class="cc-metric-item"><span>Vypršené licence</span><strong id="cc-users-expired">-</strong></div>
                 <div class="cc-metric-item"><span>Bez platby</span><strong id="cc-users-unpaid">-</strong></div>
               </div>
               <div class="form-group">
-                <label for="cc-insight-user-id">ID uživatele</label>
-                <input id="cc-insight-user-id" type="number" min="1" placeholder="ID uživatele" />
+                <label for="cc-insight-user-id">Vybraný účet</label>
+                <input id="operator-user-search" type="search" aria-label="Hledat účet podle jména nebo e-mailu" placeholder="Hledat jméno nebo e-mail"/><select id="cc-insight-user-id"><option value="">Vyberte účet…</option></select><p id="operator-selected-user" class="operator-hint" role="status">Nejprve vyberte účet, kterého se má akce týkat.</p>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterUserInsight()">Načíst insight</button>
-                <button class="btn-danger" type="button" onclick="forceLogoutFromControlCenter()">Odhlásit všechna zařízení</button>
-                <button class="btn-secondary" type="button" onclick="disableUserFromControlCenter()">Zablokovat</button>
-                <button class="btn-secondary" type="button" onclick="enableUserFromControlCenter()">Odblokovat</button>
-                <button class="btn-secondary" type="button" onclick="resetUserPasswordFromControlCenter()">Reset hesla</button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterUserInsight()"><strong>Zobrazit vybraný účet</strong><small>Načte jeho licenci, platby a aktivní přihlášení.</small></button>
+                <button class="btn-danger" type="button" onclick="forceLogoutFromControlCenter()"><strong>Odhlásit všechna zařízení</strong><small>Ukončí přístup vybraného účtu. Uživatel se bude muset znovu přihlásit.</small></button>
+                <button class="btn-secondary" type="button" onclick="disableUserFromControlCenter()"><strong>Pozastavit účet</strong><small>Zamezí přístupu vybraného uživatele. Jeho data zůstanou zachovaná.</small></button>
+                <button class="btn-secondary" type="button" onclick="enableUserFromControlCenter()"><strong>Znovu povolit účet</strong><small>Obnoví přístup dříve pozastavenému uživateli.</small></button>
+                <button class="btn-secondary" type="button" onclick="resetUserPasswordFromControlCenter()"><strong>Nastavit dočasné heslo</strong><small>Po potvrzení změní heslo vybraného účtu a zobrazí nové.</small></button>
               </div>
               <div class="cc-license-inline">
                 <div class="form-group">
-                  <label for="cc-license-plan">Licence plan</label>
+                  <label for="cc-license-plan">Tarif</label>
                   <select id="cc-license-plan">
                     <option value="">beze změny</option>
-                    <option value="free">free</option>
-                    <option value="basic">basic</option>
-                    <option value="premium">premium</option>
+                    <option value="free">Zdarma</option>
+                    <option value="basic">Základní</option>
+                    <option value="premium">Premium</option>
                   </select>
                 </div>
                 <div class="form-group">
-                  <label for="cc-license-status">Licence status</label>
+                  <label for="cc-license-status">Stav licence</label>
                   <select id="cc-license-status">
                     <option value="">beze změny</option>
-                    <option value="active">active</option>
-                    <option value="inactive">inactive</option>
-                    <option value="expired">expired</option>
-                    <option value="suspended">suspended</option>
+                    <option value="active">Aktivní</option>
+                    <option value="inactive">Neaktivní</option>
+                    <option value="expired">Vypršená</option>
+                    <option value="suspended">Pozastavená</option>
                   </select>
                 </div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="updateUserLicenseFromControlCenter()">Uložit licenci</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-users-details')">Zobrazit detail</button>
+                <button class="btn-secondary" type="button" onclick="updateUserLicenseFromControlCenter()"><strong>Uložit změnu licence</strong><small>Použije vybraný tarif a stav u zvoleného účtu.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-users-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <details id="cc-users-details" class="cc-module-details">
-                <summary>Detail user insight</summary>
+                <summary>Podrobnosti vybraného účtu</summary>
                 <div id="cc-insight-summary" class="tool-table-wrap"></div>
                 <div id="cc-insight-payments-table" class="tool-table-wrap"></div>
                 <details class="cc-technical-details">
-                  <summary>Technický detail (JSON)</summary>
+                  <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-insight-result" class="tool-result cc-technical-result"></pre>
                 </details>
               </details>
@@ -544,15 +544,15 @@
                 <div class="cc-metric-item"><span>Podezřelý stav</span><strong id="cc-presence-suspicious">-</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterPresence()">Načíst presence</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-presence-details')">Zobrazit detail</button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterPresence()"><strong>Aktualizovat přihlášení</strong><small>Ukáže poslední aktivitu a přihlášená zařízení uživatelů.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-presence-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
-              <div id="cc-presence-result" class="cc-module-result">Čeká na načtení presence dat.</div>
+              <div id="cc-presence-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-presence-details" class="cc-module-details">
-                <summary>Detail presence</summary>
+                <summary>Podrobnosti přihlášení</summary>
                 <div id="cc-presence-table" class="tool-table-wrap"></div>
                 <details class="cc-technical-details">
-                  <summary>Technický detail (JSON)</summary>
+                  <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-presence-technical" class="tool-result cc-technical-result"></pre>
                 </details>
               </details>
@@ -562,15 +562,15 @@
               <div class="cc-module-head">
                 <div>
                   <h3>🔐 Zabezpečení</h3>
-                  <p>Blokace IP, brute-force signály a podezřelé auth události.</p>
+                  <p>Neúspěšná přihlášení a blokování nežádoucích přístupů.</p>
                 </div>
                 <span id="cc-module-security-status" class="cc-status-chip">Neznámý stav</span>
               </div>
               <div class="cc-metric-grid">
                 <div class="cc-metric-item"><span>Aktivní blokace</span><strong id="cc-security-blocked-active">-</strong></div>
-                <div class="cc-metric-item"><span>Brute-force alerty</span><strong id="cc-security-bruteforce">-</strong></div>
-                <div class="cc-metric-item"><span>Rate limited 24h</span><strong id="cc-security-rate-limited">-</strong></div>
-                <div class="cc-metric-item"><span>Sus auth events</span><strong id="cc-security-suspicious">-</strong></div>
+                <div class="cc-metric-item"><span>Opakované pokusy</span><strong id="cc-security-bruteforce">-</strong></div>
+                <div class="cc-metric-item"><span>Omezené přístupy za 24 hodin</span><strong id="cc-security-rate-limited">-</strong></div>
+                <div class="cc-metric-item"><span>Podezřelé události</span><strong id="cc-security-suspicious">-</strong></div>
               </div>
               <div class="cc-license-inline">
                 <div class="form-group">
@@ -579,23 +579,23 @@
                 </div>
                 <div class="form-group">
                   <label for="cc-block-reason">Důvod</label>
-                  <input id="cc-block-reason" type="text" placeholder="např. brute force" />
+                  <input id="cc-block-reason" type="text" placeholder="Proč chcete přístup omezit?" />
                 </div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterSecurityMonitor()">Načíst monitor</button>
-                <button class="btn-danger" type="button" onclick="blockIpFromControlCenter()">Blokovat IP</button>
-                <button class="btn-secondary" type="button" onclick="unblockIpFromControlCenter()">Odblokovat IP</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-security-details')">Otevřít security events</button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterSecurityMonitor()"><strong>Prověřit přístupy</strong><small>Načte neúspěšná přihlášení, podezřelé události a blokace.</small></button>
+                <button class="btn-danger" type="button" onclick="blockIpFromControlCenter()"><strong>Zablokovat adresu</strong><small>Zabrání přístupu z vybrané internetové adresy. Může ovlivnit více lidí.</small></button>
+                <button class="btn-secondary" type="button" onclick="unblockIpFromControlCenter()"><strong>Zrušit blokaci adresy</strong><small>Znovu povolí přístup z vybrané internetové adresy.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-security-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
-              <div id="cc-security-result" class="cc-module-result">Čeká na načtení security monitoru.</div>
+              <div id="cc-security-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-security-details" class="cc-module-details">
-                <summary>Detail security monitoru</summary>
+                <summary>Podrobnosti přístupů</summary>
                 <div id="cc-security-failed-ips-table" class="tool-table-wrap"></div>
                 <div id="cc-security-table" class="tool-table-wrap"></div>
                 <div id="cc-security-events-table" class="tool-table-wrap"></div>
                 <details class="cc-technical-details">
-                  <summary>Technický detail (JSON)</summary>
+                  <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-security-technical" class="tool-result cc-technical-result"></pre>
                 </details>
               </details>
@@ -605,59 +605,56 @@
               <div class="cc-module-head">
                 <div>
                   <h3>💾 Zálohy a obnova</h3>
-                  <p>Aktuální stav záloh, tvorba snapshotu a řízené restore operace.</p>
+                  <p>Místní zálohy serveru a obnova z vybrané kopie. Dostupnost závisí na typu databáze.</p>
                 </div>
                 <span id="cc-module-backups-status" class="cc-status-chip">Neznámý stav</span>
               </div>
               <div class="cc-metric-grid">
                 <div class="cc-metric-item"><span>Poslední status</span><strong id="cc-backup-latest-status">-</strong></div>
                 <div class="cc-metric-item"><span>Poslední záloha</span><strong id="cc-backup-latest-time">-</strong></div>
-                <div class="cc-metric-item"><span>Počet backupů</span><strong id="cc-backup-count">-</strong></div>
-                <div class="cc-metric-item"><span>Restore režim</span><strong id="cc-backup-restore-warning">Dangerous</strong></div>
+                <div class="cc-metric-item"><span>Počet místních záloh</span><strong id="cc-backup-count">-</strong></div>
+                <div class="cc-metric-item"><span>Obnova dat</span><strong id="cc-backup-restore-warning">Vyžaduje potvrzení</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="createControlCenterBackup()">Vytvořit lokální zálohu</button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterBackups()">Načíst seznam</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-backups-details')">Zobrazit detail</button>
+                <button class="btn-secondary" type="button" onclick="createControlCenterBackup()"><strong>Vytvořit místní zálohu</strong><small>Uloží kopii místní databáze a souborů. Pro cloudovou databázi není dostupné.</small></button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterBackups()"><strong>Aktualizovat zálohy</strong><small>Zobrazí zálohy uložené na tomto serveru.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-backups-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <p id="cc-backup-support-note" role="status" hidden></p>
-              <div id="cc-backup-result" class="cc-module-result">Čeká na načtení backup stavu.</div>
+              <div id="cc-backup-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-backups-details" class="cc-module-details">
-                <summary>Detail backup snapshotů</summary>
+                <summary>Seznam uložených záloh</summary>
                 <div id="cc-backups-table" class="tool-table-wrap"></div>
                 <details class="cc-danger-zone">
-                  <summary>Restore (danger zone)</summary>
-                  <div class="cc-danger-copy">Restore může přepsat data. Používejte jen při řízeném zásahu.</div>
+                  <summary>Obnovit data z místní zálohy</summary>
+                  <div class="cc-danger-copy">Obnova přepíše vybraná data starší kopií. Nejdříve zvolte zálohu a rozsah; poté zkontrolujte potvrzení.</div>
                   <div class="form-group">
-                    <label for="cc-restore-backup-id">Backup ID</label>
-                    <input id="cc-restore-backup-id" type="text" placeholder="YYYYMMDD_HHMMSS" />
+                    <label for="cc-restore-backup-id">Vybraná záloha</label>
+                    <select id="cc-restore-backup-id"><option value="">Vyberte zálohu…</option></select>
                   </div>
                   <div class="form-group">
-                    <label for="cc-restore-scope">Scope restore</label>
+                    <label for="cc-restore-scope">Co obnovit</label>
                     <select id="cc-restore-scope">
-                      <option value="full">full</option>
-                      <option value="user">user</option>
-                      <option value="vehicle">vehicle</option>
+                      <option value="full">Celá místní databáze</option>
+                      <option value="user">Vybraný účet</option>
+                      <option value="vehicle">Vybrané vozidlo</option>
                     </select>
                   </div>
                   <div class="cc-license-inline">
                     <div class="form-group">
-                      <label for="cc-restore-user-id">User ID (pro scope=user)</label>
-                      <input id="cc-restore-user-id" type="number" min="1" />
+                      <label for="cc-restore-user-id">Účet pro obnovu</label>
+                      <select id="cc-restore-user-id"><option value="">Vyberte účet…</option></select>
                     </div>
                     <div class="form-group">
-                      <label for="cc-restore-vehicle-id">Vehicle ID (pro scope=vehicle)</label>
-                      <input id="cc-restore-vehicle-id" type="number" min="1" />
+                      <label for="cc-restore-vehicle-id">Vozidlo pro obnovu</label>
+                      <select id="cc-restore-vehicle-id"><option value="">Vyberte vozidlo…</option></select>
                     </div>
                   </div>
-                  <div class="form-group">
-                    <label for="cc-restore-confirm">Potvrzení restore</label>
-                    <input id="cc-restore-confirm" type="text" placeholder="PROCEED_RESTORE" />
-                  </div>
-                  <button class="btn-danger" type="button" onclick="restoreControlCenterBackup()">Spustit obnovu</button>
+
+                  <button class="btn-danger" type="button" onclick="restoreControlCenterBackup()"><strong>Obnovit vybranou zálohu</strong><small>Přepíše zvolená data uloženou kopií. Vyžaduje potvrzení.</small></button>
                 </details>
                 <details class="cc-technical-details">
-                  <summary>Technický detail (JSON)</summary>
+                  <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-backup-technical" class="tool-result cc-technical-result"></pre>
                 </details>
               </details>
@@ -667,31 +664,30 @@
               <div class="cc-module-head">
                 <div>
                   <h3>⚙️ Úlohy</h3>
-                  <p>Scheduler, manuální job zásahy a email delivery health.</p>
+                  <p>Automatické kontroly předplatného a připomínek. Každou lze prověřit nebo dočasně pozastavit.</p>
                 </div>
                 <span id="cc-module-jobs-status" class="cc-status-chip">Neznámý stav</span>
               </div>
               <div class="cc-metric-grid">
-                <div class="cc-metric-item"><span>Running jobs</span><strong id="cc-jobs-running">-</strong></div>
-                <div class="cc-metric-item"><span>Paused jobs</span><strong id="cc-jobs-paused">-</strong></div>
-                <div class="cc-metric-item"><span>Email sent 24h</span><strong id="cc-email-sent">-</strong></div>
-                <div class="cc-metric-item"><span>Email failed 24h</span><strong id="cc-email-failed">-</strong></div>
+                <div class="cc-metric-item"><span>Zapnuté automatické kontroly</span><strong id="cc-jobs-running">-</strong></div>
+                <div class="cc-metric-item"><span>Pozastavené kontroly</span><strong id="cc-jobs-paused">-</strong></div>
+                <div class="cc-metric-item"><span>Odesláno e-mailů za 24 hodin</span><strong id="cc-email-sent">-</strong></div>
+                <div class="cc-metric-item"><span>Neodeslané e-maily za 24 hodin</span><strong id="cc-email-failed">-</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterEmailMonitor()">Email monitor</button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterJobs()">Jobs status</button>
-                <button class="btn-secondary" type="button" onclick="runControlCenterJobPrompt()">Spustit job</button>
-                <button class="btn-secondary" type="button" onclick="pauseControlCenterJobPrompt()">Pozastavit job</button>
-                <button class="btn-secondary" type="button" onclick="resumeControlCenterJobPrompt()">Obnovit job</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-jobs-details')">Zobrazit detail</button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterEmailMonitor()"><strong>Zkontrolovat odesílání e-mailů</strong><small>Zobrazí evidované doručení službě a neúspěšné pokusy o odeslání.</small></button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterJobs()"><strong>Aktualizovat běh úloh</strong><small>Načte nastavení automatických kontrol. Úlohy nespouští.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-jobs-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
-              <div id="cc-ops-result" class="cc-module-result">Čeká na načtení jobs/email stavu.</div>
+              <div id="operator-jobs" class="operator-jobs" aria-live="polite">Načítám automatické úlohy…</div>
+              <div id="cc-job-action-result" class="operator-result" role="status"></div>
+              <div id="cc-ops-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-jobs-details" class="cc-module-details">
-                <summary>Detail jobs a email delivery</summary>
+                <summary>Podrobnosti kontrol a odesílání</summary>
                 <div id="cc-jobs-table" class="tool-table-wrap"></div>
                 <div id="cc-email-table" class="tool-table-wrap"></div>
                 <details class="cc-technical-details">
-                  <summary>Technický detail (JSON)</summary>
+                  <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-ops-technical" class="tool-result cc-technical-result"></pre>
                 </details>
               </details>
@@ -701,15 +697,15 @@
               <div class="cc-module-head">
                 <div>
                   <h3>📣 Oznámení</h3>
-                  <p>Broadcast feed pro cílenou komunikaci s uživateli a tenanty.</p>
+                  <p>Oznámení zobrazovaná vybraným uživatelům přímo v aplikaci.</p>
                 </div>
                 <span id="cc-module-notifications-status" class="cc-status-chip">Neznámý stav</span>
               </div>
               <div class="cc-metric-grid">
                 <div class="cc-metric-item"><span>Aktivní notifikace</span><strong id="cc-notifications-active">-</strong></div>
-                <div class="cc-metric-item"><span>Feed záznamy</span><strong id="cc-notifications-total">-</strong></div>
-                <div class="cc-metric-item"><span>Target scope</span><strong id="cc-notifications-target-preview">all</strong></div>
-                <div class="cc-metric-item"><span>Severity</span><strong id="cc-notifications-severity-preview">info</strong></div>
+                <div class="cc-metric-item"><span>Vytvořená oznámení</span><strong id="cc-notifications-total">-</strong></div>
+                <div class="cc-metric-item"><span>Příjemci</span><strong id="cc-notifications-target-preview">Všichni uživatelé</strong></div>
+                <div class="cc-metric-item"><span>Důležitost</span><strong id="cc-notifications-severity-preview">info</strong></div>
               </div>
               <div class="form-group">
                 <label for="cc-broadcast-message">Zpráva</label>
@@ -723,28 +719,28 @@
                 <div class="form-group">
                   <label for="cc-broadcast-target-type">Cílení</label>
                   <select id="cc-broadcast-target-type">
-                    <option value="all">all</option>
-                    <option value="tenant">tenant</option>
-                    <option value="plan">plan</option>
-                    <option value="user">user</option>
+                    <option value="all">Všichni uživatelé</option>
+                    <option value="tenant">Vybraná organizace</option>
+                    <option value="plan">Vybraný tarif</option>
+                    <option value="user">Vybraný účet</option>
                   </select>
                 </div>
               </div>
               <div class="form-group">
-                <label for="cc-broadcast-target-value">Target value</label>
-                <input id="cc-broadcast-target-value" type="text" placeholder="tenant_id / plan / user_id" />
+                <label for="cc-broadcast-target-value">Vyberte příjemce</label>
+                <select id="cc-broadcast-target-value" disabled><option value="">Všichni uživatelé</option></select>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-primary" type="button" onclick="broadcastControlCenterNotification()">Odeslat broadcast</button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterNotifications()">Načíst feed</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-notifications-details')">Zobrazit detail</button>
+                <button class="btn-primary" type="button" onclick="broadcastControlCenterNotification()"><strong>Zveřejnit oznámení</strong><small>Zobrazí zprávu vybraným příjemcům v aplikaci.</small></button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterNotifications()"><strong>Zobrazit oznámení</strong><small>Načte již vytvořená systémová oznámení.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-notifications-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
-              <div id="cc-notifications-result" class="cc-module-result">Čeká na načtení notification feedu.</div>
+              <div id="cc-notifications-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-notifications-details" class="cc-module-details">
-                <summary>Detail notifikačního feedu</summary>
+                <summary>Přehled oznámení</summary>
                 <div id="cc-notifications-table" class="tool-table-wrap"></div>
                 <details class="cc-technical-details">
-                  <summary>Technický detail (JSON)</summary>
+                  <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-notifications-technical" class="tool-result cc-technical-result"></pre>
                 </details>
               </details>
@@ -754,28 +750,28 @@
               <div class="cc-module-head">
                 <div>
                   <h3>🧾 Audit</h3>
-                  <p>Nedávné developer akce a přístup k detailním záznamům.</p>
+                  <p>Historie zásahů administrátorů a hlášení serveru.</p>
                 </div>
                 <span id="cc-module-audit-status" class="cc-status-chip">Neznámý stav</span>
               </div>
               <div class="cc-metric-grid">
-                <div class="cc-metric-item"><span>Recent actions</span><strong id="cc-audit-count">-</strong></div>
-                <div class="cc-metric-item"><span>Last critical</span><strong id="cc-audit-last-critical">-</strong></div>
-                <div class="cc-metric-item"><span>Logs source</span><strong id="cc-audit-log-source">system</strong></div>
-                <div class="cc-metric-item"><span>Retention</span><strong id="cc-audit-retention-note">immutable</strong></div>
+                <div class="cc-metric-item"><span>Poslední zásahy</span><strong id="cc-audit-count">-</strong></div>
+                <div class="cc-metric-item"><span>Poslední problém</span><strong id="cc-audit-last-critical">-</strong></div>
+                <div class="cc-metric-item"><span>Zdroj záznamů</span><strong id="cc-audit-log-source">Server</strong></div>
+                <div class="cc-metric-item"><span>Uchování</span><strong id="cc-audit-retention-note">Historie zásahů</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterSystemLogs()">System logs</button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterAuditActions()">Audit actions</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-audit-details')">Open audit trail</button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterSystemLogs()"><strong>Zobrazit provozní záznamy</strong><small>Ukáže poslední hlášení serveru pro zjištění příčiny potíží.</small></button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterAuditActions()"><strong>Zobrazit historii zásahů</strong><small>Ukáže kdo, kdy a jakou změnu v administraci provedl.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-audit-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
-              <div id="cc-logs-result" class="cc-module-result">Čeká na načtení audit/log dat.</div>
+              <div id="cc-logs-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-audit-details" class="cc-module-details">
-                <summary>Detail audit trail a logů</summary>
+                <summary>Podrobnosti historie a hlášení</summary>
                 <div id="cc-system-logs-table" class="tool-table-wrap"></div>
                 <div id="cc-audit-actions-table" class="tool-table-wrap"></div>
                 <details class="cc-technical-details">
-                  <summary>Technický detail (JSON)</summary>
+                  <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-logs-technical" class="tool-result cc-technical-result"></pre>
                 </details>
               </details>
@@ -785,63 +781,47 @@
               <div class="cc-module-head">
                 <div>
                   <h3>🧱 Provoz systému</h3>
-                  <p>API monitor, webhook feed a storage management včetně cleanup.</p>
+                  <p>Komunikace aplikace, příjem zpráv o platbách a místní soubory serveru.</p>
                 </div>
                 <span id="cc-module-infra-status" class="cc-status-chip">Neznámý stav</span>
               </div>
               <div class="cc-metric-grid">
-                <div class="cc-metric-item"><span>API hit endpoint</span><strong id="cc-infra-api-hits">-</strong></div>
-                <div class="cc-metric-item"><span>Webhook failed</span><strong id="cc-infra-webhooks-failed">-</strong></div>
-                <div class="cc-metric-item"><span>Storage total</span><strong id="cc-infra-storage">-</strong></div>
-                <div class="cc-metric-item"><span>Cleanup reclaim</span><strong id="cc-infra-cleanup-preview">-</strong></div>
+                <div class="cc-metric-item"><span>Nejčastější požadavky</span><strong id="cc-infra-api-hits">-</strong></div>
+                <div class="cc-metric-item"><span>Chybné zprávy o platbách</span><strong id="cc-infra-webhooks-failed">-</strong></div>
+                <div class="cc-metric-item"><span>Místní využité místo</span><strong id="cc-infra-storage">-</strong></div>
+                <div class="cc-metric-item"><span>Místo k uvolnění</span><strong id="cc-infra-cleanup-preview">-</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterApiMonitor()">API monitor</button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterWebhookMonitor()">Webhook monitor</button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterStorage()">Storage</button>
-                <button class="btn-secondary" type="button" onclick="previewControlCenterStorageCleanup()">Cleanup preview</button>
-                <button class="btn-danger" type="button" onclick="runControlCenterStorageCleanup()">Storage cleanup</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-infra-details')">Zobrazit detail</button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterApiMonitor()"><strong>Zkontrolovat požadavky aplikace</strong><small>Ukáže četnost a chyby při komunikaci se serverem.</small></button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterWebhookMonitor()"><strong>Zkontrolovat zprávy platební brány</strong><small>Načte evidované zprávy o platbách od poskytovatele.</small></button>
+                <button class="btn-secondary" type="button" onclick="loadControlCenterStorage()"><strong>Zobrazit využité místo</strong><small>Ukáže velikost místních dat, provozních záznamů a záloh.</small></button>
+                <button class="btn-secondary" type="button" onclick="previewControlCenterStorageCleanup()"><strong>Zobrazit návrh úklidu</strong><small>Spočítá místní provozní záznamy a zálohy starší 30 dnů. Nic nesmaže.</small></button>
+                <button class="btn-danger" type="button" onclick="runControlCenterStorageCleanup()"><strong>Uklidit staré soubory</strong><small>Po kontrole návrhu a potvrzení smaže místní záznamy a zálohy starší 30 dnů.</small></button>
+                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-infra-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
-              <div class="form-group">
-                <label for="cc-storage-cleanup-confirm">Potvrzení cleanup</label>
-                <input id="cc-storage-cleanup-confirm" type="text" placeholder="PROCEED_CLEANUP" />
-              </div>
-              <div id="cc-infra-result" class="cc-module-result">Čeká na načtení infrastruktury.</div>
+
+              <div id="cc-infra-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-infra-details" class="cc-module-details">
-                <summary>Detail infrastruktury a cleanup</summary>
+                <summary>Podrobnosti provozu a úklidu</summary>
                 <div id="cc-api-monitor-table" class="tool-table-wrap"></div>
                 <div id="cc-webhooks-table" class="tool-table-wrap"></div>
                 <div id="cc-storage-summary-table" class="tool-table-wrap"></div>
                 <div id="cc-storage-preview-table" class="tool-table-wrap"></div>
                 <details class="cc-technical-details">
-                  <summary>Technický detail (JSON)</summary>
+                  <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-infra-technical" class="tool-result cc-technical-result"></pre>
                 </details>
               </details>
             </article>
 
             <article id="cc-module-command" class="cc-module-card">
-              <div class="cc-module-head">
-                <div>
-                  <h3>⌨️ Interní příkazy</h3>
-                  <p>Interní příkazy bez OS shellu. Používejte pouze schválené commandy.</p>
-                </div>
-                <span id="cc-module-command-status" class="cc-status-chip">Ready</span>
+              <h3>🧭 Rychlá pomoc</h3><p>Vyberte, co potřebujete vyřešit. Není potřeba psát žádné příkazy.</p>
+              <div class="operator-quick-actions">
+                <button class="btn-secondary" onclick="focusControlCenterModule('cc-module-health')"><strong>Aplikace nereaguje</strong><small>Zkontrolujte dostupnost jednotlivých služeb.</small></button>
+                <button class="btn-secondary" onclick="focusControlCenterModule('cc-module-users')"><strong>Uživatel se nemůže přihlásit</strong><small>Vyberte účet a ověřte jeho stav nebo změňte heslo.</small></button>
+                <button class="btn-secondary" onclick="focusControlCenterModule('cc-module-jobs')"><strong>Nepřišla připomínka</strong><small>Prověřte automatickou kontrolu termínů a odesílání e-mailů.</small></button>
+                <button class="btn-secondary" onclick="focusControlCenterModule('cc-module-payments')"><strong>Platba nebo licence nesouhlasí</strong><small>Prohlédněte platby a případně zpracujte předplatné.</small></button>
               </div>
-              <div class="form-group">
-                <label for="cc-command">Příkaz</label>
-                <input id="cc-command" type="text" placeholder='např. system.health' />
-              </div>
-              <div class="tool-inline-actions">
-                <button class="btn-primary" type="button" onclick="executeControlCenterCommand()">Spustit příkaz</button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-command-details')">Zobrazit detail</button>
-              </div>
-              <div id="cc-command-summary" class="cc-module-result">Konzole připravena.</div>
-              <details id="cc-command-details" class="cc-module-details">
-                <summary>Detail odpovědi command konzole</summary>
-                <pre id="cc-command-result" class="tool-result cc-technical-result"></pre>
-              </details>
             </article>
           </div>
         </section>
@@ -1090,7 +1070,8 @@
     </div>
   </div>
 
-  <script src="admin.js?v=20260929"></script>
+  <script src="admin.js?v=20260929-2"></script>
   <script src="workspace.js?v=20260929"></script>
+  <script src="operator-panel.js?v=20260929-2"></script>
 </body>
 </html>

@@ -3820,15 +3820,13 @@ def reindex_database(
     email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db)
 ):
-    """Přeindexování databáze - pro SQLite není potřeba, vrací úspěch"""
-    try:
-        # SQLite automaticky udržuje indexy, takže tato operace není nutná
-        # Pro kompatibilitu s TOOZ_SERVICE_HUB vracíme úspěch
-        return {"message": "Databáze je již indexovaná (SQLite)", "success": True}
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při indexování: {str(e)}")
+    """Read-only index inventory; the UI no longer promises a rebuild."""
+    inspector = inspect(db.connection())
+    tables = inspector.get_table_names()
+    count = sum(len(inspector.get_indexes(table)) for table in tables)
+    return {"message": "Struktura databáze byla načtena. Data nebyla změněna.",
+            "success": True, "table_count": len(tables), "index_count": count,
+            "results": [f"Zkontrolované tabulky: {len(tables)}", f"Dostupné indexy: {count}"]}
 
 
 @router.post("/repair")
@@ -3836,15 +3834,29 @@ def repair_database(
     email: str = Depends(require_developer_admin),
     db: Session = Depends(get_db)
 ):
-    """Oprava databáze - pro SQLite není potřeba, vrací úspěch"""
-    try:
-        # SQLite automaticky udržuje integritu, takže tato operace není nutná
-        # Pro kompatibilitu s TOOZ_SERVICE_HUB vracíme úspěch
-        return {"message": "Databáze je v pořádku (SQLite)", "success": True}
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při opravě: {str(e)}")
+    """Check declared foreign keys without modifying customer data."""
+    inspector = inspect(db.connection())
+    quote = db.bind.dialect.identifier_preparer.quote
+    checked, issues = 0, []
+    for table in inspector.get_table_names():
+        for fk in inspector.get_foreign_keys(table):
+            sources, targets = fk['constrained_columns'], fk['referred_columns']
+            if not sources or not targets:
+                continue
+            target_table = quote(fk['referred_table'])
+            if fk.get('referred_schema'):
+                target_table = quote(fk['referred_schema']) + '.' + target_table
+            # MATCH SIMPLE: a nullable member exempts the complete relationship.
+            nonnull = ' AND '.join(f's.{quote(c)} IS NOT NULL' for c in sources)
+            match = ' AND '.join(f's.{quote(a)} = t.{quote(b)}' for a, b in zip(sources, targets))
+            query = f'SELECT COUNT(*) FROM {quote(table)} s WHERE {nonnull} AND NOT EXISTS (SELECT 1 FROM {target_table} t WHERE {match})'
+            missing = db.execute(text(query)).scalar_one()
+            checked += 1
+            if missing:
+                issues.append({"table": table, "target": fk['referred_table'], "missing": missing})
+    return {"success": bool(checked) and not issues, "checked_relationships": checked, "issues": issues,
+            "message": "Nalezeny chybějící vazby. Data nebyla změněna; předejte výsledek správci." if issues else ("Kontrola definovaných vazeb dokončena bez chyb. Data nebyla změněna." if checked else "Databáze nemá definované vazby pro tuto kontrolu. Správnost propojení dat nelze tímto způsobem ověřit."),
+            "results": [f"Prověřené vazby: {checked}"] + [f"{i['table']} → {i['target']}: chybí {i['missing']} vazeb" for i in issues]}
 
 
 @router.get("/db-info", response_model=DbInfoResponse)
@@ -3940,9 +3952,9 @@ def init_default_admin_settings(
 ):
     """Inicializuje výchozí nastavení administrace."""
     try:
-        defaults = get_default_admin_settings()
-        save_admin_settings(defaults)
-        return {"message": "Výchozí nastavení byla vytvořena", "settings": defaults}
+        settings = load_admin_settings()  # Merges defaults while preserving saved values.
+        save_admin_settings(settings)
+        return {"message": "Chybějící nastavení byla doplněna", "settings": settings}
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -4034,6 +4046,7 @@ def get_control_center_health(
         if db_path and db_path.exists():
             db_file_size = db_path.stat().st_size
 
+        job_states = {j["name"]: j for j in get_control_center_jobs(email=email, db=db)["jobs"]}
         return {
             "components": {
                 "api": {"status": "ok"},
@@ -4049,11 +4062,11 @@ def get_control_center_health(
                     "smtp_from_configured": smtp_from_configured,
                 },
                 "background_jobs": {
-                    "status": "ok",
+                    "status": "ok" if all(j["effective_enabled"] for j in job_states.values()) else "warning",
                     "reminders_worker_enabled": os.getenv("ENABLE_REMINDER_NOTIFICATION_WORKER", "1") in {"1", "true", "True"},
                     "license_worker_enabled": os.getenv("ENABLE_LICENSE_SUBSCRIPTION_WORKER", "1") in {"1", "true", "True"},
-                    "reminders_worker_paused": is_job_paused("reminders.notification.check"),
-                    "license_worker_paused": is_job_paused("license.subscription.cycle"),
+                    "reminders_worker_paused": job_states["reminders.notification.check"]["is_paused"],
+                    "license_worker_paused": job_states["license.subscription.cycle"]["is_paused"],
                 },
                 "api_monitor": {
                     "status": "ok",
@@ -5598,8 +5611,8 @@ def get_control_center_jobs(
             max(60, int(os.getenv("REMINDER_NOTIFICATION_WORKER_INTERVAL_SEC", "300"))),
         ),
     ]:
-        paused = is_job_paused(name)
         pause_meta = get_job_pause_metadata(name)
+        paused = bool(pause_meta.get("paused"))
         jobs.append(
             {
                 "name": name,
@@ -5634,7 +5647,7 @@ def run_control_center_job(
         if is_job_paused(job_name) and not force_run:
             raise HTTPException(
                 status_code=409,
-                detail=f"Job '{job_name}' je pozastaven. Použijte force=true nebo jej obnovte.",
+                detail="Kontrola je pozastavená. Nejdříve obnovte její automatický běh.",
             )
 
         if job_name == "license.subscription.cycle":
@@ -5707,6 +5720,10 @@ def resume_control_center_job(
     db: Session = Depends(get_db),
 ):
     job_name = resolve_job_name(payload.job_name)
+    env_key = {"license.subscription.cycle": "ENABLE_LICENSE_SUBSCRIPTION_WORKER",
+               "reminders.notification.check": "ENABLE_REMINDER_NOTIFICATION_WORKER"}[job_name]
+    if os.getenv(env_key, "1") not in {"1", "true", "True"}:
+        raise HTTPException(409, "Automatika je vypnutá v nastavení serveru. Obnovení v administraci ji nezapne.")
     set_job_paused(job_name, False, actor_email=email, reason=payload.reason)
     log_developer_action(
         db,

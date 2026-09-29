@@ -1,0 +1,16 @@
+// Isolated UI control tests; no browser, network, mail or production data.
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+function panel() {
+  const noop=()=>{};
+  const ctx={document:{readyState:'loading',addEventListener:noop,querySelectorAll:()=>[],getElementById:()=>null},window:{},setControlCenterState:noop,saveAllSettings:noop,renderSettingsCategory:noop,controlCenterDataState:{jobs:{jobs:[{name:'reminders.notification.check',env_enabled:true,is_paused:false}]}},Option:function(text,value){this.text=text;this.value=value;},apiRequest:async(...args)=>{ctx.calls.push(args);return {result:{notifications_sent:2,errors:0}};},calls:[],getControlCenterSelectedUserId:()=>1,showGlobalError:noop};
+  vm.createContext(ctx);vm.runInContext(fs.readFileSync('web_admin/operator-panel.js','utf8'),ctx);
+  ctx.operatorConfirm=async()=>null;ctx.renderOperatorJobs=noop;ctx.loadControlCenterJobs=async()=>{};ctx.opResult=(id,text,error)=>ctx.result={id,text,error};return ctx;
+}
+test('cancel never starts a job or account mutation',async()=>{const p=panel();await p.operatorJobAction('reminders.notification.check','run');assert.equal(p.calls.length,0);p.controlCenterDataState.users=[{id:1,email:'test@example.com'}];await p.operatorAccountAction('disable');assert.equal(p.calls.length,0);});
+test('confirmed job reports actual notification count',async()=>{const p=panel();p.operatorConfirm=async()=>({reason:null});await p.operatorJobAction('reminders.notification.check','run');assert.equal(p.calls.length,1);assert.equal(p.calls[0][1],'/admin-api/control-center/jobs/run');assert.match(p.result.text,/Odeslaná oznámení: 2/);});
+test('paused and server-disabled states do not offer invalid resume or run',async()=>{const p=panel();assert.equal(p.operatorJobView({env_enabled:false,is_paused:false}).resume,false);p.controlCenterDataState.jobs.jobs[0].is_paused=true;p.operatorConfirm=async()=>({});await p.operatorJobAction('reminders.notification.check','run');assert.equal(p.calls.length,0);assert.equal(p.result.error,true);});
+test('duplicate click does not send duplicate requests',async()=>{const p=panel();let release;p.operatorConfirm=()=>new Promise(r=>release=r);const first=p.operatorJobAction('reminders.notification.check','run');await p.operatorJobAction('reminders.notification.check','run');release({});await first;assert.equal(p.calls.length,1);});
+test('refresh preserves chosen backup using its actual identifier',()=>{const p=panel();const element={value:'backup-b',options:[],replaceChildren(o){this.options=[o];},append(o){this.options.push(o);}};p.document.getElementById=id=>id==='cc-restore-backup-id'?element:null;p.formatDateTime=()=>'';p.setControlCenterState('backups',{items:[{backup_id:'backup-a'},{backup_id:'backup-b'}]});assert.equal(element.value,'backup-b');assert.deepEqual(element.options.map(o=>o.value),['','backup-a','backup-b']);});
