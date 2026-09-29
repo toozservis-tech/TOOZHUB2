@@ -10,9 +10,11 @@ Vyberte období a tarif, zkontrolujte konečnou cenu, samostatně potvrďte souh
 
 ## Dokončení připojení původního obchodu
 
-Původní schválený obchod `toozservis.cz`, propojení `507933`. Přihlašovací údaje dosud nejsou v obnoveném projektu. Před aktivací je nutné ověřit v přihlášeném Comgate:
+Původní schválený obchod `toozservis.cz`, propojení `507933`. Dne 29. 9. 2026 byly po schválení vlastníkem uloženy původní údaje pouze do serverového nastavení, v portálu byly změněny návratové adresy a potvrzování plateb na `app.toozservis.cz`. Povolené IP jsou aktuální rozsahy Renderu `74.220.51.0/24` a `74.220.59.0/24`; původní IP byla nahrazena. Skutečné spojení přes seznam platebních metod bylo potvrzeno ve webové administraci i v iOS. Testovací režim zůstává zapnutý.
 
-- identifikátor a klíč propojení (uložit pouze na server), oprávnění pro opakované karetní platby;
+Před ostrým provozem je nutné dokončit:
+
+- ověření oprávnění pro opakované karetní platby;
 - povolené odchozí IP adresy nasazeného serveru (nepovolovat plošně všechny IP);
 - potvrzování výsledku: `https://app.toozservis.cz/api/v1/license/comgate/result`;
 - všechny návratové adresy: `https://app.toozservis.cz/web/payment-return.html`;
@@ -26,5 +28,7 @@ Klíč ani platné odkazy na platbu nepatří do Gitu. Aktivní propojení v por
 Server kontroluje cenu, měnu, obchod, identifikátor, referenci a testovací režim oproti uložené objednávce. Aktivuje pouze PAID, nikoli AUTHORIZED. Testovací úhrada je pouze auditní záznam. Aktivace licence a potvrzení platby se zapisují v jedné transakci. Souhlasy zůstávají dohledatelné. Stejné ID objednávky nevolá založení platby podruhé. Nejasný výsledek při výpadku zůstává rezervován pro kontrolu správcem – automatické opakování by mohlo zákazníka zpoplatnit dvakrát. Pravidelné platby mají samostatnou rezervaci pro každé období a čekající transakce se ověřuje, nezakládá znovu.
 
 ## Ověření
+
+Přesný serverový commit bez jiných rozpracovaných změn: 100 úspěšných testů. Offline iOS: 5 úspěšných kontrol navigace a souhlasů. Sestavení pro simulátor a nepodepsané zařízení uspělo.
 
 Izolované testy: `tests/api/test_mobile_billing.py`, původní `test_license_comgate_utils.py`, viditelnost plateb, role administrátorů a veřejné výjimky webu. Žádné skutečné platby ani e-maily. Nativní formulář se ověřuje v oddělené offline instalaci s `--preview-billing`; tato ukázka nesmí nic odeslat. Testy navigace zůstávají zachované.
