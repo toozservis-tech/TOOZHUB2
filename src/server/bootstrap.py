@@ -373,6 +373,8 @@ def _include_feature_routers(app: FastAPI) -> None:
 
 
 def _mount_static_directories(app: FastAPI) -> None:
+    from src.server.web_access import AdminStaticFiles, router as web_access_router
+    app.include_router(web_access_router)
     try:
         if public_path.exists():
             app.mount("/public", StaticFiles(directory=str(public_path)), name="public_static")
@@ -383,9 +385,9 @@ def _mount_static_directories(app: FastAPI) -> None:
     try:
         admin_web_path = Path(__file__).parent.parent.parent / "web_admin"
         if admin_web_path.exists():
-            app.mount("/web_admin", StaticFiles(directory=str(admin_web_path), html=True), name="web_admin")
+            app.mount("/web_admin", AdminStaticFiles(directory=str(admin_web_path), html=True), name="web_admin")
             print(f"[SERVER] Admin web zaregistrován: /web_admin/ (directory: {admin_web_path})")
-            app.mount("/admin-static", StaticFiles(directory=str(admin_web_path)), name="admin_static")
+            app.mount("/admin-static", AdminStaticFiles(directory=str(admin_web_path)), name="admin_static")
             print(f"[SERVER] Admin static files zaregistrovány: /admin-static/ (directory: {admin_web_path})")
     except (OSError, ValueError) as exc:
         print(f"[SERVER] Warning: Could not mount admin web directory: {exc}")
@@ -393,7 +395,7 @@ def _mount_static_directories(app: FastAPI) -> None:
     try:
         web_path = Path(__file__).parent.parent.parent / "web"
         if web_path.exists():
-            app.mount("/web", StaticFiles(directory=str(web_path), html=True), name="web")
+            app.mount("/web", AdminStaticFiles(directory=str(web_path), html=True, public_pages={"reset-password.html", "verify-email.html"}), name="web")
             print(f"[SERVER] Web interface zaregistrován: /web/ (directory: {web_path})")
         else:
             print(f"[SERVER] WARNING: Web directory not found: {web_path}")

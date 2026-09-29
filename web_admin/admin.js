@@ -4691,9 +4691,10 @@ async function handleAdminLogin(event) {
   }
 }
 
-function handleAdminLogout() {
+async function handleAdminLogout() {
+  await fetch('/admin-web-session', {method: 'DELETE'});
   clearAuthToken();
-  showLoginScreen();
+  location.replace('/admin-login');
 }
 
 function showLoginScreen() {
