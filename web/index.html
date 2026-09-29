@@ -14469,16 +14469,27 @@
                     const paymentEnabled = !!(comgateConfig && comgateConfig.enabled);
                     if (!paymentEnabled || !Number.isFinite(planPrice) || planPrice <= 0) {
                         throw new Error(
-                            'Comgate ještě není aktivní. Doplňte COMGATE_ENABLED=1, COMGATE_MERCHANT, COMGATE_SECRET a restartujte API.'
+                            'Online platby zatím nejsou připravené. Dokončete nastavení brány v administraci.'
                         );
                     }
                     if (button) {
                         button.textContent = "Přesměrování na platbu…";
                     }
-                    const checkoutPayload = await apiCall('/api/v1/license/comgate/checkout', 'POST', {
-                        plan: planKey,
-                        billing_period: billingPeriod,
+                    const quote = await apiCall('/api/v1/license/mobile/quote', 'POST', {plan: planKey, billing_period: billingPeriod});
+                    const priceText = new Intl.NumberFormat('cs-CZ', {style:'currency', currency:quote.currency}).format(quote.amount_halers / 100);
+                    if (!window.confirm(`${quote.test_mode ? 'TESTOVACÍ PLATBA. ' : ''}Objednat ${planKey.toUpperCase()} za ${priceText}? ${quote.recurring ? 'Platba se opakuje podle zvoleného období až do vypnutí prodlužování.' : 'Jednorázová úhrada bez automatického prodlužování.'}`)) return;
+                    const key = 'billing-order-' + String(currentUser?.email || '') + '-' + planKey + '-' + billingPeriod;
+                    let requestId = sessionStorage.getItem(key);
+                    if (!requestId) { requestId = crypto.randomUUID(); sessionStorage.setItem(key, requestId); }
+                    const checkoutPayload = await apiCall('/api/v1/license/mobile/checkout', 'POST', {
+                        plan: planKey, billing_period: quote.billing_period, request_id: requestId,
+                        expected_amount_halers: quote.amount_halers, expected_currency: quote.currency,
+                        expected_test_mode: quote.test_mode, contract_version: quote.contract_version,
+                        accept_terms: !!document.getElementById('licenseAgreeTerms')?.checked,
+                        accept_immediate_service: !!document.getElementById('licenseAgreeDigitalStart')?.checked,
+                        accept_recurring: !!document.getElementById('licenseAgreeDigitalStart')?.checked,
                     });
+                    sessionStorage.removeItem(key);
                     const requiresPayment = !(checkoutPayload && checkoutPayload.requires_payment === false);
                     if (!requiresPayment) {
                         hideLicenseLegalConsentForPaidPlan();

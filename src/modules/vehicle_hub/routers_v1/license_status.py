@@ -8,9 +8,10 @@ import json
 import logging
 import os
 import secrets
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -128,6 +129,10 @@ class ComgateConfigResponse(BaseModel):
 class ComgateCheckoutRequest(BaseModel):
     plan: str
     billing_period: str = "monthly"
+    checkout_ref: Optional[str] = None
+    expected_amount: Optional[int] = None
+    expected_currency: Optional[str] = None
+    expected_test_mode: Optional[bool] = None
 
 
 class ComgateCheckoutResponse(BaseModel):
@@ -426,10 +431,8 @@ def _request_backend_public_url(request: Request) -> str:
 
 def _build_frontend_return_url(plan: str, status: str, billing_period: str) -> str:
     base = _request_frontend_base_url()
-    if base.endswith("/web/index.html"):
-        page = base
-    else:
-        page = f"{base}/web/index.html"
+    base = base.removesuffix("/web/index.html")
+    page = f"{base}/web/payment-return.html"
     query = urlencode(
         {
             "payment_provider": "comgate",
@@ -450,7 +453,7 @@ def _post_comgate(url: str, payload: Dict[str, str]) -> Dict[str, str]:
     try:
         response = httpx.post(url, data=payload, headers=headers, timeout=15.0)
     except httpx.RequestError as exc:
-        raise HTTPException(status_code=503, detail=f"Comgate není dostupný: {exc}") from exc
+        raise HTTPException(status_code=503, detail="Platební brána není dostupná. Ověřte stav objednávky před další platbou.") from exc
 
     text = response.text or ""
     data = _parse_comgate_response_text(text)
@@ -459,7 +462,9 @@ def _post_comgate(url: str, payload: Dict[str, str]) -> Dict[str, str]:
         message = data.get("message") or text[:300] or f"HTTP {response.status_code}"
         raise HTTPException(status_code=502, detail=f"Comgate chyba: {message}")
 
-    return data
+    # Status responses echo the merchant secret and payer details. Never retain them.
+    return {key: value for key, value in data.items()
+            if key.lower() not in {"secret", "payeracc", "payername", "cardnumber", "cardvalid"}}
 
 
 def _resolve_plan_from_status_payload(status_payload: Dict[str, str]) -> Optional[str]:
@@ -846,7 +851,7 @@ def _serialize_subscription(
 
 
 def _get_subscription(db: Session, tenant_id: int) -> Optional[LicenseSubscription]:
-    return db.query(LicenseSubscription).filter(LicenseSubscription.tenant_id == tenant_id).first()
+    return db.query(LicenseSubscription).filter(LicenseSubscription.tenant_id == tenant_id).with_for_update().first()
 
 
 def _upsert_subscription(db: Session, tenant_id: int) -> LicenseSubscription:
@@ -888,6 +893,12 @@ def _record_payment_transaction(
             .filter(LicensePaymentTransaction.trans_id == trans_id)
             .first()
         )
+    if not tx and ref_id:
+        tx = db.query(LicensePaymentTransaction).filter(
+            LicensePaymentTransaction.ref_id == ref_id,
+            LicensePaymentTransaction.tenant_id == tenant_id,
+            LicensePaymentTransaction.trans_id.is_(None),
+        ).first()
     if not tx:
         tx = LicensePaymentTransaction(
             tenant_id=tenant_id,
@@ -895,6 +906,7 @@ def _record_payment_transaction(
             trans_id=trans_id,
         )
         db.add(tx)
+    tx.trans_id = trans_id
     tx.tenant_id = tenant_id
     tx.provider = provider
     tx.ref_id = ref_id
@@ -905,7 +917,9 @@ def _record_payment_transaction(
     tx.event_type = event_type
     tx.provider_status = provider_status
     if payload is not None:
-        tx.payload_json = json.dumps(payload, ensure_ascii=False)[:20000]
+        previous = json.loads(tx.payload_json or "{}")
+        previous.update({key: value for key, value in payload.items() if key.lower() not in {"secret", "payeracc", "payername", "cardnumber", "cardvalid"}})
+        tx.payload_json = json.dumps(previous, ensure_ascii=False)
     tx.updated_at = _utcnow()
     return tx
 
@@ -918,7 +932,7 @@ def _is_trans_already_paid(db: Session, trans_id: str) -> bool:
     )
     if not existing:
         return False
-    return str(existing.event_type or "").strip().lower() in {"paid_confirmed", "renewal_paid"}
+    return str(existing.event_type or "").strip().lower() in {"paid_confirmed", "renewal_paid", "test_paid_confirmed"}
 
 
 def _notification_targets_for_tenant(db: Session, tenant_id: int) -> List[Customer]:
@@ -1019,7 +1033,7 @@ def _activate_subscription_from_paid_payment(
 ) -> LicenseSubscription:
     paid_at = _utcnow()
     # Nejprve nastavíme feature/licenci.
-    upgrade_license_plan(db, tenant_id, plan)
+    upgrade_license_plan(db, tenant_id, plan, commit=False)
 
     subscription = _upsert_subscription(db, tenant_id)
     subscription.provider = "comgate"
@@ -1046,8 +1060,7 @@ def _activate_subscription_from_paid_payment(
     subscription.notified_period_d1_at = None
     subscription.updated_at = paid_at
     db.add(subscription)
-    db.commit()
-    db.refresh(subscription)
+    db.flush()
     return subscription
 
 
@@ -1060,7 +1073,7 @@ def _activate_legacy_manual_subscription_from_paid_payment(
     trans_id: str,
 ) -> LicenseSubscription:
     paid_at = _utcnow()
-    upgrade_license_plan(db, tenant_id, plan)
+    upgrade_license_plan(db, tenant_id, plan, commit=False)
 
     subscription = _upsert_subscription(db, tenant_id)
     subscription.provider = "comgate"
@@ -1086,8 +1099,7 @@ def _activate_legacy_manual_subscription_from_paid_payment(
     subscription.notified_period_d1_at = None
     subscription.updated_at = paid_at
     db.add(subscription)
-    db.commit()
-    db.refresh(subscription)
+    db.flush()
     return subscription
 
 
@@ -1103,7 +1115,7 @@ def _apply_legacy_quote_without_payment(
     billing_period = _normalize_billing_period_soft(str(quote.get("billing_period") or subscription.billing_period), default="monthly")
     keep_period_boundaries = bool(quote.get("keep_period_boundaries"))
 
-    upgrade_license_plan(db, tenant_id, target_plan)
+    upgrade_license_plan(db, tenant_id, target_plan, commit=False)
     subscription.provider = "comgate"
     subscription.status = "legacy_manual"
     subscription.plan_current = target_plan
@@ -1150,8 +1162,7 @@ def _apply_legacy_quote_without_payment(
         payload={"legacy_quote": quote},
     )
 
-    db.commit()
-    db.refresh(subscription)
+    db.flush()
     return subscription
 
 
@@ -1176,7 +1187,7 @@ def _apply_legacy_quote_after_paid_callback(
         paid_amount_halers=int(paid_amount_halers),
     )
 
-    upgrade_license_plan(db, tenant_id, target_plan)
+    upgrade_license_plan(db, tenant_id, target_plan, commit=False)
     subscription.provider = "comgate"
     subscription.status = "legacy_manual"
     subscription.plan_current = target_plan
@@ -1228,82 +1239,59 @@ def _build_renewal_ref_id(tenant_id: int, plan: str, billing_period: str = "mont
 
 
 def _charge_subscription_recurring(
-    *,
-    cfg: Dict[str, object],
-    runtime_cfg: Dict[str, object],
-    subscription: LicenseSubscription,
-    tenant_id: int,
-    plan: str,
-    billing_period: str,
+    *, cfg: Dict[str, object], runtime_cfg: Dict[str, object], subscription: LicenseSubscription,
+    tenant_id: int, plan: str, billing_period: str, db: Session,
 ) -> Dict[str, object]:
-    init_recurring_id = str(subscription.init_recurring_id or "").strip()
-    if not init_recurring_id:
+    # One durable reservation per renewal period, including network failures.
+    if not subscription.init_recurring_id:
         return {"ok": False, "reason": "missing_init_recurring_id"}
-
-    price = _price_for_plan(cfg, plan, billing_period)
-    if price <= 0:
-        return {"ok": False, "reason": "missing_price"}
-
-    recurring_payload = {
-        "merchant": str(cfg["merchant"]),
-        "secret": str(cfg["secret"]),
-        "initRecurringId": init_recurring_id,
-        "price": str(price),
-        "curr": str(cfg["currency"]),
-        "label": f"{APP_DISPLAY_NAME} {plan.upper()} {'MĚSÍČNĚ' if billing_period == 'monthly' else 'ROČNĚ'}",
-        "refId": _build_renewal_ref_id(tenant_id, plan, billing_period),
-        "test": "1" if bool(cfg["test_mode"]) else "0",
-    }
-
-    recurring_result = _post_comgate(str(runtime_cfg["recurring_url"]), recurring_payload)
-    if str(recurring_result.get("code", "")) != "0":
-        return {
-            "ok": False,
-            "reason": recurring_result.get("message") or "recurring_create_failed",
-            "provider_payload": recurring_result,
-        }
-
-    trans_id = str(recurring_result.get("transId") or "").strip()
-    if not trans_id:
-        return {
-            "ok": False,
-            "reason": "missing_trans_id",
-            "provider_payload": recurring_result,
-        }
-
-    status_result = _post_comgate(
-        str(cfg["status_url"]),
-        {
-            "merchant": str(cfg["merchant"]),
-            "secret": str(cfg["secret"]),
-            "transId": trans_id,
-            "test": "1" if bool(cfg["test_mode"]) else "0",
-        },
-    )
-    payment_status = str(status_result.get("status") or "").strip().upper()
-    if payment_status != "PAID":
-        return {
-            "ok": False,
-            "reason": f"status_{payment_status or 'unknown'}",
-            "trans_id": trans_id,
-            "provider_payload": status_result,
-        }
-
-    paid_price = _safe_int(status_result.get("price"))
-    if paid_price is not None and paid_price != price:
-        return {
-            "ok": False,
-            "reason": "price_mismatch",
-            "trans_id": trans_id,
-            "provider_payload": status_result,
-        }
-
-    return {
-        "ok": True,
-        "trans_id": trans_id,
-        "paid_price": paid_price if paid_price is not None else price,
-        "provider_payload": status_result,
-    }
+    if cfg["test_mode"]:
+        return {"ok": False, "pending": True, "reason": "test_mode_no_live_renewal"}
+    cycle = _to_iso(subscription.current_period_end)
+    reference = f"S{subscription.id}-{subscription.current_period_end.strftime('%Y%m%d%H%M%S')}"
+    tx = db.query(LicensePaymentTransaction).filter(
+        LicensePaymentTransaction.tenant_id == tenant_id, LicensePaymentTransaction.ref_id == reference
+    ).with_for_update().first()
+    if tx is None:
+        price = _price_for_plan(cfg, plan, billing_period)
+        if price <= 0:
+            return {"ok": False, "reason": "missing_price"}
+        tx = _record_payment_transaction(db, tenant_id=tenant_id, provider="comgate", trans_id=None,
+            ref_id=reference, plan=plan, billing_period=billing_period, amount_halers=price,
+            currency=str(cfg["currency"]), event_type="renewal_started", provider_status="CREATING",
+            payload={"renewal_cycle": cycle, "checkout_test_mode": False})
+        db.commit()
+        result = _post_comgate(str(runtime_cfg["recurring_url"]).replace("/v2.0/", "/v1.0/"), {
+            "merchant": str(cfg["merchant"]), "secret": str(cfg["secret"]),
+            "initRecurringId": str(subscription.init_recurring_id), "price": str(price),
+            "curr": str(cfg["currency"]), "label": f"SV {plan.upper()}", "refId": reference, "test": "false"})
+        if str(result.get("code", "")) != "0":
+            tx.provider_status = "CANCELLED"; tx.event_type = "renewal_declined"; db.commit()
+            return {"ok": False, "reason": "gateway_declined"}
+        tx.trans_id = str(result.get("transId") or "").strip() or None
+        tx.event_type = "renewal_pending"; tx.provider_status = "PENDING"; db.commit()
+    if tx.provider_status == "CANCELLED":
+        return {"ok": False, "reason": "renewal_cancelled"}
+    if not tx.trans_id:
+        return {"ok": False, "pending": True, "reason": "unknown_outcome_requires_review"}
+    status = _post_comgate(str(cfg["status_url"]), {"merchant": str(cfg["merchant"]),
+                          "secret": str(cfg["secret"]), "transId": tx.trans_id})
+    if (str(status.get("code")) != "0" or str(status.get("merchant")) != str(cfg["merchant"])
+        or status.get("transId") != tx.trans_id or status.get("refId") != reference
+        or str(status.get("test")).lower() not in {"0", "false"}
+        or status.get("curr") != tx.currency or _safe_int(status.get("price")) != tx.amount_halers):
+        return {"ok": False, "pending": True, "reason": "unverified_renewal"}
+    tx.provider_status = status.get("status")
+    db.flush()
+    if tx.provider_status != "PAID":
+        db.commit()
+        return {"ok": False, "pending": tx.provider_status != "CANCELLED", "reason": "awaiting_payment"}
+    # Reacquire after network/commits: another worker may already have applied this cycle.
+    current = db.query(LicenseSubscription).filter(LicenseSubscription.id == subscription.id) \
+        .with_for_update().populate_existing().one()
+    if _to_iso(current.current_period_end) != cycle:
+        return {"ok": False, "pending": True, "reason": "cycle_already_applied"}
+    return {"ok": True, "trans_id": tx.trans_id, "plan": tx.plan, "billing_period": tx.billing_period, "paid_price": tx.amount_halers, "provider_payload": status}
 
 
 def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
@@ -1336,6 +1324,10 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
 
     for subscription in subscriptions:
         try:
+            subscription = db.query(LicenseSubscription).filter(LicenseSubscription.id == subscription.id) \
+                .with_for_update(skip_locked=True).populate_existing().first()
+            if subscription is None:
+                continue
             tenant_id = int(subscription.tenant_id)
             plan = _normalize_plan_soft(subscription.plan_current, default="free")
             billing_period = _normalize_billing_period_soft(subscription.billing_period, default="monthly")
@@ -1382,7 +1374,7 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
 
             # Grace expirovala -> downgrade na FREE
             if status == "grace" and subscription.grace_until and subscription.grace_until <= now:
-                upgrade_license_plan(db, tenant_id, "free")
+                upgrade_license_plan(db, tenant_id, "free", commit=False)
                 subscription.status = "canceled"
                 subscription.auto_renew_enabled = False
                 subscription.plan_current = "free"
@@ -1424,28 +1416,33 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
                     continue
 
                 result = _charge_subscription_recurring(
+                    db=db,
                     cfg=cfg,
                     runtime_cfg=runtime_cfg,
                     subscription=subscription,
                     tenant_id=tenant_id,
-                    plan=plan,
+                    plan=_normalize_plan(subscription.pending_plan_change or plan),
                     billing_period=billing_period,
                 )
+                if result.get("pending"):
+                    db.commit()
+                    continue
                 if result.get("ok"):
                     trans_id = str(result.get("trans_id") or "").strip()
-                    resolved_plan = _normalize_plan(subscription.pending_plan_change or plan)
-                    upgrade_license_plan(db, tenant_id, resolved_plan)
+                    resolved_plan = _normalize_plan(str(result.get("plan") or subscription.pending_plan_change or plan))
+                    upgrade_license_plan(db, tenant_id, resolved_plan, commit=False)
                     period_start = subscription.current_period_end or now
                     if period_start < now - timedelta(days=3):
                         period_start = now
                     period_end = _add_billing_period(period_start, billing_period)
 
-                    subscription.status = "active"
+                    subscription.status = "active" if subscription.auto_renew_enabled else "cancel_at_period_end"
                     subscription.plan_current = resolved_plan
-                    subscription.pending_plan_change = None
+                    if subscription.pending_plan_change == resolved_plan:
+                        subscription.pending_plan_change = None
                     subscription.current_period_start = period_start
                     subscription.current_period_end = period_end
-                    subscription.next_charge_at = period_end
+                    subscription.next_charge_at = period_end if subscription.auto_renew_enabled else None
                     subscription.last_payment_at = now
                     subscription.last_trans_id = trans_id
                     subscription.failed_renewal_attempts = 0
@@ -1630,6 +1627,8 @@ def resume_subscription_endpoint(
     if not str(subscription.init_recurring_id or "").strip():
         raise HTTPException(status_code=409, detail="Předplatné nelze obnovit bez recurring tokenu. Proveďte novou platbu.")
 
+    if subscription.current_period_end and subscription.current_period_end <= _utcnow():
+        raise HTTPException(409, "Předplatné již skončilo. Vytvořte novou objednávku.")
     subscription.auto_renew_enabled = True
     subscription.status = "active"
     subscription.cancel_requested_at = None
@@ -1670,6 +1669,11 @@ def change_subscription_plan_endpoint(
         status = get_license_status(db, tenant_id, current_user.email)
         status["subscription"] = _serialize_subscription(subscription, license_plan=status.get("plan", "free"))
         return LicenseStatusResponse(**status)
+
+    if target_plan != "free" and not subscription.init_recurring_id:
+        raise HTTPException(409, "Tento tarif nemá automatické prodlužování. Vyberte novou objednávku.")
+    if subscription.current_period_end and subscription.current_period_end <= _utcnow():
+        raise HTTPException(409, "Předplatné již skončilo. Vytvořte novou objednávku.")
 
     if target_plan == "free":
         subscription.pending_plan_change = "free"
@@ -1724,7 +1728,19 @@ def get_comgate_config(
     )
 
 
-@router.post("/comgate/checkout", response_model=ComgateCheckoutResponse)
+def _valid_gateway_url(value: str) -> bool:
+    url = urlparse(value)
+    return bool(url.scheme == "https" and not url.username and not url.password
+                and re.fullmatch(r"(?:payments|pay[1-6])\.comgate\.(?:cz|eu)", url.hostname or ""))
+
+
+def _check_checkout_quote(payload, cfg, amount):
+    if (payload.expected_amount is not None and payload.expected_amount != amount
+        or payload.expected_currency is not None and payload.expected_currency != cfg["currency"]
+        or payload.expected_test_mode is not None and payload.expected_test_mode != cfg["test_mode"]):
+        raise HTTPException(409, "Cena nebo režim se změnily. Načtěte objednávku znovu.")
+
+
 def create_comgate_checkout(
     payload: ComgateCheckoutRequest,
     request: Request,
@@ -1748,11 +1764,7 @@ def create_comgate_checkout(
     if not cfg["configured"]:
         raise HTTPException(
             status_code=503,
-            detail=(
-                "Comgate není nakonfigurovaný. Nastavte COMGATE_ENABLED=1, COMGATE_MERCHANT, "
-                "COMGATE_SECRET, COMGATE_PRICE_BASIC_HALERS, COMGATE_PRICE_PREMIUM_HALERS "
-                "a volitelně COMGATE_PRICE_BASIC_YEARLY_HALERS/COMGATE_PRICE_PREMIUM_YEARLY_HALERS."
-            ),
+            detail="Online platby zatím nejsou dostupné. Zkuste to později nebo kontaktujte podporu.",
         )
 
     if tenant_id > _COMGATE_REF_MAX_TENANT_ID:
@@ -1776,6 +1788,9 @@ def create_comgate_checkout(
             default=billing_period,
         )
         price = int(legacy_quote.get("charge_amount_halers") or 0)
+        _check_checkout_quote(payload, cfg, price)
+        if cfg["test_mode"] and price <= 0:
+            raise HTTPException(409, "Přepočet kreditu nelze provést testovací platbou.")
         if price <= 0:
             applied_subscription = _apply_legacy_quote_without_payment(
                 db,
@@ -1800,6 +1815,7 @@ def create_comgate_checkout(
             )
     else:
         price = _price_for_plan(cfg, plan, billing_period)
+        _check_checkout_quote(payload, cfg, price)
 
     if price <= 0:
         raise HTTPException(
@@ -1807,7 +1823,7 @@ def create_comgate_checkout(
             detail=f"Cena plánu {plan.upper()} ({effective_billing_period}) není nastavena.",
         )
 
-    ref_id = _build_comgate_ref_id(tenant_id_int, plan, effective_billing_period)
+    ref_id = payload.checkout_ref or _build_comgate_ref_id(tenant_id_int, plan, effective_billing_period)
     full_name = str(getattr(current_user, "name", "") or "").strip() or str(current_user.email).strip()
     phone_raw = str(getattr(current_user, "phone", "") or "").strip()
     phone = phone_raw.replace(" ", "")
@@ -1819,7 +1835,10 @@ def create_comgate_checkout(
         "prepareOnly": "true",
         "price": str(price),
         "curr": str(cfg["currency"]),
-        "label": f"{APP_DISPLAY_NAME} {plan.upper()} {'MĚSÍČNĚ' if effective_billing_period == 'monthly' else 'ROČNĚ'}",
+        "label": f"SV {plan.upper()}",
+        "name": f"SprávaVozidel {plan.upper()} {effective_billing_period}",
+        "delivery": "ELECTRONIC_DELIVERY",
+        "category": "OTHER",
         "refId": ref_id,
         "method": str(cfg.get("subscription_method") or "CARD"),
         "country": str(cfg["country"]),
@@ -1831,7 +1850,6 @@ def create_comgate_checkout(
         "url_paid": _build_frontend_return_url(plan, "paid", effective_billing_period),
         "url_cancelled": _build_frontend_return_url(plan, "cancelled", effective_billing_period),
         "url_pending": _build_frontend_return_url(plan, "pending", effective_billing_period),
-        "url_result": f"{_request_backend_public_url(request)}/api/v1/license/comgate/result",
     }
     if phone:
         create_payload["phone"] = phone
@@ -1867,19 +1885,20 @@ def create_comgate_checkout(
                 effective_billing_period,
             )
             create_result = _post_comgate(str(cfg["create_url"]), fallback_payload)
-            create_result["_non_recurring_fallback"] = "1"
+            create_result["_non_recurring_fallback"] = "1" if can_try_test_fallback else "0"
             if str(create_result.get("code", "")) != "0":
                 fallback_message = create_result.get("message") or "Neznámá chyba vytvoření test fallback platby"
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Comgate odmítl fallback platbu: {fallback_message} (původně: {message})",
+                    detail="Platební brána objednávku odmítla. Zavřete objednávku a kontaktujte podporu.",
+                    headers={"X-Comgate-Not-Created": "1"},
                 )
         else:
-            raise HTTPException(status_code=502, detail=f"Comgate odmítl vytvoření platby: {message}")
+            raise HTTPException(status_code=502, detail="Platební brána objednávku odmítla. Zavřete objednávku a kontaktujte podporu.", headers={"X-Comgate-Not-Created": "1"})
 
     trans_id = str(create_result.get("transId") or "").strip()
     redirect_url = str(create_result.get("redirect") or "").strip()
-    if not trans_id or not redirect_url:
+    if not trans_id or urlparse(redirect_url).scheme != "https" or not _valid_gateway_url(redirect_url):
         raise HTTPException(status_code=502, detail="Comgate nevrátil transId nebo redirect URL.")
 
     fallback_non_recurring = str(
@@ -1888,6 +1907,8 @@ def create_comgate_checkout(
         or ""
     ) == "1"
     tx_payload = dict(create_result)
+    tx_payload["checkout_test_mode"] = bool(cfg["test_mode"])
+    tx_payload["checkout_recurring"] = not fallback_non_recurring
     if legacy_quote:
         tx_payload["legacy_quote"] = legacy_quote
 
@@ -1960,6 +1981,13 @@ async def comgate_result(
     if not trans_id:
         return PlainTextResponse("MISSING_TRANS_ID", status_code=400)
 
+    existing_checkout_tx = db.query(LicensePaymentTransaction).filter(
+        LicensePaymentTransaction.trans_id == trans_id
+    ).with_for_update().populate_existing().first()
+    if not existing_checkout_tx:
+        return PlainTextResponse("UNKNOWN_TRANSACTION", status_code=404)
+    if existing_checkout_tx.event_type.startswith("renewal_"):
+        return PlainTextResponse("OK_RENEWAL_QUEUED", status_code=200)
     if _is_trans_already_paid(db, trans_id):
         logger.info("[COMGATE] Duplicate paid callback ignored transId=%s", trans_id)
         return PlainTextResponse("OK_DUPLICATE", status_code=200)
@@ -1975,11 +2003,22 @@ async def comgate_result(
     )
     if str(status_result.get("code", "")) != "0":
         logger.warning("[COMGATE] Status check failed for transId=%s payload=%s", trans_id, status_result)
-        return PlainTextResponse("STATUS_NOT_CONFIRMED", status_code=200)
+        return PlainTextResponse("STATUS_NOT_CONFIRMED", status_code=503)
 
     payment_status = str(status_result.get("status") or "").strip().upper()
-    if payment_status not in {"PAID", "AUTHORIZED"}:
-        return PlainTextResponse("IGNORED", status_code=200)
+    details = json.loads(existing_checkout_tx.payload_json or "{}")
+    expected_test = details.get("checkout_test_mode", bool(cfg["test_mode"]))
+    if (str(status_result.get("curr", "")).upper() != existing_checkout_tx.currency
+        or str(status_result.get("test", "")).lower() not in ({"true", "1"} if expected_test else {"false", "0"})
+        or str(status_result.get("merchant", "")) != str(cfg["merchant"])
+        or str(status_result.get("transId", "")) != trans_id
+        or str(status_result.get("refId", "")) != existing_checkout_tx.ref_id):
+        return PlainTextResponse("PAYMENT_METADATA_MISMATCH", status_code=409)
+    if payment_status != "PAID":
+        if payment_status in {"PENDING", "AUTHORIZED", "CANCELLED"}:
+            existing_checkout_tx.provider_status = payment_status
+            db.commit()
+        return PlainTextResponse("WAITING", status_code=200)
 
     resolved_plan = _resolve_plan_from_status_payload(status_result)
     if not resolved_plan:
@@ -1987,7 +2026,7 @@ async def comgate_result(
         return PlainTextResponse("PLAN_NOT_FOUND", status_code=200)
 
     resolved_billing_period = _resolve_billing_period_from_status_payload(status_result)
-    parsed_ref = _parse_comgate_ref_id(str(status_result.get("refId") or payload.get("refId") or ""))
+    parsed_ref = _parse_comgate_ref_id(str(status_result.get("refId") or ""))
     if not parsed_ref:
         logger.warning("[COMGATE] Invalid refId for transId=%s", trans_id)
         return PlainTextResponse("REFID_INVALID", status_code=200)
@@ -2039,7 +2078,7 @@ async def comgate_result(
         )
         return PlainTextResponse("PRICE_MISMATCH", status_code=200)
 
-    ref_id_from_status = str(status_result.get("refId") or payload.get("refId") or "")
+    ref_id_from_status = str(status_result.get("refId") or "")
     if existing_checkout_tx:
         if existing_checkout_tx.ref_id and existing_checkout_tx.ref_id != ref_id_from_status:
             logger.warning(
@@ -2074,6 +2113,13 @@ async def comgate_result(
             )
             return PlainTextResponse("PRICE_TX_MISMATCH", status_code=200)
 
+    if expected_test:
+        # Sandbox payments must never unlock paid access or start real renewals.
+        existing_checkout_tx.event_type = "test_paid_confirmed"
+        existing_checkout_tx.provider_status = "PAID"
+        db.commit()
+        return PlainTextResponse("OK_TEST", status_code=200)
+
     legacy_quote = _legacy_quote_payload_from_checkout_tx(existing_checkout_tx)
     fallback_non_recurring_checkout = _checkout_is_non_recurring_fallback(existing_checkout_tx)
 
@@ -2081,8 +2127,7 @@ async def comgate_result(
         init_recurring_id = str(
             status_result.get("initRecurringId")
             or status_result.get("initrecurringid")
-            or payload.get("initRecurringId")
-            or ""
+            or (trans_id if details.get("checkout_recurring") else "")
         ).strip() or None
         if legacy_quote:
             subscription = _upsert_subscription(db, tenant_id)
@@ -2132,6 +2177,8 @@ async def comgate_result(
             provider_status=payment_status,
             payload=paid_tx_payload,
         )
+        # Persist the verified payment and entitlement together before sending notifications.
+        db.commit()
         if subscription.notified_first_payment_at is None:
             is_legacy_manual = _normalize_subscription_status(subscription.status) == "legacy_manual"
             is_legacy_quote_payment = bool(legacy_quote)
@@ -2201,7 +2248,17 @@ async def comgate_result(
     except Exception as exc:
         db.rollback()
         logger.exception("[COMGATE] Failed to upgrade tenant=%s plan=%s transId=%s", tenant_id, resolved_plan, trans_id)
-        return PlainTextResponse(f"UPGRADE_FAILED:{exc}", status_code=200)
+        return PlainTextResponse("UPGRADE_FAILED", status_code=503)
 
     logger.info("[COMGATE] License upgraded tenant=%s plan=%s transId=%s", tenant_id, resolved_plan, trans_id)
     return PlainTextResponse("OK", status_code=200)
+
+
+@router.post("/comgate/checkout", response_model=ComgateCheckoutResponse)
+def legacy_checkout(payload: ComgateCheckoutRequest, request: Request,
+                    current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Older clients must use the reviewed order with recorded consent.
+    raise HTTPException(409, "Otevřete aktuální aplikaci a potvrďte objednávku v sekci Tarify a předplatné.")
+
+from .mobile_billing import router as mobile_billing_router
+router.include_router(mobile_billing_router)

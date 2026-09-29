@@ -384,7 +384,7 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
     return status
 
 
-def upgrade_license_plan(db: Session, tenant_id: int, plan: str) -> dict:
+def upgrade_license_plan(db: Session, tenant_id: int, plan: str, *, commit: bool = True) -> dict:
     """
     Nastaví licenci na požadovaný plán a vrátí aktuální stav.
     
@@ -400,10 +400,19 @@ def upgrade_license_plan(db: Session, tenant_id: int, plan: str) -> dict:
     if plan_key not in PLAN_FEATURES:
         raise HTTPException(status_code=400, detail="Neplatný plán. Povolené hodnoty: free, basic, premium.")
     
-    license_obj = get_or_create_license(db, tenant_id)
+    if commit:
+        license_obj = get_or_create_license(db, tenant_id)
+    else:
+        # The payment ledger and entitlements must commit in the same transaction.
+        license_obj = db.query(License).filter(License.tenant_id == tenant_id).with_for_update().first()
+        if license_obj is None:
+            license_obj = License(tenant_id=tenant_id, valid_from=datetime.utcnow())
     features = PLAN_FEATURES[plan_key]
     vehicles_limit = PLAN_LIMITS.get(plan_key, 1)
     
+    if not commit:
+        # The subscription period now governs validity; retire any legacy expiry.
+        license_obj.valid_to = None
     license_obj.plan = plan_key
     license_obj.status = "active"
     license_obj.vehicles_limit = vehicles_limit
@@ -413,6 +422,9 @@ def upgrade_license_plan(db: Session, tenant_id: int, plan: str) -> dict:
     license_obj.updated_at = datetime.utcnow()
     
     db.add(license_obj)
+    if not commit:
+        db.flush()
+        return {}
     db.commit()
     db.refresh(license_obj)
     

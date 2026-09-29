@@ -14,7 +14,7 @@ from src.modules.vehicle_hub.models import Customer
 from src.modules.vehicle_hub.account_state import customer_is_deleted, customer_is_disabled, customer_session_version
 
 PUBLIC_WEB_PAGES = {
-    "open-app.html", "chatbot/widget.js", "chatbot/robot-logo.png",
+    "open-app.html", "payment-return.html", "assets/mastercard-mark.svg", "chatbot/widget.js", "chatbot/robot-logo.png",
     "reset-password.html", "verify-email.html", "cookies.html", "obchodni-podminky.html",
     "ochrana-osobnich-udaju.html", "platebni-podminky.html", "reklamacni-rad.html",
     "assets/apple-pay-official.svg", "assets/google-pay-official.svg",

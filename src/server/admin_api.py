@@ -315,7 +315,7 @@ def _extract_payment_test_flag(payload: Dict[str, Any]) -> Optional[bool]:
         current, depth = stack.pop()
         for raw_key, raw_value in current.items():
             key = str(raw_key or "").strip().lower()
-            if key in {"test", "is_test", "test_mode", "sandbox", "sandbox_mode"}:
+            if key in {"test", "is_test", "test_mode", "checkout_test_mode", "sandbox", "sandbox_mode"}:
                 coerced = _coerce_bool(raw_value)
                 if coerced is not None:
                     return coerced
@@ -3892,6 +3892,17 @@ def get_db_info(
         raise HTTPException(status_code=500, detail=f"Chyba při získávání informací: {str(e)}")
 
 
+_SECRET_PLACEHOLDER = "••••••••"
+
+
+def _public_admin_settings(settings):
+    # Write-only credentials: browser and mobile can replace them, never read them back.
+    return {category: {key: {**definition, "value": _SECRET_PLACEHOLDER if definition.get("value") else ""}
+                      if any(word in key.lower() for word in ("secret", "password", "token", "api_key"))
+                      else dict(definition) for key, definition in fields.items()}
+            for category, fields in settings.items()}
+
+
 @router.get("/settings")
 def get_admin_settings(
     email: str = Depends(require_developer_admin),
@@ -3900,7 +3911,7 @@ def get_admin_settings(
     """Vrátí uložená nastavení administrace."""
     try:
         settings = load_admin_settings()
-        return {"settings": settings}
+        return {"settings": _public_admin_settings(settings)}
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -3924,6 +3935,8 @@ def update_admin_settings(
             if not category or not key:
                 continue
 
+            if item.value == _SECRET_PLACEHOLDER and any(word in key.lower() for word in ("secret", "password", "token", "api_key")):
+                continue
             settings.setdefault(category, {})
             current = settings[category].get(key, {})
             value_type = (item.value_type or current.get("value_type") or infer_setting_value_type(item.value)).strip().lower()
@@ -3938,7 +3951,7 @@ def update_admin_settings(
             updated_count += 1
 
         save_admin_settings(settings)
-        return {"message": f"Nastavení uloženo ({updated_count} položek)", "settings": settings}
+        return {"message": f"Nastavení uloženo ({updated_count} položek)", "settings": _public_admin_settings(settings)}
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -3954,7 +3967,7 @@ def init_default_admin_settings(
     try:
         settings = load_admin_settings()  # Merges defaults while preserving saved values.
         save_admin_settings(settings)
-        return {"message": "Chybějící nastavení byla doplněna", "settings": settings}
+        return {"message": "Chybějící nastavení byla doplněna", "settings": _public_admin_settings(settings)}
     except Exception as e:
         import traceback
         traceback.print_exc()

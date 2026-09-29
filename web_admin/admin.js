@@ -2730,6 +2730,9 @@ function renderSettingsCategory(category) {
   
   let html = `<div class="settings-category active" data-category="${category}">`;
   html += `<h2 style="margin-bottom: 24px; font-size: 24px; color: #1e293b;">${config.title}</h2>`;
+  if (category === 'comgate') {
+    html += `<div class="settings-group"><h4>Ověření připojení</h4><p>Zkontroluje dostupné platební metody. Nevytváří platbu a nic neúčtuje.</p><button type="button" class="btn btn-primary" id="comgate-check-connection">Ověřit spojení s Comgate</button><p id="comgate-check-result" role="status"></p><p>Potvrzování plateb: <code>https://app.toozservis.cz/api/v1/license/comgate/result</code><br>Návrat do aplikace: <code>https://app.toozservis.cz/web/payment-return.html</code></p><p>Tyto adresy nastavte také v portálu Comgate. Automatické prodlužování vyžaduje povolené opakované platby a běžící kontrolu předplatného v sekci Systém a kontrola.</p></div>`;
+  }
   html += `<div class="settings-category-grid">`;
   
   config.groups.forEach(group => {
@@ -2774,7 +2777,7 @@ function renderSettingsCategory(category) {
         const idAttr = `setting-${escapeHtml(category)}-${escapeHtml(setting.key)}`;
         html += `<textarea id="${idAttr}" data-category="${escapeHtml(category)}" data-key="${escapeHtml(setting.key)}" rows="3">${escapeHtml(String(value))}</textarea>`;
       } else {
-        const inputType = setting.type === 'email' ? 'email' : setting.type === 'number' ? 'number' : 'text';
+        const inputType = /secret|password|token|api_key/i.test(setting.key) ? 'password' : setting.type === 'email' ? 'email' : setting.type === 'number' ? 'number' : 'text';
         const idAttr = `setting-${escapeHtml(category)}-${escapeHtml(setting.key)}`;
         html += `<input type="${inputType}" id="${idAttr}" data-category="${escapeHtml(category)}" data-key="${escapeHtml(setting.key)}" value="${escapeHtml(String(value))}">`;
       }
@@ -2789,6 +2792,14 @@ function renderSettingsCategory(category) {
   
   container.innerHTML = html;
   
+  const checkComgate = container.querySelector('#comgate-check-connection');
+  if (checkComgate) checkComgate.addEventListener('click', async () => {
+    const output = container.querySelector('#comgate-check-result');
+    checkComgate.disabled = true; output.textContent = 'Ověřuji spojení…';
+    try { const result = await apiRequest('POST', '/api/v1/license/mobile/connection-check'); output.textContent = result.message; }
+    catch (error) { output.textContent = error.message || 'Spojení se nepodařilo ověřit.'; }
+    finally { checkComgate.disabled = false; }
+  });
   // Přidat event listenery pro checkboxy
   container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
     cb.addEventListener('change', function() {
