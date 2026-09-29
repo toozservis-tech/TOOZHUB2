@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SprávaVozidel – Administrace</title>
   <link rel="stylesheet" href="admin.css?v=20260929" />
-  <link rel="stylesheet" href="workspace.css?v=20260929-2" />
+  <link rel="stylesheet" href="workspace.css?v=20260929-3" />
 </head>
 <body>
   <!-- Přihlašovací obrazovka -->
@@ -362,7 +362,7 @@
               <article class="cc-kpi-card">
                 <span class="cc-kpi-label">Poslední záloha</span>
                 <strong id="cc-kpi-backup-status" class="cc-kpi-value">-</strong>
-                <span id="cc-kpi-backup-time" class="cc-kpi-hint">Bez datumu</span>
+                <span id="cc-kpi-backup-time" class="cc-kpi-hint">Neověřeno</span>
               </article>
             </div>
 
@@ -387,12 +387,12 @@
                 <span id="cc-module-health-status" class="cc-status-chip">Neznámý stav</span>
               </div>
               <div class="cc-health-chip-grid">
-                <span id="cc-health-chip-api" class="cc-health-chip">API: -</span>
-                <span id="cc-health-chip-database" class="cc-health-chip">DB: -</span>
-                <span id="cc-health-chip-email" class="cc-health-chip">Email: -</span>
-                <span id="cc-health-chip-payments" class="cc-health-chip">Payments: -</span>
-                <span id="cc-health-chip-workers" class="cc-health-chip">Workers: -</span>
-                <span id="cc-health-chip-storage" class="cc-health-chip">Storage: -</span>
+                <span id="cc-health-chip-api" class="cc-health-chip">Server: -</span>
+                <span id="cc-health-chip-database" class="cc-health-chip">Databáze: -</span>
+                <span id="cc-health-chip-email" class="cc-health-chip">E-maily: -</span>
+                <span id="cc-health-chip-payments" class="cc-health-chip">Platby: -</span>
+                <span id="cc-health-chip-workers" class="cc-health-chip">Automatika: -</span>
+                <span id="cc-health-chip-storage" class="cc-health-chip">Místní zálohy: -</span>
               </div>
               <div class="tool-inline-actions">
                 <button class="btn-secondary" type="button" onclick="loadControlCenterHealth()"><strong>Zkontrolovat dostupnost</strong><small>Prověří spojení, databázi, e-maily a nastavení služeb.</small></button>
