@@ -140,10 +140,9 @@ function showSuccess(message) {
 
 async function apiRequest(method, path, body = null) {
   if (method === "DELETE" && /\/(users|services|vehicles|records|reminders|reservations)\/\d+$/.test(path)) {
-    const reason = window.prompt("Důvod odstranění (3 až 1000 znaků):");
-    if (!reason || reason.trim().length < 3 || reason.trim().length > 1000) throw new Error("Odstranění zrušeno: je nutný platný důvod.");
-    if (window.prompt("Pro potvrzení napište ODSTRANIT:") !== "ODSTRANIT") throw new Error("Odstranění zrušeno.");
-    body = {reason: reason.trim(), confirmation: "ODSTRANIT"};
+    const confirmed = await requestDeletionConfirmation(path);
+    if (!confirmed) throw new Error("Odstranění zrušeno.");
+    body = confirmed;
   }
   const token = getAuthToken();
   const headers = {
@@ -177,7 +176,7 @@ async function apiRequest(method, path, body = null) {
       clearAuthToken();
       showGlobalError('Session vypršela. Prosím přihlaste se znovu.');
       setTimeout(() => {
-        showLoginScreen();
+        location.replace('/admin-login');
       }, 2000);
       throw new Error('Unauthorized');
     }
@@ -197,7 +196,10 @@ async function apiRequest(method, path, body = null) {
       return null;
     }
     
-    return await res.json();
+    const result = await res.json();
+    const sync = document.getElementById('workspace-sync');
+    if (sync) sync.textContent = 'Poslední odpověď ' + new Date().toLocaleTimeString('cs-CZ', {hour:'2-digit', minute:'2-digit'});
+    return result;
   } catch (error) {
     // Pokud je to network error (Failed to fetch), zobrazit uživatelsky přívětivou zprávu
     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
@@ -288,7 +290,7 @@ function getAdminSectionContainer(section) {
 
 function getStoredViewMode(section) {
   const saved = localStorage.getItem(`admin:view:${section}`);
-  return ADMIN_VIEW_MODES.includes(saved) ? saved : 'grid';
+  return ADMIN_VIEW_MODES.includes(saved) ? saved : 'list';
 }
 
 function applySectionViewMode(section) {
@@ -344,7 +346,7 @@ function getOnlineState(user) {
 
 function canAccessControlCenter() {
   const role = (getStoredAdminRole() || '').toLowerCase();
-  return role === 'developer_admin';
+  return ['admin', 'developer_admin'].includes(role);
 }
 
 function updateControlCenterVisibility() {
@@ -364,10 +366,6 @@ function updateControlCenterVisibility() {
 }
 
 async function resolveCurrentAdminRole() {
-  if (getStoredAdminRole()) {
-    updateControlCenterVisibility();
-    return;
-  }
   try {
     const me = await apiRequest('GET', '/user/me');
     setAdminRole(me?.role || null);
@@ -398,7 +396,13 @@ function initNavigation() {
   if (activeItem) {
     const section = activeItem.getAttribute('data-section');
     if (section) {
-      currentSection = section;
+      if (!document.getElementById(`section-${section}`)) return;
+  currentSection = section;
+  const title = document.querySelector(`.nav-item[data-section="${section}"] .nav-text`)?.textContent || section;
+  const breadcrumb = document.getElementById('workspace-section-name');
+  if (breadcrumb) breadcrumb.textContent = title;
+  document.title = `${title} · SprávaVozidel`;
+  history.replaceState(null, '', '#' + section);
       loadSectionData(section);
     }
   }
@@ -620,9 +624,9 @@ async function loadRecentActivity() {
       return `
         <div class="activity-item">
           <span class="activity-time">${timestamp}</span>
-          <span class="activity-actor">${actor}</span>
-          <span class="activity-action">${actionText}</span>
-          <span class="activity-entity">${entityType} #${entityId}</span>
+          <span class="activity-actor">${escapeHtml(actor)}</span>
+          <span class="activity-action">${escapeHtml(actionText)}</span>
+          <span class="activity-entity">${escapeHtml(entityType)} #${escapeHtml(entityId)}</span>
         </div>
       `;
     }).join('');
@@ -3662,7 +3666,7 @@ function initControlCenterModuleColumns() {
 
 async function refreshControlCenterOverview() {
   if (!canAccessControlCenter()) {
-    setControlCenterResult('cc-health-result', { detail: 'Sekce je dostupná pouze pro roli developer_admin.' });
+    setControlCenterResult('cc-health-result', { detail: 'Sekce je dostupná pouze administrátorům.' });
     return;
   }
 
@@ -4724,7 +4728,8 @@ function showDashboard() {
   loadSystemCapabilitiesAdmin();
   
   // Načíst přehled jako výchozí
-  switchSection('overview');
+  const initial = location.hash.slice(1);
+  switchSection(['overview','users','vehicles','services','records','audit','settings','system','control-center'].includes(initial) ? initial : 'overview');
 }
 
 // ============================================

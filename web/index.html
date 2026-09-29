@@ -10339,31 +10339,31 @@
 
         // API URL - centrální funkce pro získání BASE URL
         function getApiBaseUrl() {
-            // PRODUKČNÍ REŽIM – běžíme na hub.toozservis.cz → API je na stejném originu
+            // PRODUKČNÍ REŽIM – běžíme na app.toozservis.cz → API je na stejném originu
             // HARD RULE: Pokud jsme na produkci, ignoruj localStorage override
-            if (window.location.hostname === "hub.toozservis.cz") {
+            if (window.location.hostname === "app.toozservis.cz") {
                 const origin = window.location.origin;
                 console.log('[API] Produkční režim - používám origin:', origin);
                 return origin;
             }
             
-            // Pokud je aplikace vložena v iframe na toozservis.cz, použít hub.toozservis.cz
+            // Pokud je aplikace vložena v iframe na toozservis.cz, použít app.toozservis.cz
             try {
                 // Zkusit detekovat, zda jsme v iframe (pokud je parent jiný origin)
                 if (window.self !== window.top) {
                     // Jsme v iframe - použít produkční API URL
                     const parentHostname = window.top.location.hostname;
                     if (parentHostname && (parentHostname.includes('toozservis.cz') || parentHostname.includes('webnode.com'))) {
-                        console.log('[API] Detekován iframe na toozservis.cz - používám hub.toozservis.cz');
-                        return "https://hub.toozservis.cz";
+                        console.log('[API] Detekován iframe na toozservis.cz - používám app.toozservis.cz');
+                        return "https://app.toozservis.cz";
                     }
                 }
             } catch (e) {
                 // Cross-origin iframe - nemůžeme přistupovat k window.top.location
                 // Ale můžeme použít produkční URL pokud hostname obsahuje toozservis.cz
                 if (window.location.hostname.includes('toozservis.cz') || window.location.hostname.includes('webnode.com')) {
-                    console.log('[API] Detekován cross-origin iframe - používám hub.toozservis.cz');
-                    return "https://hub.toozservis.cz";
+                    console.log('[API] Detekován cross-origin iframe - používám app.toozservis.cz');
+                    return "https://app.toozservis.cz";
                 }
             }
             
@@ -11450,7 +11450,7 @@
             const panel = document.getElementById('dev-api-url-panel');
             if (!panel) return;
             
-            if (window.location.hostname === "hub.toozservis.cz") {
+            if (window.location.hostname === "app.toozservis.cz") {
                 // V produkci panel schováme
                 panel.style.display = "none";
             } else {
@@ -20448,7 +20448,7 @@
             setupDevApiUrlPanel();
             
             // Zobrazit tlačítko konfigurace jen v DEV režimu (ne v produkci)
-            const isProduction = window.location.hostname === "hub.toozservis.cz";
+            const isProduction = window.location.hostname === "app.toozservis.cz";
             const location = getLocation();
             const urlParams = new URLSearchParams(location.search || '');
             const isAdmin = urlParams.get('admin') === '1';
@@ -27958,7 +27958,7 @@
                 return;
             }
 
-            const isProduction = window.location.hostname === 'hub.toozservis.cz';
+            const isProduction = window.location.hostname === 'app.toozservis.cz';
             const params = new URLSearchParams(window.location.search || '');
             const isAdmin = params.get('admin') === '1';
             const forceDebug = params.get('debug') === '1';

@@ -112,7 +112,7 @@
             const saved = localStorage.getItem('API_URL');
             if (saved && saved.startsWith('http')) return saved;
             if (window.location.hostname.includes('toozservis.cz') || window.location.hostname.includes('webnode.com')) {
-                return 'https://hub.toozservis.cz';
+                return 'https://app.toozservis.cz';
             }
             return window.location.origin || DEFAULT_API_URL;
         }

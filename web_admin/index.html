@@ -3,15 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Správa vozidel – Developer Admin Dashboard</title>
-  <link rel="stylesheet" href="admin.css?v=20260311g" />
+  <title>SprávaVozidel – Administrace</title>
+  <link rel="stylesheet" href="admin.css?v=20260929" />
+  <link rel="stylesheet" href="workspace.css?v=20260929" />
 </head>
 <body>
   <!-- Přihlašovací obrazovka -->
   <div id="login-screen" class="hidden">
     <div class="login-container">
-      <h1>🚗 Správa vozidel</h1>
-      <h2>Developer Admin Dashboard</h2>
+      <h1>🚗 SprávaVozidel</h1>
+      <h2>Administrace</h2>
       <form id="login-form" onsubmit="handleAdminLogin(event); return false;">
         <div class="form-group">
           <label for="admin-email">Email:</label>
@@ -32,8 +33,8 @@
     <!-- Horní navigační lišta -->
     <nav class="navbar">
       <div class="navbar-brand">
-        <span class="logo">🚗</span>
-        <span class="brand-text">Správa vozidel – Developer Admin</span>
+        <img class="brand-logo" src="/web/assets/toozservis-logo-icon.png" alt="" />
+        <span class="brand-text">SprávaVozidel<small class="brand-subtitle">Administrace</small></span>
       </div>
       <button
         id="admin-mobile-menu-toggle"
@@ -60,7 +61,8 @@
       <div id="admin-mobile-nav-overlay" class="admin-mobile-nav-overlay hidden" onclick="closeAdminMobileNav()"></div>
       <!-- Levý sidebar -->
       <aside id="adminSidebar" class="sidebar">
-        <nav class="sidebar-nav">
+        <nav class="sidebar-nav" aria-label="Hlavní navigace">
+          <div class="nav-group-title">Správa provozu</div>
           <button data-section="overview" class="nav-item active">
             <span class="nav-icon">📊</span>
             <span class="nav-text">Přehled</span>
@@ -85,7 +87,7 @@
             <span class="nav-icon">📜</span>
             <span class="nav-text">Audit log</span>
           </button>
-          <div class="nav-divider"></div>
+          <div class="nav-divider"></div><div class="nav-group-title">Systém a kontrola</div>
           <button data-section="system" class="nav-item">
             <span class="nav-icon">⚙️</span>
             <span class="nav-text">Systémové nástroje</span>
@@ -96,13 +98,14 @@
           </button>
           <button data-section="control-center" class="nav-item">
             <span class="nav-icon">🧠</span>
-            <span class="nav-text">Developer Control Center</span>
+            <span class="nav-text">Řídicí centrum</span>
           </button>
-        </nav>
+        </nav><p class="sidebar-note">Správa účtů, vozidel a servisů z jednoho místa. Citlivé akce se zaznamenávají do auditu.</p>
       </aside>
 
       <!-- Hlavní obsah -->
       <main class="content-area">
+        <div class="workspace-bar"><div class="workspace-path">Administrace / <strong id="workspace-section-name">Přehled</strong></div><div class="workspace-tools"><small id="workspace-sync" aria-live="polite">Načítám data…</small><button type="button" class="btn-secondary" onclick="loadSectionData(currentSection)" aria-label="Obnovit aktuální sekci">↻ Obnovit</button></div></div>
         <div id="global-error" class="global-error hidden"></div>
 
         <!-- Sekce: Přehled -->
@@ -110,9 +113,11 @@
           <div class="section-header">
             <h1>Přehled systému</h1>
           </div>
+          <div class="workspace-hero"><div><span class="eyebrow">PŘEHLED A SOUVISLOSTI</span><h2>Celý provoz pod kontrolou.</h2><p>Od uživatele k vozidlu, od servisu k záznamu. Spravujte účty, schvalujte servisy a kontrolujte historii změn.</p></div><div class="hero-actions"><button type="button" onclick="switchSection('users')">Spravovat účty →</button><button type="button" onclick="switchSection('services')">Žádosti servisů →</button></div></div>
           <div id="overview-stats" class="stats-grid">
             <!-- Naplní se JavaScriptem -->
           </div>
+          <div class="workflow-grid"><button class="workflow-link" onclick="switchSection('users')"><strong>Uživatel a jeho data →</strong><span>Profil, vozidla, rezervace i záznamy v propojeném detailu účtu.</span></button><button class="workflow-link" onclick="switchSection('services')"><strong>Spolupracující servisy →</strong><span>Schvalování registrací, kontakty a správa servisních účtů.</span></button><button class="workflow-link" onclick="switchSection('control-center')"><strong>Stav a bezpečnost →</strong><span>Provoz systému, oprávnění, relace a dostupnost služeb.</span></button></div>
           <div class="section-header section-header-secondary">
             <h2>Poslední aktivita</h2>
           </div>
@@ -316,11 +321,11 @@
           </div>
         </section>
 
-        <!-- Sekce: Developer Control Center -->
+        <!-- Sekce: Řídicí centrum -->
         <section id="section-control-center" class="content-section">
           <div class="section-header section-header-control-center">
             <div>
-              <h1>Developer Control Center</h1>
+              <h1>Řídicí centrum</h1>
               <p class="cc-section-subtitle">Operační konzole: nejdřív stav a priority, detaily až na vyžádání.</p>
             </div>
             <button class="btn-primary" type="button" onclick="refreshControlCenterOverview()">Obnovit panel</button>
@@ -1084,6 +1089,7 @@
     </div>
   </div>
 
-  <script src="admin.js?v=20260311g"></script>
+  <script src="admin.js?v=20260929"></script>
+  <script src="workspace.js?v=20260929"></script>
 </body>
 </html>

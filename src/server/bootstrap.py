@@ -373,7 +373,7 @@ def _include_feature_routers(app: FastAPI) -> None:
 
 
 def _mount_static_directories(app: FastAPI) -> None:
-    from src.server.web_access import AdminStaticFiles, router as web_access_router
+    from src.server.web_access import AdminStaticFiles, PUBLIC_WEB_PAGES, router as web_access_router
     app.include_router(web_access_router)
     try:
         if public_path.exists():
@@ -395,7 +395,7 @@ def _mount_static_directories(app: FastAPI) -> None:
     try:
         web_path = Path(__file__).parent.parent.parent / "web"
         if web_path.exists():
-            app.mount("/web", AdminStaticFiles(directory=str(web_path), html=True, public_pages={"reset-password.html", "verify-email.html"}), name="web")
+            app.mount("/web", AdminStaticFiles(directory=str(web_path), html=True, public_pages=PUBLIC_WEB_PAGES), name="web")
             print(f"[SERVER] Web interface zaregistrován: /web/ (directory: {web_path})")
         else:
             print(f"[SERVER] WARNING: Web directory not found: {web_path}")

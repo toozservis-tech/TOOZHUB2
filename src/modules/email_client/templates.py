@@ -10,7 +10,7 @@ from src.core.config import PUBLIC_API_BASE_URL
 def build_app_url(path: str = "/web/index.html") -> str:
     base = str(PUBLIC_API_BASE_URL or "").strip().rstrip("/")
     if not base:
-        return f"https://hub.toozservis.cz{path}"
+        return f"https://app.toozservis.cz{path}"
     if base.endswith("/web/index.html") and path == "/web/index.html":
         return base
     if base.endswith("/index.html") and path == "/web/index.html":

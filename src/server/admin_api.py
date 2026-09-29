@@ -920,7 +920,7 @@ def require_control_center_admin(
     db: Session = Depends(get_db)
 ):
     """
-    Přísný přístup pouze pro roli developer_admin (Control Center).
+    Správa systému je dostupná oběma administrátorským rolím.
     """
     ensure_customer_account_state_schema(db)
     customer = db.query(Customer).filter(Customer.email == email).first()
@@ -929,10 +929,10 @@ def require_control_center_admin(
     if customer_is_deleted(customer) or customer_is_disabled(customer):
         raise HTTPException(status_code=403, detail="Účet je neaktivní")
 
-    if not is_developer_admin(customer.role):
+    if not is_admin(customer.role):
         raise HTTPException(
             status_code=403,
-            detail="Přístup odepřen. Tato sekce je dostupná pouze pro roli developer_admin."
+            detail="Přístup odepřen. Tato sekce je dostupná pouze administrátorům."
         )
 
     if request and request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
@@ -4009,7 +4009,8 @@ def get_control_center_health(
 
         smtp_host_configured = bool(str(smtp_settings.get("smtp_host", {}).get("value", SMTP_HOST or "")).strip())
         smtp_from_configured = bool(str(smtp_settings.get("smtp_from", {}).get("value", SMTP_FROM or "")).strip())
-        email_status = "ok" if (smtp_host_configured and smtp_from_configured) else "warning"
+        from src.modules.email_client.service import EmailService
+        email_status = "ok" if EmailService().is_configured() else "warning"
 
         api_threshold = datetime.utcnow() - timedelta(minutes=15)
         recent_api_activity = (

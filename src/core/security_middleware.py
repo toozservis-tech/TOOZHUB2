@@ -40,7 +40,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # - https://www.toozservis.cz
         # - https://toozservis.cz
         if ENVIRONMENT == "production":
-            # Produkce: povolit pouze toozservis.cz domény (bez hub.toozservis.cz - nechceme, aby se embedoval sám do sebe)
+            # Produkce: povolit pouze toozservis.cz domény (bez app.toozservis.cz - nechceme, aby se embedoval sám do sebe)
             frame_ancestors = "https://www.toozservis.cz https://toozservis.cz"
         else:
             # Development: povolit všechny (pro testování)
@@ -48,13 +48,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         
         # CSP - kompatibilní se stávajícími skripty a API voláními
         if ENVIRONMENT == "production":
-            # Produkce: povolit embed jen z toozservis.cz domén, API volání na hub.toozservis.cz
+            # Produkce: povolit embed jen z toozservis.cz domén, API volání na app.toozservis.cz
             csp = (
-                "default-src 'self' https://hub.toozservis.cz; "
+                "default-src 'self' https://app.toozservis.cz; "
                 "img-src 'self' data: https:; "
                 "style-src 'self' 'unsafe-inline'; "
                 "script-src 'self' 'unsafe-inline'; "
-                "connect-src 'self' https://hub.toozservis.cz https://api.dataovozidlech.cz https://ares.gov.cz; "
+                "connect-src 'self' https://app.toozservis.cz https://api.dataovozidlech.cz https://ares.gov.cz; "
                 "frame-ancestors 'self' https://www.toozservis.cz https://toozservis.cz;"
             )
         else:

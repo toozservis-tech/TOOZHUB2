@@ -13,6 +13,13 @@ from src.modules.vehicle_hub.database import SessionLocal, get_db
 from src.modules.vehicle_hub.models import Customer
 from src.modules.vehicle_hub.account_state import customer_is_deleted, customer_is_disabled, customer_session_version
 
+PUBLIC_WEB_PAGES = {
+    "reset-password.html", "verify-email.html", "cookies.html", "obchodni-podminky.html",
+    "ochrana-osobnich-udaju.html", "platebni-podminky.html", "reklamacni-rad.html",
+    "assets/apple-pay-official.svg", "assets/google-pay-official.svg",
+    "assets/mastercard-official.svg", "assets/visa-official.svg",
+    "assets/comgate-logo-horizontal-red.png", "assets/toozservis-logo-icon.png",
+}
 router = APIRouter()
 COOKIE = 'admin_web_session'
 

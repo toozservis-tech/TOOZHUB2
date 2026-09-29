@@ -677,7 +677,7 @@ def _build_tachometer_session() -> requests.Session:
     session = requests.Session()
     session.headers.update(
         {
-            "User-Agent": "Mozilla/5.0 (compatible; SpravaVozidel/1.0; +https://hub.toozservis.cz)",
+            "User-Agent": "Mozilla/5.0 (compatible; SpravaVozidel/1.0; +https://app.toozservis.cz)",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "cs-CZ,cs;q=0.9,en;q=0.8",
             "Cache-Control": "no-cache",

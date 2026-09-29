@@ -117,7 +117,7 @@ _default_api_url = f"http://{HOST}:{PORT}"
 _api_url_env = env_prefer_new("SPRAVA_VOZIDEL_API_URL", "TOOZHUB_API_URL")
 BASE_API_URL = _api_url_env if _api_url_env is not None else _default_api_url
 
-# Veřejná API URL (pro produkci: https://hub.toozservis.cz)
+# Veřejná API URL (pro produkci: https://app.toozservis.cz)
 PUBLIC_API_BASE_URL = os.getenv("PUBLIC_API_BASE_URL", BASE_API_URL)
 
 # =============================================================================
@@ -128,7 +128,7 @@ PUBLIC_API_BASE_URL = os.getenv("PUBLIC_API_BASE_URL", BASE_API_URL)
 DEFAULT_PRODUCTION_ORIGINS = [
     "https://www.toozservis.cz",
     "https://toozservis.cz",
-    "https://hub.toozservis.cz",  # Cloudflare Tunnel doména
+    "https://app.toozservis.cz",  # Cloudflare Tunnel doména
 ]
 
 _allowed_origins = os.getenv("ALLOWED_ORIGINS")
