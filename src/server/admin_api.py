@@ -3861,7 +3861,7 @@ def get_db_info(
         tables = inspector.get_table_names()
         
         # Získat cestu k databázi
-        db_path = str(DB_URL).replace("sqlite:///", "")
+        db_path = str(get_db_file_path() or "PostgreSQL — cloudová databáze")
         if os.path.exists(db_path):
             size_bytes = os.path.getsize(db_path)
             size_kb = round(size_bytes / 1024, 2)

@@ -483,6 +483,12 @@ function initSummaryNavigation() {
 }
 
 function switchSection(section) {
+  if (!document.getElementById(`section-${section}`)) return;
+  const title = document.querySelector(`.nav-item[data-section="${section}"] .nav-text`)?.textContent || section;
+  const breadcrumb = document.getElementById('workspace-section-name');
+  if (breadcrumb) breadcrumb.textContent = title;
+  document.title = `${title} · SprávaVozidel`;
+  history.replaceState(null, '', '#' + section);
   if (section !== 'control-center') {
     closeAllControlCenterDetails();
   } else {

@@ -5,25 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Správa vozidel</title>
     <style>
-        * { 
-            margin: 0; 
-            padding: 0; 
-            box-sizing: border-box; 
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        html, body { 
-            height: 100%; 
-            overflow: hidden; 
+        html, body {
+            height: 100%;
+            overflow: hidden;
         }
-        body { 
-            margin: 0; 
-            padding: 0; 
+        body {
+            margin: 0;
+            padding: 0;
         }
-        iframe { 
-            width: 100%; 
-            min-height: 100vh; 
+        iframe {
+            width: 100%;
+            min-height: 100vh;
             height: 100vh;
-            border: none; 
-            display: block; 
+            border: none;
+            display: block;
         }
         .loading {
             position: absolute;
@@ -38,10 +38,10 @@
 </head>
 <body>
     <div class="loading" id="loading">Načítání aplikace...</div>
-    <iframe 
-        id="appFrame" 
-        src="https://app.toozservis.cz/web/index.html" 
-        allow="camera; microphone; geolocation" 
+    <iframe
+        id="appFrame"
+        src="https://app.toozservis.cz/web/index.html"
+        allow="camera; microphone; geolocation"
         scrolling="auto"
         style="opacity: 0; transition: opacity 0.3s;"
         onload="document.getElementById('loading').style.display='none'; document.getElementById('appFrame').style.opacity='1';">
@@ -49,12 +49,12 @@
     <script>
         const iframe = document.getElementById('appFrame');
         const loading = document.getElementById('loading');
-        
+
         // Skrytí loading po načtení
         iframe.addEventListener('load', () => {
             loading.style.display = 'none';
             iframe.style.opacity = '1';
-            
+
             // Automaticky upravit výšku iframe podle obsahu (pokud není cross-origin)
             try {
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
@@ -71,7 +71,7 @@
                 iframe.style.height = '100vh';
             }
         });
-        
+
         // Poslouchat změny velikosti okna
         window.addEventListener('resize', () => {
             try {
@@ -88,7 +88,7 @@
                 // Cross-origin - ignorovat
             }
         });
-        
+
         // Timeout pro skrytí loading (pokud iframe se nenačte)
         setTimeout(() => {
             if (loading.style.display !== 'none') {
