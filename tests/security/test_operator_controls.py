@@ -52,6 +52,24 @@ class OperatorControls(unittest.TestCase):
                     response=self.client.post('/admin-api/control-center/jobs/'+action,json={'job_name':'not-a-real-job','reason':'test'},headers=headers)
                     self.assertEqual(response.status_code,400 if role in {'admin','developer_admin'} else 403,(role,action,response.text));save.assert_not_called()
 
+    def test_archived_account_is_hidden_from_counts_but_history_remains(self):
+        from starlette.requests import Request
+        admin = self.register('admin@example.com').json()['user']['id']
+        target = self.register('service@example.com').json()['user']['id']
+        with self.Session() as db:
+            db.get(Customer,admin).role='developer_admin'
+            db.get(Customer,target).role='service';db.commit()
+            before=admin_api.get_overview('admin@example.com',db)
+            result=admin_api.delete_admin_resource('services',target,admin_api.AdminDeleteRequest(reason='Synthetic test cleanup',confirmation='ODSTRANIT'),Request({'type':'http','headers':[],'client':('127.0.0.1',1)}),'admin@example.com',db)
+            after=admin_api.get_overview('admin@example.com',db)
+            self.assertTrue(result['soft_deleted'])
+            self.assertEqual(after.total_users,before.total_users-1)
+            self.assertEqual(after.total_services,0)
+            self.assertEqual(db.query(Customer).count(),2)
+            self.assertTrue(db.get(Customer,target).is_disabled)
+            self.assertGreater(db.get(Customer,target).session_version,0)
+            self.assertFalse(db.get(Customer,admin).is_deleted)
+
     def test_default_settings_preserve_existing_values(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(admin_api,'ADMIN_SETTINGS_FILE',Path(folder)/'settings.json'), patch.object(admin_api,'cached_file'), patch.object(admin_api,'persist_file',side_effect=lambda path,content,**kw:path.write_bytes(content)):
             admin_api.ADMIN_SETTINGS_FILE.write_text(json.dumps({'email':{'smtp_host':{'value':'existing.example.com','value_type':'string'}}}))

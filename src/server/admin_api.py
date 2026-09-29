@@ -1731,9 +1731,9 @@ def get_overview(
 ):
     """Vrátí přehled statistik celé databáze - pouze pro developer_admin"""
     try:
-        total_users = safe_count_query(db, "SELECT COUNT(*) FROM customers")
+        total_users = safe_count_query(db, "SELECT COUNT(*) FROM customers WHERE COALESCE(is_deleted, FALSE) = FALSE")
         total_vehicles = safe_count_query(db, "SELECT COUNT(*) FROM vehicles")
-        total_services = safe_count_query(db, "SELECT COUNT(*) FROM customers WHERE role = 'service'")
+        total_services = safe_count_query(db, "SELECT COUNT(*) FROM customers WHERE role = 'service' AND COALESCE(is_deleted, FALSE) = FALSE")
         total_records = safe_count_query(db, "SELECT COUNT(*) FROM service_records")
         total_reservations = safe_count_query(db, "SELECT COUNT(*) FROM reservations")
         total_reminders = safe_count_query(db, "SELECT COUNT(*) FROM reminders")
