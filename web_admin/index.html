@@ -355,12 +355,12 @@
                 <span class="cc-kpi-hint">Poslední feed</span>
               </article>
               <article class="cc-kpi-card">
-                <span class="cc-kpi-label">Security alerty</span>
+                <span class="cc-kpi-label">Bezpečnostní upozornění</span>
                 <strong id="cc-kpi-security-alerts" class="cc-kpi-value">-</strong>
                 <span class="cc-kpi-hint">Brute-force + blokace</span>
               </article>
               <article class="cc-kpi-card">
-                <span class="cc-kpi-label">Poslední backup</span>
+                <span class="cc-kpi-label">Poslední záloha</span>
                 <strong id="cc-kpi-backup-status" class="cc-kpi-value">-</strong>
                 <span id="cc-kpi-backup-time" class="cc-kpi-hint">Bez datumu</span>
               </article>
@@ -381,7 +381,7 @@
             <article id="cc-module-health" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
-                  <h3>🩺 System Health</h3>
+                  <h3>🩺 Stav systému</h3>
                   <p>API, DB, e-mail, platby, workers a storage.</p>
                 </div>
                 <span id="cc-module-health-status" class="cc-status-chip">Neznámý stav</span>
@@ -412,7 +412,7 @@
             <article id="cc-module-payments" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
-                  <h3>💳 Licenses & Payments</h3>
+                  <h3>💳 Licence a platby</h3>
                   <p>Příjmy, neúspěšné transakce, refundy a účty vyžadující zásah.</p>
                 </div>
                 <span id="cc-module-payments-status" class="cc-status-chip">Neznámý stav</span>
@@ -471,7 +471,7 @@
             <article id="cc-module-users" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
-                  <h3>👥 Users</h3>
+                  <h3>👥 Uživatelé</h3>
                   <p>Rychlé zásahy na konkrétním účtu: insight, relace, přístup a licence.</p>
                 </div>
                 <span id="cc-module-users-status" class="cc-status-chip">Neznámý stav</span>
@@ -483,14 +483,14 @@
                 <div class="cc-metric-item"><span>Bez platby</span><strong id="cc-users-unpaid">-</strong></div>
               </div>
               <div class="form-group">
-                <label for="cc-insight-user-id">User ID</label>
+                <label for="cc-insight-user-id">ID uživatele</label>
                 <input id="cc-insight-user-id" type="number" min="1" placeholder="ID uživatele" />
               </div>
               <div class="tool-inline-actions">
                 <button class="btn-secondary" type="button" onclick="loadControlCenterUserInsight()">Načíst insight</button>
-                <button class="btn-danger" type="button" onclick="forceLogoutFromControlCenter()">Force logout</button>
-                <button class="btn-secondary" type="button" onclick="disableUserFromControlCenter()">Disable</button>
-                <button class="btn-secondary" type="button" onclick="enableUserFromControlCenter()">Enable</button>
+                <button class="btn-danger" type="button" onclick="forceLogoutFromControlCenter()">Odhlásit všechna zařízení</button>
+                <button class="btn-secondary" type="button" onclick="disableUserFromControlCenter()">Zablokovat</button>
+                <button class="btn-secondary" type="button" onclick="enableUserFromControlCenter()">Odblokovat</button>
                 <button class="btn-secondary" type="button" onclick="resetUserPasswordFromControlCenter()">Reset hesla</button>
               </div>
               <div class="cc-license-inline">
@@ -532,7 +532,7 @@
             <article id="cc-module-presence" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
-                  <h3>🟢 Presence</h3>
+                  <h3>🟢 Aktivita uživatelů</h3>
                   <p>Online/offline přehled, poslední aktivita a aktivní relace.</p>
                 </div>
                 <span id="cc-module-presence-status" class="cc-status-chip">Neznámý stav</span>
@@ -561,7 +561,7 @@
             <article id="cc-module-security" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
-                  <h3>🔐 Security</h3>
+                  <h3>🔐 Zabezpečení</h3>
                   <p>Blokace IP, brute-force signály a podezřelé auth události.</p>
                 </div>
                 <span id="cc-module-security-status" class="cc-status-chip">Neznámý stav</span>
@@ -604,22 +604,23 @@
             <article id="cc-module-backups" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
-                  <h3>💾 Backup & Restore</h3>
+                  <h3>💾 Zálohy a obnova</h3>
                   <p>Aktuální stav záloh, tvorba snapshotu a řízené restore operace.</p>
                 </div>
                 <span id="cc-module-backups-status" class="cc-status-chip">Neznámý stav</span>
               </div>
               <div class="cc-metric-grid">
                 <div class="cc-metric-item"><span>Poslední status</span><strong id="cc-backup-latest-status">-</strong></div>
-                <div class="cc-metric-item"><span>Poslední backup</span><strong id="cc-backup-latest-time">-</strong></div>
+                <div class="cc-metric-item"><span>Poslední záloha</span><strong id="cc-backup-latest-time">-</strong></div>
                 <div class="cc-metric-item"><span>Počet backupů</span><strong id="cc-backup-count">-</strong></div>
                 <div class="cc-metric-item"><span>Restore režim</span><strong id="cc-backup-restore-warning">Dangerous</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="createControlCenterBackup()">Vytvořit backup</button>
+                <button class="btn-secondary" type="button" onclick="createControlCenterBackup()">Vytvořit lokální zálohu</button>
                 <button class="btn-secondary" type="button" onclick="loadControlCenterBackups()">Načíst seznam</button>
                 <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-backups-details')">Zobrazit detail</button>
               </div>
+              <p id="cc-backup-support-note" role="status" hidden></p>
               <div id="cc-backup-result" class="cc-module-result">Čeká na načtení backup stavu.</div>
               <details id="cc-backups-details" class="cc-module-details">
                 <summary>Detail backup snapshotů</summary>
@@ -653,7 +654,7 @@
                     <label for="cc-restore-confirm">Potvrzení restore</label>
                     <input id="cc-restore-confirm" type="text" placeholder="PROCEED_RESTORE" />
                   </div>
-                  <button class="btn-danger" type="button" onclick="restoreControlCenterBackup()">Spustit restore</button>
+                  <button class="btn-danger" type="button" onclick="restoreControlCenterBackup()">Spustit obnovu</button>
                 </details>
                 <details class="cc-technical-details">
                   <summary>Technický detail (JSON)</summary>
@@ -665,7 +666,7 @@
             <article id="cc-module-jobs" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
-                  <h3>⚙️ Jobs</h3>
+                  <h3>⚙️ Úlohy</h3>
                   <p>Scheduler, manuální job zásahy a email delivery health.</p>
                 </div>
                 <span id="cc-module-jobs-status" class="cc-status-chip">Neznámý stav</span>
@@ -699,7 +700,7 @@
             <article id="cc-module-notifications" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
-                  <h3>📣 Notifications</h3>
+                  <h3>📣 Oznámení</h3>
                   <p>Broadcast feed pro cílenou komunikaci s uživateli a tenanty.</p>
                 </div>
                 <span id="cc-module-notifications-status" class="cc-status-chip">Neznámý stav</span>
@@ -783,7 +784,7 @@
             <article id="cc-module-infra" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
-                  <h3>🧱 Infrastructure</h3>
+                  <h3>🧱 Provoz systému</h3>
                   <p>API monitor, webhook feed a storage management včetně cleanup.</p>
                 </div>
                 <span id="cc-module-infra-status" class="cc-status-chip">Neznámý stav</span>
@@ -823,7 +824,7 @@
             <article id="cc-module-command" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
-                  <h3>⌨️ Command Console</h3>
+                  <h3>⌨️ Interní příkazy</h3>
                   <p>Interní příkazy bez OS shellu. Používejte pouze schválené commandy.</p>
                 </div>
                 <span id="cc-module-command-status" class="cc-status-chip">Ready</span>

@@ -4031,6 +4031,12 @@ async function loadControlCenterBackups() {
   try {
     const data = await apiRequest('GET', '/admin-api/control-center/backups');
     setControlCenterState('backups', data);
+    document.querySelectorAll('[onclick="createControlCenterBackup()"], [onclick="restoreControlCenterBackup()"]').forEach(button => {
+      button.disabled = data.local_snapshot_supported === false;
+      button.title = data.note || '';
+    });
+    const backupNotice = document.getElementById('cc-backup-support-note');
+    if (backupNotice) { backupNotice.textContent = data.note || ''; backupNotice.hidden = !data.note; }
     const items = Array.isArray(data?.items) ? data.items : [];
     renderControlCenterTable(
       'cc-backups-table',

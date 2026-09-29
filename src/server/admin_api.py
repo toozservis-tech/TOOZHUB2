@@ -5062,7 +5062,11 @@ def list_control_center_backups(
     db: Session = Depends(get_db),
 ):
     """Seznam dostupných backup snapshotů."""
-    return {"items": _list_backup_entries()}
+    return {
+        "items": _list_backup_entries(),
+        "local_snapshot_supported": db.bind.dialect.name == "sqlite",
+        "note": "" if db.bind.dialect.name == "sqlite" else "Cloudová databáze používá PostgreSQL. Tento panel podporuje pouze lokální SQLite zálohy; obnovu cloudové databáze zde nelze spustit.",
+    }
 
 
 @router.post("/control-center/backups/create")
