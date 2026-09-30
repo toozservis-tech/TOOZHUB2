@@ -12,14 +12,13 @@ Vyberte období a tarif, zkontrolujte konečnou cenu, samostatně potvrďte souh
 
 Původní schválený obchod `toozservis.cz`, propojení `507933`. Dne 29. 9. 2026 byly po schválení vlastníkem uloženy původní údaje pouze do serverového nastavení, v portálu byly změněny návratové adresy a potvrzování plateb na `app.toozservis.cz`. Povolené IP jsou aktuální rozsahy Renderu `74.220.51.0/24` a `74.220.59.0/24`; původní IP byla nahrazena. Skutečné spojení přes seznam platebních metod bylo potvrzeno ve webové administraci i v iOS. Testovací režim zůstává zapnutý.
 
-Před ostrým provozem je nutné dokončit:
+30. 9. 2026 byl po výslovném schválení aktivován Render 0,5 CPU / 512 MB za 7 USD měsíčně. `ENABLE_LICENSE_SUBSCRIPTION_WORKER=1`; skutečný server zaznamenal spuštění s intervalem 3 600 sekund a první cyklus s nulou chyb. Před zapnutím nebyly žádné splatné obnovy, rušení ani oznámení. Připomínkový worker se tímto nezapínal.
 
-- ověření oprávnění pro opakované karetní platby;
-- povolené odchozí IP adresy nasazeného serveru (nepovolovat plošně všechny IP);
-- potvrzování výsledku: `https://app.toozservis.cz/api/v1/license/comgate/result`;
-- všechny návratové adresy: `https://app.toozservis.cz/web/payment-return.html`;
-- testovací platbu a doručení výsledku, poté teprve skutečný režim;
-- běh kontroly předplatného a dostupnost serveru i bez otevřené aplikace. Uspávaný bezplatný server sám nezaručuje včasnou automatickou obnovu. Je třeba zajistit pravidelné spouštění; pouhé zapnutí přepínače Comgate tento problém neřeší.
+Testovací objednávka Basic za 98,99 Kč vznikla v přihlášené iOS aplikaci (původní účet má kredit 0,01 Kč). Stejná platba byla potvrzena na testovací stránce Comgate v Chromu, protože ovládání okna simulátoru přes Computer Use nebylo dostupné. Skutečné potvrzení od brány dorazilo na server: `test_paid_confirmed`, `PAID`. Původní licence a předplatné se před testem a po testu shodují ve všech uložených polích. Návratový odkaz a zobrazení „Test potvrzen · bez změny tarifu“ byly ověřeny v iOS. Neproběhlo skutečné stržení peněz.
+
+Lokální ukázka nyní registruje pouze `spravavozidel-local`, aby při souběžné instalaci nepřebírala návraty plateb a obnovy hesla určené serverové aplikaci. Serverová a distribuovaná verze používá `spravavozidel`.
+
+Před ostrým účtováním ještě zbývá potvrdit oprávnění tohoto obchodu pro automatické opakované platby a ověřit jejich celý průchod. Portál potvrzuje schválený obchod a aktivní propojení, ale tyto údaje samy oprávnění k opakování neprokazují. [Dokumentace Comgate](https://help.comgate.eu/docs/opakovane-platby) vyžaduje aktivaci této funkce podporou. Jednorázový test nenahrazuje ověření automatické obnovy. Testovací režim proto zůstává zapnutý.
 
 Klíč ani platné odkazy na platbu nepatří do Gitu. Aktivní propojení v portálu samo o sobě neprokazuje připravenost celého průchodu. Ostrá platba nebyla při implementaci provedena. Schválení distribuce digitálního předplatného přes externí bránu v App Store je samostatný krok před vydáním do obchodu.
 
@@ -29,7 +28,7 @@ Server kontroluje cenu, měnu, obchod, identifikátor, referenci a testovací re
 
 ## Ověření
 
-30. 9. 2026: přihlášená iOS aplikace ověřila spojení s Comgate a načetla skutečný katalog. Při přípravě testovací objednávky původního účtu byl opraven nesoulad jednorázové nabídky a požadavku `initRecurring`. Jednorázová objednávka nyní žádné oprávnění k opakovaným platbám nevyžaduje. Klient posílá `expected_recurring`; změna způsobu prodlužování mezi nabídkou a odesláním se odmítne ještě před bránou. Starší klient dostane požadavek na aktualizaci. Telefon plátce se zbytečně nepředává, kontaktem je e-mail. Přesný připravený serverový stav prošel 105 testy; platba přes skutečnou testovací bránu zatím není dokončena.
+30. 9. 2026: přihlášená iOS aplikace ověřila spojení s Comgate a načetla skutečný katalog. Při přípravě testovací objednávky původního účtu byl opraven nesoulad jednorázové nabídky a požadavku `initRecurring`. Jednorázová objednávka nyní žádné oprávnění k opakovaným platbám nevyžaduje. Klient posílá `expected_recurring`; změna způsobu prodlužování mezi nabídkou a odesláním se odmítne ještě před bránou. Starší klient dostane požadavek na aktualizaci. Telefon plátce se zbytečně nepředává, kontaktem je e-mail. Po doplnění bezpečného ověření historických zrušených objednávek prošel přesný serverový stav 114 testy. Stará nevyřízená objednávka přestává blokovat nákup pouze po ověření stavu CANCELLED, obchodu, reference, identifikátoru, měny a částky přímo u brány. Původní záznam se zachovává; neznámá historická platba PAID nesmí bez původních podmínek měnit oprávnění.
 
 Přesný serverový commit bez jiných rozpracovaných změn: 100 úspěšných testů. Offline iOS: 5 úspěšných kontrol navigace a souhlasů. Sestavení pro simulátor a nepodepsané zařízení uspělo.
 
