@@ -1,6 +1,6 @@
 # SprávaVozidel — vydání v App Storu
 
-Poslední ověření: 30. 9. 2026. Směr potvrzený uživatelem: iOS předplatné přes Apple In-App Purchase; Comgate pro web. Režim externích EU plateb v iOS není vybraný.
+Poslední ověření: 1. 10. 2026. Směr potvrzený uživatelem: iOS předplatné přes Apple In-App Purchase; Comgate pro web. Režim externích EU plateb v iOS není vybraný.
 
 ## Skutečný stav
 
@@ -35,7 +35,7 @@ Ceny musí vlastník schválit a nastavit v App Store Connect. Klient nepřebír
 
 ## Zbývající závěrečné kontroly celého produktu
 
-- Nativní potvrzení smazání účtu nyní vyžaduje současné heslo, ručně zadaný text a výslovné `deleted: true` od serveru. Neodhlašuje po chybě ani nepředstírá dokončený export. Serverové smazání ale stále vyžaduje prověření všech vazeb, médií a zákonné archivace účetních podkladů; následně změnit povinný export na dobrovolný. Neprovádět mazání skutečných účtů pro test.
+- Odstranění účtu je implementované v `ACCOUNT_ERASURE.md`: dobrovolný export, povinné heslo a ruční potvrzení, vlastnictví místo plošného smazání organizace, trvalé odstranění souborů s potvrzením stavu. Izolované testy a nativní formulář prošly bez mazání skutečných účtů. Zbývá právní/produkční ověření uchování účetních podkladů, kopií a záloh.
 - Inventura zdrojového kódu je v `docs/APP_PRIVACY_INVENTORY.md`. Nativní manifest nyní zahrnuje 14 používaných kategorií údajů, důvod UserDefaults CA92.1 a deklaraci bez reklamního sledování. Před zveřejněním ještě ověřit konkrétní serverové proměnné, smlouvy, retence a vyplnit odpovědi v App Store Connect. Neslibovat nulový sběr osobních údajů. Ověření nových účtů je popsáno v doplnění níže; rozpracované úpravy fotografií do této etapy nepatří.
 - Ověřit aktuální obchodní/platební podmínky, odstoupení u průběžné digitální služby, reklamace, vrácení peněz, DPA a uchování dokladů. Přechod na Apple musí být zohledněn; staré Comgate souhlasy nelze používat pro Apple nákup.
 - EET2: dle ověřeného webu MF dne 30. 9. 2026 je účinnost uvedena od 1. 1. 2027. Prověřit přesné znění účinného zákona, kontaktní tržby servisů a technickou specifikaci. Samotné online SaaS předplatné není důkazem povinnosti/absence povinnosti pro všechny platby servisů. Integrace EET dosud neexistuje; nevydávat fiktivní potvrzení o evidenci.
@@ -99,3 +99,26 @@ Ceny musí vlastník schválit a nastavit v App Store Connect. Klient nepřebír
 - Fyzický fotoaparát není tímto ověřený: výchozí je samostatný širokoúhlý objektiv, odstraněn souběžný diagnostický výstup. Dříve hlášený černý/zelený obraz musí znovu ověřit vlastník na iPhonu.
 
 - Přesný připravený serverový index prošel 21 izolovanými testy protokolu, oprávnění, nezměnitelnosti opakovaného odeslání a vlastnictví. Náhled PDF má čtyři vykreslené a zkontrolované stránky se smyšlenými snímky. iOS `ddac1de` prošlo podepsaným sestavením simulátoru, Release kompilací pro iPhone a testem místních konceptů; kopie pro Xcode je synchronizovaná se zachovaným nastavením podpisu.
+
+
+## Doplnění 1. 10. — odstranění účtu, doklady a oddělení místních dat
+
+- Server `e08125f` je ověřený jako Live. Změny účtu a fronta odstranění souborů
+  jsou atomické; opožděná Comgate platba nemůže obnovit předplatné zaniklé
+  organizace. Platební evidence a ochrana Apple nákupů zůstávají uchované.
+  Stav dokončení se ověřuje náhodným potvrzením bez e-mailu či jiných detailů.
+- iOS `9a68604` je synchronizovaný do pracovního Xcode projektu. Potvrzení
+  odstranění je čitelné, přístupné i po restartu; export není podmínkou.
+  Při změně přihlášení se oddělí přehledy i opožděné odpovědi.
+- Dvě kontroly skutečného admin rozhraní prošly: bezpečný nevyplněný formulář
+  odstranění a Provoz → Automatické kontroly → čekající soukromé soubory.
+  Původní automatizace mířila na neklikací nadpis; po opravě prošla.
+- Nové ORV fotografie mají trvalé soukromé ukládání obou stran, inventář uložený
+  před uploadem, chybové stavy a úklid pouze nových opuštěných pokusů. Starší
+  dokumenty se automaticky nemažou. Podrobnosti: `ORV_STORAGE.md`.
+- Přesný připravený kód ORV spolu s účetním výmazem, přístupy a Apple/Comgate
+  prošel **226 testy** v oddělené databázi. Skutečné soubory, účty, nákupy ani
+  e-maily se testem neměnily.
+- Současná kompilace Release pro iPhone prošla bez distribučního podpisu.
+  Apple ToS, produkty, sandbox nákupy, TestFlight a fyzický fotoaparát stále
+  vyžadují dokončení; nejde o prohlášení, že je aplikace již vydaná.

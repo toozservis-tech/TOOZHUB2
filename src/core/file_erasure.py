@@ -8,9 +8,10 @@ from pathlib import Path
 import hashlib
 import json
 import secrets
+import re
 
 import httpx
-from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy import Column, DateTime, Integer, String, Text, inspect
 
 from src.core import file_storage
 from src.modules.vehicle_hub.database import Base, SessionLocal
@@ -114,8 +115,45 @@ def erase_private_file(relative: str) -> None:
     path.unlink(missing_ok=True)
 
 
+def recover_abandoned_document_uploads(*, session_factory=SessionLocal, now=None, limit=10) -> int:
+    """Only unfinished upload intents, never reviewed/confirmed documents.
+
+    A process can die between storing either side and committing OCR results.
+    Keep its exact paths available for recovery, then expire it after 24 hours.
+    Active uploads hold the row lock and are skipped.
+    """
+    from src.modules.vehicle_hub.models import VehicleORVScan
+    now = now or datetime.utcnow()
+    with session_factory() as db:
+        if not inspect(db.connection()).has_table(VehicleORVScan.__tablename__):
+            return 0
+        rows = (db.query(VehicleORVScan).filter(VehicleORVScan.status == "processing",
+                    VehicleORVScan.vehicle_id.is_(None),
+                    VehicleORVScan.front_image_path.like("%/front\\_%.jpg", escape="\\"),
+                    VehicleORVScan.created_at < now - timedelta(hours=24))
+                .order_by(VehicleORVScan.created_at).limit(max(0, min(limit, 100)))
+                .with_for_update(skip_locked=True).all())
+        recovered = 0
+        for row in rows:
+            # Legacy files were not created with this durable-intent protocol.
+            # Do not infer permission to remove them merely from an old status.
+            prefix = f"tenant_{row.tenant_id}/scan_{row.id}/"
+            if not all(re.fullmatch(re.escape(prefix + side + "_") + r"[a-f0-9]{32}\.jpg", path or "")
+                       for side, path in (("front", row.front_image_path), ("back", row.back_image_path))):
+                continue
+            enqueue_file_erasure(db, "vehicle_orv_scans", row.front_image_path)
+            enqueue_file_erasure(db, "vehicle_orv_scans", row.back_image_path)
+            row.front_image_path = row.back_image_path = None
+            row.front_captured = row.back_captured = False
+            row.status = "failed"
+            recovered += 1
+        db.commit()
+        return recovered
+
+
 def process_file_erasures(*, session_factory=SessionLocal, limit=10, now=None) -> dict:
     now = now or datetime.utcnow()
+    recover_abandoned_document_uploads(session_factory=session_factory, now=now, limit=limit)
     result = {"removed": 0, "retrying": 0}
     for _ in range(max(0, min(limit, 100))):
         with session_factory() as db:

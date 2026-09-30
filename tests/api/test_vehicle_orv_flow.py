@@ -18,6 +18,14 @@ from src.modules.vehicle_hub.routers_v1 import vehicles as vehicles_router
 from src.modules.vehicle_hub import orv_scans
 
 
+@pytest.fixture(autouse=True)
+def private_storage_root(tmp_path, monkeypatch):
+    from src.core import file_storage
+    monkeypatch.setattr(file_storage, "DATA_DIR", tmp_path)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+
+
 @pytest.fixture()
 def db_session(tmp_path: Path):
     db_path = tmp_path / "vehicle_orv_flow.sqlite"

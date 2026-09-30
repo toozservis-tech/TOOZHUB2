@@ -14,11 +14,14 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 import unicodedata
+from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from src.core.config import DATA_DIR
+from src.core.file_storage import persist_file
+from src.core.file_erasure import enqueue_file_erasure
 from .models import Customer, Vehicle as VehicleModel, VehicleORVScan
 
 try:
@@ -644,14 +647,16 @@ def _safe_file_stem(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "scan")).strip("._-")[:64] or "scan"
 
 
-def _store_scan_image(*, tenant_id: int, scan_id: int, side: str, content: bytes, mime_type: str | None) -> str:
-    del mime_type
-    extension = ".jpg"
-    relative = Path(f"tenant_{tenant_id}") / f"scan_{scan_id}" / f"{side}{extension}"
-    absolute = ORV_SCANS_DIR / relative
-    absolute.parent.mkdir(parents=True, exist_ok=True)
-    absolute.write_bytes(content)
-    return relative.as_posix()
+def _scan_image_path(*, tenant_id: int, scan_id: int, side: str) -> str:
+    if side not in {"front", "back"}:
+        raise ValueError("Unknown document side")
+    # A removed database ID may be reused; never reuse an old storage object.
+    return (Path(f"tenant_{int(tenant_id)}") / f"scan_{int(scan_id)}" / f"{side}_{uuid4().hex}.jpg").as_posix()
+
+
+def _store_scan_image(*, relative: str, content: bytes) -> None:
+    # Supabase private storage is authoritative. DATA_DIR is only a local cache.
+    persist_file(ORV_SCANS_DIR / relative, content)
 
 
 def _compute_sha256(content: bytes) -> str:
@@ -698,72 +703,89 @@ def create_orv_scan_record(
     db.add(scan)
     db.flush()
 
-    scan.front_image_path = _store_scan_image(
-        tenant_id=tenant_id,
-        scan_id=scan.id,
-        side="front",
-        content=front_bytes,
-        mime_type=front_image_mime_type,
-    )
-    scan.back_image_path = _store_scan_image(
-        tenant_id=tenant_id,
-        scan_id=scan.id,
-        side="back",
-        content=back_bytes,
-        mime_type=back_image_mime_type,
-    )
-    scan.front_image_hash = _compute_sha256(front_bytes)
-    scan.back_image_hash = _compute_sha256(back_bytes)
-
-    logger.info(
-        "[ORV_PARSE] scan_id=%s tenant_id=%s decode_ms=%.1f normalize_ms=%.1f front_bytes=%s back_bytes=%s",
-        scan.id,
-        tenant_id,
-        decode_duration_ms,
-        normalize_duration_ms,
-        len(front_bytes),
-        len(back_bytes),
-    )
-
-    front_ocr_started = time.perf_counter()
-    front_text = _extract_ocr_text(front_bytes, f"{_safe_file_stem(scan.source)}_front.jpg", front_image_mime_type or "image/jpeg")
-    front_ocr_duration_ms = round((time.perf_counter() - front_ocr_started) * 1000, 1)
-
-    back_ocr_started = time.perf_counter()
-    back_text = _extract_ocr_text(back_bytes, f"{_safe_file_stem(scan.source)}_back.jpg", back_image_mime_type or "image/jpeg")
-    back_ocr_duration_ms = round((time.perf_counter() - back_ocr_started) * 1000, 1)
-
-    parse_started = time.perf_counter()
-    parsed = parse_orv_payload(front_text, back_text)
-    parse_duration_ms = round((time.perf_counter() - parse_started) * 1000, 1)
-
-    scan.orv_number = parsed.vehicle_fields.get("orv_number")
-    scan.front_ocr_text = parsed.front_text
-    scan.back_ocr_text = parsed.back_text
-    scan.parsed_vehicle_json = json.dumps(parsed.vehicle_fields, ensure_ascii=False)
-    scan.parsed_owner_json = json.dumps(parsed.owner_fields, ensure_ascii=False)
-    scan.confidence_json = json.dumps(parsed.confidence_items, ensure_ascii=False)
-    scan.warnings_json = json.dumps(parsed.warnings, ensure_ascii=False)
-    scan.missing_fields_json = json.dumps(parsed.missing_fields, ensure_ascii=False)
-    extracted_fields = sorted([key for key, value in {**parsed.vehicle_fields, **parsed.owner_fields}.items() if value])
-    scan.extracted_fields_json = json.dumps(extracted_fields, ensure_ascii=False)
-    scan.status = "review"
-    scan.processed_at = datetime.utcnow()
-
+    scan.front_image_path = _scan_image_path(tenant_id=tenant_id, scan_id=scan.id, side="front")
+    scan.back_image_path = _scan_image_path(tenant_id=tenant_id, scan_id=scan.id, side="back")
+    # Commit the exact inventory before external I/O. A crash never leaves an
+    # uploaded private document with no owning record / erasure path.
+    scan_id, customer_id = scan.id, current_user.id
     db.commit()
-    db.refresh(scan)
-    total_duration_ms = round((time.perf_counter() - overall_started) * 1000, 1)
-    logger.info(
-        "[ORV_PARSE] scan_id=%s completed total_ms=%.1f front_ocr_ms=%.1f back_ocr_ms=%.1f parse_ms=%.1f extracted_fields=%s warnings=%s",
-        scan.id,
-        total_duration_ms,
-        front_ocr_duration_ms,
-        back_ocr_duration_ms,
-        parse_duration_ms,
-        len(extracted_fields),
-        len(parsed.warnings),
-    )
-    return scan
+    try:
+        owner = db.query(Customer).filter(Customer.id == customer_id).with_for_update().first()
+        if owner is None:
+            raise HTTPException(401, "Účet již není dostupný.")
+        scan = db.query(VehicleORVScan).filter(VehicleORVScan.id == scan_id).with_for_update().first()
+        if scan is None or scan.status != "processing":
+            raise HTTPException(409, "Zpracování dokladu již není dostupné. Pořiďte nový snímek.")
+        # Serialize with account erasure: no upload can finish after its account
+        # and document inventory have already been removed.
+        _store_scan_image(relative=scan.front_image_path, content=front_bytes)
+        _store_scan_image(relative=scan.back_image_path, content=back_bytes)
+        scan.front_image_hash = _compute_sha256(front_bytes)
+        scan.back_image_hash = _compute_sha256(back_bytes)
+
+        logger.info(
+            "[ORV_PARSE] scan_id=%s tenant_id=%s decode_ms=%.1f normalize_ms=%.1f front_bytes=%s back_bytes=%s",
+            scan.id,
+            tenant_id,
+            decode_duration_ms,
+            normalize_duration_ms,
+            len(front_bytes),
+            len(back_bytes),
+        )
+
+        front_ocr_started = time.perf_counter()
+        front_text = _extract_ocr_text(front_bytes, f"{_safe_file_stem(scan.source)}_front.jpg", front_image_mime_type or "image/jpeg")
+        front_ocr_duration_ms = round((time.perf_counter() - front_ocr_started) * 1000, 1)
+
+        back_ocr_started = time.perf_counter()
+        back_text = _extract_ocr_text(back_bytes, f"{_safe_file_stem(scan.source)}_back.jpg", back_image_mime_type or "image/jpeg")
+        back_ocr_duration_ms = round((time.perf_counter() - back_ocr_started) * 1000, 1)
+
+        parse_started = time.perf_counter()
+        parsed = parse_orv_payload(front_text, back_text)
+        parse_duration_ms = round((time.perf_counter() - parse_started) * 1000, 1)
+
+        scan.orv_number = parsed.vehicle_fields.get("orv_number")
+        scan.front_ocr_text = parsed.front_text
+        scan.back_ocr_text = parsed.back_text
+        scan.parsed_vehicle_json = json.dumps(parsed.vehicle_fields, ensure_ascii=False)
+        scan.parsed_owner_json = json.dumps(parsed.owner_fields, ensure_ascii=False)
+        scan.confidence_json = json.dumps(parsed.confidence_items, ensure_ascii=False)
+        scan.warnings_json = json.dumps(parsed.warnings, ensure_ascii=False)
+        scan.missing_fields_json = json.dumps(parsed.missing_fields, ensure_ascii=False)
+        extracted_fields = sorted([key for key, value in {**parsed.vehicle_fields, **parsed.owner_fields}.items() if value])
+        scan.extracted_fields_json = json.dumps(extracted_fields, ensure_ascii=False)
+        scan.status = "review"
+        scan.processed_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(scan)
+        total_duration_ms = round((time.perf_counter() - overall_started) * 1000, 1)
+        logger.info(
+            "[ORV_PARSE] scan_id=%s completed total_ms=%.1f front_ocr_ms=%.1f back_ocr_ms=%.1f parse_ms=%.1f extracted_fields=%s warnings=%s",
+            scan.id,
+            total_duration_ms,
+            front_ocr_duration_ms,
+            back_ocr_duration_ms,
+            parse_duration_ms,
+            len(extracted_fields),
+            len(parsed.warnings),
+        )
+        return scan
+
+    except Exception:
+        db.rollback()
+        failed = db.query(VehicleORVScan).filter(VehicleORVScan.id == scan_id).with_for_update().first()
+        if failed is not None and failed.status == "processing":
+            # A timed-out upload may have reached storage. Queue BOTH intended
+            # paths; absence is harmless and storage failures remain retryable.
+            enqueue_file_erasure(db, "vehicle_orv_scans", failed.front_image_path)
+            enqueue_file_erasure(db, "vehicle_orv_scans", failed.back_image_path)
+            failed.front_image_path = failed.back_image_path = None
+            failed.front_captured = failed.back_captured = False
+            failed.status = "failed"
+            db.commit()
+        raise
 
 
 def serialize_orv_scan(scan: VehicleORVScan) -> dict[str, Any]:
@@ -811,6 +833,9 @@ def apply_orv_scan_to_vehicle(
         raise HTTPException(status_code=403, detail="ORV scan nepatří do stejného tenantu.")
     if getattr(scan, "initiated_by_customer_id", None) not in {None, getattr(current_user, "id", None)}:
         raise HTTPException(status_code=403, detail="ORV scan patří jinému uživateli.")
+
+    if scan.status not in {"review", "confirmed"}:
+        raise HTTPException(409, detail="Doklad ještě není zpracovaný. Pořiďte jej znovu.")
 
     parsed_vehicle = json.loads(scan.parsed_vehicle_json or "{}")
     monitored_fields = ["nickname", "brand", "model", "year", "engine", "vin", "plate", "orv_number"]
