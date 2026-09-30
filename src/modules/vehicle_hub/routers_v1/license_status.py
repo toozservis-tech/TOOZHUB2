@@ -1034,6 +1034,15 @@ def _activate_subscription_from_paid_payment(
     trans_id: str,
     init_recurring_id: Optional[str],
 ) -> LicenseSubscription:
+    from src.modules.vehicle_hub.account_erasure import tenant_was_erased
+    if tenant_was_erased(db, tenant_id):
+        subscription = _upsert_subscription(db, tenant_id)
+        subscription.status = "canceled"
+        subscription.auto_renew_enabled = False
+        subscription.init_recurring_id = None
+        subscription.next_charge_at = None
+        db.flush()
+        return subscription
     paid_at = _utcnow()
     # Nejprve nastavíme feature/licenci.
     upgrade_license_plan(db, tenant_id, plan, commit=False)
@@ -1332,6 +1341,14 @@ def process_license_subscription_jobs(db: Session) -> Dict[str, int]:
             if subscription is None:
                 continue
             tenant_id = int(subscription.tenant_id)
+            from src.modules.vehicle_hub.account_erasure import tenant_was_erased
+            if tenant_was_erased(db, tenant_id):
+                subscription.status = "canceled"
+                subscription.auto_renew_enabled = False
+                subscription.init_recurring_id = None
+                subscription.next_charge_at = None
+                db.commit()
+                continue
             plan = _normalize_plan_soft(subscription.plan_current, default="free")
             billing_period = _normalize_billing_period_soft(subscription.billing_period, default="monthly")
             status = _normalize_subscription_status(subscription.status)

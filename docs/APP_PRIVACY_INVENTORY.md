@@ -51,11 +51,11 @@ Výběr „Data Not Collected“ by byl nesprávný. Kategorie jsou vložené do
 
 Manifest nemění žádné smlouvy se zpracovateli ani retenční lhůty. Před publikací doplnit konkrétní platné údaje do veřejných zásad, včetně účelů, právních základů, příjemců, dob uchování a práv uživatele. Nepoužívat nepodložené obecné sliby „všechna data jen v EU“ nebo „vše se ihned vymaže“.
 
-## Odstranění účtu — zjištěná otevřená práce
+## Odstranění účtu — implementovaný postup a zbývající kontrola
 
-Nativní formulář je dostupný v účtu a ověřuje heslo, ručně zadané potvrzení a kladnou odpověď serveru. Nové serverové testy ověřují omezení pokusů a vrácení neúspěšné transakce zpět bez úniku interní chyby.
+Postup z 1. 10. 2026 je popsán v `ACCOUNT_ERASURE.md`. Export je dobrovolný, heslo a ruční potvrzení zůstávají povinné. Odstranění používá explicitní vlastnictví, maže vazby v jedné transakci a soubory následně dokončuje trvalá fronta. Nativní aplikace zobrazuje potvrzení a kontroluje dokončení i po odhlášení; při ztrátě odpovědi dokáže výsledek ověřit tajným potvrzením. Žádný skutečný účet nebyl při testech odstraněn.
 
-Původní `delete_customer_account` není ještě dostatečný pro vydání: nepokrývá všechny nové vazby, neumí bezpečně odstranit soukromé soubory a obsahuje široké mazání celé organizace. Export je zatím povinný a po dokončení bezpečného serverového postupu musí být dobrovolný. Potřebná je zvláštní ochrana sdílených/převedených vozidel, zákonně uchovávaných dokladů, zastavení obnovování Comgate a anonymizované oddělení Apple transakcí. Testy této etapy nenahrazují tyto práce. Žádný skutečný účet nebyl kvůli testům odstraněn.
+Před publikací stále zbývá ověřit a zveřejnit konkrétní retenční lhůty účetních záznamů, záloh a logů infrastruktury, otestovat obnovu zálohy včetně opětovného použití záznamů o výmazu a posoudit pravidla kopií sdílené servisní dokumentace. Odstranění živých záznamů a souborů samo o sobě nedokládá odstranění všech záloh u poskytovatelů.
 
 ## Ověřené primární podklady
 

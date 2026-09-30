@@ -1,6 +1,12 @@
 /* Plain-language administration built on the existing authorized API. */
 const operatorPending = new Set();
 const operatorJobs = {
+  'privacy.files.erase': {
+    title: 'Odstranění soukromých souborů',
+    description: 'Dokončuje již potvrzené žádosti o odstranění souborů a při výpadku úložiště je opakuje.',
+    impact: 'Zpracuje jeden soubor, jehož odstranění už bylo potvrzeno. Nevytváří novou žádost o smazání účtu.',
+    pause: 'Dokončování potvrzených žádostí nelze pozastavit.'
+  },
   'apple.subscription.reconcile': {
     title: 'Předplatné v App Storu',
     description: 'Ověřuje aktuální předplatné přímo u Applu a doplňuje změny při opožděném oznámení.',
@@ -63,6 +69,7 @@ async function opAction(key,resultId,fn) {
 function operatorJobView(job) {
   if(job.available===false)return {label:'Čeká na dokončení nastavení',resume:false,pause:false,run:false,note:job.unavailable_reason||'Propojení služby zatím není připravené.'};
   if(!job.env_enabled)return {label:'Automatika vypnutá na serveru',resume:false,pause:false,run:!job.is_paused, note:'Tlačítko jednorázové kontroly automatiku nezapíná. Pravidelný běh musí nejprve povolit správce nasazení serveru.'};
+  if(job.pause_supported===false)return {label:'Automatika zapnutá',resume:false,pause:false,run:true,note:'Dokončování již potvrzených žádostí běží automaticky a nelze je pozastavit.'};
   if(job.is_paused)return {label:'Pozastavená',resume:true,pause:false,run:false,note:'Nejdříve obnovte automatiku. Potom můžete spustit jednorázovou kontrolu.'};
   return {label:'Automatika zapnutá',resume:false,pause:true,run:true,note:'Jde o nastavení pravidelného běhu; tento údaj nepotvrzuje dokončení poslední kontroly.'};
 }
@@ -71,6 +78,7 @@ function renderOperatorJobs(data) {
   const jobs=Array.isArray(data?.jobs)?data.jobs:[];
   for(const job of jobs){const meta=operatorJobs[job.name];if(!meta)continue;const view=operatorJobView(job),card=opElement('section',null,'operator-job');
     card.append(opElement('h4',meta.title),opElement('p',meta.description),opElement('strong',view.label,'operator-job-status'),opElement('p',`Interval: přibližně každých ${Math.ceil(job.interval_seconds/60)} minut. ${view.note}`,'operator-hint'));
+    if(Number.isInteger(job.pending_count))card.append(opElement('p',`Soubory čekající na odstranění: ${job.pending_count}`));
     if(job.pause_reason)card.append(opElement('p',`Důvod pozastavení: ${job.pause_reason}`));
     if(job.last_success_at)card.append(opElement('p',`Poslední ověřené předplatné: ${new Date(job.last_success_at).toLocaleString('cs-CZ')}`));
     if(Number(job.retry_count)>0)card.append(opElement('p',`Kontroly čekající na opakování: ${job.retry_count}`,'operator-error'));
@@ -92,9 +100,9 @@ async function operatorJobAction(name,action) {
     opResult('cc-job-action-result',`${meta.title}: požadavek se zpracovává. Vyčkejte na výsledek.`);
     const data=await apiRequest('POST',`/admin-api/control-center/jobs/${action}`,{job_name:name,...(answer.reason?{reason:answer.reason}:{})});
     const summary=data.result||{};let message=action==='run'?'Jednorázová kontrola dokončena.':action==='pause'?'Automatické kontroly byly pozastaveny.':'Automatické kontroly byly znovu povoleny.';
-    const labels={checked_reminders:'Prověřené připomínky',checked_auto_stk:'Prověřené termíny STK',notifications_sent:'Odeslaná oznámení',email_notifications_sent:'Z toho e-mailem',push_notifications_sent:'Z toho do telefonu',renewal_success:'Obnovená předplatná',renewal_failed:'Neúspěšné obnovy',downgraded_free:'Převedeno na bezplatný tarif',notified:'Odeslaná upozornění',cancel_finalized:'Ukončená předplatná',errors:'Chyby',sent:'Odesláno',failed:'Neodesláno',checked:'Zkontrolováno'};
+    const labels={removed:'Odstraněné soubory',retrying:'Soubory čekající na opakování',checked_reminders:'Prověřené připomínky',checked_auto_stk:'Prověřené termíny STK',notifications_sent:'Odeslaná oznámení',email_notifications_sent:'Z toho e-mailem',push_notifications_sent:'Z toho do telefonu',renewal_success:'Obnovená předplatná',renewal_failed:'Neúspěšné obnovy',downgraded_free:'Převedeno na bezplatný tarif',notified:'Odeslaná upozornění',cancel_finalized:'Ukončená předplatná',errors:'Chyby',sent:'Odesláno',failed:'Neodesláno',checked:'Zkontrolováno'};
     const counts=Object.entries(labels).filter(([k])=>typeof summary[k]==='number').map(([k,label])=>`${label}: ${summary[k]}`);
-    const partial=Number(summary.errors||0)>0||Number(summary.failed||0)>0||Number(summary.renewal_failed||0)>0;
+    const partial=Number(summary.retrying||0)>0||Number(summary.errors||0)>0||Number(summary.failed||0)>0||Number(summary.renewal_failed||0)>0;
     if(partial)message='Kontrola skončila s problémy. Prověřte níže uvedený výsledek.';
     opResult('cc-job-action-result',`${meta.title}: ${message} ${counts.join('. ')}`,partial);await loadControlCenterJobs();
   });

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
+from pydantic import BaseModel, Field
 
 from src.core.auth import get_current_user_email
 from src.core.branding import APP_DISPLAY_NAME
@@ -135,17 +136,12 @@ def delete_current_user_account(
             detail="Potvrzení smazání nesouhlasí. Zadejte přesně text: SMAZAT UCET",
         )
 
-    if not payload.export_downloaded:
-        raise HTTPException(
-            status_code=400,
-            detail="Před smazáním účtu je nutné stáhnout export dat.",
-        )
-
     _limit_auth(request, "delete-account", customer.email, calls=5)
     if not customer.password_hash or not verify_password(payload.current_password, customer.password_hash):
         raise HTTPException(status_code=400, detail="Neplatné současné heslo")
 
     try:
+        db.info["requested_erasure_receipt"] = payload.erasure_receipt
         deleted_counts = delete_customer_account(customer, email=email, db=db)
         db.commit()
     except HTTPException:
@@ -160,9 +156,28 @@ def delete_current_user_account(
 
     return DeleteAccountResponse(
         deleted=True,
-        message="Účet i navázaná data byly trvale smazány.",
+        deletion_receipt=db.info.pop("account_erasure_receipt", None),
+        files_pending=deleted_counts.get("private_files_queued", 0),
+        message="Účet a jeho obsah byly odstraněny. Soukromé soubory se dokončují mazat na pozadí. "
+                "Údaje o platbách potřebné pro účetnictví a ochranu nákupů zůstávají uchované.",
         deleted_counts=deleted_counts,
     )
+
+
+class ErasureStatusRequest(BaseModel):
+    receipt: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@router.post("/user/account-erasure/status")
+def account_erasure_status(payload: ErasureStatusRequest, request: Request, response: Response, db=Depends(get_db)):
+    from src.core.file_erasure import receipt_status
+    _limit_auth(request, "erasure-status", payload.receipt, calls=60)
+    response.headers["Cache-Control"] = "no-store"
+    result = receipt_status(db, payload.receipt)
+    if result is None:
+        raise HTTPException(404, "Potvrzení odstranění nebylo nalezeno nebo již skončila jeho platnost.")
+    db.commit()
+    return result
 
 
 @router.put("/user/change-password")

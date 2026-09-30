@@ -64,6 +64,7 @@ ENABLE_FILE_BROWSER = _env_bool("ENABLE_FILE_BROWSER", False)
 _reminder_notification_task: asyncio.Task | None = None
 _license_subscription_task: asyncio.Task | None = None
 _apple_reconciliation_task: asyncio.Task | None = None
+_file_erasure_task: asyncio.Task | None = None
 
 _MAINTENANCE_BYPASS_PREFIXES = (
     "/admin-api",
@@ -175,6 +176,19 @@ async def _apple_reconciliation_worker() -> None:
             # Detailed upstream exceptions can contain signing credentials or JWS.
             print("[APPLE_RECONCILIATION] check unavailable; configuration or connection needs attention")
         await asyncio.sleep(interval_seconds())
+
+
+async def _private_file_erasure_worker() -> None:
+    from src.core.file_erasure import process_file_erasures
+    await asyncio.sleep(10)
+    while True:
+        try:
+            result = await asyncio.to_thread(process_file_erasures)
+            if result["removed"] or result["retrying"]:
+                print(f"[FILE_ERASURE] removed={result['removed']}, retrying={result['retrying']}")
+        except Exception:
+            print("[FILE_ERASURE] cleanup unavailable; committed requests remain queued")
+        await asyncio.sleep(60)
 
 
 def _is_maintenance_bypass_path(path: str) -> bool:
@@ -422,11 +436,16 @@ def _mount_static_directories(app: FastAPI) -> None:
 def _register_lifecycle_hooks(app: FastAPI) -> None:
     @app.on_event("startup")
     async def _start_background_workers() -> None:
-        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task
+        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _file_erasure_task
         db = SessionLocal()
         try:
             from src.modules.vehicle_hub.email_verification import EmailVerification
             EmailVerification.__table__.create(bind=db.get_bind(), checkfirst=True)
+            from src.core.file_erasure import FileErasure, AccountErasureReceipt
+            FileErasure.__table__.create(bind=db.get_bind(), checkfirst=True)
+            AccountErasureReceipt.__table__.create(bind=db.get_bind(), checkfirst=True)
+            from src.modules.vehicle_hub.account_erasure import ErasedTenant
+            ErasedTenant.__table__.create(bind=db.get_bind(), checkfirst=True)
             ensure_customer_account_state_schema(db)
             capabilities = get_capabilities(db)
             unavailable = [
@@ -452,6 +471,9 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
         finally:
             db.close()
 
+        if _file_erasure_task is None:
+            _file_erasure_task = asyncio.create_task(_private_file_erasure_worker())
+
         if not ENABLE_REMINDER_NOTIFICATION_WORKER:
             print("[REMINDERS_WORKER] disabled (ENABLE_REMINDER_NOTIFICATION_WORKER=0)")
         elif _reminder_notification_task is None:
@@ -473,7 +495,15 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
 
     @app.on_event("shutdown")
     async def _stop_background_workers() -> None:
-        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task
+        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _file_erasure_task
+        if _file_erasure_task is not None:
+            _file_erasure_task.cancel()
+            try:
+                await _file_erasure_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                _file_erasure_task = None
         if _apple_reconciliation_task is not None:
             _apple_reconciliation_task.cancel()
             try:

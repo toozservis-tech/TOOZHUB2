@@ -164,12 +164,15 @@ class ChangePasswordRequest(BaseModel):
 
 
 class DeleteAccountRequest(BaseModel):
+    erasure_receipt: Optional[str] = Field(default=None, min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]+$")
     current_password: str = Field(min_length=1, max_length=256)
     confirmation_text: str = Field(min_length=3, max_length=64)
     export_downloaded: bool = False
 
 
 class DeleteAccountResponse(BaseModel):
+    deletion_receipt: Optional[str] = None
+    files_pending: int = 0
     deleted: bool
     message: str
     deleted_counts: dict
@@ -874,207 +877,8 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
 
 
 def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
-    normalized_email = normalize_email(customer.email or email)
-    vehicle_ids = sorted(get_owned_vehicle_ids(db, customer, tenant_id=customer.tenant_id))
-
-    deleted_counts: dict[str, int] = {}
-    tenant_id = customer.tenant_id
-    no_vehicle_match_docs = ServiceDocumentIngestion.id == -1
-    no_vehicle_match_intakes = ServiceIntake.id == -1
-    no_vehicle_match_reservations = ReservationModel.id == -1
-    no_vehicle_match_reminders = ReminderModel.id == -1
-    no_vehicle_match_records = ServiceRecordModel.id == -1
-    no_vehicle_match_commands = CustomerCommand.id == -1
-    no_vehicle_match_vehicles = VehicleModel.id == -1
-
-    vehicle_docs_condition = ServiceDocumentIngestion.vehicle_id.in_(vehicle_ids) if vehicle_ids else no_vehicle_match_docs
-    vehicle_intakes_condition = ServiceIntake.vehicle_id.in_(vehicle_ids) if vehicle_ids else no_vehicle_match_intakes
-    vehicle_reservation_condition = ReservationModel.vehicle_id.in_(vehicle_ids) if vehicle_ids else no_vehicle_match_reservations
-    vehicle_reminder_condition = ReminderModel.vehicle_id.in_(vehicle_ids) if vehicle_ids else no_vehicle_match_reminders
-    vehicle_record_condition = ServiceRecordModel.vehicle_id.in_(vehicle_ids) if vehicle_ids else no_vehicle_match_records
-    vehicle_command_condition = CustomerCommand.vehicle_id.in_(vehicle_ids) if vehicle_ids else no_vehicle_match_commands
-    vehicle_self_condition = VehicleModel.id.in_(vehicle_ids) if vehicle_ids else no_vehicle_match_vehicles
-
-    db.query(ServiceRegistrationRequest).filter(
-        ServiceRegistrationRequest.reviewed_by_customer_id == customer.id
-    ).update({ServiceRegistrationRequest.reviewed_by_customer_id: None}, synchronize_session=False)
-    db.query(ServiceRegistrationRequest).filter(
-        ServiceRegistrationRequest.approved_customer_id == customer.id
-    ).update({ServiceRegistrationRequest.approved_customer_id: None}, synchronize_session=False)
-    if tenant_id:
-        db.query(ServiceRegistrationRequest).filter(
-            ServiceRegistrationRequest.approved_tenant_id == tenant_id
-        ).update({ServiceRegistrationRequest.approved_tenant_id: None}, synchronize_session=False)
-
-    deleted_counts["service_documents"] = bulk_delete(
-        db.query(ServiceDocumentIngestion).filter(
-            or_(
-                ServiceDocumentIngestion.customer_id == customer.id,
-                ServiceDocumentIngestion.service_customer_id == customer.id,
-                vehicle_docs_condition,
-            )
-        )
-    )
-    deleted_counts["service_intakes"] = bulk_delete(
-        db.query(ServiceIntake).filter(
-            or_(
-                ServiceIntake.customer_id == customer.id,
-                ServiceIntake.service_id == customer.id,
-                vehicle_intakes_condition,
-            )
-        )
-    )
-    deleted_counts["reservations"] = bulk_delete(
-        db.query(ReservationModel).filter(
-            or_(
-                ReservationModel.customer_id == customer.id,
-                ReservationModel.service_id == customer.id,
-                vehicle_reservation_condition,
-            )
-        )
-    )
-    deleted_counts["reminders"] = bulk_delete(
-        db.query(ReminderModel).filter(
-            or_(
-                ReminderModel.customer_id == customer.id,
-                vehicle_reminder_condition,
-            )
-        )
-    )
-    deleted_counts["service_records"] = bulk_delete(
-        db.query(ServiceRecordModel).filter(
-            or_(
-                ServiceRecordModel.user_id == customer.id,
-                vehicle_record_condition,
-            )
-        )
-    )
-    deleted_counts["service_links"] = bulk_delete(
-        db.query(ServiceCustomerLink).filter(
-            or_(
-                ServiceCustomerLink.service_customer_id == customer.id,
-                ServiceCustomerLink.customer_id == customer.id,
-            )
-        )
-    )
-    deleted_counts["service_invites"] = bulk_delete(
-        db.query(ServiceCustomerInvite).filter(
-            or_(
-                ServiceCustomerInvite.service_customer_id == customer.id,
-                ServiceCustomerInvite.linked_customer_id == customer.id,
-                func.lower(ServiceCustomerInvite.invite_email) == normalized_email,
-            )
-        )
-    )
-    deleted_counts["email_logs"] = bulk_delete(
-        db.query(EmailNotificationLog).filter(
-            or_(
-                EmailNotificationLog.customer_id == customer.id,
-                func.lower(EmailNotificationLog.email) == normalized_email,
-            )
-        )
-    )
-    deleted_counts["push_subscriptions"] = bulk_delete(
-        db.query(PushSubscription).filter(PushSubscription.customer_id == customer.id)
-    )
-    deleted_counts["security_logs"] = bulk_delete(
-        db.query(SecurityAccessLog).filter(
-            or_(
-                SecurityAccessLog.customer_id == customer.id,
-                func.lower(SecurityAccessLog.user_email) == normalized_email,
-            )
-        )
-    )
-    deleted_counts["bot_commands"] = bulk_delete(
-        db.query(BotCommand).filter(
-            or_(
-                BotCommand.user_id == customer.id,
-                func.lower(BotCommand.user_email) == normalized_email,
-            )
-        )
-    )
-    deleted_counts["customer_commands"] = bulk_delete(
-        db.query(CustomerCommand).filter(
-            or_(
-                func.lower(CustomerCommand.customer_email) == normalized_email,
-                vehicle_command_condition,
-            )
-        )
-    )
-    deleted_counts["service_registration_requests"] = bulk_delete(
-        db.query(ServiceRegistrationRequest).filter(
-            func.lower(ServiceRegistrationRequest.email) == normalized_email
-        )
-    )
-    deleted_counts["vehicle_ownerships"] = bulk_delete(
-        db.query(VehicleOwnership).filter(
-            VehicleOwnership.customer_id == customer.id
-        )
-    )
-    deleted_counts["security_settings"] = bulk_delete(
-        db.query(CustomerSecuritySettings).filter(CustomerSecuritySettings.customer_id == customer.id)
-    )
-    deleted_counts["vehicles"] = bulk_delete(
-        db.query(VehicleModel).filter(vehicle_self_condition)
-    )
-    from src.modules.vehicle_hub.email_verification import EmailVerification
-    deleted_counts["email_verifications"] = bulk_delete(
-        db.query(EmailVerification).filter(EmailVerification.customer_id == customer.id)
-    )
-    deleted_counts["customers"] = bulk_delete(
-        db.query(Customer).filter(Customer.id == customer.id)
-    )
-
-    if tenant_id:
-        remaining_customers = db.query(Customer.id).filter(Customer.tenant_id == tenant_id).count()
-        if remaining_customers == 0:
-            deleted_counts["tenant_service_documents"] = bulk_delete(
-                db.query(ServiceDocumentIngestion).filter(ServiceDocumentIngestion.service_tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_records"] = bulk_delete(
-                db.query(ServiceRecordModel).filter(ServiceRecordModel.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_reminders"] = bulk_delete(
-                db.query(ReminderModel).filter(ReminderModel.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_reservations"] = bulk_delete(
-                db.query(ReservationModel).filter(ReservationModel.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_intakes"] = bulk_delete(
-                db.query(ServiceIntake).filter(ServiceIntake.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_vehicles"] = bulk_delete(
-                db.query(VehicleModel).filter(VehicleModel.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_vehicle_ownerships"] = bulk_delete(
-                db.query(VehicleOwnership).filter(VehicleOwnership.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_push_subscriptions"] = bulk_delete(
-                db.query(PushSubscription).filter(PushSubscription.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_email_logs"] = bulk_delete(
-                db.query(EmailNotificationLog).filter(EmailNotificationLog.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_security_logs"] = bulk_delete(
-                db.query(SecurityAccessLog).filter(SecurityAccessLog.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_bot_commands"] = bulk_delete(
-                db.query(BotCommand).filter(BotCommand.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_customer_commands"] = bulk_delete(
-                db.query(CustomerCommand).filter(CustomerCommand.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_instances"] = bulk_delete(
-                db.query(Instance).filter(Instance.tenant_id == tenant_id)
-            )
-            deleted_counts["tenant_license"] = bulk_delete(
-                db.query(License).filter(License.tenant_id == tenant_id)
-            )
-            deleted_counts["tenants"] = bulk_delete(
-                db.query(Tenant).filter(Tenant.id == tenant_id)
-            )
-
-    return deleted_counts
+    from src.modules.vehicle_hub.account_erasure import erase_account
+    return erase_account(db, customer)
 
 
 def cleanup_export_dir(tmp_dir_path: Path) -> None:

@@ -36,6 +36,20 @@ class OperatorControls(unittest.TestCase):
                 admin_api.resume_control_center_job(admin_api.JobStateRequest(job_name='license.subscription.cycle',reason='test'),None,'admin@example.com',None)
             self.assertEqual(caught.exception.status_code,409);save.assert_not_called()
 
+    def test_confirmed_file_erasure_cannot_be_paused_or_falsely_resumed(self):
+        with patch.object(admin_api,'set_job_paused') as save:
+            for action in [admin_api.pause_control_center_job,admin_api.resume_control_center_job]:
+                with self.assertRaises(HTTPException) as caught:
+                    action(admin_api.JobStateRequest(job_name='privacy.files.erase',reason='fixture'),None,'admin@example.com',None)
+                self.assertEqual(caught.exception.status_code,409)
+            save.assert_not_called()
+
+    def test_manual_file_cleanup_uses_one_bounded_existing_request(self):
+        with patch.object(admin_api,'is_job_paused',return_value=False), patch.object(admin_api,'log_developer_action'), patch('src.core.file_erasure.process_file_erasures',return_value={'removed':0,'retrying':1}) as cleanup:
+            result=admin_api.run_control_center_job({'job_name':'privacy.files.erase'},None,'admin@example.com',None)
+            cleanup.assert_called_once_with(limit=1)
+            self.assertEqual(result['result']['retrying'],1)
+
     def test_paused_run_never_processes_payments(self):
         with patch.object(admin_api,'is_job_paused',return_value=True), patch('src.modules.vehicle_hub.routers_v1.license_status.process_license_subscription_jobs') as process:
             with self.assertRaises(HTTPException) as caught:

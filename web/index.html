@@ -26623,7 +26623,7 @@
                                             </div>
                                             <div class="profile-danger-zone">
                                                 <h4>Trvalé smazání účtu</h4>
-                                                <p>Tento krok odstraní účet i všechna navázaná data (vozidla, záznamy, připomínky, rezervace).</p>
+                                                <p>Tento krok odstraní účet, vlastní obsah a vozidla bez dalšího vlastníka. Cizí a spoluvlastněná vozidla zůstanou zachovaná. Platební záznamy pro účetnictví a ochranu nákupů se uchovávají odděleně.</p>
                                                 <div class="profile-delete-confirm">
                                                     <div class="form-group">
                                                         <label for="profileDeletePassword">Současné heslo</label>
@@ -26636,7 +26636,7 @@
                                                     </div>
                                                     <label class="profile-delete-check" for="profileDeleteExportConfirmed">
                                                         <input type="checkbox" id="profileDeleteExportConfirmed">
-                                                        <span>Potvrzuji, že jsem stáhl(a) export dat a rozumím, že smazání je nevratné.</span>
+                                                        <span>Stáhl(a) jsem export dat (dobrovolné).</span>
                                                     </label>
                                                     <div class="profile-delete-actions">
                                                         <button type="button" class="btn-danger" id="profileDeleteAccountBtn" onclick="handleDeleteAccount()">🗑️ Smazat účet a data</button>
@@ -26881,10 +26881,6 @@
                 setProfileDataStatus(statusBoxId, 'Do potvrzovacího pole zadejte přesně text SMAZAT UCET.', 'error');
                 return;
             }
-            if (!exportConfirmed) {
-                setProfileDataStatus(statusBoxId, 'Nejprve potvrďte, že jste stáhli export dat.', 'error');
-                return;
-            }
 
             const hardConfirm = window.confirm(
                 'Opravdu chcete TRVALE smazat účet a všechna data? Tento krok nelze vrátit zpět.'
@@ -26902,15 +26898,15 @@
                 const response = await apiCall('/user/me', 'DELETE', {
                     current_password: password,
                     confirmation_text: confirmationText,
-                    export_downloaded: true
+                    export_downloaded: exportConfirmed
                 });
 
                 setProfileDataStatus(
                     statusBoxId,
-                    `Účet byl smazán. Odstraňuji relaci... (${JSON.stringify(response?.deleted_counts || {})})`,
+                    response?.message || 'Účet byl odstraněn.',
                     'success'
                 );
-                showAlert('Účet a data byly trvale smazány.', 'success');
+                showAlert(response?.message || 'Účet byl odstraněn.', 'success');
 
                 setTimeout(() => {
                     handleLogout();

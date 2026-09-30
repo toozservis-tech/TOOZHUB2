@@ -72,10 +72,13 @@ class AccountDeletionSafety(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.mock_erase.assert_not_called()
 
-    def test_confirmation_and_export_failure_never_reach_erasure(self):
-        for changes in ({"confirmation_text": "maybe"}, {"export_downloaded": False}):
-            self.assertEqual(self.request(**changes).status_code, 400)
+    def test_confirmation_failure_never_reaches_erasure(self):
+        self.assertEqual(self.request(confirmation_text="maybe").status_code, 400)
         self.mock_erase.assert_not_called()
+
+    def test_export_is_optional(self):
+        self.assertEqual(self.request(export_downloaded=False).status_code, 200)
+        self.mock_erase.assert_called_once()
 
     def test_sixth_password_attempt_is_throttled(self):
         with patch.object(user_account, "verify_password", return_value=False) as verifier:

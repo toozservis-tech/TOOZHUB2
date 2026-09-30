@@ -100,6 +100,7 @@ CONTROL_CENTER_LOG_DIR = PROJECT_ROOT / "logs"
 CONTROL_CENTER_DANGEROUS_CONFIRM = "PROCEED_RESTORE"
 CONTROL_CENTER_CLEANUP_CONFIRM = "PROCEED_CLEANUP"
 JOB_NAME_ALIASES = {
+    "privacy.files.erase": "privacy.files.erase",
     "apple.subscription.reconcile": "apple.subscription.reconcile",
     "license.subscription.cycle": "license.subscription.cycle",
     "payments.resync": "license.subscription.cycle",
@@ -5665,6 +5666,16 @@ def get_control_center_jobs(
                  "interval_seconds": interval_seconds(), "pause_reason": pause_meta.get("reason"),
                  "paused_at": pause_meta.get("paused_at"), "paused_by": pause_meta.get("paused_by"),
                  **summary})
+    from src.core.file_erasure import FileErasure
+    cleanup_available = inspect(db.connection()).has_table(FileErasure.__tablename__)
+    pending_count = db.query(FileErasure).count() if cleanup_available else 0
+    retry_count = db.query(FileErasure).filter(FileErasure.attempts > 0).count() if cleanup_available else 0
+    jobs.append({"name": "privacy.files.erase", "env_enabled": True, "is_paused": False,
+                 "available": cleanup_available, "pause_supported": False,
+                 "state": "running" if cleanup_available else "disabled",
+                 "effective_enabled": cleanup_available, "interval_seconds": 60,
+                 "pending_count": pending_count, "retry_count": retry_count,
+                 "unavailable_reason": None if cleanup_available else "Odstraňování souborů čeká na dokončení nastavení databáze."})
     return {"jobs": jobs}
 
 
@@ -5686,7 +5697,10 @@ def run_control_center_job(
                 detail="Kontrola je pozastavená. Nejdříve obnovte její automatický běh.",
             )
 
-        if job_name == "apple.subscription.reconcile":
+        if job_name == "privacy.files.erase":
+            from src.core.file_erasure import process_file_erasures
+            result = process_file_erasures(limit=1)
+        elif job_name == "apple.subscription.reconcile":
             from src.modules.licensing.apple_reconciliation import reconcile_subscriptions
             result = reconcile_subscriptions(batch_size=5, time_budget_seconds=45)
         elif job_name == "license.subscription.cycle":
@@ -5737,6 +5751,8 @@ def pause_control_center_job(
     db: Session = Depends(get_db),
 ):
     job_name = resolve_job_name(payload.job_name)
+    if job_name == "privacy.files.erase":
+        raise HTTPException(409, "Dokončování potvrzeného odstranění souborů běží automaticky a nelze je pozastavit.")
     set_job_paused(job_name, True, actor_email=email, reason=payload.reason)
     log_developer_action(
         db,
@@ -5759,6 +5775,8 @@ def resume_control_center_job(
     db: Session = Depends(get_db),
 ):
     job_name = resolve_job_name(payload.job_name)
+    if job_name == "privacy.files.erase":
+        raise HTTPException(409, "Dokončování potvrzeného odstranění souborů běží automaticky a nelze je pozastavit.")
     if job_name == "apple.subscription.reconcile":
         from src.modules.licensing.apple_reconciliation import require_ready, worker_enabled
         require_ready(db)
