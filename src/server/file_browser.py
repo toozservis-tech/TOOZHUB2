@@ -142,7 +142,7 @@ async def file_browser_index(path: Optional[str] = None):
     <html>
     <head>
         <meta charset="UTF-8">
-        <title>File Browser - Správa vozidel</title>
+        <title>File Browser - SprávaVozidel</title>
         <style>
             body {{
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -244,7 +244,7 @@ async def file_browser_index(path: Optional[str] = None):
     </head>
     <body>
         <div class="container">
-            <h1>📁 File Browser - Správa vozidel</h1>
+            <h1>📁 File Browser - SprávaVozidel</h1>
             <div class="breadcrumb">
                 <a href="/files/">🏠 Root</a>
                 {generate_breadcrumb(path) if path else ""}

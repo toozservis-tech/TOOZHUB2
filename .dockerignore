@@ -2,6 +2,9 @@
 !requirements-server.txt
 !Dockerfile.cloud
 !VERSION
+!VERSION.py
+!scripts/
+!scripts/migrate_apple_billing.py
 !src/
 !src/**
 !web/

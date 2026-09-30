@@ -3,7 +3,8 @@ Verzování aplikace Správa vozidel.
 Čte semver ze souboru VERSION v kořenovém adresáři projektu.
 """
 from pathlib import Path
-from datetime import datetime
+import os
+from src.core.branding import APP_DISPLAY_NAME
 
 _project_root = Path(__file__).parent
 _version_file = _project_root / "VERSION"
@@ -21,9 +22,9 @@ def _read_version():
 
 
 __version__ = _read_version()
-__version_name__ = f"Správa vozidel {__version__}"
-__build_date__ = datetime.now().strftime("%Y-%m-%d")
-__update_info__ = "Kompletní redesign UI + zavedení verzování"
+__version_name__ = f"{APP_DISPLAY_NAME} {__version__}"
+__build_date__ = os.getenv("APP_BUILD_DATE", "2026-09-30")
+__update_info__ = "Příprava předplatného v App Storu a spolehlivější správa účtů."
 
 VERSION = __version__
 VERSION_NAME = __version_name__

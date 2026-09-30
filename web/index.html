@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Správa vozidel</title>
+    <title>SprávaVozidel</title>
     <link rel="stylesheet" href="theme.css" />
     <link rel="stylesheet" href="app.css" />
     <link rel="stylesheet" href="inline-styles.css" />
@@ -8669,7 +8669,7 @@
         <nav class="navbar hidden" id="mainNavbar">
             <div class="navbar-brand">
                 <img class="logo" src="assets/toozservis-logo-icon.png" alt="TOOZSERVIS logo" />
-                <span class="brand-text">Správa vozidel</span>
+                <span class="brand-text">SprávaVozidel</span>
             </div>
             <div id="mobileServerStatus" class="mobile-server-status" aria-live="polite">
                 <span id="mobileStatusIndicator" class="mobile-status-dot status-checking"></span>
@@ -9116,17 +9116,17 @@
                         </div>
                     </div>
 
-                    <aside class="auth-promo" aria-label="Představení Správa vozidel">
+                    <aside class="auth-promo" aria-label="Představení SprávaVozidel">
                         <div class="auth-promo-brand">
                             <img src="assets/toozservis-logo-icon.png" alt="Toozservis logo" class="auth-promo-logo">
                             <div class="auth-promo-brand-text">
-                                <strong>Správa vozidel</strong>
+                                <strong>SprávaVozidel</strong>
                                 <span>Digitální servisní kniha pro auta i flotily</span>
                             </div>
                         </div>
                         <h3>Mějte každé vozidlo pod kontrolou na jednom místě</h3>
                         <p class="auth-promo-lead">
-                            Správa vozidel sjednocuje správu vozidel, servisních úkonů, připomínek a rezervací do přehledné aplikace.
+                            SprávaVozidel sjednocuje správu vozidel, servisních úkonů, připomínek a rezervací do přehledné aplikace.
                         </p>
                         <div class="auth-storyboard" data-auth-storyboard aria-label="Postupná ukázka prostředí aplikace">
                             <figure class="auth-story-frame is-active" data-story-index="0">
@@ -9521,7 +9521,7 @@
                     <a class="external-web-section-link" href="https://www.toozservis.cz/#cenik" target="_blank" rel="noopener noreferrer">Ceník</a>
                     <a class="external-web-section-link" href="https://www.toozservis.cz/#reference" target="_blank" rel="noopener noreferrer">Reference</a>
                     <a class="external-web-section-link" href="https://www.toozservis.cz/#kontakt" target="_blank" rel="noopener noreferrer">Kontakt</a>
-                    <a class="external-web-section-link" href="https://www.toozservis.cz/sprava-vozidel/" target="_blank" rel="noopener noreferrer">Správa vozidel</a>
+                    <a class="external-web-section-link" href="https://www.toozservis.cz/sprava-vozidel/" target="_blank" rel="noopener noreferrer">SprávaVozidel</a>
                 </div>
                 <p class="web-sections-note">Odkazy se otevírají v nové kartě. Rozpracované změny v aplikaci se neukládají automaticky.</p>
             </div>
@@ -11429,7 +11429,7 @@
         async function sendPushTestNotification() {
             try {
                 const response = await apiCall('/api/v1/push/test', 'POST', {
-                    title: 'Správa vozidel',
+                    title: 'SprávaVozidel',
                     body: 'Test push notifikace je doručena.'
                 });
                 const sent = Number(response?.result?.sent || 0);
@@ -20372,7 +20372,7 @@
                                 class="btn btn-secondary"
                                 onclick="openManagedServiceVehicleAccess(${Number(service?.id || 0)})"
                             >
-                                Správa vozidel
+                                SprávaVozidel
                             </button>
                             <button
                                 type="button"

@@ -34,7 +34,7 @@ def require_web_admin(token, db):
     if str(payload.get('sv', 0)) != str(customer_session_version(user)):
         raise HTTPException(401, 'Přihlášení již není platné.')
     if user.role not in {'admin', 'developer_admin'}:
-        raise HTTPException(403, 'Webové rozhraní je dostupné pouze administrátorům. Použijte aplikaci Správa vozidel.')
+        raise HTTPException(403, 'Webové rozhraní je dostupné pouze administrátorům. Použijte aplikaci SprávaVozidel.')
     return payload
 
 @router.get('/admin-login', include_in_schema=False)

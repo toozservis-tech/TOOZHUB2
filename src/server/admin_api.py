@@ -21,6 +21,7 @@ import secrets
 import string
 
 from src.core.auth import get_current_user_email, security
+from src.core.branding import APP_DISPLAY_NAME
 from src.core.rbac import is_admin, is_developer_admin
 from src.core.security import hash_password
 from src.core.config import (
@@ -1244,7 +1245,7 @@ def get_default_admin_settings() -> Dict[str, Dict[str, Dict[str, Any]]]:
 
     return {
         "general": {
-            "app_name": {"value": "Správa vozidel", "value_type": "string", "description": "Název aplikace"},
+            "app_name": {"value": APP_DISPLAY_NAME, "value_type": "string", "description": "Název aplikace"},
             "app_version": {"value": "2.2.0", "value_type": "string", "description": "Verze aplikace"},
             "app_description": {"value": "Správa vozidel a servisních záznamů", "value_type": "string", "description": "Popis aplikace"},
             "maintenance_mode": {"value": False, "value_type": "boolean", "description": "Zapnout režim údržby"},

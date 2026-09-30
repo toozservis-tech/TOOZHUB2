@@ -8,8 +8,8 @@ vars, GitHub repo slug) may still use legacy tokens until a compatibility
 refactor — see TECHNICAL_RENAME_BACKLOG.md.
 """
 
-APP_DISPLAY_NAME = "Správa vozidel"
-APP_DISPLAY_NAME_GENITIVE = "Správy vozidel"
+APP_DISPLAY_NAME = "SprávaVozidel"
+APP_DISPLAY_NAME_GENITIVE = APP_DISPLAY_NAME
 APP_API_DISPLAY_NAME = f"{APP_DISPLAY_NAME} API"
 APP_SUPPORT_DISPLAY_NAME = f"{APP_DISPLAY_NAME} Podpora"
 APP_EXPORT_DISPLAY_NAME = APP_DISPLAY_NAME
