@@ -141,6 +141,7 @@ def delete_current_user_account(
             detail="Před smazáním účtu je nutné stáhnout export dat.",
         )
 
+    _limit_auth(request, "delete-account", customer.email, calls=5)
     if not customer.password_hash or not verify_password(payload.current_password, customer.password_hash):
         raise HTTPException(status_code=400, detail="Neplatné současné heslo")
 
@@ -154,7 +155,7 @@ def delete_current_user_account(
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Smazání účtu selhalo: {exc}",
+            detail="Účet se nepodařilo odstranit. Žádná změna nebyla potvrzena. Zkuste to později.",
         ) from exc
 
     return DeleteAccountResponse(

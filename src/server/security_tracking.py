@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import os
 import time
 from typing import Any, Dict, Optional
@@ -16,13 +17,15 @@ from src.modules.vehicle_hub.database import SessionLocal
 from src.modules.vehicle_hub.models import SecurityAccessLog
 
 _TRUTHY = {"1", "true", "yes", "on"}
-_GEOLOOKUP_ENABLED = os.getenv("ENABLE_IP_GEOLOOKUP", "1").strip().lower() in _TRUTHY
+# Optional enrichment discloses visitor data to another provider. Keep security
+# logging local by default; enabling it requires an explicit operator decision.
+_GEOLOOKUP_ENABLED = os.getenv("ENABLE_IP_GEOLOOKUP", "0").strip().lower() in _TRUTHY
 _GEOLOOKUP_TIMEOUT = float(os.getenv("IP_GEOLOOKUP_TIMEOUT_SEC", "1.2"))
 _GEOLOOKUP_URL = os.getenv("IP_GEOLOOKUP_PROVIDER_URL", "https://ipwho.is/{ip}")
 _GEOLOOKUP_CACHE_TTL_SEC = int(os.getenv("IP_GEOLOOKUP_CACHE_TTL_SEC", "43200"))
 _GEOLOOKUP_CACHE_MAX_ITEMS = int(os.getenv("IP_GEOLOOKUP_CACHE_MAX_ITEMS", "1000"))
-_BROWSER_GEO_ENABLED = os.getenv("ENABLE_BROWSER_GEOLOCATION_OVERRIDE", "1").strip().lower() in _TRUTHY
-_REVERSE_GEO_ENABLED = os.getenv("ENABLE_REVERSE_GEOCODE", "1").strip().lower() in _TRUTHY
+_BROWSER_GEO_ENABLED = os.getenv("ENABLE_BROWSER_GEOLOCATION_OVERRIDE", "0").strip().lower() in _TRUTHY
+_REVERSE_GEO_ENABLED = os.getenv("ENABLE_REVERSE_GEOCODE", "0").strip().lower() in _TRUTHY
 _REVERSE_GEOLOOKUP_TIMEOUT = float(os.getenv("REVERSE_GEOLOOKUP_TIMEOUT_SEC", "1.6"))
 _REVERSE_GEOLOOKUP_URL = os.getenv(
     "REVERSE_GEOLOOKUP_PROVIDER_URL",
@@ -132,7 +135,8 @@ def _save_to_cache(ip_value: str, payload: Dict[str, Any]) -> None:
 
 def _safe_float(value: Any) -> Optional[float]:
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 

@@ -131,8 +131,22 @@ def ensure_vehicle_owner_assignment(
 
 
 def backfill_vehicle_owner_assignment(db: Session, vehicle: Vehicle) -> Optional[VehicleOwnership]:
+    # Legacy email is only a migration hint for a vehicle with no ownership
+    # history. Never let a read/access check transfer a vehicle or revive a grant.
+    # Serialize concurrent backfills before checking whether history exists.
+    locked_vehicle = (
+        db.query(Vehicle).filter(Vehicle.id == vehicle.id)
+        .with_for_update().populate_existing().first()
+    )
+    if locked_vehicle is None:
+        return None
+    vehicle = locked_vehicle
+    assignments = db.query(VehicleOwnership).filter(VehicleOwnership.vehicle_id == vehicle.id).all()
+    if assignments:
+        return next((row for row in assignments if row.is_active and row.is_primary), None)
     owner = get_customer_by_email(db, getattr(vehicle, "user_email", None))
-    if not owner:
+    if (not owner or owner.tenant_id != vehicle.tenant_id
+            or owner.is_deleted or owner.is_disabled):
         return None
     return ensure_vehicle_owner_assignment(
         db,
@@ -253,24 +267,25 @@ def get_owned_vehicle_ids(
         return set()
 
     tenant_scope = tenant_id if tenant_id is not None else getattr(customer, "tenant_id", None)
-    ownership_query = db.query(VehicleOwnership.vehicle_id).filter(
+    ownership_query = db.query(VehicleOwnership.vehicle_id).join(
+        Vehicle, Vehicle.id == VehicleOwnership.vehicle_id,
+    ).filter(
         VehicleOwnership.customer_id == customer_id,
         VehicleOwnership.is_active.is_(True),
     )
     if tenant_scope is not None:
-        ownership_query = ownership_query.filter(VehicleOwnership.tenant_id == tenant_scope)
+        ownership_query = ownership_query.filter(
+            VehicleOwnership.tenant_id == tenant_scope, Vehicle.tenant_id == tenant_scope,
+        )
 
     owned_vehicle_ids = {
         int(vehicle_id)
         for (vehicle_id,) in ownership_query.all()
         if vehicle_id is not None
     }
-    if owned_vehicle_ids:
-        return owned_vehicle_ids
-
     normalized_email = _normalize_email(getattr(customer, "email", None))
     if not normalized_email:
-        return set()
+        return owned_vehicle_ids
 
     legacy_query = db.query(Vehicle).filter(func.lower(Vehicle.user_email) == normalized_email)
     if tenant_scope is not None:
@@ -278,8 +293,8 @@ def get_owned_vehicle_ids(
 
     legacy_vehicles = legacy_query.all()
     for vehicle in legacy_vehicles:
-        backfill_vehicle_owner_assignment(db, vehicle)
-        if getattr(vehicle, "id", None) is not None:
+        assignment = backfill_vehicle_owner_assignment(db, vehicle)
+        if assignment and assignment.is_active and assignment.customer_id == customer.id:
             owned_vehicle_ids.add(int(vehicle.id))
     if legacy_vehicles:
         db.flush()

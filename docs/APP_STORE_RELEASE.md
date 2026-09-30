@@ -4,7 +4,7 @@ Poslední ověření: 30. 9. 2026. Směr potvrzený uživatelem: iOS předplatn�
 
 ## Skutečný stav
 
-- Vlastník potvrdil dokončení registrace a zaplacení členství Apple Developer. Následná kontrola účtu `toozservis@gmail.com` ukazuje **Tomáš Zachurčok (Pending)** a informaci, že zpracování nákupu může trvat až 48 hodin. Neopakovat platbu. Aktivace zatím nebyla potvrzena; aplikace a App Store Connect produkty nebyly založeny.
+- Členství Apple Developer je od večerní kontroly 30. 9. **aktivní**, tým `5DATUX4X32`, Individual, obnova 1. 10. 2027. Neopakovat platbu. Vstup do App Store Connect nyní vyžaduje první přijetí Terms of Service; modal zůstal připravený pro vlastníka. Vlastník spí a výslovně odložil potřebná osobní potvrzení na další den, podmínky proto nebyly přijaty. Aplikace a produkty dosud nebyly založeny.
 - Produkční server běží na placeném Renderu (7 USD/měsíc). Comgate test Basic 98,99 Kč byl potvrzen a nezměnil původní licenci. Ostré Comgate účtování dosud není zapnuté.
 - Nový klient používá StoreKit 2, zobrazuje ceny dodané App Storem, obsahuje obnovení nákupů a nativní správu předplatného. Původní Comgate objednávka z iOS byla odstraněna; webové propojení a data jsou zachována.
 - Server má samostatný ověřovač Apple, vazbu nákupu na náhodný `appAccountToken`, aktuální ověření přes App Store Server API a zpracování oznámení V2. Nevěří samotnému potvrzení z telefonu. Apple integrace zůstává vypnutá, dokud nejsou dokončené skutečné údaje a ověření.
@@ -12,7 +12,7 @@ Poslední ověření: 30. 9. 2026. Směr potvrzený uživatelem: iOS předplatn�
 
 ## Nastavení, které ještě vyžaduje účet Apple
 
-1. Vyčkat na potvrzení aktivace Apple Developer Program po již oznámené platbě. Apple uvádí 99 USD za rok; skutečná místní cena je uvedena v objednávce. OSVČ se registruje jako jednotlivec a osobní jméno bude uvedené jako prodejce. Smlouvu, osobní údaje a platbu musí potvrdit vlastník.
+1. Vlastník dokončí připravené přijetí App Store Connect Terms of Service. Vývojářské členství už je aktivní a zaplacené. Registrace Individual znamená osobní jméno prodejce; nezakládat ani neplatit druhé členství.
 2. Založit aplikaci **SprávaVozidel**, iOS, bundle ID `cz.toozservis.spravavozidel.ios`. Uložit její skutečné číselné Apple ID. Zajistit podepisování pro App Store.
 3. Dokončit Paid Apps Agreement, bankovní a daňové údaje a ověření obchodníka pro EU. Žádné z těchto potvrzení nebylo dosud provedeno.
 4. Založit JEDNU skupinu automaticky obnovovaných předplatných. Premium má vyšší úroveň než Basic. Měsíční a roční varianta stejného plánu má stejnou úroveň. Family Sharing není implementován; nezapínat.
@@ -36,7 +36,7 @@ Ceny musí vlastník schválit a nastavit v App Store Connect. Klient nepřebír
 ## Zbývající závěrečné kontroly celého produktu
 
 - Nativní potvrzení smazání účtu nyní vyžaduje současné heslo, ručně zadaný text a výslovné `deleted: true` od serveru. Neodhlašuje po chybě ani nepředstírá dokončený export. Serverové smazání ale stále vyžaduje prověření všech vazeb, médií a zákonné archivace účetních podkladů; následně změnit povinný export na dobrovolný. Neprovádět mazání skutečných účtů pro test.
-- Dopracovat inventuru zpracování dat a App Store privacy labels, účely fotoaparátu/polohy a skutečné zpracovatele. PrivacyInfo.xcprivacy je přiložený s důvodem UserDefaults CA92.1 a bez sledování; část inventury sběru dat ještě není dokončená. Neslibovat nulový sběr osobních údajů. Rozpracované změny e-mailového ověření a fotografií zatím nejsou zahrnuté do této platební změny.
+- Inventura zdrojového kódu je v `docs/APP_PRIVACY_INVENTORY.md`. Nativní manifest nyní zahrnuje 14 používaných kategorií údajů, důvod UserDefaults CA92.1 a deklaraci bez reklamního sledování. Před zveřejněním ještě ověřit konkrétní serverové proměnné, smlouvy, retence a vyplnit odpovědi v App Store Connect. Neslibovat nulový sběr osobních údajů. Rozpracované změny e-mailového ověření a fotografií zatím nejsou zahrnuté do této platební změny.
 - Ověřit aktuální obchodní/platební podmínky, odstoupení u průběžné digitální služby, reklamace, vrácení peněz, DPA a uchování dokladů. Přechod na Apple musí být zohledněn; staré Comgate souhlasy nelze používat pro Apple nákup.
 - EET2: dle ověřeného webu MF dne 30. 9. 2026 je účinnost uvedena od 1. 1. 2027. Prověřit přesné znění účinného zákona, kontaktní tržby servisů a technickou specifikaci. Samotné online SaaS předplatné není důkazem povinnosti/absence povinnosti pro všechny platby servisů. Integrace EET dosud neexistuje; nevydávat fiktivní potvrzení o evidenci.
 - Fyzický iPhone: fotoaparát a skutečně uložený snímek, přílohy, export, obnova hesla/deep links. Simulátor nenahrazuje ověření fotoaparátu.
@@ -69,3 +69,11 @@ Ceny musí vlastník schválit a nastavit v App Store Connect. Klient nepřebír
 - Podepsaná Apple oznámení mají přesnou výjimku z režimu údržby; nevztahuje se na nákupní API ani libovolné podadresáře. Ověřování podpisu zůstává povinné.
 - Migraci `scripts.migrate_apple_billing` spustit znovu i na prostředí, kde už existují první dvě Apple tabulky. Přidává pouze `apple_reconciliation_state`; nemění původní licence, účty ani Comgate. Bez dokončených Apple údajů integraci zatím nezapínat.
 - Přesná připravená serverová verze: 120 Apple/Comgate testů a 50 testů oprávnění, řízení kontrol a viditelnosti plateb prošlo v izolované databázi. Navíc prošlo 6 kontrol webových ovládacích prvků a nativní testy iOS administrátorských akcí. Pozitivní Apple odpovědi jsou stále simulované; tyto výsledky nenahrazují sandbox nákup.
+
+## Doplnění 30. 9. — soukromí a hranice účtů
+
+- Oprava `backfill_vehicle_owner_assignment` zabrání přepsání aktuálního vlastníka zastaralým e-mailem při pouhém ověřování přístupu. Automatické doplnění se použije jen bez předchozí historie a ve stejné organizaci; zrušená vazba se sama neobnoví. Smíšený účet se starými i migrovanými vozidly nyní zahrne obě skupiny bez přidání cizích vozidel.
+- Potvrzení odstranění účtu má samostatný limit ověřování hesla (5 pokusů / 15 minut na účet, navíc limit IP). Chyba vrátí transakci zpět a klient nedostane databázové podrobnosti. Nejde zatím o dokončení celého serverového odstranění.
+- Bezpečnostní IP/GPS obohacování je nyní výslovně volitelné a ve výchozím nastavení vypnuté. Audit přihlášení zůstává; nativní vyhledávání podle města není touto změnou odstraněné. Podrobnosti a kategorie manifestu jsou v `APP_PRIVACY_INVENTORY.md`.
+- **90 testů přesné připravené serverové verze prošlo** v oddělené databázi: účty, webová oprávnění, administrace, geolokace a vlastnictví vozidel. Starší integrační scénář `test_service_access_requests.py` očekával externí testovací server na 127.0.0.1:8000 a bez něj neproběhl; není započítaný mezi úspěchy. Není důvod ho spouštět proti skutečným účtům.
+- Poslední předchozí nasazení `8ff8fc7` bylo potvrzeno jako Live; veřejný health ukazuje SprávaVozidel 2.2.0 a datum sestavení 2026-09-30. Integrace Apple stále není aktivovaná.
