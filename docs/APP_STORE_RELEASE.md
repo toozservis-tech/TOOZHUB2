@@ -88,3 +88,14 @@ Ceny musí vlastník schválit a nastavit v App Store Connect. Klient nepřebír
 - Tabulka `email_verifications` se při startu přidává pomocí `checkfirst`; změna neoznačuje existující účty za neověřené. Pokud vytvoření tabulky selže, chráněné API nesmí ochranu obejít. Před nasazením spustit izolované testy přesného indexu a po něm ověřit načtení původního administrátora.
 
 - Ověření připraveného zdrojového indexu: **188 serverových testů prošlo**, dále 5 kontrol skriptu ověřovací stránky a nativní Swift kontrola povinného ověření, kompatibility se starým serverem a odmítnutých relací. E-mailový transport a pozitivní platební odpovědi jsou simulované; žádný skutečný účet ani nákup nebyl vytvořen.
+
+## Doplnění 30. 9. — fotografie a předání vozidla
+
+- Ověření e-mailů `ab9afa2` je nasazené jako Live. Produkční health a ověřovací stránka vracejí 200, anonymní stav ověření 401. Původní admin v simulátoru přežil tři restarty. Test odhalil přesouvání odkazu na tarify během načítání karet; odkazy jsou nyní v iOS nahoře. Opakovaný test vstupu do tarifů i návratu z provozní kontroly prošel.
+- Soukromý PDF protokol opravy shrnuje všechny tři fáze, autora, čas nahrání, čas/zdroj podle telefonu a SHA-256 původního souboru. Obsahuje správné logo a místo pro ruční předání/podpisy. Není elektronicky podepsaný a neprokazuje nezávisle čas pořízení ani pravdivost scény.
+- Protokol mohou stáhnout vlastník vozidla, servis, který dokumentaci vytvořil, a administrátor. Cizí uživatel ani jiný servis přístup nemají. Po odvolání sdílení zůstává původnímu servisu čtení jeho historie; další snímky už přidávat nemůže.
+- Chybějící, poškozený či nečitelný snímek vede k chybě, nikdy k neoznačenému vynechání. Export má limity 100 fotografií / 120 MB zdrojových souborů, zmenšené náhledy pro tisk a nejvýše jeden souběžný výpočet na proces. Při zaneprázdnění lze pokus opakovat. Neexistují veřejné odkazy na soubory.
+- iOS koncept drží jednou připravené bajty JPEG a identifikátor opakovaného požadavku. Rozlišuje server, účet a opravu, je chráněný na zařízení a vynechaný ze záloh. Obnovení formuláře snímek znovu nekomprimuje a nemění identifikátor. Po zahájení odesílání zůstává obsah neměnný až do potvrzení nebo výslovného zahození místního konceptu. Starý formát konceptu se přenese bez změny bajtů.
+- Fyzický fotoaparát není tímto ověřený: výchozí je samostatný širokoúhlý objektiv, odstraněn souběžný diagnostický výstup. Dříve hlášený černý/zelený obraz musí znovu ověřit vlastník na iPhonu.
+
+- Přesný připravený serverový index prošel 21 izolovanými testy protokolu, oprávnění, nezměnitelnosti opakovaného odeslání a vlastnictví. Náhled PDF má čtyři vykreslené a zkontrolované stránky se smyšlenými snímky. iOS `ddac1de` prošlo podepsaným sestavením simulátoru, Release kompilací pro iPhone a testem místních konceptů; kopie pro Xcode je synchronizovaná se zachovaným nastavením podpisu.

@@ -111,17 +111,18 @@ def upload(session_id: int, payload: PhotoCreate, user: Customer = Depends(get_c
             image.verify()
     except HTTPException: raise
     except Exception: raise HTTPException(422, "Fotografii nelze přečíst.")
+    captured = payload.captured_at
+    if captured and captured.tzinfo:
+        captured = captured.astimezone(timezone.utc).replace(tzinfo=None)
     digest = hashlib.sha256(content).hexdigest()
     existing = db.query(RepairEvidencePhoto).filter_by(session_id=session_id, client_id=str(payload.client_id)).first()
     if existing:
-        if (existing.sha256, existing.phase, existing.note, existing.source) != (digest, payload.phase, payload.note.strip(), payload.source):
+        if (existing.sha256, existing.phase, existing.note, existing.source, existing.captured_at) != (digest, payload.phase, payload.note.strip(), payload.source, captured):
             raise HTTPException(409, "Identifikátor fotografie už byl použit pro jiný obsah.")
         return photo_out(existing)
     PHOTO_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     name = uuid.uuid4().hex + (".jpg" if mime == "image/jpeg" else ".png")
     target = PHOTO_ROOT / name
-    captured = payload.captured_at
-    if captured and captured.tzinfo: captured = captured.astimezone(timezone.utc).replace(tzinfo=None)
     row = RepairEvidencePhoto(session_id=session_id, author_id=user.id, author_name=user.name or user.email, phase=payload.phase, note=payload.note.strip(), source=payload.source, captured_at=captured, sha256=digest, file_path=name, mime_type=mime, size_bytes=len(content), client_id=str(payload.client_id))
     try:
         persist_file(target, content)
@@ -143,3 +144,19 @@ def photo_file(photo_id: int, user: Customer = Depends(get_current_user), db: Se
     if not target.is_file(): raise HTTPException(404, "Soubor fotografie není dostupný.")
     if hashlib.sha256(target.read_bytes()).hexdigest() != row.sha256: raise HTTPException(409, "Kontrola integrity fotografie selhala.")
     return FileResponse(target, media_type=row.mime_type, filename=f"oprava_{row.session_id}_{row.phase}_{row.id}{target.suffix}", headers={"Cache-Control": "private, no-store"})
+
+@router.get('/sessions/{session_id}/report.pdf')
+def repair_report(session_id: int, user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    from ..repair_report import build_repair_report, MAX_REPORT_PHOTOS
+
+    session = session_or_404(db, user, session_id)
+    vehicle = vehicle_or_404(db, session.vehicle_id)
+    evidence = db.query(RepairEvidencePhoto).filter_by(session_id=session_id).order_by(
+        RepairEvidencePhoto.uploaded_at, RepairEvidencePhoto.id
+    ).limit(MAX_REPORT_PHOTOS + 1).all()
+    document = build_repair_report(session, vehicle, evidence, PHOTO_ROOT)
+    return Response(document, media_type='application/pdf', headers={
+        'Content-Disposition': f'attachment; filename="protokol-opravy-{session_id}.pdf"',
+        'Cache-Control': 'private, no-store',
+    })
