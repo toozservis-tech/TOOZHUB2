@@ -14,6 +14,8 @@ from sqlalchemy import func
 from src.core.config import ENVIRONMENT, PUBLIC_API_BASE_URL
 from src.core.branding import APP_DISPLAY_NAME
 from src.core.rate_limiter import rate_limiter
+from src.core import mfa
+from src.server.security_tracking import extract_client_ip, log_security_event
 from src.core.security import create_access_token, hash_password, needs_rehash, verify_password, validate_new_password
 from src.modules.email_client.templates import build_app_url, render_email_layout, render_panel
 from src.modules.vehicle_hub.account_state import (
@@ -44,14 +46,7 @@ from src.server.main_helpers import (
     normalize_ico,
     send_registration_alert_email,
 )
-from src.server.security_helpers import (
-    create_2fa_login_challenge,
-    get_2fa_login_challenge,
-    pop_2fa_login_challenge,
-    set_2fa_login_challenge,
-    verify_totp,
-)
-from src.server.security_tracking import extract_client_ip, log_security_event
+
 
 
 from src.modules.vehicle_hub.email_verification import EmailVerification, issue_verification, prepare_verification
@@ -454,16 +449,16 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
 
         if needs_rehash(customer.password_hash):
             customer.password_hash = hash_password(login_data.password)
-            db.commit()
 
         security_settings = (
             db.query(CustomerSecuritySettings)
             .filter(CustomerSecuritySettings.customer_id == customer.id)
             .first()
         )
-        if security_settings and security_settings.two_factor_enabled and security_settings.totp_secret:
-            challenge_token, expires_in = create_2fa_login_challenge(
-                customer=customer,
+        if security_settings and security_settings.two_factor_enabled:
+            mfa.read_secret(security_settings.totp_secret)  # A missing/corrupt factor must never downgrade to password-only.
+            challenge_token, expires_in = mfa.create_login_challenge(
+                db=db, customer=customer,
                 expected_role=requested_role if requested_role in {"user", "service"} else None,
             )
             log_security_event(
@@ -482,8 +477,9 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
             )
 
         touch_customer_last_login(customer)
+        claims = {"sub": customer.email, "sv": customer_session_version(customer)}
         db.commit()
-        access_token = create_access_token(data={"sub": customer.email, "sv": customer_session_version(customer)})
+        access_token = create_access_token(data=claims)
 
         log_security_event(
             event_type="login_success",
@@ -508,11 +504,7 @@ def login_user(login_data: UserLogin, request: Request, db=Depends(get_db)):
     except HTTPException:
         raise
     except Exception as exc:
-        import traceback
-
-        error_details = traceback.format_exc()
-        print(f"[LOGIN ERROR] {str(exc)}")
-        print(f"[LOGIN ERROR] Traceback:\n{error_details}")
+        logger.error("Authentication dependency failed; details suppressed to protect credentials")
         raise HTTPException(
             status_code=500,
             detail="Přihlášení se nepodařilo dokončit. Zkuste to později.",
@@ -525,81 +517,43 @@ def verify_login_two_factor(
     request: Request,
     db=Depends(get_db),
 ):
-    challenge = get_2fa_login_challenge(payload.challenge_token)
-    if not challenge:
-        raise HTTPException(
-            status_code=401,
-            detail="2FA výzva vypršela nebo je neplatná. Přihlaste se znovu.",
-        )
-
-    expires_at = float(challenge.get("expires_at", 0))
-    if expires_at <= time.time():
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(
-            status_code=401,
-            detail="2FA výzva vypršela. Přihlaste se znovu.",
-        )
-
-    attempts = int(challenge.get("attempts", 0))
-    if attempts >= 5:
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(
-            status_code=429,
-            detail="Překročen počet pokusů o 2FA ověření. Přihlaste se znovu.",
-        )
-
-    email = challenge.get("email")
-    customer = get_customer_by_email(db, str(email or ""))
-    if not customer:
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(status_code=401, detail="Uživatel pro 2FA ověření nebyl nalezen")
-    if customer_is_deleted(customer):
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(status_code=403, detail="Účet byl deaktivován.")
-    if customer_is_disabled(customer):
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(status_code=403, detail="Účet je dočasně pozastaven.")
-
-    if challenge.get("session_version") != customer_session_version(customer):
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(401, "Přihlášení bylo ukončeno. Přihlaste se znovu.")
-
-    expected_role = str(challenge.get("expected_role") or "").strip().lower()
-    customer_role = (customer.role or "user").strip().lower()
-    if expected_role == "service" and customer_role not in {"service", "admin", "developer_admin"}:
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(status_code=403, detail="Tento účet není servisní.")
-    if expected_role == "user" and customer_role == "service":
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(status_code=403, detail="Tento účet je servisní.")
-
-    security_settings = (
-        db.query(CustomerSecuritySettings)
-        .filter(CustomerSecuritySettings.customer_id == customer.id)
-        .first()
-    )
-    if not security_settings or not security_settings.two_factor_enabled or not security_settings.totp_secret:
-        pop_2fa_login_challenge(payload.challenge_token)
-        raise HTTPException(status_code=400, detail="2FA není pro tento účet aktivní")
-
-    if not verify_totp(security_settings.totp_secret, payload.code):
-        challenge["attempts"] = attempts + 1
-        set_2fa_login_challenge(payload.challenge_token, challenge)
-        log_security_event(
-            event_type="login_2fa_failed",
-            request=request,
-            user_email=customer.email,
-            customer_id=customer.id,
-            tenant_id=customer.tenant_id,
-            endpoint=str(request.url.path),
-            details={"attempts": challenge["attempts"]},
-        )
-        raise HTTPException(status_code=401, detail="Neplatný 2FA kód")
-
-    pop_2fa_login_challenge(payload.challenge_token)
+    _limit_auth(request, "totp-login-ip", calls=10)
+    digest = hashlib.sha256(payload.challenge_token.encode()).hexdigest()
+    challenge = db.get(mfa.MFALoginChallenge, digest)
+    if not challenge or challenge.expires_at <= datetime.utcnow():
+        raise HTTPException(401, "Ověření vypršelo. Přihlaste se znovu.")
+    mfa.limit_attempt(db, challenge.customer_id, "totp-login", limit=10)
+    challenge = (db.query(mfa.MFALoginChallenge).filter(mfa.MFALoginChallenge.digest == digest)
+                 .with_for_update().populate_existing().first())
+    if not challenge or challenge.expires_at <= datetime.utcnow():
+        raise HTTPException(401, "Ověření vypršelo. Přihlaste se znovu.")
+    claimed = (db.query(mfa.MFALoginChallenge).filter(mfa.MFALoginChallenge.digest == digest,
+                   mfa.MFALoginChallenge.attempts < 5)
+               .update({mfa.MFALoginChallenge.attempts: mfa.MFALoginChallenge.attempts + 1}, synchronize_session='fetch'))
+    if claimed != 1:
+        raise HTTPException(429, "Překročen počet pokusů. Přihlaste se znovu.")
+    customer = db.get(Customer, challenge.customer_id)
+    if not customer or customer_is_deleted(customer) or customer_is_disabled(customer) or challenge.session_version != customer_session_version(customer):
+        db.delete(challenge); db.commit()
+        raise HTTPException(401, "Přihlášení již není platné. Přihlaste se znovu.")
+    expected_role = challenge.expected_role
+    role = (customer.role or "user").strip().lower()
+    if (expected_role == "service" and role not in {"service", "admin", "developer_admin"}) or (expected_role == "user" and role == "service"):
+        db.delete(challenge); db.commit()
+        raise HTTPException(403, "Zvolený typ účtu nesouhlasí.")
+    _limit_auth(request, "totp-login-account", customer.email, calls=5)
+    settings = mfa.locked_settings(db, customer)
+    if not settings.two_factor_enabled or not settings.totp_secret:
+        db.delete(challenge); db.commit()
+        raise HTTPException(401, "Nastavení ověření se změnilo. Přihlaste se znovu.")
+    if not mfa.consume_code(db, settings, payload.code):
+        db.commit()  # Persist the attempt budget across workers / restarts.
+        raise HTTPException(401, "Neplatný nebo již použitý kód. Vyčkejte na další kód v autentikátoru.")
+    db.delete(challenge)
     touch_customer_last_login(customer)
+    claims = mfa.verified_claims(customer)
     db.commit()
-    access_token = create_access_token(data={"sub": customer.email, "sv": customer_session_version(customer)})
+    access_token = create_access_token(claims)
 
     log_security_event(
         event_type="login_2fa_success",

@@ -201,23 +201,38 @@ def _is_maintenance_bypass_path(path: str) -> bool:
 
 
 def _register_exception_handler(app: FastAPI) -> None:
+    from fastapi.exception_handlers import http_exception_handler
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from uuid import uuid4
+
+    def private_failure(request, exc):
+        incident = uuid4().hex
+        route = getattr(request.scope.get("route"), "path", "unknown")
+        # Never interpolate exception text: provider/SQL exceptions can contain
+        # passwords, token-bearing URLs, personal data, and bind parameters.
+        print(f"[ERROR] incident={incident} kind={type(exc).__name__} route={route}")
+        return JSONResponse(status_code=500, headers={"Cache-Control": "no-store"}, content={
+            "detail": "Požadavek se nepodařilo dokončit. Zkuste to později; pokud problém trvá, sdělte podpoře číslo chyby.",
+            "incident_id": incident,
+        })
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handled_error(request: Request, exc):
+        if exc.status_code == 500:
+            return private_failure(request, exc)
+        return await http_exception_handler(request, exc)
+
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
-        import traceback
+        return private_failure(request, exc)
 
-        error_traceback = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-        print(f"[ERROR] Neošetřená výjimka: {type(exc).__name__}: {str(exc)}")
-        print(f"[ERROR] Path: {request.url.path}")
-        print(f"[ERROR] Method: {request.method}")
-        print(f"[ERROR] Traceback:\n{error_traceback}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "detail": f"Interní chyba serveru: {str(exc)}",
-                "type": type(exc).__name__,
-                "path": request.url.path,
-            },
-        )
+    @app.middleware("http")
+    async def private_error_boundary(request: Request, call_next):
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            # Return here instead of re-raising raw provider errors into ASGI logs.
+            return private_failure(request, exc)
 
 
 def _register_middlewares(app: FastAPI) -> None:
@@ -441,6 +456,11 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
         try:
             from src.modules.vehicle_hub.email_verification import EmailVerification
             EmailVerification.__table__.create(bind=db.get_bind(), checkfirst=True)
+            from src.core.mfa import MFAState, MFALoginChallenge, MFAAttemptBudget, encrypt_legacy_seeds
+            MFAState.__table__.create(bind=db.get_bind(), checkfirst=True)
+            MFALoginChallenge.__table__.create(bind=db.get_bind(), checkfirst=True)
+            MFAAttemptBudget.__table__.create(bind=db.get_bind(), checkfirst=True)
+            encrypt_legacy_seeds(db)
             from src.core.file_erasure import FileErasure, AccountErasureReceipt
             FileErasure.__table__.create(bind=db.get_bind(), checkfirst=True)
             AccountErasureReceipt.__table__.create(bind=db.get_bind(), checkfirst=True)

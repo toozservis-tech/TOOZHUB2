@@ -11,6 +11,7 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, and_, func, inspec
 from src.core.file_erasure import enqueue_file_erasure
 from src.modules.vehicle_hub import models as m
 from src.modules.vehicle_hub.email_verification import EmailVerification
+from src.core.mfa import MFAState, MFALoginChallenge, MFAAttemptBudget
 from src.modules.vehicle_hub.ownership import get_owned_vehicle_ids
 from src.modules.vehicle_hub.database import Base
 
@@ -176,7 +177,7 @@ def erase_account(db, customer) -> dict[str, int]:
         remove(model, or_(customer_column == account_id, func.lower(email_column) == email))
     remove(m.CustomerCommand, or_(func.lower(m.CustomerCommand.customer_email) == email,
                                  m.CustomerCommand.vehicle_id.in_(vehicle_ids)))
-    for model in [m.PushSubscription, m.CustomerSecuritySettings, EmailVerification]:
+    for model in [m.PushSubscription, m.CustomerSecuritySettings, EmailVerification, MFAState, MFALoginChallenge, MFAAttemptBudget]:
         remove(model, model.customer_id == account_id)
     remove(m.ServiceRegistrationRequest, func.lower(m.ServiceRegistrationRequest.email) == email)
     for column in [m.ServiceRegistrationRequest.reviewed_by_customer_id, m.ServiceRegistrationRequest.approved_customer_id]:

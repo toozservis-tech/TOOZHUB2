@@ -22,10 +22,10 @@ def read_version() -> str:
             return version
         else:
             # Fallback pokud soubor neexistuje
-            return "2.1.0"
+            return "1.0.0"
     except Exception as e:
         print(f"[VERSION] Warning: Nepodařilo se načíst verzi ze souboru VERSION: {e}")
-        return "2.1.0"
+        return "1.0.0"
 
 
 def get_version_info() -> dict:

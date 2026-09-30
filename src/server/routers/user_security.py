@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from src.core.auth import get_current_user_email
 from src.core.branding import APP_DISPLAY_NAME, APP_SUPPORT_DISPLAY_NAME
-from src.core.security import verify_password
+from src.core.security import verify_password, create_access_token, decode_access_token_payload
+from src.core import mfa
+from src.modules.vehicle_hub.account_state import increment_customer_session_version
+from src.server.routers.user_auth import _limit_auth
 from src.modules.email_client.templates import render_email_layout, render_list, render_panel
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer
@@ -18,6 +21,7 @@ from src.server.main_helpers import (
     TotpDisableRequest,
     TotpEnableRequest,
     TotpSetupResponse,
+    TotpSetupRequest,
     get_customer_by_email,
     normalize_email,
 )
@@ -27,7 +31,6 @@ from src.server.security_helpers import (
     build_totp_uri,
     generate_totp_secret,
     get_or_create_security_settings,
-    verify_totp,
 )
 from src.server.security_tracking import extract_client_ip, log_security_event, log_user_activity
 
@@ -65,7 +68,9 @@ def get_security_settings(
 
 @router.post("/user/security/totp/setup", response_model=TotpSetupResponse)
 def setup_totp(
+    payload: TotpSetupRequest,
     request: Request,
+    response: Response,
     email: str = Depends(get_current_user_email),
     db=Depends(get_db),
 ):
@@ -73,11 +78,20 @@ def setup_totp(
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
 
-    settings = get_or_create_security_settings(db, customer)
+    _limit_auth(request, "totp-setup", customer.email, calls=5)
+    mfa.limit_attempt(db, customer.id, "totp-setup")
+    if not verify_password(payload.current_password, customer.password_hash):
+        raise HTTPException(400, "Neplatné současné heslo")
+    settings = mfa.locked_settings(db, customer)
+    if settings.two_factor_enabled:
+        raise HTTPException(409, "Dvoufázové ověření už je aktivní. Nové nastavení nesmí vypnout současnou ochranu.")
+    response.headers["Cache-Control"] = "no-store"
     secret = generate_totp_secret()
-    settings.totp_secret = secret
-    settings.two_factor_enabled = False
+    settings.totp_secret = mfa.protect_secret(secret)
     settings.totp_enabled_at = None
+    state = mfa.state_for(db, customer.id)
+    state.pending_expires_at = datetime.utcnow() + timedelta(minutes=10)
+    state.last_step = -1
     db.commit()
 
     log_security_event(
@@ -110,18 +124,21 @@ def enable_totp(
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
 
-    settings = get_or_create_security_settings(db, customer)
-    if not settings.totp_secret:
-        raise HTTPException(
-            status_code=400,
-            detail="Nejprve spusťte nastavení 2FA (vygenerování tajného klíče).",
-        )
-
-    if not verify_totp(settings.totp_secret, payload.code):
-        raise HTTPException(status_code=400, detail="Neplatný ověřovací kód")
-
+    _limit_auth(request, "totp-code", customer.email, calls=5)
+    mfa.limit_attempt(db, customer.id, "totp-code")
+    settings = mfa.locked_settings(db, customer)
+    if settings.two_factor_enabled:
+        raise HTTPException(409, "Dvoufázové ověření už je aktivní.")
+    state = mfa.state_for(db, customer.id)
+    if not settings.totp_secret or not state.pending_expires_at or state.pending_expires_at <= datetime.utcnow():
+        raise HTTPException(400, "Nastavení ověření vypršelo. Začněte znovu se současným heslem.")
+    if not mfa.consume_code(db, settings, payload.code):
+        raise HTTPException(400, "Neplatný nebo již použitý kód. Vyčkejte na další kód v autentikátoru.")
     settings.two_factor_enabled = True
     settings.totp_enabled_at = datetime.utcnow()
+    state.pending_expires_at = None
+    increment_customer_session_version(customer)
+    claims = mfa.verified_claims(customer) if settings.two_factor_enabled else {"sub": customer.email, "sv": customer.session_version}
     db.commit()
 
     log_security_event(
@@ -134,7 +151,8 @@ def enable_totp(
         details={"role": customer.role or "user"},
     )
 
-    return {"message": "Dvoufázové ověření bylo aktivováno.", "two_factor_enabled": True}
+    return {"message": "Dvoufázové ověření bylo aktivováno. Ostatní přihlášení byla ukončena.", "two_factor_enabled": True,
+            "access_token": create_access_token(claims)}
 
 
 @router.post("/user/security/totp/disable")
@@ -148,19 +166,26 @@ def disable_totp(
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
 
+    if (customer.role or "").strip().lower() in {"admin", "developer_admin"}:
+        raise HTTPException(403, "Administrátorský účet musí mít dvoufázové ověření aktivní.")
+    _limit_auth(request, "totp-disable", customer.email, calls=5)
+    mfa.limit_attempt(db, customer.id, "totp-disable")
     if not customer.password_hash or not verify_password(payload.current_password, customer.password_hash):
         raise HTTPException(status_code=401, detail="Neplatné současné heslo")
 
-    settings = get_or_create_security_settings(db, customer)
+    settings = mfa.locked_settings(db, customer)
     if not settings.two_factor_enabled or not settings.totp_secret:
         raise HTTPException(status_code=400, detail="2FA není aktivní")
 
-    if not verify_totp(settings.totp_secret, payload.code):
+    if not mfa.consume_code(db, settings, payload.code):
         raise HTTPException(status_code=400, detail="Neplatný 2FA kód")
 
     settings.two_factor_enabled = False
     settings.totp_secret = None
     settings.totp_enabled_at = None
+    mfa.state_for(db, customer.id).pending_expires_at = None
+    increment_customer_session_version(customer)
+    claims = mfa.verified_claims(customer) if settings.two_factor_enabled else {"sub": customer.email, "sv": customer.session_version}
     db.commit()
 
     log_security_event(
@@ -173,7 +198,41 @@ def disable_totp(
         details={"role": customer.role or "user"},
     )
 
-    return {"message": "Dvoufázové ověření bylo vypnuto.", "two_factor_enabled": False}
+    return {"message": "Dvoufázové ověření bylo vypnuto. Ostatní přihlášení byla ukončena.", "two_factor_enabled": False,
+            "access_token": create_access_token(claims)}
+
+
+@router.get("/user/security/admin-status")
+def admin_status(request: Request, response: Response, email: str = Depends(get_current_user_email), db=Depends(get_db)):
+    customer = get_customer_by_email(db, email)
+    claims = decode_access_token_payload(request.headers.get("authorization", "").removeprefix("Bearer ")) or {}
+    response.headers["Cache-Control"] = "no-store"
+    return mfa.admin_assurance_status(db, customer, claims)
+
+
+@router.post("/user/security/admin-verify")
+def verify_admin(payload: TotpDisableRequest, request: Request, response: Response,
+                 email: str = Depends(get_current_user_email), db=Depends(get_db)):
+    customer = get_customer_by_email(db, email)
+    if (customer.role or "").strip().lower() not in {"admin", "developer_admin"}:
+        raise HTTPException(403, "Tato kontrola je určena administrátorům.")
+    _limit_auth(request, "admin-step-up", customer.email, calls=5)
+    mfa.limit_attempt(db, customer.id, "admin-step-up")
+    if not verify_password(payload.current_password, customer.password_hash):
+        raise HTTPException(400, "Heslo nebo ověřovací kód nesouhlasí.")
+    settings = mfa.locked_settings(db, customer)
+    if not settings.two_factor_enabled:
+        raise HTTPException(409, "Nejprve nastavte dvoufázové ověření.")
+    if not mfa.consume_code(db, settings, payload.code):
+        raise HTTPException(400, "Heslo nebo kód nesouhlasí, nebo už byl kód použit. Vyčkejte na nový kód.")
+    claims = mfa.verified_claims(customer)
+    db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    log_security_event(event_type="admin_verified", request=request, user_email=customer.email,
+                       customer_id=customer.id, tenant_id=customer.tenant_id,
+                       endpoint=str(request.url.path), details={"method": "password_totp"})
+    return {"access_token": create_access_token(claims),
+            "message": "Administrátor ověřen na 15 minut."}
 
 
 @router.post("/user/security/biometric")

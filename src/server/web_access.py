@@ -38,6 +38,8 @@ def require_web_admin(token, db):
         raise HTTPException(403, 'Webové rozhraní je dostupné pouze administrátorům. Použijte aplikaci SprávaVozidel.')
     if pending_verification(db, user.id):
         raise HTTPException(403, 'Nejprve ověřte svou e-mailovou adresu v aplikaci.')
+    from src.core.mfa import require_admin_assurance
+    require_admin_assurance(db, user, payload)
     return payload
 
 @router.get('/admin-login', include_in_schema=False)
@@ -73,7 +75,7 @@ class AdminStaticFiles(StaticFiles):
             try:
                 await run_in_threadpool(check)
             except HTTPException as exc:
-                if exc.status_code == 401:
+                if exc.status_code == 401 or (exc.headers or {}).get('X-Admin-Verification'):
                     return RedirectResponse('/admin-login', status_code=303, headers={'Cache-Control':'no-store'})
                 return JSONResponse({'detail':exc.detail}, status_code=403, headers={'Cache-Control':'no-store'})
         # Never expose backups of frontend source.

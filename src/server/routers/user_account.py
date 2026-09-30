@@ -225,7 +225,7 @@ def change_password(
 
     try:
         if email_service.is_configured():
-            print(f"[CHANGE_PASSWORD] Odesílám potvrzovací email na: {email}")
+            print("[CHANGE_PASSWORD] Sending security notification")
             user_name = customer.name or "Uživateli"
             change_time = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
 
@@ -260,26 +260,23 @@ S pozdravem,
                 accent="#f59e0b",
             )
             try:
-                email_service.send_simple_email(
+                email_sent = bool(email_service.send_simple_email(
                     to=email,
                     subject=f"Potvrzení změny hesla - {APP_DISPLAY_NAME}",
                     body=email_body,
                     html_body=html_body,
-                )
-                email_sent = True
-                print(f"[CHANGE_PASSWORD] OK: Potvrzovací email úspěšně odeslán na: {email}")
-            except Exception as email_ex:
-                email_error = str(email_ex)
-                print(f"[CHANGE_PASSWORD] ERROR: Chyba při odesílání emailu: {email_error}")
-                import traceback
-                traceback.print_exc()
+                ))
+                if not email_sent:
+                    email_error = "delivery_failed"
+                print("[CHANGE_PASSWORD] Security notification accepted" if email_sent else "[CHANGE_PASSWORD] Security notification delivery failed")
+            except Exception:
+                email_error = "delivery_failed"
+                print("[CHANGE_PASSWORD] Security notification delivery failed")
         else:
             print("[CHANGE_PASSWORD] WARNING: Email není nakonfigurován (chybí SMTP údaje)")
-    except Exception as exc:
-        email_error = str(exc)
-        print(f"[CHANGE_PASSWORD] ERROR: Neočekávaná chyba: {email_error}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        email_error = "delivery_failed"
+        print("[CHANGE_PASSWORD] Security notification unavailable")
 
     response_message = "Heslo bylo úspěšně změněno"
     if email_sent:

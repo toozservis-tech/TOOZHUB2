@@ -122,3 +122,7 @@ Ceny musí vlastník schválit a nastavit v App Store Connect. Klient nepřebír
 - Současná kompilace Release pro iPhone prošla bez distribučního podpisu.
   Apple ToS, produkty, sandbox nákupy, TestFlight a fyzický fotoaparát stále
   vyžadují dokončení; nejde o prohlášení, že je aplikace již vydaná.
+
+## Kontrola před prvním veřejným vydáním 1.0.0 — 1. 10. 2026
+
+První veřejná verze je **1.0.0**, build 1. Přehled nalezených bezpečnostních chyb, provedených kontrol a zbývajících překážek vydání je v [RELEASE_1_0_0_AUDIT.md](RELEASE_1_0_0_AUDIT.md). Povinné ověření administrátora a provozní důsledky popisuje [ADMIN_MFA.md](ADMIN_MFA.md). Starší úspěšné sestavení nebo počet testů není schválením veřejného vydání.

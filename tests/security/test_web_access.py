@@ -20,6 +20,7 @@ class WebAccess(AccountFlows):
         self.assertEqual(self.client.post('/admin-web-session', headers=headers).status_code, 403)
         with self.Session() as db:
             row=db.get(Customer,user['user']['id']); row.role='admin'; db.commit()
+        token=self.verified_admin_token(user['user']['id']);headers={'Authorization':'Bearer '+token}
         response=self.client.post('/admin-web-session',headers=headers)
         self.assertEqual(response.status_code,200)
         cookie=response.headers['set-cookie']

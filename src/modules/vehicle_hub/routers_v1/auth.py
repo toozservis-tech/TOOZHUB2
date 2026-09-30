@@ -89,6 +89,8 @@ def get_current_user_optional(
             and not pending_verification(db, user.id)
             and token_session_version_int == customer_session_version(user)
         ):
+            from src.core.mfa import require_admin_assurance
+            require_admin_assurance(db, user, payload)
             log_user_activity(
                 request=request,
                 user_email=user.email,

@@ -15,16 +15,16 @@ def _read_version():
     try:
         if _version_file.exists():
             return _version_file.read_text(encoding="utf-8").strip()
-        return "2.1.0"
+        return "1.0.0"
     except Exception as e:
         print(f"[VERSION] Warning: Nepodařilo se načíst verzi ze souboru VERSION: {e}")
-        return "2.1.0"
+        return "1.0.0"
 
 
 __version__ = _read_version()
 __version_name__ = f"{APP_DISPLAY_NAME} {__version__}"
-__build_date__ = os.getenv("APP_BUILD_DATE", "2026-09-30")
-__update_info__ = "Příprava předplatného v App Storu a spolehlivější správa účtů."
+__build_date__ = os.getenv("APP_BUILD_DATE", "2026-10-01")
+__update_info__ = "Příprava prvního veřejného vydání 1.0.0; bezpečnostní a funkční ověření probíhá."
 
 VERSION = __version__
 VERSION_NAME = __version_name__

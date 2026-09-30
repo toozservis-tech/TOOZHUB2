@@ -89,4 +89,7 @@ def get_current_user_email(
         ("GET", "/user/email-verification"), ("POST", "/user/email-verification/resend"),
     }:
         raise HTTPException(403, "Nejprve ověřte svou e-mailovou adresu odkazem v e-mailu.")
+    from src.core.mfa import ADMIN_BOOTSTRAP_ROUTES, require_admin_assurance
+    if (request.method, request.url.path) not in ADMIN_BOOTSTRAP_ROUTES:
+        require_admin_assurance(db, customer, payload)
     return email

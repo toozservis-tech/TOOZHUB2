@@ -6,7 +6,7 @@ from src.core.rbac import vehicle_read_policy, vehicle_write_policy
 class AdminRoles(AccountFlows):
     def test_control_center_read_and_write_by_role(self):
         account=self.register().json()
-        headers={'Authorization':'Bearer '+account['access_token']}
+        headers={'Authorization':'Bearer '+self.verified_admin_token(account['user']['id'])}
         for role in ['user','service','admin','developer_admin']:
             with self.Session() as db:
                 user=db.get(Customer,account['user']['id']);user.role=role;db.commit()

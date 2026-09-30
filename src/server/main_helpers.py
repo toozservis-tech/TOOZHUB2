@@ -53,8 +53,8 @@ try:
     BUILD_DATE = __build_date__
     UPDATE_INFO = __update_info__
 except ImportError:
-    APP_VERSION = "2.1.0"
-    APP_VERSION_NAME = "Správa vozidel 2.1.0"
+    APP_VERSION = "1.0.0"
+    APP_VERSION_NAME = "Správa vozidel 1.0.0"
     BUILD_DATE = "2025-01-27"
     UPDATE_INFO = "Aktualizace s vizuálními úpravami a vylepšeními"
 
@@ -200,6 +200,10 @@ class SecuritySettingsResponse(BaseModel):
     biometric_preferred: bool
 
 
+class TotpSetupRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+
+
 class TotpSetupResponse(BaseModel):
     secret: str
     otpauth_uri: str
@@ -310,8 +314,9 @@ def serialize_export_value(value):
 
 def model_to_export_dict(row) -> dict:
     payload: dict = {}
-    for column in row.__table__.columns:
-        payload[column.name] = serialize_export_value(getattr(row, column.name))
+    from src.modules.vehicle_hub.export_privacy import export_fields
+    for field in export_fields(row):
+        payload[field] = serialize_export_value(getattr(row, field))
     return payload
 
 

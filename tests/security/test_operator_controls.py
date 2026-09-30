@@ -15,6 +15,7 @@ class OperatorControls(unittest.TestCase):
     setUp = fixtures.AccountFlows.setUp
     tearDown = fixtures.AccountFlows.tearDown
     register = fixtures.AccountFlows.register
+    verified_admin_token = fixtures.AccountFlows.verified_admin_token
 
     def test_checks_detect_orphan_without_changing_data(self):
         with self.Session() as db:
@@ -57,7 +58,7 @@ class OperatorControls(unittest.TestCase):
             self.assertEqual(caught.exception.status_code,409);process.assert_not_called()
 
     def test_job_mutations_require_admin(self):
-        account=self.register().json();headers={'Authorization':'Bearer '+account['access_token']}
+        account=self.register().json();headers={'Authorization':'Bearer '+self.verified_admin_token(account['user']['id'])}
         for role in ['user','service','admin','developer_admin']:
             with self.Session() as db:
                 db.get(Customer,account['user']['id']).role=role;db.commit()

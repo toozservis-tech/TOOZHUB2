@@ -1,11 +1,47 @@
-<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Administrace – SprávaVozidel</title><style>[hidden]{display:none!important}body{font:17px system-ui;background:#102d31;color:#e1f5ef;margin:0;display:grid;min-height:100vh;place-items:center}main{max-width:420px;padding:32px}label{display:block;margin-top:20px}input,button,a{box-sizing:border-box;font:inherit}input,button{width:100%;padding:14px;margin-top:8px;border-radius:10px;border:1px solid #67988e}button{background:#bdeee0;color:#102d31;margin-top:24px;cursor:pointer}a{color:#bdeee0}p{line-height:1.5}#error{color:#ffb5b5}</style></head><body><main><h1>SprávaVozidel</h1><p>Webové rozhraní je určené pouze administrátorům. Uživatelé a servisy pokračují v mobilní aplikaci.</p><form id="form"><label>E-mail administrátora<input id="email" type="email" autocomplete="username" required></label><label>Heslo<input id="password" type="password" autocomplete="current-password" required></label><label id="codeLabel" hidden>Ověřovací kód<input id="code" inputmode="numeric" autocomplete="one-time-code"></label><button id="submit">Přihlásit administrátora</button></form><p id="error" role="alert"></p><a href="spravavozidel://login">Otevřít mobilní aplikaci</a></main><script>
-let challenge=null;
-const form=document.getElementById('form'), button=document.getElementById('submit');
-async function post(url,body,token){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...(token?{'Authorization':'Bearer '+token}:{})},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(typeof data.detail==='string'?data.detail:'Přihlášení se nezdařilo.');return data;}
-form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;document.getElementById('error').textContent='';try{
-const data=challenge?await post('/user/login/2fa',{challenge_token:challenge,code:document.getElementById('code').value}):await post('/user/login',{email:document.getElementById('email').value.trim(),password:document.getElementById('password').value});
-if(data.two_factor_required){challenge=data.challenge_token;document.getElementById('codeLabel').hidden=false;document.getElementById('code').required=true;document.getElementById('code').focus();return;}
-await post('/admin-web-session',{},data.access_token);
-localStorage.setItem('adminAccessToken',data.access_token);localStorage.setItem('adminRole',data.user.role);form.reset();location.replace('/web_admin/');
-}catch(e){document.getElementById('error').textContent=e.message;}finally{button.disabled=false;}});
+<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Administrace – SprávaVozidel</title><style>[hidden]{display:none!important}body{font:17px system-ui;background:#102d31;color:#e1f5ef;margin:0;display:grid;min-height:100vh;place-items:center}main{max-width:420px;padding:32px}label{display:block;margin-top:20px}input,button,a{box-sizing:border-box;font:inherit}input,button{width:100%;padding:14px;margin-top:8px;border-radius:10px;border:1px solid #67988e}button{background:#bdeee0;color:#102d31;margin-top:24px;cursor:pointer}a{color:#bdeee0}p{line-height:1.5}#error{color:#ffb5b5}</style></head><body><main><h1>SprávaVozidel</h1><p>Webové rozhraní je určené pouze administrátorům. Uživatelé a servisy pokračují v mobilní aplikaci.</p><form id="form"><label>E-mail administrátora<input id="email" type="email" autocomplete="username" required></label><label id="passwordLabel">Heslo<input id="password" type="password" autocomplete="current-password" required></label><label id="codeLabel" hidden>Ověřovací kód<input id="code" inputmode="numeric" autocomplete="one-time-code"></label><div id="setup" hidden><p>V autentikátoru přidejte účet SprávaVozidel pomocí klíče níže. Zvolte časový kód. Klíč nikomu neposílejte; nastavení dokončete do 10 minut.</p><p id="secret" style="overflow-wrap:anywhere;font-family:monospace"></p></div><button id="submit">Přihlásit administrátora</button></form><button id="restart" type="button" hidden>Začít přihlášení znovu</button><p id="error" role="alert"></p><a href="spravavozidel://login">Otevřít mobilní aplikaci</a></main><script>
+let challenge=null, pendingToken=null, mode='login';
+const el=id=>document.getElementById(id), form=el('form'), button=el('submit');
+// Unverified sessions and authenticator seeds remain only in this page's memory.
+localStorage.removeItem('adminAccessToken');localStorage.removeItem('accessToken');
+sessionStorage.removeItem('adminAccessToken');
+async function api(url,body,token){
+ const r=await fetch(url,{method:body===null?'GET':'POST',cache:'no-store',headers:{'Content-Type':'application/json',...(token?{'Authorization':'Bearer '+token}:{})},...(body===null?{}:{body:JSON.stringify(body)})});
+ const data=await r.json();if(!r.ok)throw new Error(typeof data.detail==='string'?data.detail:'Ověření se nezdařilo.');return data;
+}
+function showMode(next){
+ mode=next;const otp=next==='otp'||next==='setupCode';
+ el('passwordLabel').hidden=otp;el('password').required=!otp;el('password').value='';
+ el('email').readOnly=next!=='login';el('codeLabel').hidden=!otp;el('code').required=otp;el('code').value='';
+ el('setup').hidden=next!=='setupCode';el('restart').hidden=next==='login';
+ button.textContent=next==='setupPassword'?'Připravit autentikátor':next==='setupCode'?'Potvrdit nastavení a otevřít správu':otp?'Ověřit a otevřít správu':'Přihlásit administrátora';
+ (otp?el('code'):el('password')).focus();
+}
+async function accept(token){
+ const profile=await api('/user/me',null,token);
+ if(!['admin','developer_admin'].includes(profile.role))throw new Error('Webová správa je určena pouze administrátorům.');
+ const status=await api('/user/security/admin-status',null,token);
+ if(!status.verified){
+   pendingToken=token;
+   if(status.enrolled)throw new Error('Ověření vypršelo. Začněte přihlášení znovu.');
+   showMode('setupPassword');el('error').textContent='Před prvním vstupem nastavte autentikátor. Znovu potvrďte své heslo.';return;
+ }
+ await api('/admin-web-session',{},token);
+ sessionStorage.setItem('adminAccessToken',token);sessionStorage.setItem('adminRole',profile.role);
+ pendingToken=null;challenge=null;el('secret').textContent='';form.reset();location.replace('/web_admin/');
+}
+el('restart').addEventListener('click',()=>{pendingToken=null;challenge=null;el('secret').textContent='';el('error').textContent='';showMode('login');});
+form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;el('error').textContent='';try{
+ if(mode==='setupPassword'){
+   const data=await api('/user/security/totp/setup',{current_password:el('password').value},pendingToken);
+   el('secret').textContent=data.secret;showMode('setupCode');return;
+ }
+ if(mode==='setupCode'){
+   const data=await api('/user/security/totp/enable',{code:el('code').value},pendingToken);
+   el('secret').textContent='';await accept(data.access_token);return;
+ }
+ const data=mode==='otp'?await api('/user/login/2fa',{challenge_token:challenge,code:el('code').value}):await api('/user/login',{email:el('email').value.trim(),password:el('password').value});
+ el('password').value='';
+ if(data.two_factor_required){challenge=data.challenge_token;showMode('otp');return;}
+ await accept(data.access_token);
+}catch(e){el('error').textContent=e.message;}finally{button.disabled=false;el('code').value='';}});
 </script></body></html>

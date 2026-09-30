@@ -69,6 +69,18 @@ class AccountFlows(unittest.TestCase):
                 row = db.get(EmailVerification, response.json()['user']['id'])
                 row.verified_at = datetime.utcnow(); db.commit()
         return response
+    def verified_admin_token(self, customer_id):
+        from src.core import mfa
+        from src.core.security import create_access_token
+        from src.modules.vehicle_hub.models import CustomerSecuritySettings
+        with self.Session() as db:
+            customer=db.get(Customer,customer_id)
+            settings=mfa.locked_settings(db,customer)
+            settings.two_factor_enabled=True
+            settings.totp_secret=mfa.protect_secret('A'*32)
+            db.commit()
+            return create_access_token(mfa.verified_claims(customer))
+
     def test_registration_login_and_role_cannot_be_injected(self):
         r=self.register(role='admin',tenant_id=1);self.assertEqual(r.status_code,200,r.text)
         self.assertEqual(r.json()['user']['role'],'user')
@@ -121,11 +133,12 @@ class AccountFlows(unittest.TestCase):
 
     def test_password_change_invalidates_pending_two_factor_challenge(self):
         self.register()
-        challenge={'email':'user@example.com','session_version':0,'expires_at':__import__('time').time()+60,'attempts':0}
+        from src.core import mfa
         with self.Session() as db:
-            db.query(Customer).one().session_version=1;db.commit()
-        with patch.object(user_auth,'get_2fa_login_challenge',return_value=challenge):
-            response=self.client.post('/user/login/2fa',json={'challenge_token':'x'*43,'code':'123456'})
+            customer=db.query(Customer).one()
+            challenge,_=mfa.create_login_challenge(db,customer)
+            customer.session_version=1;db.commit()
+        response=self.client.post('/user/login/2fa',json={'challenge_token':challenge,'code':'123456'})
         self.assertEqual(response.status_code,401,response.text)
 
     def test_change_password_revokes_old_session(self):
@@ -147,7 +160,7 @@ class AccountFlows(unittest.TestCase):
         r=self.register('admin@example.com');self.assertEqual(r.status_code,200,r.text)
         with self.Session() as db:
             db.query(Customer).one().role='admin';db.commit()
-        headers={'Authorization':'Bearer '+r.json()['access_token']}
+        headers={'Authorization':'Bearer '+self.verified_admin_token(r.json()['user']['id'])}
         payload={'email':'service@example.com','password':PASSWORD,'ico':'12345678','service_name':'Test Service',
                  'responsible_person':'Test Person','phone':'+420123456789','street':'Test Street','city':'Test City',
                  'zip':'12345','registration_purpose':'Isolated automated security test'}

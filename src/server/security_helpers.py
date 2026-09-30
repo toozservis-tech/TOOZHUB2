@@ -16,52 +16,11 @@ from src.modules.vehicle_hub.models import Customer, CustomerSecuritySettings
 from src.modules.vehicle_hub.account_state import customer_session_version
 
 
-_pending_2fa_logins: dict[str, dict] = {}
 TOTP_PERIOD_SECONDS = 30
 TOTP_DIGITS = 6
 TOTP_VERIFY_WINDOW_STEPS = 1
 TOTP_LOGIN_CHALLENGE_TTL_SECONDS = 5 * 60
 TOTP_ISSUER_NAME = APP_DISPLAY_NAME
-
-
-def cleanup_expired_2fa_challenges() -> None:
-    now = time.time()
-    expired_tokens = [
-        token
-        for token, payload in _pending_2fa_logins.items()
-        if float(payload.get("expires_at", 0)) <= now
-    ]
-    for token in expired_tokens:
-        _pending_2fa_logins.pop(token, None)
-
-
-def create_2fa_login_challenge(customer: Customer, expected_role: str | None = None) -> tuple[str, int]:
-    cleanup_expired_2fa_challenges()
-    challenge_token = secrets.token_urlsafe(32)
-    expires_at = time.time() + TOTP_LOGIN_CHALLENGE_TTL_SECONDS
-    _pending_2fa_logins[challenge_token] = {
-        "email": customer.email,
-        "tenant_id": customer.tenant_id,
-        "customer_id": customer.id,
-        "session_version": customer_session_version(customer),
-        "expected_role": expected_role or "",
-        "attempts": 0,
-        "expires_at": expires_at,
-    }
-    return challenge_token, TOTP_LOGIN_CHALLENGE_TTL_SECONDS
-
-
-def get_2fa_login_challenge(token: str) -> dict | None:
-    cleanup_expired_2fa_challenges()
-    return _pending_2fa_logins.get(token)
-
-
-def pop_2fa_login_challenge(token: str) -> dict | None:
-    return _pending_2fa_logins.pop(token, None)
-
-
-def set_2fa_login_challenge(token: str, payload: dict) -> None:
-    _pending_2fa_logins[token] = payload
 
 
 def normalize_totp_code(value: str | None) -> str:

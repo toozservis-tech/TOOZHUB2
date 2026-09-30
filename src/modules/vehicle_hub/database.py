@@ -26,7 +26,7 @@ if DB_URL.startswith("postgresql") or DB_URL.startswith("postgres"):
     )
 else:
     # SQLite - bez poolování
-    engine = create_engine(DB_URL, connect_args=connect_args)
+    engine = create_engine(DB_URL, connect_args=connect_args, hide_parameters=True)
 
 schema = os.getenv("DATABASE_SCHEMA", "")
 if schema:

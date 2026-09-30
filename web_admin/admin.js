@@ -59,36 +59,31 @@ let systemCapabilities = {};
 // ============================================
 
 function getAuthToken() {
-  if (authToken) return authToken;
-  authToken = localStorage.getItem(ADMIN_TOKEN_KEY) || localStorage.getItem(LEGACY_TOKEN_KEY);
-  if (authToken) return authToken;
-  const urlParams = new URLSearchParams(window.location.search);
-  authToken = urlParams.get('token');
-  if (authToken) {
-    localStorage.setItem(ADMIN_TOKEN_KEY, authToken);
-    return authToken;
-  }
-  return null;
+  // Tokens in URLs leak into history/referrers; persistent legacy tokens are not reused.
+  localStorage.removeItem(ADMIN_TOKEN_KEY);
+  localStorage.removeItem(LEGACY_TOKEN_KEY);
+  if (!authToken) authToken = sessionStorage.getItem(ADMIN_TOKEN_KEY);
+  return authToken;
 }
 
 function setAuthToken(token) {
   authToken = token;
-  localStorage.setItem(ADMIN_TOKEN_KEY, token);
+  sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
 }
 
 function setAdminRole(role) {
   currentAdminRole = role || null;
   if (currentAdminRole) {
-    localStorage.setItem(ADMIN_ROLE_KEY, currentAdminRole);
+    sessionStorage.setItem(ADMIN_ROLE_KEY, currentAdminRole);
   } else {
-    localStorage.removeItem(ADMIN_ROLE_KEY);
+    sessionStorage.removeItem(ADMIN_ROLE_KEY);
   }
   updateControlCenterVisibility();
 }
 
 function getStoredAdminRole() {
   if (currentAdminRole) return currentAdminRole;
-  currentAdminRole = localStorage.getItem(ADMIN_ROLE_KEY) || null;
+  currentAdminRole = sessionStorage.getItem(ADMIN_ROLE_KEY) || null;
   return currentAdminRole;
 }
 
@@ -96,6 +91,7 @@ function clearAuthToken() {
   const currentToken = authToken;
   const legacyToken = localStorage.getItem(LEGACY_TOKEN_KEY);
   authToken = null;
+  sessionStorage.removeItem(ADMIN_TOKEN_KEY);
   localStorage.removeItem(ADMIN_TOKEN_KEY);
   if (legacyToken && currentToken && legacyToken === currentToken) {
     localStorage.removeItem(LEGACY_TOKEN_KEY);
@@ -172,12 +168,10 @@ async function apiRequest(method, path, body = null) {
     const res = await fetch(url, options);
     
     // Pokud je 401 Unauthorized, zkusit přesměrovat na login
-    if (res.status === 401) {
+    if (res.status === 401 || res.headers.get('X-Admin-Verification') === 'required') {
       clearAuthToken();
       showGlobalError('Session vypršela. Prosím přihlaste se znovu.');
-      setTimeout(() => {
-        location.replace('/admin-login');
-      }, 2000);
+      showLoginScreen();
       throw new Error('Unauthorized');
     }
     
@@ -4656,38 +4650,10 @@ async function openControlCenterProblemUsers() {
 // LOGIN & AUTH
 // ============================================
 
-async function handleAdminLogin(event) {
+function handleAdminLogin(event) {
   event.preventDefault();
-  hideGlobalError();
-  
-  const email = document.getElementById('admin-email').value.trim();
-  const password = document.getElementById('admin-password').value;
-  const errorEl = document.getElementById('login-error');
-  
-  errorEl.style.display = 'none';
-  
-  if (!email || !password) {
-    errorEl.textContent = 'Vyplňte prosím email a heslo';
-    errorEl.classList.remove('hidden');
-    return;
-  }
-  
-  try {
-    const data = await apiRequest('POST', '/user/login', { email, password });
-    
-    const role = data?.user?.role;
-    if (!role || !['developer_admin', 'admin'].includes(role)) {
-      throw new Error('Přístup odepřen. Vyžadována role developer_admin nebo admin.');
-    }
-    
-    setAuthToken(data.access_token);
-    setAdminRole(role);
-    showDashboard();
-    
-  } catch (error) {
-    errorEl.textContent = error.message || 'Chyba při přihlášení';
-    errorEl.classList.remove('hidden');
-  }
+  // One shared entry point handles enrollment and password + OTP verification.
+  location.replace('/admin-login');
 }
 
 async function handleAdminLogout() {
@@ -4697,13 +4663,9 @@ async function handleAdminLogout() {
 }
 
 function showLoginScreen() {
-  closeAllControlCenterDetails();
-  closeAdminMobileNav();
-  document.getElementById('login-screen').classList.remove('hidden');
-  document.getElementById('dashboard-screen').classList.add('hidden');
-  document.getElementById('admin-email').value = '';
-  document.getElementById('admin-password').value = '';
-  document.getElementById('login-error').classList.add('hidden');
+  clearAuthToken();
+  document.getElementById('dashboard-screen')?.classList.add('hidden');
+  location.replace('/admin-login');
 }
 
 function showDashboard() {
@@ -4754,7 +4716,13 @@ window.addEventListener('DOMContentLoaded', () => {
   
   if (token) {
     // Zkusit načíst uživatele - pokud selže (token neplatný), zobrazit přihlášení
-    apiRequest('GET', '/admin-api/users')
+    apiRequest('GET', '/user/security/admin-status')
+      .then(status => {
+        if (!status.verified || !status.valid_until) throw new Error('Ověření administrátora je nutné.');
+        const remaining = Math.min(900000, Math.max(0, status.valid_until * 1000 - Date.now()));
+        setTimeout(showLoginScreen, remaining);
+        return apiRequest('GET', '/admin-api/users');
+      })
       .then(() => {
         showDashboard();
       })

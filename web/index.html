@@ -26511,6 +26511,7 @@
                                                     <span id="securityStatusTotpChip" class="profile-security-chip is-muted">Aplikace: nenastaveno</span>
                                                 </div>
                                                 <div class="profile-security-actions">
+                                                    <label>Současné heslo pro nové nastavení<input type="password" id="securitySetupPassword" autocomplete="current-password"></label>
                                                     <button type="button" class="btn" id="securityStartTotpSetupBtn" onclick="startTotpSetup()">Nastavit 2FA</button>
                                                     <button type="button" class="btn btn-secondary" id="securityShowTotpDisableBtn" onclick="toggleTotpDisableForm(true)">Vypnout 2FA</button>
                                                 </div>
@@ -27051,6 +27052,16 @@
             }
         }
 
+        async function replaceSecuritySession(result) {
+            if (!result?.access_token) return;
+            saveAuthSession(result.access_token, currentUser, getStaySignedInPreference());
+            if (['admin', 'developer_admin'].includes(currentUser?.role)) {
+                const sessionResponse = await fetch('/admin-web-session', {method:'POST', headers:{Authorization:'Bearer '+result.access_token}});
+                if (!sessionResponse.ok) throw new Error('Přihlaste se znovu pro otevření administrace.');
+                sessionStorage.setItem('adminAccessToken', result.access_token);
+            }
+        }
+
         async function startTotpSetup() {
             setSecurityInlineMessage('security2faMessage', '');
             const setupPanel = document.getElementById('securityTotpSetupPanel');
@@ -27058,7 +27069,12 @@
             if (disablePanel) disablePanel.classList.add('hidden');
 
             try {
-                const response = await apiCall('/user/security/totp/setup', 'POST', {});
+                const passwordInput = document.getElementById('securitySetupPassword');
+                const currentPassword = passwordInput?.value || '';
+                if (!currentPassword) throw new Error('Zadejte současné heslo.');
+                let response;
+                try { response = await apiCall('/user/security/totp/setup', 'POST', {current_password: currentPassword}); }
+                finally { if (passwordInput) passwordInput.value = ''; }
                 const secretEl = document.getElementById('securityTotpSecretValue');
                 if (secretEl) {
                     secretEl.textContent = response.secret || '-';
@@ -27118,9 +27134,9 @@
                 codeInput.value = '';
             }
             const uriEl = document.getElementById('securityTotpUriValue');
-            if (uriEl) {
-                uriEl.value = '';
-            }
+            if (uriEl) { uriEl.value = ''; }
+            const secretEl = document.getElementById('securityTotpSecretValue');
+            if (secretEl) { secretEl.textContent = '-'; }
             if (clearMessage) {
                 setSecurityInlineMessage('security2faMessage', '');
             }
@@ -27134,7 +27150,8 @@
             }
 
             try {
-                await apiCall('/user/security/totp/enable', 'POST', { code });
+                const result = await apiCall('/user/security/totp/enable', 'POST', { code });
+                await replaceSecuritySession(result);
                 cancelTotpSetup(false);
                 setSecurityInlineMessage('security2faMessage', '2FA bylo úspěšně aktivováno. Další přihlášení už bude vyžadovat kód.', 'success');
                 await refreshProfileSecuritySettings();
@@ -27173,10 +27190,11 @@
             }
 
             try {
-                await apiCall('/user/security/totp/disable', 'POST', {
+                const result = await apiCall('/user/security/totp/disable', 'POST', {
                     current_password: currentPassword,
                     code
                 });
+                await replaceSecuritySession(result);
                 toggleTotpDisableForm(false);
                 setSecurityInlineMessage('security2faMessage', '2FA bylo vypnuto.', 'success');
                 await refreshProfileSecuritySettings();
