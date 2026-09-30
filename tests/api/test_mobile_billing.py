@@ -122,6 +122,33 @@ def test_history_and_refresh_are_tenant_scoped(setup,monkeypatch):
 def test_unknown_transaction_does_not_contact_gateway(setup):
     assert asyncio.run(billing.comgate_result(request('UNKNOWN'),setup[0])).status_code==404
 
+@pytest.mark.parametrize('gateway_test', ['false', 'true'])
+def test_restored_cancelled_checkout_can_be_reconciled_across_modes(setup, monkeypatch, gateway_test):
+    db,user,cfg=setup; created(setup,monkeypatch)
+    row=db.query(LicensePaymentTransaction).one()
+    row.payload_json=json.dumps({'code':'0','redirect':'https://pay1.comgate.cz/old'})
+    db.commit(); cfg['test_mode']=gateway_test != 'true'
+    monkeypatch.setattr(billing,'_post_comgate',lambda *a:paid_response(row,status='CANCELLED',test=gateway_test))
+    result=asyncio.run(mobile.refresh(row.id,user,db))
+    assert result['status']=='CANCELLED'
+    assert db.query(License).one().plan=='free'
+    assert json.loads(row.payload_json)['legacy_reconciliation']['status']=='CANCELLED'
+    # The historical row is retained, but no longer blocks a new checkout.
+    cfg['test_mode']=False
+    monkeypatch.setattr(billing,'_post_comgate',lambda *a:dict(code='0',transId='NEW',redirect='https://pay1.comgate.cz/new'))
+    mobile.checkout(purchase(),request(),user,db)
+    assert db.query(LicensePaymentTransaction).count()==2
+
+@pytest.mark.parametrize('changes', [dict(status='PAID'),dict(status='PENDING'),dict(status='AUTHORIZED'),dict(price='1'),dict(refId='other'),dict(merchant='other'),dict(test='unknown')])
+def test_restored_unknown_or_mismatched_payment_stays_blocked(setup, monkeypatch, changes):
+    db,user,cfg=setup; created(setup,monkeypatch)
+    row=db.query(LicensePaymentTransaction).one(); row.payload_json='{}'; db.commit()
+    values=dict(status='CANCELLED'); values.update(changes)
+    monkeypatch.setattr(billing,'_post_comgate',lambda *a:paid_response(row,**values))
+    assert asyncio.run(billing.comgate_result(request(row.trans_id),db)).status_code==409
+    assert row.provider_status=='PENDING'
+    assert db.query(License).one().plan=='free'
+
 def test_catalog_and_readiness_do_not_expose_secret(setup):
     db,user,cfg=setup
     assert 'fixture-secret' not in json.dumps(mobile.catalog(request(),user))

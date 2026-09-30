@@ -2008,9 +2008,19 @@ async def comgate_result(
 
     payment_status = str(status_result.get("status") or "").strip().upper()
     details = json.loads(existing_checkout_tx.payload_json or "{}")
-    expected_test = details.get("checkout_test_mode", bool(cfg["test_mode"]))
+    expected_test = details.get("checkout_test_mode")
+    provider_test = str(status_result.get("test", "")).lower()
+    # Restored checkouts predate the saved mode/consent metadata. A verified
+    # cancellation may close them, but unknown historical terms must never
+    # activate a licence under today's gateway configuration.
+    legacy_cancellation = (
+        expected_test is None and not details.get("request_id")
+        and payment_status == "CANCELLED" and provider_test in {"true", "1", "false", "0"}
+        and _safe_int(status_result.get("price")) == existing_checkout_tx.amount_halers
+    )
     if (str(status_result.get("curr", "")).upper() != existing_checkout_tx.currency
-        or str(status_result.get("test", "")).lower() not in ({"true", "1"} if expected_test else {"false", "0"})
+        or (not legacy_cancellation and (not isinstance(expected_test, bool)
+            or provider_test not in ({"true", "1"} if expected_test else {"false", "0"})))
         or str(status_result.get("merchant", "")) != str(cfg["merchant"])
         or str(status_result.get("transId", "")) != trans_id
         or str(status_result.get("refId", "")) != existing_checkout_tx.ref_id):
@@ -2018,6 +2028,12 @@ async def comgate_result(
     if payment_status != "PAID":
         if payment_status in {"PENDING", "AUTHORIZED", "CANCELLED"}:
             existing_checkout_tx.provider_status = payment_status
+            if legacy_cancellation:
+                details["legacy_reconciliation"] = {
+                    "status": payment_status, "test_mode": provider_test in {"true", "1"},
+                    "verified_at": _utcnow().isoformat(),
+                }
+                existing_checkout_tx.payload_json = json.dumps(details, ensure_ascii=False)
             db.commit()
         return PlainTextResponse("WAITING", status_code=200)
 
