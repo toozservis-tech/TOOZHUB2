@@ -60,6 +60,11 @@ def _tenant(user):
 def _quote(payload, user, db):
     cfg = billing._load_comgate_config()
     subscription = billing._get_subscription(db, _tenant(user))
+    if subscription and subscription.provider == "apple" and (
+        subscription.auto_renew_enabled or
+        (subscription.current_period_end and subscription.current_period_end > billing._utcnow())
+    ):
+        raise HTTPException(409, "Účet má předplatné přes Apple. Spravujte ho v App Storu.")
     if (subscription and subscription.init_recurring_id and subscription.current_period_end
         and subscription.current_period_end > billing._utcnow()
         and subscription.status in {"active", "cancel_at_period_end", "grace"}):

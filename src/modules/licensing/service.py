@@ -11,7 +11,7 @@ from fastapi import HTTPException
 
 from src.core.env_aliases import env_prefer_new
 
-from ..vehicle_hub.models import License, Vehicle, Tenant
+from ..vehicle_hub.models import License, LicenseSubscription, Vehicle, Tenant
 from ..vehicle_hub.database import Base
 from ..vehicle_hub.ownership import get_customer_by_email, get_owned_vehicle_ids
 
@@ -116,6 +116,16 @@ def get_or_create_license(db: Session, tenant_id: int) -> License:
     # Pokud licence existuje, ujistit se, že má správné funkce podle plánu
     if license_obj:
         needs_update = False
+        # Access expires even if an Apple notification is delayed or not delivered.
+        # Existing vehicles/data are retained; only the available plan changes.
+        if not admin_force_premium and license_obj.valid_to and license_obj.valid_to <= datetime.utcnow():
+            apple_sub = db.query(LicenseSubscription).filter_by(tenant_id=tenant_id, provider="apple").first()
+            if apple_sub:
+                license_obj.plan = "free"
+                license_obj.valid_to = None
+                apple_sub.plan_current = "free"
+                apple_sub.status = "canceled"
+                needs_update = True
 
         if admin_force_premium and license_obj.plan != "premium":
             license_obj.plan = "premium"

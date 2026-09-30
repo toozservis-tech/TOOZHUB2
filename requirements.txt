@@ -60,3 +60,5 @@ pytest-asyncio>=0.21.0
 # Audio (optional - for voice features)
 # SpeechRecognition>=3.10.0
 # pyttsx3>=2.90
+# App Store signed transactions and server notifications (official Apple library).
+app-store-server-library==3.1.2

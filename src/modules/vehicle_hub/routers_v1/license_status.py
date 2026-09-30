@@ -99,6 +99,7 @@ class LicenseUpgradeRequest(BaseModel):
 
 
 class SubscriptionStatusResponse(BaseModel):
+    provider: Optional[str] = None
     status: str
     auto_renew_enabled: bool
     billing_period: Optional[str] = None
@@ -839,6 +840,7 @@ def _serialize_subscription(
 
     period_end = subscription.current_period_end
     return {
+        "provider": subscription.provider,
         "status": _normalize_subscription_status(subscription.status),
         "auto_renew_enabled": bool(subscription.auto_renew_enabled),
         "billing_period": subscription.billing_period,
@@ -1586,6 +1588,9 @@ def cancel_subscription_endpoint(
     if not subscription:
         raise HTTPException(status_code=409, detail="Pro tento účet zatím není aktivní předplatné.")
 
+    if subscription.provider != "comgate":
+        raise HTTPException(409, "Předplatné z App Storu spravujte ve svém účtu Apple.")
+
     current_plan = _normalize_plan(subscription.plan_current or "free")
     if current_plan == "free":
         raise HTTPException(status_code=400, detail="FREE plán nemá aktivní předplatné pro zrušení.")
@@ -1620,6 +1625,9 @@ def resume_subscription_endpoint(
     subscription = _get_subscription(db, tenant_id)
     if not subscription:
         raise HTTPException(status_code=409, detail="Pro tento účet zatím není aktivní předplatné.")
+
+    if subscription.provider != "comgate":
+        raise HTTPException(409, "Předplatné z App Storu spravujte ve svém účtu Apple.")
 
     current_plan = _normalize_plan(subscription.plan_current or "free")
     if current_plan == "free":
@@ -1661,6 +1669,9 @@ def change_subscription_plan_endpoint(
     subscription = _get_subscription(db, tenant_id)
     if not subscription:
         raise HTTPException(status_code=409, detail="Pro tento účet zatím není aktivní předplatné.")
+
+    if subscription.provider != "comgate":
+        raise HTTPException(409, "Předplatné z App Storu spravujte ve svém účtu Apple.")
 
     current_plan = _normalize_plan(subscription.plan_current or "free")
     if current_plan == "free":
@@ -1773,6 +1784,11 @@ def create_comgate_checkout(
 
     tenant_id_int = int(tenant_id)
     subscription = _get_subscription(db, tenant_id_int)
+    if subscription and subscription.provider == "apple" and (
+        subscription.auto_renew_enabled or
+        (subscription.current_period_end and subscription.current_period_end > _utcnow())
+    ):
+        raise HTTPException(409, "Účet má předplatné přes Apple. Spravujte ho v App Storu, aby nevznikla dvojí platba.")
     subscription_status = _normalize_subscription_status(subscription.status) if subscription else ""
     recurring = subscription_status != "legacy_manual"
     if payload.expected_recurring is not None and payload.expected_recurring != recurring:
@@ -2279,3 +2295,5 @@ def legacy_checkout(payload: ComgateCheckoutRequest, request: Request,
 
 from .mobile_billing import router as mobile_billing_router
 router.include_router(mobile_billing_router)
+from .apple_billing import router as apple_billing_router
+router.include_router(apple_billing_router)
