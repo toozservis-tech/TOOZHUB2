@@ -3083,6 +3083,8 @@ def approve_service_registration_request(
         )
         db.add(new_service)
         db.flush()
+        from src.modules.vehicle_hub.email_verification import prepare_verification, issue_verification
+        prepare_verification(db, new_service)
 
         ensure_default_license_for_tenant(db, dedicated_tenant.id)
 
@@ -3097,8 +3099,11 @@ def approve_service_registration_request(
         db.refresh(new_service)
         db.refresh(req)
 
+        verification_sent = issue_verification(db, new_service)
         return {
-            "message": "Žádost byla schválena a servisní účet vytvořen.",
+            "message": ("Žádost byla schválena. Servisu jsme poslali odkaz pro ověření e-mailu."
+                        if verification_sent else "Servisní účet byl vytvořen. Ověřovací e-mail se nepodařilo doručit; servis si může nový odkaz vyžádat po přihlášení v aplikaci."),
+            "email_sent": verification_sent,
             "request_id": req.id,
             "service_customer_id": new_service.id,
             "tenant_id": dedicated_tenant.id,

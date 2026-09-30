@@ -425,6 +425,8 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
         global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task
         db = SessionLocal()
         try:
+            from src.modules.vehicle_hub.email_verification import EmailVerification
+            EmailVerification.__table__.create(bind=db.get_bind(), checkfirst=True)
             ensure_customer_account_state_schema(db)
             capabilities = get_capabilities(db)
             unavailable = [

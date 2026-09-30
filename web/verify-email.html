@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light">
+  <title>Ověření e-mailu · SprávaVozidel</title>
+  <style>
+    *{box-sizing:border-box}body{font:17px/1.6 system-ui,-apple-system,sans-serif;background:#edf5f2;color:#163f3a;margin:0;padding:24px}
+    main{max-width:480px;margin:8vh auto;background:#fff;border:1px solid #d6e5df;border-radius:24px;padding:32px;box-shadow:0 16px 48px #123d3912}
+    .brand{display:flex;gap:14px;align-items:center;font-size:20px;font-weight:750}.brand img{width:48px;height:48px;object-fit:contain}
+    h1{font-size:30px;line-height:1.2;margin:30px 0 16px}p{margin:16px 0}.hint{font-size:14px;color:#536b65}
+    button,.action{display:block;width:100%;text-align:center;background:#164b44;color:#fff;border:0;border-radius:14px;padding:16px;font:600 17px system-ui;text-decoration:none;cursor:pointer}
+    button:disabled{background:#536b65;cursor:default}button:focus-visible,a:focus-visible{outline:3px solid #bd4779;outline-offset:4px}
+    [hidden]{display:none!important}.help{color:#164b44;text-underline-offset:3px}
+    @media(max-width:400px){body{padding:16px}main{padding:24px;margin:5vh auto}h1{font-size:27px}}
+  </style>
+</head>
+<body>
+<main>
+  <div class="brand"><img src="/web/assets/toozservis-logo-icon.png" alt=""><span>SprávaVozidel</span></div>
+  <h1>Potvrďte svůj e-mail</h1>
+  <p id="message" role="status" aria-live="polite">Tímto krokem ověříte adresu svého účtu. Potom se vrátíte do aplikace.</p>
+  <button id="confirm" type="button">Ověřit e-mail</button>
+  <a id="open-app" class="action" href="spravavozidel://open" hidden>Otevřít SprávaVozidel</a>
+  <p id="open-hint" class="hint" hidden>Pokud se aplikace neotevře sama, otevřete ji na telefonu a klepněte na „Zkontrolovat ověření“.</p>
+  <p class="hint">Odkaz platí 24 hodin a lze jej použít jednou. Pokud jste účet nezakládali, nemusíte nic potvrzovat.</p>
+  <a class="help" href="/web/ochrana-osobnich-udaju.html">Ochrana osobních údajů</a>
+</main>
+<script>
+(() => {
+  let token = new URLSearchParams(location.hash.slice(1)).get('token');
+  history.replaceState(null, '', location.pathname);
+  const button = document.getElementById('confirm');
+  const message = document.getElementById('message');
+  if (!token || !/^[A-Za-z0-9_-]{32,128}$/.test(token)) {
+    token = null;
+    button.disabled = true;
+    message.textContent = 'Otevřete úplný ověřovací odkaz z e-mailu. Nový odkaz si můžete vyžádat v aplikaci.';
+  }
+  button.onclick = async () => {
+    if (!token || button.disabled) return;
+    button.disabled = true;
+    button.textContent = 'Ověřuji…';
+    try {
+      const response = await fetch('/user/email-verification/confirm', {
+        method:'POST', headers:{'Content-Type':'application/json'}, credentials:'omit', cache:'no-store',
+        body:JSON.stringify({token})
+      });
+      const data = await response.json();
+      if (response.ok) {
+        token = null;
+        message.textContent = 'E-mail je ověřený. V aplikaci nyní můžete pokračovat.';
+        button.hidden = true;
+        document.getElementById('open-app').hidden = false;
+        document.getElementById('open-hint').hidden = false;
+      } else {
+        message.textContent = typeof data.detail === 'string' ? data.detail : 'Ověření se nezdařilo. Zkuste to znovu.';
+        button.disabled = false;
+        button.textContent = 'Zkusit ověření znovu';
+      }
+    } catch (_) {
+      message.textContent = 'Server není dostupný. Zkuste to znovu.';
+      button.disabled = false;
+      button.textContent = 'Zkusit ověření znovu';
+    }
+  };
+})();
+</script>
+</body>
+</html>

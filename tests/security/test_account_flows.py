@@ -62,7 +62,13 @@ class AccountFlows(unittest.TestCase):
         for p in reversed(self.patches): p.stop()
         self.engine.dispose()
     def register(self, email='user@example.com', **extra):
-        return self.client.post('/user/register', json={'email':email,'password':PASSWORD,'name':'Security Test',**extra})
+        response = self.client.post('/user/register', json={'email':email,'password':PASSWORD,'name':'Security Test',**extra})
+        if response.status_code == 200:
+            from src.modules.vehicle_hub.email_verification import EmailVerification
+            with self.Session() as db:
+                row = db.get(EmailVerification, response.json()['user']['id'])
+                row.verified_at = datetime.utcnow(); db.commit()
+        return response
     def test_registration_login_and_role_cannot_be_injected(self):
         r=self.register(role='admin',tenant_id=1);self.assertEqual(r.status_code,200,r.text)
         self.assertEqual(r.json()['user']['role'],'user')
@@ -154,4 +160,19 @@ class AccountFlows(unittest.TestCase):
         self.assertEqual(login.status_code,200,login.text);self.assertEqual(login.json()['user']['role'],'service')
         self.assertEqual(self.client.post(f'/admin-api/service-registration-requests/{rid}/approve',headers=headers,json={}).status_code,400)
 
-if __name__ == '__main__': unittest.main()
+
+
+    def test_email_verification_gates_access_and_is_one_use(self):
+        from src.modules.vehicle_hub.email_verification import EmailVerification
+        r=self.client.post('/user/register',json={'email':'pending@example.com','password':PASSWORD})
+        self.assertEqual(r.status_code,200,r.text)
+        headers={'Authorization':'Bearer '+r.json()['access_token']}
+        self.assertEqual(self.client.get('/test/protected',headers=headers).status_code,403)
+        self.assertTrue(self.client.get('/user/email-verification',headers=headers).json()['required'])
+        import hashlib
+        token='test-verification-token-'+('x'*32)
+        with self.Session() as db:
+            row=db.get(EmailVerification,r.json()['user']['id']);row.token_digest=hashlib.sha256(token.encode()).hexdigest();db.commit()
+        self.assertEqual(self.client.post('/user/email-verification/confirm',json={'token':token}).status_code,200)
+        self.assertEqual(self.client.post('/user/email-verification/confirm',json={'token':token}).status_code,400)
+        self.assertEqual(self.client.get('/test/protected',headers=headers).status_code,200)

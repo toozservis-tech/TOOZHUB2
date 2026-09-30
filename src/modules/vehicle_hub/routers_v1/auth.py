@@ -16,6 +16,7 @@ from ..account_state import (
 )
 from ..service_access import service_can_read_vehicle
 from ..ownership import user_owns_vehicle
+from ..email_verification import pending_verification
 from src.core.auth import get_current_user_email
 from src.core.rbac import is_admin, is_service, normalize_role, service_record_write_policy, vehicle_read_policy
 from src.server.security_tracking import log_user_activity
@@ -85,6 +86,7 @@ def get_current_user_optional(
             user
             and not customer_is_deleted(user)
             and not customer_is_disabled(user)
+            and not pending_verification(db, user.id)
             and token_session_version_int == customer_session_version(user)
         ):
             log_user_activity(

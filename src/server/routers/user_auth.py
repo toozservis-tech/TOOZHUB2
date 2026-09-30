@@ -54,6 +54,10 @@ from src.server.security_helpers import (
 from src.server.security_tracking import extract_client_ip, log_security_event
 
 
+from src.modules.vehicle_hub.email_verification import EmailVerification, issue_verification, prepare_verification
+from src.core.auth import get_current_user_email
+from pydantic import BaseModel, Field
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -115,74 +119,12 @@ def register_user(user_data: UserRegister, request: Request, db=Depends(get_db))
     )
 
     db.add(customer)
+    db.flush()
+    prepare_verification(db, customer)
     db.commit()
     db.refresh(customer)
 
     ensure_default_license_for_tenant(db, dedicated_tenant.id)
-
-    email_sent = False
-    registration_email_status = "not_configured"
-    try:
-        from src.modules.email_client.service import EmailService
-
-        email_service = EmailService()
-        if email_service.is_configured():
-            registered_at = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
-            user_name = (customer.name or "uživateli").strip()
-
-            email_body = f"""
-Dobrý den {user_name},
-
-vaše registrace do aplikace {APP_DISPLAY_NAME} byla úspěšně dokončena.
-
-Registrovaný účet: {customer.email}
-Datum registrace: {registered_at} UTC
-
-Nyní se můžete přihlásit a začít spravovat svá vozidla.
-
-S pozdravem,
-{APP_DISPLAY_NAME}
-"""
-
-            html_body = render_email_layout(
-                title="Účet je připraven",
-                subtitle="Registrace byla úspěšně dokončena.",
-                intro=f"Dobrý den {user_name},",
-                paragraphs=[
-                    f"vaše registrace do aplikace {APP_DISPLAY_NAME} byla úspěšně dokončena.",
-                    "Teď se můžete přihlásit a začít spravovat svá vozidla, servisní historii i připomínky.",
-                ],
-                panels=[
-                    render_panel(
-                        title="Přehled účtu",
-                        rows=[
-                            ("Registrovaný účet", customer.email),
-                            ("Datum registrace", f"{registered_at} UTC"),
-                        ],
-                    )
-                ],
-                cta_label="Otevřít aplikaci",
-                cta_url=build_app_url(),
-                accent="#f59e0b",
-            )
-            try:
-                email_service.send_simple_email(
-                    to=customer.email,
-                    subject=f"Potvrzení registrace - {APP_DISPLAY_NAME}",
-                    body=email_body,
-                    html_body=html_body,
-                )
-                email_sent = True
-                registration_email_status = "sent"
-                print(f"[REGISTER] OK: Potvrzovací email odeslán na: {customer.email}")
-            except Exception as email_ex:
-                registration_email_status = "failed"
-                print(f"[REGISTER] ERROR: Nepodařilo se odeslat registrační email: {email_ex}")
-        else:
-            print("[REGISTER] WARNING: SMTP není nakonfigurováno, potvrzovací email nebyl odeslán")
-    except Exception as exc:
-        registration_email_status = "failed"
-        print(f"[REGISTER] ERROR: Neočekávaná chyba při odesílání registračního emailu: {exc}")
 
     developer_alert = send_registration_alert_email(
         db,
@@ -199,6 +141,9 @@ S pozdravem,
     if developer_alert.get("status") not in {"sent", "no_recipients", "smtp_not_configured"}:
         print(f"[REGISTER] Developer alert status: {developer_alert.get('status')} error={developer_alert.get('error')}")
 
+    verification_sent = issue_verification(db, customer)
+    registration_email_status = "sent" if verification_sent else "failed"
+    email_sent = verification_sent
     access_token = create_access_token(data={"sub": customer.email, "sv": customer_session_version(customer)})
 
     return RegisterTokenResponse(
@@ -758,3 +703,46 @@ def reset_password(payload: ResetPasswordRequest, request: Request, db=Depends(g
     customer.session_version = customer_session_version(customer) + 1
     db.commit()
     return {"message": "Heslo bylo změněno. Přihlaste se novým heslem na všech zařízeních."}
+
+
+class EmailVerificationRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=128)
+
+
+@router.get("/user/email-verification")
+def email_verification_status(email=Depends(get_current_user_email), db=Depends(get_db)):
+    customer = get_customer_by_email(db, email)
+    row = db.get(EmailVerification, customer.id)
+    return {"required": bool(row and not row.verified_at), "verified": bool(row and row.verified_at)}
+
+
+@router.post("/user/email-verification/resend")
+def resend_email_verification(request: Request, email=Depends(get_current_user_email), db=Depends(get_db)):
+    _limit_auth(request, "verify-resend", email, calls=3)
+    customer = get_customer_by_email(db, email)
+    row = db.get(EmailVerification, customer.id)
+    if row is None:
+        return {"message": "Pro tento účet nové ověření e-mailu není vyžadované."}
+    if row.verified_at:
+        return {"message": "E-mail už je ověřený."}
+    if not issue_verification(db, customer):
+        raise HTTPException(503, "E-mail se nepodařilo odeslat. Zkuste to později.")
+    return {"message": "Ověřovací odkaz jsme odeslali na váš e-mail."}
+
+
+@router.post("/user/email-verification/confirm")
+def confirm_email_verification(payload: EmailVerificationRequest, request: Request, db=Depends(get_db)):
+    _limit_auth(request, "verify-confirm", calls=10)
+    digest = hashlib.sha256(payload.token.encode()).hexdigest()
+    row = db.query(EmailVerification).filter(
+        EmailVerification.token_digest == digest
+    ).with_for_update().first()
+    customer = db.get(Customer, row.customer_id) if row else None
+    if (not row or row.verified_at or not row.expires_at or row.expires_at <= datetime.utcnow()
+            or not customer or customer_is_deleted(customer) or customer_is_disabled(customer)):
+        raise HTTPException(400, "Odkaz není platný nebo již byl použit. Vyžádejte si nový v aplikaci.")
+    row.verified_at = datetime.utcnow()
+    row.token_digest = None
+    row.expires_at = None
+    db.commit()
+    return {"message": "E-mail je ověřený. Vraťte se do aplikace a klepněte na Zkontrolovat ověření."}

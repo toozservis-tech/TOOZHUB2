@@ -1017,6 +1017,10 @@ def delete_customer_account(customer: Customer, *, email: str, db) -> dict:
     deleted_counts["vehicles"] = bulk_delete(
         db.query(VehicleModel).filter(vehicle_self_condition)
     )
+    from src.modules.vehicle_hub.email_verification import EmailVerification
+    deleted_counts["email_verifications"] = bulk_delete(
+        db.query(EmailVerification).filter(EmailVerification.customer_id == customer.id)
+    )
     deleted_counts["customers"] = bulk_delete(
         db.query(Customer).filter(Customer.id == customer.id)
     )

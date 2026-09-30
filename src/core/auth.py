@@ -3,8 +3,9 @@ Autentizační modul pro Správu vozidel
 - JWT token validace
 - Získání aktuálního uživatele
 """
-from fastapi import HTTPException, Depends, status
+from fastapi import HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from src.modules.vehicle_hub.email_verification import pending_verification
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional
@@ -24,6 +25,7 @@ security = HTTPBearer()
 
 
 def get_current_user_email(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> str:
@@ -81,4 +83,10 @@ def get_current_user_email(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if pending_verification(db, customer.id) and (request.method, request.url.path) not in {
+        ("GET", "/user/me"), ("DELETE", "/user/me"), ("GET", "/user/me/export"),
+        ("PUT", "/user/change-password"),
+        ("GET", "/user/email-verification"), ("POST", "/user/email-verification/resend"),
+    }:
+        raise HTTPException(403, "Nejprve ověřte svou e-mailovou adresu odkazem v e-mailu.")
     return email
