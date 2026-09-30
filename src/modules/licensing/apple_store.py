@@ -17,9 +17,9 @@ from appstoreserverlibrary.api_client import AppStoreServerAPIClient
 from appstoreserverlibrary.models.Environment import Environment
 from appstoreserverlibrary.signed_data_verifier import SignedDataVerifier, VerificationException
 
-from .apple_models import AppleBillingIdentity, AppleSubscription
+from .apple_models import AppleBillingIdentity, AppleSubscription, AppleReconciliationState
 from .service import PLAN_FEATURES, PLAN_LIMITS
-from src.modules.vehicle_hub.models import License, LicenseSubscription, LicensePaymentTransaction, Tenant
+from src.modules.vehicle_hub.models import Customer, License, LicenseSubscription, LicensePaymentTransaction, Tenant
 
 PRODUCTS = {
     f"cz.toozservis.spravavozidel.{plan}.{period}": (plan, period)
@@ -69,7 +69,7 @@ def apple_services(cfg):
 
 def require_schema(db):
     existing = set(inspect(db.get_bind()).get_table_names())
-    if not {AppleBillingIdentity.__tablename__, AppleSubscription.__tablename__} <= existing:
+    if not {AppleBillingIdentity.__tablename__, AppleSubscription.__tablename__, AppleReconciliationState.__tablename__} <= existing:
         raise HTTPException(503, "Databáze předplatného čeká na dokončení nastavení.")
 
 
@@ -188,7 +188,12 @@ def synchronize(db, identity, original_id, cfg):
         # Do not leak private keys, JWS payloads or upstream response internals.
         raise HTTPException(503, "App Store nyní nelze ověřit. Nákup zůstává uložený u Applu; zkuste to později.") from None
 
-    db.query(Tenant).filter_by(id=identity.tenant_id).with_for_update().one()
+    tenant_id = identity.tenant_id
+    tenant = db.query(Tenant).filter_by(id=tenant_id).with_for_update().first()
+    db.refresh(identity)
+    owner = db.query(Customer).filter_by(id=identity.customer_id).populate_existing().with_for_update().first() if identity.customer_id else None
+    if not tenant or not owner or owner.is_deleted or identity.tenant_id != tenant_id or owner.tenant_id != tenant_id:
+        raise HTTPException(409, "Účet předplatného již není dostupný.")
     assert_account_owner(db, identity)
     for snapshot in snapshots:
         row = db.get(AppleSubscription, snapshot["id"])

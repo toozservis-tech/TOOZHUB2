@@ -99,6 +99,7 @@ CONTROL_CENTER_LOG_DIR = PROJECT_ROOT / "logs"
 CONTROL_CENTER_DANGEROUS_CONFIRM = "PROCEED_RESTORE"
 CONTROL_CENTER_CLEANUP_CONFIRM = "PROCEED_CLEANUP"
 JOB_NAME_ALIASES = {
+    "apple.subscription.reconcile": "apple.subscription.reconcile",
     "license.subscription.cycle": "license.subscription.cycle",
     "payments.resync": "license.subscription.cycle",
     "reminders.notification.check": "reminders.notification.check",
@@ -5640,9 +5641,25 @@ def get_control_center_jobs(
             }
         )
 
-    return {
-        "jobs": jobs
-    }
+    from src.modules.licensing.apple_reconciliation import JOB_NAME, interval_seconds, worker_enabled, reconciliation_summary
+    available, unavailable_reason, summary = True, None, {}
+    try:
+        summary = reconciliation_summary(db)
+    except HTTPException as exc:
+        available, unavailable_reason = False, exc.detail
+    except Exception:
+        available, unavailable_reason = False, "Stav kontroly App Storu nelze načíst. Zkuste přehled aktualizovat."
+    pause_meta = get_job_pause_metadata(JOB_NAME)
+    paused = bool(pause_meta.get("paused"))
+    enabled = worker_enabled()
+    jobs.append({"name": JOB_NAME, "env_enabled": enabled, "is_paused": paused,
+                 "available": available, "unavailable_reason": unavailable_reason,
+                 "state": "disabled" if not available or not enabled else "paused" if paused else "running",
+                 "effective_enabled": bool(available and enabled and not paused),
+                 "interval_seconds": interval_seconds(), "pause_reason": pause_meta.get("reason"),
+                 "paused_at": pause_meta.get("paused_at"), "paused_by": pause_meta.get("paused_by"),
+                 **summary})
+    return {"jobs": jobs}
 
 
 @router.post("/control-center/jobs/run")
@@ -5663,7 +5680,10 @@ def run_control_center_job(
                 detail="Kontrola je pozastavená. Nejdříve obnovte její automatický běh.",
             )
 
-        if job_name == "license.subscription.cycle":
+        if job_name == "apple.subscription.reconcile":
+            from src.modules.licensing.apple_reconciliation import reconcile_subscriptions
+            result = reconcile_subscriptions(batch_size=5, time_budget_seconds=45)
+        elif job_name == "license.subscription.cycle":
             from src.modules.vehicle_hub.routers_v1.license_status import process_license_subscription_jobs
 
             result = process_license_subscription_jobs(db=db)
@@ -5733,8 +5753,14 @@ def resume_control_center_job(
     db: Session = Depends(get_db),
 ):
     job_name = resolve_job_name(payload.job_name)
+    if job_name == "apple.subscription.reconcile":
+        from src.modules.licensing.apple_reconciliation import require_ready, worker_enabled
+        require_ready(db)
+        if not worker_enabled():
+            raise HTTPException(409, "Pravidelná kontrola App Storu je vypnutá na serveru.")
     env_key = {"license.subscription.cycle": "ENABLE_LICENSE_SUBSCRIPTION_WORKER",
-               "reminders.notification.check": "ENABLE_REMINDER_NOTIFICATION_WORKER"}[job_name]
+               "reminders.notification.check": "ENABLE_REMINDER_NOTIFICATION_WORKER",
+               "apple.subscription.reconcile": "ENABLE_APPLE_RECONCILIATION_WORKER"}[job_name]
     if os.getenv(env_key, "1") not in {"1", "true", "True"}:
         raise HTTPException(409, "Automatika je vypnutá v nastavení serveru. Obnovení v administraci ji nezapne.")
     set_job_paused(job_name, False, actor_email=email, reason=payload.reason)

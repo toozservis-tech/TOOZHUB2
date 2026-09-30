@@ -63,6 +63,7 @@ ENABLE_FILE_BROWSER = _env_bool("ENABLE_FILE_BROWSER", False)
 
 _reminder_notification_task: asyncio.Task | None = None
 _license_subscription_task: asyncio.Task | None = None
+_apple_reconciliation_task: asyncio.Task | None = None
 
 _MAINTENANCE_BYPASS_PREFIXES = (
     "/admin-api",
@@ -75,6 +76,7 @@ _MAINTENANCE_BYPASS_EXACT: set[str] = {
     "/version/history",
     "/user/login",
     "/user/login/2fa",
+    "/api/v1/license/apple/notifications",
 }
 _MAINTENANCE_BYPASS_RUNTIME_PREFIXES = (
     "/api/v1/license/comgate/result",
@@ -159,6 +161,20 @@ async def _license_subscription_worker() -> None:
             db.close()
 
         await asyncio.sleep(LICENSE_SUBSCRIPTION_WORKER_INTERVAL_SEC)
+
+
+async def _apple_reconciliation_worker() -> None:
+    from src.modules.licensing.apple_reconciliation import JOB_NAME, interval_seconds, reconcile_subscriptions
+    await asyncio.sleep(35)
+    while True:
+        try:
+            if not await asyncio.to_thread(is_job_paused, JOB_NAME):
+                result = await asyncio.to_thread(reconcile_subscriptions)
+                print(f"[APPLE_RECONCILIATION] checked={result['checked']}, errors={result['errors']}, skipped={result['skipped']}")
+        except Exception:
+            # Detailed upstream exceptions can contain signing credentials or JWS.
+            print("[APPLE_RECONCILIATION] check unavailable; configuration or connection needs attention")
+        await asyncio.sleep(interval_seconds())
 
 
 def _is_maintenance_bypass_path(path: str) -> bool:
@@ -406,7 +422,7 @@ def _mount_static_directories(app: FastAPI) -> None:
 def _register_lifecycle_hooks(app: FastAPI) -> None:
     @app.on_event("startup")
     async def _start_background_workers() -> None:
-        global _reminder_notification_task, _license_subscription_task
+        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task
         db = SessionLocal()
         try:
             ensure_customer_account_state_schema(db)
@@ -446,9 +462,24 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
             _license_subscription_task = asyncio.create_task(_license_subscription_worker())
             print(f"[LICENSE_SUBSCRIPTION_WORKER] started (interval={LICENSE_SUBSCRIPTION_WORKER_INTERVAL_SEC}s)")
 
+        from src.modules.licensing.apple_reconciliation import worker_enabled, interval_seconds
+        if worker_enabled() and _apple_reconciliation_task is None:
+            _apple_reconciliation_task = asyncio.create_task(_apple_reconciliation_worker())
+            print(f"[APPLE_RECONCILIATION] started (interval={interval_seconds()}s)")
+        elif not worker_enabled():
+            print("[APPLE_RECONCILIATION] disabled until App Store is enabled")
+
     @app.on_event("shutdown")
     async def _stop_background_workers() -> None:
-        global _reminder_notification_task, _license_subscription_task
+        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task
+        if _apple_reconciliation_task is not None:
+            _apple_reconciliation_task.cancel()
+            try:
+                await _apple_reconciliation_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                _apple_reconciliation_task = None
         if _reminder_notification_task is not None:
             _reminder_notification_task.cancel()
             try:

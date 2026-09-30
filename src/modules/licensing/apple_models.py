@@ -31,3 +31,15 @@ class AppleSubscription(Base):
     auto_renew = Column(Boolean, nullable=False, default=False)
     active = Column(Boolean, nullable=False, default=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class AppleReconciliationState(Base):
+    """Durable schedule and short lease; contains no Apple credentials or JWS."""
+    __tablename__ = "apple_reconciliation_state"
+    subscription_id = Column(String, ForeignKey("apple_subscriptions.id", ondelete="CASCADE"), primary_key=True)
+    next_check_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    claim_token = Column(String(36), nullable=True)
+    last_attempt_at = Column(DateTime, nullable=True)
+    last_success_at = Column(DateTime, nullable=True)
+    last_result = Column(String, nullable=True)
+    failures = Column(Integer, nullable=False, default=0)

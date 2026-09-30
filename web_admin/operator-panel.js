@@ -1,6 +1,12 @@
 /* Plain-language administration built on the existing authorized API. */
 const operatorPending = new Set();
 const operatorJobs = {
+  'apple.subscription.reconcile': {
+    title: 'Předplatné v App Storu',
+    description: 'Ověřuje aktuální předplatné přímo u Applu a doplňuje změny při opožděném oznámení.',
+    impact: 'Zkontroluje naplánovaná předplatná a podle ověřeného výsledku upraví dostupnost tarifu. Nevyvolává platbu ani neposílá e-maily.',
+    pause: 'Zastaví pravidelnou kontrolu App Storu. Podepsaná oznámení od Applu se nadále zpracovávají.'
+  },
   'license.subscription.cycle': {
     title: 'Předplatné a licence',
     description: 'Kontroluje končící předplatné, obnovuje licence a zpracovává související platby.',
@@ -55,6 +61,7 @@ async function opAction(key,resultId,fn) {
   finally{operatorPending.delete(key);buttons.forEach((b,i)=>b.disabled=previous[i]);}
 }
 function operatorJobView(job) {
+  if(job.available===false)return {label:'Čeká na dokončení nastavení',resume:false,pause:false,run:false,note:job.unavailable_reason||'Propojení služby zatím není připravené.'};
   if(!job.env_enabled)return {label:'Automatika vypnutá na serveru',resume:false,pause:false,run:!job.is_paused, note:'Tlačítko jednorázové kontroly automatiku nezapíná. Pravidelný běh musí nejprve povolit správce nasazení serveru.'};
   if(job.is_paused)return {label:'Pozastavená',resume:true,pause:false,run:false,note:'Nejdříve obnovte automatiku. Potom můžete spustit jednorázovou kontrolu.'};
   return {label:'Automatika zapnutá',resume:false,pause:true,run:true,note:'Jde o nastavení pravidelného běhu; tento údaj nepotvrzuje dokončení poslední kontroly.'};
@@ -65,6 +72,8 @@ function renderOperatorJobs(data) {
   for(const job of jobs){const meta=operatorJobs[job.name];if(!meta)continue;const view=operatorJobView(job),card=opElement('section',null,'operator-job');
     card.append(opElement('h4',meta.title),opElement('p',meta.description),opElement('strong',view.label,'operator-job-status'),opElement('p',`Interval: přibližně každých ${Math.ceil(job.interval_seconds/60)} minut. ${view.note}`,'operator-hint'));
     if(job.pause_reason)card.append(opElement('p',`Důvod pozastavení: ${job.pause_reason}`));
+    if(job.last_success_at)card.append(opElement('p',`Poslední ověřené předplatné: ${new Date(job.last_success_at).toLocaleString('cs-CZ')}`));
+    if(Number(job.retry_count)>0)card.append(opElement('p',`Kontroly čekající na opakování: ${job.retry_count}`,'operator-error'));
     const actions=opElement('div',null,'operator-job-actions');
     for(const [action,label,hint,allowed] of [['run','Provést kontrolu nyní',meta.impact,view.run],['pause','Pozastavit automatiku',meta.pause,view.pause],['resume','Obnovit automatiku','Povolí další naplánované kontroly. Jednorázovou kontrolu nespouští.',view.resume]]){
       const button=opButton(label,hint,()=>operatorJobAction(job.name,action),!allowed||operatorPending.has('job:'+job.name));button.dataset.operation='job:'+job.name;actions.append(button);

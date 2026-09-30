@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from appstoreserverlibrary.models.Environment import Environment
 from appstoreserverlibrary.signed_data_verifier import SignedDataVerifier, VerificationException
 
@@ -21,7 +22,7 @@ from src.modules.vehicle_hub.routers_v1 import apple_billing as api, license_sta
 
 @pytest.fixture
 def setup(monkeypatch):
-    engine = create_engine("sqlite:///:memory:")
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     @event.listens_for(engine, "connect")
     def enable_foreign_keys(connection, _):
         connection.execute("PRAGMA foreign_keys=ON")
