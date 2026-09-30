@@ -13,7 +13,7 @@
     <div class="login-container">
       <h1>🚗 SprávaVozidel</h1>
       <h2>Administrace</h2>
-      <form id="login-form" onsubmit="handleAdminLogin(event); return false;">
+      <form id="login-form" data-admin-submit="handleAdminLogin" data-admin-args="[]">
         <div class="form-group">
           <label for="admin-email">Email:</label>
           <input type="email" id="admin-email" placeholder="vas@email.cz" required>
@@ -43,7 +43,7 @@
         aria-label="Otevřít menu"
         aria-controls="adminSidebar"
         aria-expanded="false"
-        onclick="toggleAdminMobileNav()"
+        data-admin-click="toggleAdminMobileNav" data-admin-args="[]"
       >
         ☰
       </button>
@@ -53,12 +53,12 @@
         <span id="summary-services" class="stat-badge" title="Otevřít sekci Servisy">🛠 Servisy: <strong>0</strong></span>
         <span id="summary-records" class="stat-badge" title="Otevřít sekci Záznamy">📋 Záznamy: <strong>0</strong></span>
       </div>
-      <button id="logout-btn" class="btn-logout" onclick="handleAdminLogout()">Odhlásit se</button>
+      <button id="logout-btn" class="btn-logout" data-admin-click="handleAdminLogout" data-admin-args="[]">Odhlásit se</button>
     </nav>
 
     <!-- Hlavní layout: Sidebar + Content -->
     <div class="main-container">
-      <div id="admin-mobile-nav-overlay" class="admin-mobile-nav-overlay hidden" onclick="closeAdminMobileNav()"></div>
+      <div id="admin-mobile-nav-overlay" class="admin-mobile-nav-overlay hidden" data-admin-click="closeAdminMobileNav" data-admin-args="[]"></div>
       <!-- Levý sidebar -->
       <aside id="adminSidebar" class="sidebar">
         <nav class="sidebar-nav" aria-label="Hlavní navigace">
@@ -105,7 +105,7 @@
 
       <!-- Hlavní obsah -->
       <main class="content-area">
-        <div class="workspace-bar"><div class="workspace-path">Administrace / <strong id="workspace-section-name">Přehled</strong></div><div class="workspace-tools"><small id="workspace-sync" aria-live="polite">Načítám data…</small><button type="button" class="btn-secondary" onclick="loadSectionData(currentSection)" aria-label="Obnovit aktuální sekci">↻ Obnovit</button></div></div>
+        <div class="workspace-bar"><div class="workspace-path">Administrace / <strong id="workspace-section-name">Přehled</strong></div><div class="workspace-tools"><small id="workspace-sync" aria-live="polite">Načítám data…</small><button type="button" class="btn-secondary" data-admin-click="loadSectionData" data-admin-args="[]" aria-label="Obnovit aktuální sekci">↻ Obnovit</button></div></div>
         <div id="global-error" class="global-error hidden"></div>
 
         <!-- Sekce: Přehled -->
@@ -113,11 +113,11 @@
           <div class="section-header">
             <h1>Přehled systému</h1>
           </div>
-          <div class="workspace-hero"><div><span class="eyebrow">PŘEHLED A SOUVISLOSTI</span><h2>Celý provoz pod kontrolou.</h2><p>Od uživatele k vozidlu, od servisu k záznamu. Spravujte účty, schvalujte servisy a kontrolujte historii změn.</p></div><div class="hero-actions"><button type="button" onclick="switchSection('users')">Spravovat účty →</button><button type="button" onclick="switchSection('services')">Žádosti servisů →</button></div></div>
+          <div class="workspace-hero"><div><span class="eyebrow">PŘEHLED A SOUVISLOSTI</span><h2>Celý provoz pod kontrolou.</h2><p>Od uživatele k vozidlu, od servisu k záznamu. Spravujte účty, schvalujte servisy a kontrolujte historii změn.</p></div><div class="hero-actions"><button type="button" data-admin-click="switchSection" data-admin-args="[&quot;users&quot;]">Spravovat účty →</button><button type="button" data-admin-click="switchSection" data-admin-args="[&quot;services&quot;]">Žádosti servisů →</button></div></div>
           <div id="overview-stats" class="stats-grid">
             <!-- Naplní se JavaScriptem -->
           </div>
-          <div class="workflow-grid"><button class="workflow-link" onclick="switchSection('users')"><strong>Uživatel a jeho data →</strong><span>Profil, vozidla, rezervace i záznamy v propojeném detailu účtu.</span></button><button class="workflow-link" onclick="switchSection('services')"><strong>Spolupracující servisy →</strong><span>Schvalování registrací, kontakty a správa servisních účtů.</span></button><button class="workflow-link" onclick="switchSection('control-center')"><strong>Stav a bezpečnost →</strong><span>Provoz systému, oprávnění, relace a dostupnost služeb.</span></button></div>
+          <div class="workflow-grid"><button class="workflow-link" data-admin-click="switchSection" data-admin-args="[&quot;users&quot;]"><strong>Uživatel a jeho data →</strong><span>Profil, vozidla, rezervace i záznamy v propojeném detailu účtu.</span></button><button class="workflow-link" data-admin-click="switchSection" data-admin-args="[&quot;services&quot;]"><strong>Spolupracující servisy →</strong><span>Schvalování registrací, kontakty a správa servisních účtů.</span></button><button class="workflow-link" data-admin-click="switchSection" data-admin-args="[&quot;control-center&quot;]"><strong>Stav a bezpečnost →</strong><span>Provoz systému, oprávnění, relace a dostupnost služeb.</span></button></div>
           <div class="section-header section-header-secondary">
             <h2>Poslední aktivita</h2>
           </div>
@@ -130,14 +130,14 @@
         <section id="section-users" class="content-section">
           <div class="section-header">
             <h1>Uživatelé</h1>
-            <button class="btn-primary" onclick="showUserModal()">+ Přidat uživatele</button>
+            <button class="btn-primary" data-admin-click="showUserModal" data-admin-args="[]">+ Přidat uživatele</button>
           </div>
           <div class="section-toolbar">
             <input type="text" id="user-search" placeholder="🔍 Hledat uživatele..." class="search-input" />
             <div class="view-switch" data-section="users" role="group" aria-label="Zobrazení uživatelů">
-              <button type="button" class="view-btn" data-view="grid" onclick="setSectionViewMode('users', 'grid')">Mřížka</button>
-              <button type="button" class="view-btn" data-view="list" onclick="setSectionViewMode('users', 'list')">Seznam</button>
-              <button type="button" class="view-btn" data-view="compact" onclick="setSectionViewMode('users', 'compact')">Kompaktní</button>
+              <button type="button" class="view-btn" data-view="grid" data-admin-click="setSectionViewMode" data-admin-args="[&quot;users&quot;, &quot;grid&quot;]">Mřížka</button>
+              <button type="button" class="view-btn" data-view="list" data-admin-click="setSectionViewMode" data-admin-args="[&quot;users&quot;, &quot;list&quot;]">Seznam</button>
+              <button type="button" class="view-btn" data-view="compact" data-admin-click="setSectionViewMode" data-admin-args="[&quot;users&quot;, &quot;compact&quot;]">Kompaktní</button>
             </div>
           </div>
           <div id="users-cards-container" class="cards-grid">
@@ -150,14 +150,14 @@
         <section id="section-vehicles" class="content-section">
           <div class="section-header">
             <h1>Vozidla</h1>
-            <button class="btn-primary" onclick="showVehicleModal()">+ Přidat vozidlo</button>
+            <button class="btn-primary" data-admin-click="showVehicleModal" data-admin-args="[]">+ Přidat vozidlo</button>
           </div>
           <div class="section-toolbar">
             <input type="text" id="vehicle-search" placeholder="🔍 Hledat vozidlo..." class="search-input" />
             <div class="view-switch" data-section="vehicles" role="group" aria-label="Zobrazení vozidel">
-              <button type="button" class="view-btn" data-view="grid" onclick="setSectionViewMode('vehicles', 'grid')">Mřížka</button>
-              <button type="button" class="view-btn" data-view="list" onclick="setSectionViewMode('vehicles', 'list')">Seznam</button>
-              <button type="button" class="view-btn" data-view="compact" onclick="setSectionViewMode('vehicles', 'compact')">Kompaktní</button>
+              <button type="button" class="view-btn" data-view="grid" data-admin-click="setSectionViewMode" data-admin-args="[&quot;vehicles&quot;, &quot;grid&quot;]">Mřížka</button>
+              <button type="button" class="view-btn" data-view="list" data-admin-click="setSectionViewMode" data-admin-args="[&quot;vehicles&quot;, &quot;list&quot;]">Seznam</button>
+              <button type="button" class="view-btn" data-view="compact" data-admin-click="setSectionViewMode" data-admin-args="[&quot;vehicles&quot;, &quot;compact&quot;]">Kompaktní</button>
             </div>
           </div>
           <div id="vehicles-cards-container" class="cards-grid">
@@ -169,12 +169,12 @@
         <section id="section-services" class="content-section">
           <div class="section-header">
             <h1>Servisy</h1>
-            <button class="btn-primary" onclick="showServiceModal()">+ Přidat servis</button>
+            <button class="btn-primary" data-admin-click="showServiceModal" data-admin-args="[]">+ Přidat servis</button>
           </div>
           <div class="service-requests-panel">
             <div class="service-requests-head">
               <h2>Žádosti o servisní registraci</h2>
-              <button class="btn-secondary" type="button" onclick="loadServiceRegistrationRequests()">Obnovit žádosti</button>
+              <button class="btn-secondary" type="button" data-admin-click="loadServiceRegistrationRequests" data-admin-args="[]">Obnovit žádosti</button>
             </div>
             <div id="service-requests-container" class="service-requests-list">
               <!-- Naplní se JavaScriptem -->
@@ -183,9 +183,9 @@
           <div class="section-toolbar">
             <input type="text" id="service-search" placeholder="🔍 Hledat servis..." class="search-input" />
             <div class="view-switch" data-section="services" role="group" aria-label="Zobrazení servisů">
-              <button type="button" class="view-btn" data-view="grid" onclick="setSectionViewMode('services', 'grid')">Mřížka</button>
-              <button type="button" class="view-btn" data-view="list" onclick="setSectionViewMode('services', 'list')">Seznam</button>
-              <button type="button" class="view-btn" data-view="compact" onclick="setSectionViewMode('services', 'compact')">Kompaktní</button>
+              <button type="button" class="view-btn" data-view="grid" data-admin-click="setSectionViewMode" data-admin-args="[&quot;services&quot;, &quot;grid&quot;]">Mřížka</button>
+              <button type="button" class="view-btn" data-view="list" data-admin-click="setSectionViewMode" data-admin-args="[&quot;services&quot;, &quot;list&quot;]">Seznam</button>
+              <button type="button" class="view-btn" data-view="compact" data-admin-click="setSectionViewMode" data-admin-args="[&quot;services&quot;, &quot;compact&quot;]">Kompaktní</button>
             </div>
           </div>
           <div id="services-cards-container" class="cards-grid">
@@ -197,14 +197,14 @@
         <section id="section-records" class="content-section">
           <div class="section-header">
             <h1>Servisní záznamy</h1>
-            <button class="btn-primary" onclick="showRecordModal()">+ Přidat záznam</button>
+            <button class="btn-primary" data-admin-click="showRecordModal" data-admin-args="[]">+ Přidat záznam</button>
           </div>
           <div class="section-toolbar">
             <input type="text" id="record-search" placeholder="🔍 Hledat záznam..." class="search-input" />
             <div class="view-switch" data-section="records" role="group" aria-label="Zobrazení záznamů">
-              <button type="button" class="view-btn" data-view="grid" onclick="setSectionViewMode('records', 'grid')">Mřížka</button>
-              <button type="button" class="view-btn" data-view="list" onclick="setSectionViewMode('records', 'list')">Seznam</button>
-              <button type="button" class="view-btn" data-view="compact" onclick="setSectionViewMode('records', 'compact')">Kompaktní</button>
+              <button type="button" class="view-btn" data-view="grid" data-admin-click="setSectionViewMode" data-admin-args="[&quot;records&quot;, &quot;grid&quot;]">Mřížka</button>
+              <button type="button" class="view-btn" data-view="list" data-admin-click="setSectionViewMode" data-admin-args="[&quot;records&quot;, &quot;list&quot;]">Seznam</button>
+              <button type="button" class="view-btn" data-view="compact" data-admin-click="setSectionViewMode" data-admin-args="[&quot;records&quot;, &quot;compact&quot;]">Kompaktní</button>
             </div>
           </div>
           <div id="records-cards-container" class="cards-grid">
@@ -230,7 +230,7 @@
               <option value="CREATE_RESERVATION">Vytvoření rezervace</option>
               <option value="CREATE_REMINDER">Vytvoření připomínky</option>
             </select>
-            <button class="btn-secondary" onclick="loadAuditLog()">Filtrovat</button>
+            <button class="btn-secondary" data-admin-click="loadAuditLog" data-admin-args="[]">Filtrovat</button>
           </div>
           <div id="audit-log-list" class="audit-log-list">
             <!-- Naplní se JavaScriptem -->
@@ -246,19 +246,19 @@
             <div class="tool-card">
               <h3>🔍 Struktura databáze</h3>
               <p>Prohlédne dostupné tabulky a indexy používané pro vyhledávání.</p>
-              <button class="btn-secondary" onclick="runReindex()"><strong>Prověřit databázové indexy</strong><small>Zkontroluje strukturu pro rychlé vyhledávání. Data nepřepisuje.</small></button>
+              <button class="btn-secondary" data-admin-click="runReindex" data-admin-args="[]"><strong>Prověřit databázové indexy</strong><small>Zkontroluje strukturu pro rychlé vyhledávání. Data nepřepisuje.</small></button>
               <div id="reindex-result" class="tool-result"></div>
             </div>
             <div class="tool-card">
               <h3>🔗 Vazby mezi údaji</h3>
               <p>Ověří odkazy mezi tabulkami a vypíše nalezené chybějící vazby. Opravy dat se nespouštějí automaticky.</p>
-              <button class="btn-secondary" onclick="runRepair()"><strong>Zkontrolovat vazby dat</strong><small>Vyhledá záznamy odkazující na neexistující data. Nic nemaže.</small></button>
+              <button class="btn-secondary" data-admin-click="runRepair" data-admin-args="[]"><strong>Zkontrolovat vazby dat</strong><small>Vyhledá záznamy odkazující na neexistující data. Nic nemaže.</small></button>
               <div id="repair-result" class="tool-result"></div>
             </div>
             <div class="tool-card">
               <h3>📊 Informace o databázi</h3>
               <p>Zobrazí informace o velikosti, tabulkách a schématu</p>
-              <button class="btn-secondary" onclick="loadDbInfo()"><strong>Zobrazit přehled databáze</strong><small>Ukáže typ úložiště, velikost a seznam částí databáze.</small></button>
+              <button class="btn-secondary" data-admin-click="loadDbInfo" data-admin-args="[]"><strong>Zobrazit přehled databáze</strong><small>Ukáže typ úložiště, velikost a seznam částí databáze.</small></button>
               <div id="db-info-result" class="tool-result"></div>
             </div>
           </div>
@@ -268,7 +268,7 @@
         <section id="section-settings" class="content-section">
           <div class="section-header">
             <h1>Nastavení aplikace</h1>
-            <button class="btn-primary" onclick="initDefaultSettings()"><strong>Doplnit chybějící nastavení</strong><small>Vytvoří pouze chybějící položky; existující hodnoty zachová.</small></button>
+            <button class="btn-primary" data-admin-click="initDefaultSettings" data-admin-args="[]"><strong>Doplnit chybějící nastavení</strong><small>Vytvoří pouze chybějící položky; existující hodnoty zachová.</small></button>
           </div>
 
           <div id="settings-loading" class="loading">Načítání nastavení...</div>
@@ -277,34 +277,34 @@
           <div id="settings-content" class="settings-content hidden">
             <!-- Tabs pro kategorie -->
             <div class="settings-tabs">
-              <button class="settings-tab active" data-category="general" onclick="showSettingsCategory('general')">
+              <button class="settings-tab active" data-category="general" data-admin-click="showSettingsCategory" data-admin-args="[&quot;general&quot;]">
                 <span class="tab-icon">⚙️</span> Obecné
               </button>
-              <button class="settings-tab" data-category="security" onclick="showSettingsCategory('security')">
+              <button class="settings-tab" data-category="security" data-admin-click="showSettingsCategory" data-admin-args="[&quot;security&quot;]">
                 <span class="tab-icon">🔒</span> Bezpečnost
               </button>
-              <button class="settings-tab" data-category="database" onclick="showSettingsCategory('database')">
+              <button class="settings-tab" data-category="database" data-admin-click="showSettingsCategory" data-admin-args="[&quot;database&quot;]">
                 <span class="tab-icon">💾</span> Databáze
               </button>
-              <button class="settings-tab" data-category="server" onclick="showSettingsCategory('server')">
+              <button class="settings-tab" data-category="server" data-admin-click="showSettingsCategory" data-admin-args="[&quot;server&quot;]">
                 <span class="tab-icon">🖥️</span> Server
               </button>
-              <button class="settings-tab" data-category="email" onclick="showSettingsCategory('email')">
+              <button class="settings-tab" data-category="email" data-admin-click="showSettingsCategory" data-admin-args="[&quot;email&quot;]">
                 <span class="tab-icon">📧</span> E-maily
               </button>
-              <button class="settings-tab" data-category="logging" onclick="showSettingsCategory('logging')">
+              <button class="settings-tab" data-category="logging" data-admin-click="showSettingsCategory" data-admin-args="[&quot;logging&quot;]">
                 <span class="tab-icon">📝</span> Logování
               </button>
-              <button class="settings-tab" data-category="ui" onclick="showSettingsCategory('ui')">
+              <button class="settings-tab" data-category="ui" data-admin-click="showSettingsCategory" data-admin-args="[&quot;ui&quot;]">
                 <span class="tab-icon">🎨</span> Vzhled
               </button>
-              <button class="settings-tab" data-category="api" onclick="showSettingsCategory('api')">
+              <button class="settings-tab" data-category="api" data-admin-click="showSettingsCategory" data-admin-args="[&quot;api&quot;]">
                 <span class="tab-icon">🔌</span> API
               </button>
-              <button class="settings-tab" data-category="comgate" onclick="showSettingsCategory('comgate')">
+              <button class="settings-tab" data-category="comgate" data-admin-click="showSettingsCategory" data-admin-args="[&quot;comgate&quot;]">
                 <span class="tab-icon">💳</span> Comgate
               </button>
-              <button class="settings-tab" data-category="system" onclick="showSettingsCategory('system')">
+              <button class="settings-tab" data-category="system" data-admin-click="showSettingsCategory" data-admin-args="[&quot;system&quot;]">
                 <span class="tab-icon">🖥️</span> Systémové
               </button>
             </div>
@@ -315,8 +315,8 @@
             </div>
 
             <div class="settings-footer">
-              <button class="btn-primary" onclick="saveAllSettings()"><strong>Uložit změny nastavení</strong><small>Zapíše upravené hodnoty. Před uložením zobrazí potvrzení.</small></button>
-              <button class="btn-secondary" onclick="resetSettingsCategory()"><strong>Zahodit neuložené změny</strong><small>V této kategorii vrátí poslední načtené hodnoty.</small></button>
+              <button class="btn-primary" data-admin-click="saveAllSettings" data-admin-args="[]"><strong>Uložit změny nastavení</strong><small>Zapíše upravené hodnoty. Před uložením zobrazí potvrzení.</small></button>
+              <button class="btn-secondary" data-admin-click="resetSettingsCategory" data-admin-args="[]"><strong>Zahodit neuložené změny</strong><small>V této kategorii vrátí poslední načtené hodnoty.</small></button>
             </div>
           </div>
         </section>
@@ -328,9 +328,9 @@
               <h1>Řídicí centrum</h1>
               <p class="cc-section-subtitle">Správa provozu krok za krokem. Každé tlačítko vysvětluje svůj účinek; změny potvrďte až po kontrole vybraných údajů.</p>
             </div>
-            <button class="btn-primary" type="button" onclick="refreshControlCenterOverview()"><strong>Aktualizovat celý přehled</strong><small>Znovu načte údaje ze serveru. Nic nemění.</small></button>
+            <button class="btn-primary" type="button" data-admin-click="refreshControlCenterOverview" data-admin-args="[]"><strong>Aktualizovat celý přehled</strong><small>Znovu načte údaje ze serveru. Nic nemění.</small></button>
           </div>
-          <div id="cc-details-backdrop" class="cc-details-backdrop" onclick="closeAllControlCenterDetails()"></div>
+          <div id="cc-details-backdrop" class="cc-details-backdrop" data-admin-click="closeAllControlCenterDetails" data-admin-args="[]"></div>
 
           <section class="cc-executive-layer" aria-label="Přehled provozu">
             <div class="cc-kpi-grid">
@@ -395,8 +395,8 @@
                 <span id="cc-health-chip-storage" class="cc-health-chip">Místní zálohy: -</span>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterHealth()"><strong>Zkontrolovat dostupnost</strong><small>Prověří spojení, databázi, e-maily a nastavení služeb.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-health-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterHealth" data-admin-args="[]"><strong>Zkontrolovat dostupnost</strong><small>Prověří spojení, databázi, e-maily a nastavení služeb.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterModuleDetails" data-admin-args="[&quot;cc-health-details&quot;]"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <div id="cc-health-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-health-details" class="cc-module-details">
@@ -433,10 +433,10 @@
                 <div id="cc-payments-live-feed" class="cc-live-feed-list">Údaje se zobrazí po načtení ze serveru.</div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterPayments()"><strong>Aktualizovat platby</strong><small>Načte poslední evidované platby a jejich stavy.</small></button>
-                <button class="btn-secondary" type="button" onclick="runControlCenterPaymentResync()"><strong>Zpracovat předplatné</strong><small>Provede obnovy licencí; může odeslat upozornění i vyvolat opakovanou platbu.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterProblemUsers()"><strong>Zobrazit účty k prověření</strong><small>Vyfiltruje účty s neplatnou licencí nebo neuhrazenou platbou.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-payments-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterPayments" data-admin-args="[]"><strong>Aktualizovat platby</strong><small>Načte poslední evidované platby a jejich stavy.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="runControlCenterPaymentResync" data-admin-args="[]"><strong>Zpracovat předplatné</strong><small>Provede obnovy licencí; může odeslat upozornění i vyvolat opakovanou platbu.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterProblemUsers" data-admin-args="[]"><strong>Zobrazit účty k prověření</strong><small>Vyfiltruje účty s neplatnou licencí nebo neuhrazenou platbou.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterModuleDetails" data-admin-args="[&quot;cc-payments-details&quot;]"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <div id="cc-payments-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-payments-details" class="cc-module-details">
@@ -487,11 +487,11 @@
                 <input id="operator-user-search" type="search" aria-label="Hledat účet podle jména nebo e-mailu" placeholder="Hledat jméno nebo e-mail"/><select id="cc-insight-user-id"><option value="">Vyberte účet…</option></select><p id="operator-selected-user" class="operator-hint" role="status">Nejprve vyberte účet, kterého se má akce týkat.</p>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterUserInsight()"><strong>Zobrazit vybraný účet</strong><small>Načte jeho licenci, platby a aktivní přihlášení.</small></button>
-                <button class="btn-danger" type="button" onclick="forceLogoutFromControlCenter()"><strong>Odhlásit všechna zařízení</strong><small>Ukončí přístup vybraného účtu. Uživatel se bude muset znovu přihlásit.</small></button>
-                <button class="btn-secondary" type="button" onclick="disableUserFromControlCenter()"><strong>Pozastavit účet</strong><small>Zamezí přístupu vybraného uživatele. Jeho data zůstanou zachovaná.</small></button>
-                <button class="btn-secondary" type="button" onclick="enableUserFromControlCenter()"><strong>Znovu povolit účet</strong><small>Obnoví přístup dříve pozastavenému uživateli.</small></button>
-                <button class="btn-secondary" type="button" onclick="resetUserPasswordFromControlCenter()"><strong>Nastavit dočasné heslo</strong><small>Po potvrzení změní heslo vybraného účtu a zobrazí nové.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterUserInsight" data-admin-args="[]"><strong>Zobrazit vybraný účet</strong><small>Načte jeho licenci, platby a aktivní přihlášení.</small></button>
+                <button class="btn-danger" type="button" data-admin-click="forceLogoutFromControlCenter" data-admin-args="[]"><strong>Odhlásit všechna zařízení</strong><small>Ukončí přístup vybraného účtu. Uživatel se bude muset znovu přihlásit.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="disableUserFromControlCenter" data-admin-args="[]"><strong>Pozastavit účet</strong><small>Zamezí přístupu vybraného uživatele. Jeho data zůstanou zachovaná.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="enableUserFromControlCenter" data-admin-args="[]"><strong>Znovu povolit účet</strong><small>Obnoví přístup dříve pozastavenému uživateli.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="resetUserPasswordFromControlCenter" data-admin-args="[]"><strong>Nastavit dočasné heslo</strong><small>Po potvrzení změní heslo vybraného účtu a zobrazí nové.</small></button>
               </div>
               <div class="cc-license-inline">
                 <div class="form-group">
@@ -515,8 +515,8 @@
                 </div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="updateUserLicenseFromControlCenter()"><strong>Uložit změnu licence</strong><small>Použije vybraný tarif a stav u zvoleného účtu.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-users-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="updateUserLicenseFromControlCenter" data-admin-args="[]"><strong>Uložit změnu licence</strong><small>Použije vybraný tarif a stav u zvoleného účtu.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterModuleDetails" data-admin-args="[&quot;cc-users-details&quot;]"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <details id="cc-users-details" class="cc-module-details">
                 <summary>Podrobnosti vybraného účtu</summary>
@@ -544,8 +544,8 @@
                 <div class="cc-metric-item"><span>Podezřelý stav</span><strong id="cc-presence-suspicious">-</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterPresence()"><strong>Aktualizovat přihlášení</strong><small>Ukáže poslední aktivitu a přihlášená zařízení uživatelů.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-presence-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterPresence" data-admin-args="[]"><strong>Aktualizovat přihlášení</strong><small>Ukáže poslední aktivitu a přihlášená zařízení uživatelů.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterModuleDetails" data-admin-args="[&quot;cc-presence-details&quot;]"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <div id="cc-presence-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-presence-details" class="cc-module-details">
@@ -583,10 +583,10 @@
                 </div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterSecurityMonitor()"><strong>Prověřit přístupy</strong><small>Načte neúspěšná přihlášení, podezřelé události a blokace.</small></button>
-                <button class="btn-danger" type="button" onclick="blockIpFromControlCenter()"><strong>Zablokovat adresu</strong><small>Zabrání přístupu z vybrané internetové adresy. Může ovlivnit více lidí.</small></button>
-                <button class="btn-secondary" type="button" onclick="unblockIpFromControlCenter()"><strong>Zrušit blokaci adresy</strong><small>Znovu povolí přístup z vybrané internetové adresy.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-security-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterSecurityMonitor" data-admin-args="[]"><strong>Prověřit přístupy</strong><small>Načte neúspěšná přihlášení, podezřelé události a blokace.</small></button>
+                <button class="btn-danger" type="button" data-admin-click="blockIpFromControlCenter" data-admin-args="[]"><strong>Zablokovat adresu</strong><small>Zabrání přístupu z vybrané internetové adresy. Může ovlivnit více lidí.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="unblockIpFromControlCenter" data-admin-args="[]"><strong>Zrušit blokaci adresy</strong><small>Znovu povolí přístup z vybrané internetové adresy.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterModuleDetails" data-admin-args="[&quot;cc-security-details&quot;]"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <div id="cc-security-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-security-details" class="cc-module-details">
@@ -616,9 +616,9 @@
                 <div class="cc-metric-item"><span>Obnova dat</span><strong id="cc-backup-restore-warning">Vyžaduje potvrzení</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="createControlCenterBackup()"><strong>Vytvořit místní zálohu</strong><small>Uloží kopii místní databáze a souborů. Pro cloudovou databázi není dostupné.</small></button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterBackups()"><strong>Aktualizovat zálohy</strong><small>Zobrazí zálohy uložené na tomto serveru.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-backups-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="createControlCenterBackup" data-admin-args="[]"><strong>Vytvořit místní zálohu</strong><small>Uloží kopii místní databáze a souborů. Pro cloudovou databázi není dostupné.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterBackups" data-admin-args="[]"><strong>Aktualizovat zálohy</strong><small>Zobrazí zálohy uložené na tomto serveru.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterModuleDetails" data-admin-args="[&quot;cc-backups-details&quot;]"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <p id="cc-backup-support-note" role="status" hidden></p>
               <div id="cc-backup-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
@@ -651,7 +651,7 @@
                     </div>
                   </div>
 
-                  <button class="btn-danger" type="button" onclick="restoreControlCenterBackup()"><strong>Obnovit vybranou zálohu</strong><small>Přepíše zvolená data uloženou kopií. Vyžaduje potvrzení.</small></button>
+                  <button class="btn-danger" type="button" data-admin-click="restoreControlCenterBackup" data-admin-args="[]"><strong>Obnovit vybranou zálohu</strong><small>Přepíše zvolená data uloženou kopií. Vyžaduje potvrzení.</small></button>
                 </details>
                 <details class="cc-technical-details">
                   <summary>Podklady pro technickou podporu</summary>
@@ -675,9 +675,9 @@
                 <div class="cc-metric-item"><span>Neodeslané e-maily za 24 hodin</span><strong id="cc-email-failed">-</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterEmailMonitor()"><strong>Zkontrolovat odesílání e-mailů</strong><small>Zobrazí evidované doručení službě a neúspěšné pokusy o odeslání.</small></button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterJobs()"><strong>Aktualizovat běh úloh</strong><small>Načte nastavení automatických kontrol. Úlohy nespouští.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-jobs-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterEmailMonitor" data-admin-args="[]"><strong>Zkontrolovat odesílání e-mailů</strong><small>Zobrazí evidované doručení službě a neúspěšné pokusy o odeslání.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterJobs" data-admin-args="[]"><strong>Aktualizovat běh úloh</strong><small>Načte nastavení automatických kontrol. Úlohy nespouští.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterModuleDetails" data-admin-args="[&quot;cc-jobs-details&quot;]"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <div id="operator-jobs" class="operator-jobs" aria-live="polite">Načítám automatické úlohy…</div>
               <div id="cc-job-action-result" class="operator-result" role="status"></div>
@@ -731,9 +731,9 @@
                 <select id="cc-broadcast-target-value" disabled><option value="">Všichni uživatelé</option></select>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-primary" type="button" onclick="broadcastControlCenterNotification()"><strong>Zveřejnit oznámení</strong><small>Zobrazí zprávu vybraným příjemcům v aplikaci.</small></button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterNotifications()"><strong>Zobrazit oznámení</strong><small>Načte již vytvořená systémová oznámení.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-notifications-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
+                <button class="btn-primary" type="button" data-admin-click="broadcastControlCenterNotification" data-admin-args="[]"><strong>Zveřejnit oznámení</strong><small>Zobrazí zprávu vybraným příjemcům v aplikaci.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterNotifications" data-admin-args="[]"><strong>Zobrazit oznámení</strong><small>Načte již vytvořená systémová oznámení.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterModuleDetails" data-admin-args="[&quot;cc-notifications-details&quot;]"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <div id="cc-notifications-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-notifications-details" class="cc-module-details">
@@ -761,9 +761,9 @@
                 <div class="cc-metric-item"><span>Uchování</span><strong id="cc-audit-retention-note">Historie zásahů</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterSystemLogs()"><strong>Zobrazit provozní záznamy</strong><small>Ukáže poslední hlášení serveru pro zjištění příčiny potíží.</small></button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterAuditActions()"><strong>Zobrazit historii zásahů</strong><small>Ukáže kdo, kdy a jakou změnu v administraci provedl.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-audit-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterSystemLogs" data-admin-args="[]"><strong>Zobrazit provozní záznamy</strong><small>Ukáže poslední hlášení serveru pro zjištění příčiny potíží.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterAuditActions" data-admin-args="[]"><strong>Zobrazit historii zásahů</strong><small>Ukáže kdo, kdy a jakou změnu v administraci provedl.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterModuleDetails" data-admin-args="[&quot;cc-audit-details&quot;]"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
               <div id="cc-logs-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
               <details id="cc-audit-details" class="cc-module-details">
@@ -792,12 +792,12 @@
                 <div class="cc-metric-item"><span>Místo k uvolnění</span><strong id="cc-infra-cleanup-preview">-</strong></div>
               </div>
               <div class="tool-inline-actions">
-                <button class="btn-secondary" type="button" onclick="loadControlCenterApiMonitor()"><strong>Zkontrolovat požadavky aplikace</strong><small>Ukáže četnost a chyby při komunikaci se serverem.</small></button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterWebhookMonitor()"><strong>Zkontrolovat zprávy platební brány</strong><small>Načte evidované zprávy o platbách od poskytovatele.</small></button>
-                <button class="btn-secondary" type="button" onclick="loadControlCenterStorage()"><strong>Zobrazit využité místo</strong><small>Ukáže velikost místních dat, provozních záznamů a záloh.</small></button>
-                <button class="btn-secondary" type="button" onclick="previewControlCenterStorageCleanup()"><strong>Zobrazit návrh úklidu</strong><small>Spočítá místní provozní záznamy a zálohy starší 30 dnů. Nic nesmaže.</small></button>
-                <button class="btn-danger" type="button" onclick="runControlCenterStorageCleanup()"><strong>Uklidit staré soubory</strong><small>Po kontrole návrhu a potvrzení smaže místní záznamy a zálohy starší 30 dnů.</small></button>
-                <button class="btn-secondary" type="button" onclick="openControlCenterModuleDetails('cc-infra-details')"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterApiMonitor" data-admin-args="[]"><strong>Zkontrolovat požadavky aplikace</strong><small>Ukáže četnost a chyby při komunikaci se serverem.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterWebhookMonitor" data-admin-args="[]"><strong>Zkontrolovat zprávy platební brány</strong><small>Načte evidované zprávy o platbách od poskytovatele.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="loadControlCenterStorage" data-admin-args="[]"><strong>Zobrazit využité místo</strong><small>Ukáže velikost místních dat, provozních záznamů a záloh.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="previewControlCenterStorageCleanup" data-admin-args="[]"><strong>Zobrazit návrh úklidu</strong><small>Spočítá místní provozní záznamy a zálohy starší 30 dnů. Nic nesmaže.</small></button>
+                <button class="btn-danger" type="button" data-admin-click="runControlCenterStorageCleanup" data-admin-args="[]"><strong>Uklidit staré soubory</strong><small>Po kontrole návrhu a potvrzení smaže místní záznamy a zálohy starší 30 dnů.</small></button>
+                <button class="btn-secondary" type="button" data-admin-click="openControlCenterModuleDetails" data-admin-args="[&quot;cc-infra-details&quot;]"><strong>Zobrazit podrobnosti</strong><small>Otevře související záznamy a podrobné výsledky.</small></button>
               </div>
 
               <div id="cc-infra-result" class="cc-module-result">Údaje se zobrazí po načtení ze serveru.</div>
@@ -817,10 +817,10 @@
             <article id="cc-module-command" class="cc-module-card">
               <h3>🧭 Rychlá pomoc</h3><p>Vyberte, co potřebujete vyřešit. Není potřeba psát žádné příkazy.</p>
               <div class="operator-quick-actions">
-                <button class="btn-secondary" onclick="focusControlCenterModule('cc-module-health')"><strong>Aplikace nereaguje</strong><small>Zkontrolujte dostupnost jednotlivých služeb.</small></button>
-                <button class="btn-secondary" onclick="focusControlCenterModule('cc-module-users')"><strong>Uživatel se nemůže přihlásit</strong><small>Vyberte účet a ověřte jeho stav nebo změňte heslo.</small></button>
-                <button class="btn-secondary" onclick="focusControlCenterModule('cc-module-jobs')"><strong>Nepřišla připomínka</strong><small>Prověřte automatickou kontrolu termínů a odesílání e-mailů.</small></button>
-                <button class="btn-secondary" onclick="focusControlCenterModule('cc-module-payments')"><strong>Platba nebo licence nesouhlasí</strong><small>Prohlédněte platby a případně zpracujte předplatné.</small></button>
+                <button class="btn-secondary" data-admin-click="focusControlCenterModule" data-admin-args="[&quot;cc-module-health&quot;]"><strong>Aplikace nereaguje</strong><small>Zkontrolujte dostupnost jednotlivých služeb.</small></button>
+                <button class="btn-secondary" data-admin-click="focusControlCenterModule" data-admin-args="[&quot;cc-module-users&quot;]"><strong>Uživatel se nemůže přihlásit</strong><small>Vyberte účet a ověřte jeho stav nebo změňte heslo.</small></button>
+                <button class="btn-secondary" data-admin-click="focusControlCenterModule" data-admin-args="[&quot;cc-module-jobs&quot;]"><strong>Nepřišla připomínka</strong><small>Prověřte automatickou kontrolu termínů a odesílání e-mailů.</small></button>
+                <button class="btn-secondary" data-admin-click="focusControlCenterModule" data-admin-args="[&quot;cc-module-payments&quot;]"><strong>Platba nebo licence nesouhlasí</strong><small>Prohlédněte platby a případně zpracujte předplatné.</small></button>
               </div>
             </article>
           </div>
@@ -835,9 +835,9 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="user-modal-title">Přidat uživatele</h2>
-        <button class="modal-close" onclick="closeUserModal()">&times;</button>
+        <button class="modal-close" data-admin-click="closeUserModal" data-admin-args="[]">&times;</button>
       </div>
-      <form id="user-form" onsubmit="saveUser(event); return false;">
+      <form id="user-form" data-admin-submit="saveUser" data-admin-args="[]">
         <input type="hidden" id="user-id" />
         <div class="form-group">
           <label for="user-email">Email *</label>
@@ -896,7 +896,7 @@
           </select>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="closeUserModal()">Zrušit</button>
+          <button type="button" class="btn-secondary" data-admin-click="closeUserModal" data-admin-args="[]">Zrušit</button>
           <button type="submit" class="btn-primary">Uložit</button>
         </div>
       </form>
@@ -908,9 +908,9 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="vehicle-modal-title">Přidat vozidlo</h2>
-        <button class="modal-close" onclick="closeVehicleModal()">&times;</button>
+        <button class="modal-close" data-admin-click="closeVehicleModal" data-admin-args="[]">&times;</button>
       </div>
-      <form id="vehicle-form" onsubmit="saveVehicle(event); return false;">
+      <form id="vehicle-form" data-admin-submit="saveVehicle" data-admin-args="[]">
         <input type="hidden" id="vehicle-id" />
         <div class="form-group">
           <label for="vehicle-user-email">Email vlastníka *</label>
@@ -941,7 +941,7 @@
           <input type="text" id="vehicle-vin" />
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="closeVehicleModal()">Zrušit</button>
+          <button type="button" class="btn-secondary" data-admin-click="closeVehicleModal" data-admin-args="[]">Zrušit</button>
           <button type="submit" class="btn-primary">Uložit</button>
         </div>
       </form>
@@ -953,9 +953,9 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="service-modal-title">Přidat servis</h2>
-        <button class="modal-close" onclick="closeServiceModal()">&times;</button>
+        <button class="modal-close" data-admin-click="closeServiceModal" data-admin-args="[]">&times;</button>
       </div>
-      <form id="service-form" onsubmit="saveService(event); return false;">
+      <form id="service-form" data-admin-submit="saveService" data-admin-args="[]">
         <input type="hidden" id="service-id" />
         <div class="form-group">
           <label for="service-email">Email *</label>
@@ -982,7 +982,7 @@
           <input type="password" id="service-password" />
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="closeServiceModal()">Zrušit</button>
+          <button type="button" class="btn-secondary" data-admin-click="closeServiceModal" data-admin-args="[]">Zrušit</button>
           <button type="submit" class="btn-primary">Uložit</button>
         </div>
       </form>
@@ -994,9 +994,9 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="record-modal-title">Přidat záznam</h2>
-        <button class="modal-close" onclick="closeRecordModal()">&times;</button>
+        <button class="modal-close" data-admin-click="closeRecordModal" data-admin-args="[]">&times;</button>
       </div>
-      <form id="record-form" onsubmit="saveRecord(event); return false;">
+      <form id="record-form" data-admin-submit="saveRecord" data-admin-args="[]">
         <input type="hidden" id="record-id" />
         <div class="form-group">
           <label for="record-service-id">Servis / uživatel (volitelné)</label>
@@ -1031,7 +1031,7 @@
           <textarea id="record-note"></textarea>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="closeRecordModal()">Zrušit</button>
+          <button type="button" class="btn-secondary" data-admin-click="closeRecordModal" data-admin-args="[]">Zrušit</button>
           <button type="submit" class="btn-primary">Uložit</button>
         </div>
       </form>
@@ -1043,7 +1043,7 @@
     <div class="modal-content user-detail-modal-content">
       <div class="modal-header">
         <h2 id="user-detail-title">Detail uživatele</h2>
-        <button class="modal-close" onclick="closeUserDetailModal()">&times;</button>
+        <button class="modal-close" data-admin-click="closeUserDetailModal" data-admin-args="[]">&times;</button>
       </div>
       <div class="user-detail-body">
         <div id="user-detail-loading" class="loading">Načítám detail uživatele...</div>
@@ -1058,14 +1058,14 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn-secondary" onclick="refreshUserDetail()">Obnovit data</button>
-        <button type="button" class="btn-primary" onclick="editUserFromDetail()">✏️ Upravit uživatele</button>
-        <button type="button" class="btn-secondary" onclick="disableCurrentUserFromDetail()">⏸️ Disable</button>
-        <button type="button" class="btn-secondary" onclick="enableCurrentUserFromDetail()">▶️ Enable</button>
-        <button type="button" class="btn-secondary" onclick="forceLogoutCurrentUserFromDetail()">🚪 Force logout</button>
-        <button type="button" class="btn-secondary" onclick="resetPasswordCurrentUserFromDetail()">🔑 Reset hesla</button>
-        <button type="button" class="btn-danger" onclick="deleteCurrentUserFromDetail()">🗑️ Smazat uživatele</button>
-        <button type="button" class="btn-secondary" onclick="closeUserDetailModal()">Zavřít</button>
+        <button type="button" class="btn-secondary" data-admin-click="refreshUserDetail" data-admin-args="[]">Obnovit data</button>
+        <button type="button" class="btn-primary" data-admin-click="editUserFromDetail" data-admin-args="[]">✏️ Upravit uživatele</button>
+        <button type="button" class="btn-secondary" data-admin-click="disableCurrentUserFromDetail" data-admin-args="[]">⏸️ Disable</button>
+        <button type="button" class="btn-secondary" data-admin-click="enableCurrentUserFromDetail" data-admin-args="[]">▶️ Enable</button>
+        <button type="button" class="btn-secondary" data-admin-click="forceLogoutCurrentUserFromDetail" data-admin-args="[]">🚪 Force logout</button>
+        <button type="button" class="btn-secondary" data-admin-click="resetPasswordCurrentUserFromDetail" data-admin-args="[]">🔑 Reset hesla</button>
+        <button type="button" class="btn-danger" data-admin-click="deleteCurrentUserFromDetail" data-admin-args="[]">🗑️ Smazat uživatele</button>
+        <button type="button" class="btn-secondary" data-admin-click="closeUserDetailModal" data-admin-args="[]">Zavřít</button>
       </div>
     </div>
   </div>

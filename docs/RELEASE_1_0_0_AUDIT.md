@@ -10,9 +10,22 @@ Stav 1. 10. 2026: příprava vydání, nikoliv souhlas s veřejným spuštěním
 - Databáze ukládá klíče autentikátoru šifrovaně. Platná starší nastavení se při startu převedou bez změny kódů v telefonu. Podmínky rotace klíče viz `ADMIN_MFA.md`.
 - Administrátor potřebuje heslo + autentikátor. Přístup ke spravovaným datům je podmíněn ověřením z posledních 15 minut. Kontrola platí na serveru pro běžné API, volitelné přihlášení i webovou cookie.
 - iOS i web vedou administrátora nastavením/obnovou ověření; přihlašovací obrazovky obsahují jen uživatelský popis. Změna faktoru zneplatňuje předchozí relace a klient uloží náhradní relaci.
-- Webová administrace nepřijímá token v URL a neukládá jej do trvalého úložiště prohlížeče. Nadále používá token v úložišti aktuální karty; to samo o sobě neřeší případný XSS útok. Prověření všech míst vykreslování uživatelského textu zůstává součástí auditu.
+- Webová administrace nepřijímá token v URL a neukládá jej do trvalého úložiště prohlížeče. Nadále používá token v úložišti aktuální karty; to samo o sobě neřeší případný XSS útok. Nová administrace nyní používá kontextové kódování textů a atributů a oddělené události tlačítek; starší rozhraní `web/index.html` zůstává otevřenou částí auditu.
 - **Opraven únik do exportu vlastních dat:** dříve se automaticky exportovaly i sloupce `password_hash`, `totp_secret`, tokeny pozvánek a klíče push notifikací. Nyní je seznam exportovaných polí výslovný; nová databázová pole se bez kontroly do exportu nepřidají. Soukromé interní chybové zprávy se neexportují.
 - Neošetřené chyby a HTTP 500 nevracejí obsah výjimky/SQL poskytovatele klientovi. Bezpečná hranice zapisuje identifikátor chyby, typ a šablonu cesty. Parametry SQL jsou skryté i v místní databázi. Další jednotlivá starší místa vlastního logování je nutné dál prověřovat.
+
+## Navazující kontrola webu a chyb (1. 10. 2026)
+
+- Opravené uložené XSS v nové administraci: kompaktní seznam uživatelů, vozidla, servisy, servisní záznamy, audit a chybové zprávy. Dříve se některé hodnoty vkládaly přímo jako HTML.
+- Společné kódování nyní chrání také obě uvozovky v atributech nastavení. Mapové odkazy přijímají pouze HTTP/HTTPS bez vloženého jména/hesla.
+- Uživatelský text není součástí JavaScriptu tlačítek: argumenty jsou JSON data a obsluha je ve výslovném seznamu povolených akcí. Všechny statické `onclick`/`onsubmit` nové administrace byly převedeny na události ve skriptu.
+- Přihlášení, `/web_admin/` i jeho alternativní cesta `/admin-static/` mají přísnější CSP: žádné inline skripty/události, eval, objekty, cizí formuláře, rámce ani změna základní adresy stránky. Přihlašovací skript je samostatný soubor. Toto opatření **zatím neplatí pro rozsáhlé starší `web/index.html`**; jeho úplná kontrola je stále podmínkou vydání.
+- Administrátorské API už nevypisuje celé výjimky ani SQL dotazy. Bezpečná diagnostika zachovává náhodné číslo chyby, její typ a umístění ve zdrojovém kódu; neformátuje zprávu výjimky, její parametry, lokální proměnné ani zdrojový řádek. Stejné číslo se předává přes navázané výjimky až ke klientovi. Náhled zdraví a audit selhaných akcí neukládají syrovou databázovou chybu.
+- Selhání načtení počtů, záznamů a auditu se hlásí jako chyba, nikoliv úspěšná prázdná databáze. Selhání uložení připomínek je serverová chyba s obecnou zprávou.
+- **Důkazy:** 7 izolovaných testů ve skutečném Chromu (bez přístupu k reálným účtům) testuje škodlivé texty i bez CSP, předání přesného názvu při kliknutí, připomínky a mapy, tabulky, chyby, přihlášení, přepojení všech statických akcí a skutečnou navigaci → úpravu → zrušení mazání. K tomu 12 dřívějších JS regresí a 246 serverových testů. Nové testy vstřikují výjimky s fiktivním heslem/SQL/osobními údaji a ověřují odpověď i výstup serveru.
+- Běh prohlížečových testů: `npm ci --prefix tests/e2e --ignore-scripts`, potom `node --test tests/security/test_admin_browser.cjs`. Používají nový izolovaný profil Chrome a zachytí všechny požadavky; nepotřebují běžící server. Python lze zadat proměnnou `TEST_PYTHON`, kanál prohlížeče `TEST_BROWSER_CHANNEL`.
+
+Postup vychází z [OWASP – prevence XSS](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html) a [MDN – CSP](https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/CSP). CSP je doplněk opravy vykreslování, nikoliv náhrada auditu dalších cest.
 
 ## Matice návazností a důkazy
 
@@ -37,11 +50,11 @@ Testy nevytvářejí ani nemažou skutečné účty, nestrhávají platby a nepo
 2. Nastavení autentikátoru vlastníkem hlavního administrátorského účtu. Klíč musí zůstat v jeho správě. Dokončit ověřený postup obnovy při ztrátě autentikátoru; nesmí vzniknout obejití druhého faktoru pouhou znalostí e-mailu.
 3. Fotoaparát ověřený přímo na fyzickém iPhonu. Úspěch simulátoru nedokazuje funkčnost snímání; dřívější černý náhled a zelené fotografie nejsou uzavřená závada.
 4. Úplná scénářová kontrola rezervací, připomínek, servisních vazeb, všech tlačítek a navigace s více oddělenými účty, včetně přerušení spojení a souběžných požadavků. Kontrola běhu na PostgreSQL a obnova zálohy do odděleného prostředí.
-5. Kompletní prověření vykreslování uživatelských dat na webu (XSS), starších samostatných záznamů chyb, závislostí, obnovy klíčů, provozních upozornění a limitů. Žádné tvrzení o stoprocentní nezneužitelnosti.
+5. Dokončení XSS auditu staršího `web/index.html` a ostatních veřejných stránek/skriptů, starších samostatných záznamů chyb mimo opravené administrátorské API, závislostí, obnovy klíčů, provozních upozornění a limitů. Žádné tvrzení o stoprocentní nezneužitelnosti.
 6. GDPR provozní část: potvrzené retenční lhůty a jejich provádění, zpracovatelé a smlouvy, úplnost exportovaných souborů/fotografií, přístup k zálohám, postup incidentu a finální informace o ochraně údajů. Technické testy neznamenají právní schválení.
 
 Dokud nejsou otevřené body doložené, verze není označená jako připravená k veřejnému vydání.
 
 ## Aktuální výsledky
 
-Po výše uvedených opravách prošlo **243 serverových regresí** (účty, oprávnění, MFA, export, odstranění, ORV, soukromé soubory, Apple/Comgate), **13 iOS jednotkových testů**, **1 iOS test obrazovky a restartu** a kompilace konfigurace Release pro iPhone. JavaScriptové kontroly panelu operátora a stránky ověření e-mailu také prošly. Testy plateb používají ověřovací testovací objekty, nikoliv skutečný nákup v App Storu. Výsledky samy nepotvrzují splnění otevřených bodů výše.
+Po výše uvedených opravách prošlo **246 serverových regresí** (účty, oprávnění, MFA, export, odstranění, ORV, soukromé soubory, Apple/Comgate), **13 iOS jednotkových testů**, **1 iOS test obrazovky a restartu** a kompilace konfigurace Release pro iPhone. **19 JavaScriptových/prohlížečových testů** také prošlo (7 nových prohlížečových kontrol + panel operátora a stránka ověření e-mailu). Testy plateb používají ověřovací testovací objekty, nikoliv skutečný nákup v App Storu. Výsledky samy nepotvrzují splnění otevřených bodů výše.

@@ -253,9 +253,133 @@ async function fetchAllList(path, pageSize = LIST_FETCH_PAGE_SIZE, maxPages = 20
 
 function escapeHtml(value) {
   if (value === null || value === undefined) return '';
-  const div = document.createElement('div');
-  div.textContent = String(value);
-  return div.innerHTML;
+  // Safe in text AND quoted HTML attributes; never use this for executable code.
+  return String(value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[char]);
+}
+
+
+function safeHttpUrl(value) {
+  try {
+    const url = new URL(String(value));
+    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : '';
+  } catch { return ''; }
+}
+
+function adminActionAttributes(name, ...args) {
+  return `data-admin-click="${escapeHtml(name)}" data-admin-args="${escapeHtml(JSON.stringify(args))}"`;
+}
+
+function registerAdminActions() {
+  // Values from records are arguments, never event-handler source or function names.
+  const actions = Object.freeze({
+    approveServiceRegistrationRequest: (event, ...args) => approveServiceRegistrationRequest(...args),
+    blockIpFromControlCenter: (event, ...args) => blockIpFromControlCenter(...args),
+    broadcastControlCenterNotification: (event, ...args) => broadcastControlCenterNotification(...args),
+    changeUsersPage: (event, ...args) => changeUsersPage(...args),
+    closeAdminMobileNav: (event, ...args) => closeAdminMobileNav(...args),
+    closeAllControlCenterDetails: (event, ...args) => closeAllControlCenterDetails(...args),
+    closeRecordModal: (event, ...args) => closeRecordModal(...args),
+    closeServiceModal: (event, ...args) => closeServiceModal(...args),
+    closeUserDetailModal: (event, ...args) => closeUserDetailModal(...args),
+    closeUserModal: (event, ...args) => closeUserModal(...args),
+    closeVehicleModal: (event, ...args) => closeVehicleModal(...args),
+    createControlCenterBackup: (event, ...args) => createControlCenterBackup(...args),
+    deleteCurrentUserFromDetail: (event, ...args) => deleteCurrentUserFromDetail(...args),
+    deleteRecord: (event, ...args) => deleteRecord(...args),
+    deleteRecordFromUserDetail: (event, ...args) => deleteRecordFromUserDetail(...args),
+    deleteReminderFromUserDetail: (event, ...args) => deleteReminderFromUserDetail(...args),
+    deleteReservationFromUserDetail: (event, ...args) => deleteReservationFromUserDetail(...args),
+    deleteService: (event, ...args) => deleteService(...args),
+    deleteUser: (event, ...args) => deleteUser(event, ...args),
+    deleteVehicle: (event, ...args) => deleteVehicle(...args),
+    deleteVehicleFromUserDetail: (event, ...args) => deleteVehicleFromUserDetail(...args),
+    disableCurrentUserFromDetail: (event, ...args) => disableCurrentUserFromDetail(...args),
+    disableUserFromControlCenter: (event, ...args) => disableUserFromControlCenter(...args),
+    editRecord: (event, ...args) => editRecord(...args),
+    editRecordFromUserDetail: (event, ...args) => editRecordFromUserDetail(...args),
+    editService: (event, ...args) => editService(...args),
+    editUser: (event, ...args) => editUser(event, ...args),
+    editUserFromDetail: (event, ...args) => editUserFromDetail(...args),
+    editVehicle: (event, ...args) => editVehicle(...args),
+    editVehicleFromUserDetail: (event, ...args) => editVehicleFromUserDetail(...args),
+    enableCurrentUserFromDetail: (event, ...args) => enableCurrentUserFromDetail(...args),
+    enableUserFromControlCenter: (event, ...args) => enableUserFromControlCenter(...args),
+    focusControlCenterModule: (event, ...args) => focusControlCenterModule(...args),
+    forceLogoutCurrentUserFromDetail: (event, ...args) => forceLogoutCurrentUserFromDetail(...args),
+    forceLogoutFromControlCenter: (event, ...args) => forceLogoutFromControlCenter(...args),
+    handleAdminLogin: (event, ...args) => handleAdminLogin(event, ...args),
+    handleAdminLogout: (event, ...args) => handleAdminLogout(...args),
+    handleUserCardClick: (event, ...args) => handleUserCardClick(event, ...args),
+    initDefaultSettings: (event, ...args) => initDefaultSettings(...args),
+    loadAuditLog: (event, ...args) => loadAuditLog(...args),
+    loadControlCenterApiMonitor: (event, ...args) => loadControlCenterApiMonitor(...args),
+    loadControlCenterAuditActions: (event, ...args) => loadControlCenterAuditActions(...args),
+    loadControlCenterBackups: (event, ...args) => loadControlCenterBackups(...args),
+    loadControlCenterEmailMonitor: (event, ...args) => loadControlCenterEmailMonitor(...args),
+    loadControlCenterHealth: (event, ...args) => loadControlCenterHealth(...args),
+    loadControlCenterJobs: (event, ...args) => loadControlCenterJobs(...args),
+    loadControlCenterNotifications: (event, ...args) => loadControlCenterNotifications(...args),
+    loadControlCenterPayments: (event, ...args) => loadControlCenterPayments(...args),
+    loadControlCenterPresence: (event, ...args) => loadControlCenterPresence(...args),
+    loadControlCenterSecurityMonitor: (event, ...args) => loadControlCenterSecurityMonitor(...args),
+    loadControlCenterStorage: (event, ...args) => loadControlCenterStorage(...args),
+    loadControlCenterSystemLogs: (event, ...args) => loadControlCenterSystemLogs(...args),
+    loadControlCenterUserInsight: (event, ...args) => loadControlCenterUserInsight(...args),
+    loadControlCenterWebhookMonitor: (event, ...args) => loadControlCenterWebhookMonitor(...args),
+    loadDbInfo: (event, ...args) => loadDbInfo(...args),
+    loadSectionData: (event, ...args) => loadSectionData(currentSection),
+    loadServiceRegistrationRequests: (event, ...args) => loadServiceRegistrationRequests(...args),
+    openControlCenterModuleDetails: (event, ...args) => openControlCenterModuleDetails(...args),
+    openControlCenterProblemUsers: (event, ...args) => openControlCenterProblemUsers(...args),
+    previewControlCenterStorageCleanup: (event, ...args) => previewControlCenterStorageCleanup(...args),
+    quickEditReminderFromUserDetail: (event, ...args) => quickEditReminderFromUserDetail(...args),
+    refreshControlCenterOverview: (event, ...args) => refreshControlCenterOverview(...args),
+    refreshUserDetail: (event, ...args) => refreshUserDetail(...args),
+    rejectServiceRegistrationRequest: (event, ...args) => rejectServiceRegistrationRequest(...args),
+    resetPasswordCurrentUserFromDetail: (event, ...args) => resetPasswordCurrentUserFromDetail(...args),
+    resetSettingsCategory: (event, ...args) => resetSettingsCategory(...args),
+    resetUserPasswordFromControlCenter: (event, ...args) => resetUserPasswordFromControlCenter(...args),
+    restoreControlCenterBackup: (event, ...args) => restoreControlCenterBackup(...args),
+    runControlCenterPaymentResync: (event, ...args) => runControlCenterPaymentResync(...args),
+    runControlCenterStorageCleanup: (event, ...args) => runControlCenterStorageCleanup(...args),
+    runReindex: (event, ...args) => runReindex(...args),
+    runRepair: (event, ...args) => runRepair(...args),
+    saveAllSettings: (event, ...args) => saveAllSettings(...args),
+    saveRecord: (event, ...args) => saveRecord(event, ...args),
+    saveService: (event, ...args) => saveService(event, ...args),
+    saveUser: (event, ...args) => saveUser(event, ...args),
+    saveVehicle: (event, ...args) => saveVehicle(event, ...args),
+    setSectionViewMode: (event, ...args) => setSectionViewMode(...args),
+    setUserDetailPanel: (event, ...args) => setUserDetailPanel(...args),
+    showRecordModal: (event, ...args) => showRecordModal(...args),
+    showServiceModal: (event, ...args) => showServiceModal(...args),
+    showSettingsCategory: (event, ...args) => showSettingsCategory(...args),
+    showUserModal: (event, ...args) => showUserModal(...args),
+    showVehicleModal: (event, ...args) => showVehicleModal(...args),
+    switchSection: (event, ...args) => switchSection(...args),
+    toggleAdminMobileNav: (event, ...args) => toggleAdminMobileNav(...args),
+    toggleReminderCompletionFromUserDetail: (event, ...args) => toggleReminderCompletionFromUserDetail(...args),
+    unblockIpFromControlCenter: (event, ...args) => unblockIpFromControlCenter(...args),
+    updateReservationStatusFromUserDetail: (event, ...args) => updateReservationStatusFromUserDetail(...args),
+    updateUserLicenseFromControlCenter: (event, ...args) => updateUserLicenseFromControlCenter(...args),
+  });
+  for (const type of ['click', 'submit']) {
+    document.addEventListener(type, event => {
+      const target = event.target.closest(`[data-admin-${type}]`);
+      if (!target || target.disabled) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const name = target.getAttribute(`data-admin-${type}`);
+      if (!Object.hasOwn(actions, name)) return;
+      try {
+        const args = JSON.parse(target.getAttribute('data-admin-args') || '[]');
+        if (!Array.isArray(args)) return;
+        Promise.resolve(actions[name](event, ...args)).catch(error => showGlobalError(error.message || 'Akci se nepodařilo dokončit.'));
+      } catch { showGlobalError('Akci se nepodařilo dokončit. Obnovte prosím stránku.'); }
+    });
+  }
 }
 
 function formatDateTime(value, fallback = '-') {
@@ -560,33 +684,33 @@ async function loadOverview() {
     const stats = await apiRequest('GET', '/admin-api/overview');
     
     // Aktualizovat statistiky v navbaru
-    document.getElementById('summary-users').innerHTML = `👥 Uživatelé: <strong>${stats.total_users ?? 0}</strong>`;
-    document.getElementById('summary-vehicles').innerHTML = `🚗 Vozidla: <strong>${stats.total_vehicles ?? 0}</strong>`;
-    document.getElementById('summary-services').innerHTML = `🛠 Servisy: <strong>${stats.total_services ?? 0}</strong>`;
-    document.getElementById('summary-records').innerHTML = `📋 Záznamy: <strong>${stats.total_records ?? 0}</strong>`;
+    document.getElementById('summary-users').innerHTML = `👥 Uživatelé: <strong>${escapeHtml(stats.total_users ?? 0)}</strong>`;
+    document.getElementById('summary-vehicles').innerHTML = `🚗 Vozidla: <strong>${escapeHtml(stats.total_vehicles ?? 0)}</strong>`;
+    document.getElementById('summary-services').innerHTML = `🛠 Servisy: <strong>${escapeHtml(stats.total_services ?? 0)}</strong>`;
+    document.getElementById('summary-records').innerHTML = `📋 Záznamy: <strong>${escapeHtml(stats.total_records ?? 0)}</strong>`;
     
     // Zobrazit statistiky
     const statsEl = document.getElementById('overview-stats');
     if (statsEl) {
       statsEl.innerHTML = `
         <div class="stat-card">
-          <h3>${stats.total_users ?? 0}</h3>
+          <h3>${escapeHtml(stats.total_users ?? 0)}</h3>
           <p>Uživatelé</p>
         </div>
         <div class="stat-card">
-          <h3>${stats.total_vehicles ?? 0}</h3>
+          <h3>${escapeHtml(stats.total_vehicles ?? 0)}</h3>
           <p>Vozidla</p>
         </div>
         <div class="stat-card">
-          <h3>${stats.total_services ?? 0}</h3>
+          <h3>${escapeHtml(stats.total_services ?? 0)}</h3>
           <p>Servisy</p>
         </div>
         <div class="stat-card">
-          <h3>${stats.total_records ?? 0}</h3>
+          <h3>${escapeHtml(stats.total_records ?? 0)}</h3>
           <p>Servisní záznamy</p>
         </div>
         <div class="stat-card">
-          <h3>${stats.total_assignments ?? 0}</h3>
+          <h3>${escapeHtml(stats.total_assignments ?? 0)}</h3>
           <p>Přiřazení</p>
         </div>
       `;
@@ -684,7 +808,7 @@ async function loadUsers() {
 
     renderUsersList();
   } catch (error) {
-    container.innerHTML = `<div class="error">Chyba při načítání: ${error.message}</div>`;
+    container.innerHTML = `<div class="error">Chyba při načítání: ${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -764,27 +888,27 @@ function renderUsersList() {
     const tenantIdValue = escapeHtml(String(tenantId));
     const contactValue = [phone !== '-' ? phone : null, city !== '-' ? city : null].filter(Boolean).join(' • ') || '-';
     const networkValue = [ipAddress !== '-' ? ipAddress : null, location !== '-' ? location : null].filter(Boolean).join(' • ') || '-';
-    const encodedEmail = encodeURIComponent(String(user.email || ''));
+
 
     if (usersViewMode === 'compact') {
       return `
-        <div class="card user-card-clickable" data-user-id="${user.id}" onclick="handleUserCardClick(event, ${user.id})" title="Otevřít detail uživatele">
+        <div class="card user-card-clickable" data-user-id="${escapeHtml(user.id)}" ${adminActionAttributes('handleUserCardClick', user.id)} title="Otevřít detail uživatele">
           <div class="card-header">
-            <h3 class="card-title">${user.name || user.email || 'Bez jména'}</h3>
-            <span class="card-id">#${user.id}</span>
+            <h3 class="card-title">${escapeHtml(user.name || user.email || 'Bez jména')}</h3>
+            <span class="card-id">#${escapeHtml(user.id)}</span>
           </div>
           <div class="card-body">
             <div class="card-field">
               <span class="card-label">Email</span>
-              <span class="card-value">${user.email || '-'}</span>
+              <span class="card-value">${escapeHtml(user.email || '-')}</span>
             </div>
             <div class="card-field">
               <span class="card-label">Jméno</span>
-              <span class="card-value">${user.name || '-'}</span>
+              <span class="card-value">${escapeHtml(user.name || '-')}</span>
             </div>
             <div class="card-field">
               <span class="card-label">Role</span>
-              <span class="card-value"><span class="role-badge role-${user.role || 'user'}">${user.role || 'user'}</span></span>
+              <span class="card-value"><span class="role-badge role-${escapeHtml(user.role || 'user')}">${escapeHtml(user.role || 'user')}</span></span>
             </div>
             <div class="card-field">
               <span class="card-label">Licence</span>
@@ -800,11 +924,11 @@ function renderUsersList() {
             </div>
             <div class="card-field">
               <span class="card-label">Tenant</span>
-              <span class="card-value">${user.tenant_id ?? '-'}</span>
+              <span class="card-value">${escapeHtml(user.tenant_id ?? '-')}</span>
             </div>
             <div class="card-field">
               <span class="card-label">Vozidla</span>
-              <span class="card-value">${user.vehicles_count || 0}</span>
+              <span class="card-value">${escapeHtml(user.vehicles_count || 0)}</span>
             </div>
             <div class="card-field">
               <span class="card-label">Registrován</span>
@@ -824,15 +948,15 @@ function renderUsersList() {
             </div>
           </div>
           <div class="card-actions">
-            <button class="btn-edit" onclick="editUser(event, ${user.id})">✏️ Upravit</button>
-            <button class="btn-danger" onclick="deleteUser(event, ${user.id}, decodeURIComponent('${encodedEmail}'))">🗑️ Smazat</button>
+            <button class="btn-edit" ${adminActionAttributes('editUser', user.id)}>✏️ Upravit</button>
+            <button class="btn-danger" ${adminActionAttributes('deleteUser', user.id, user.email || '')}>🗑️ Smazat</button>
           </div>
         </div>
       `;
     }
 
     return `
-      <div class="card user-card user-card-clickable" data-user-id="${user.id}" onclick="handleUserCardClick(event, ${user.id})" title="Otevřít detail uživatele">
+      <div class="card user-card user-card-clickable" data-user-id="${escapeHtml(user.id)}" ${adminActionAttributes('handleUserCardClick', user.id)} title="Otevřít detail uživatele">
         <div class="card-header user-card-header">
           <div class="user-card-head-main">
             <h3 class="card-title">${displayName}</h3>
@@ -841,7 +965,7 @@ function renderUsersList() {
           <div class="user-card-head-meta">
             <span class="role-badge role-${role}">${roleLabel}</span>
             <span class="presence-pill ${presenceClass}">${presenceLabel}</span>
-            <span class="card-id">#${user.id}</span>
+            <span class="card-id">#${escapeHtml(user.id)}</span>
           </div>
         </div>
         <div class="card-body user-card-body">
@@ -879,8 +1003,8 @@ function renderUsersList() {
           </div>
         </div>
         <div class="card-actions user-card-actions">
-          <button class="btn-edit" onclick="editUser(event, ${user.id})">Upravit</button>
-          <button class="btn-danger" onclick="deleteUser(event, ${user.id}, decodeURIComponent('${encodedEmail}'))">Smazat</button>
+          <button class="btn-edit" ${adminActionAttributes('editUser', user.id)}>Upravit</button>
+          <button class="btn-danger" ${adminActionAttributes('deleteUser', user.id, user.email || '')}>Smazat</button>
         </div>
       </div>
     `;
@@ -898,9 +1022,9 @@ function renderUsersList() {
   paginationEl.innerHTML = `
     <div class="list-meta">Zobrazeno ${from}-${to} z ${usersFilteredCache.length} uživatelů</div>
     <div class="pagination-controls">
-      <button class="pagination-btn" onclick="changeUsersPage(-1)" ${usersCurrentPage <= 1 ? 'disabled' : ''}>Předchozí</button>
+      <button class="pagination-btn" ${adminActionAttributes('changeUsersPage', -1)} ${usersCurrentPage <= 1 ? 'disabled' : ''}>Předchozí</button>
       <span class="list-meta">Strana ${usersCurrentPage}/${totalPages}</span>
-      <button class="pagination-btn" onclick="changeUsersPage(1)" ${usersCurrentPage >= totalPages ? 'disabled' : ''}>Další</button>
+      <button class="pagination-btn" ${adminActionAttributes('changeUsersPage', 1)} ${usersCurrentPage >= totalPages ? 'disabled' : ''}>Další</button>
     </div>
   `;
 }
@@ -1046,7 +1170,7 @@ function renderUserDetailModal() {
     latestLatitude !== null && latestLatitude !== undefined &&
     latestLongitude !== null && latestLongitude !== undefined
   ) ? `${Number(latestLatitude).toFixed(5)}, ${Number(latestLongitude).toFixed(5)}` : '-';
-  const latestMapsUrl = latestIpEntry?.maps_url || null;
+  const latestMapsUrl = safeHttpUrl(latestIpEntry?.maps_url);
   const olderIpEntries = ipHistory.slice(1);
   const latestSeen = formatDateTime(meta.last_activity_at);
   const detailOnline = getOnlineState({ last_seen_at: insightPresence.last_seen_at || meta.last_activity_at });
@@ -1067,14 +1191,14 @@ function renderUserDetailModal() {
     <div class="user-detail-info-grid">
       <div class="user-detail-info-card">
         <h4>Základní údaje</h4>
-        <div class="user-detail-row"><span>ID</span><strong>#${user.id ?? '-'}</strong></div>
+        <div class="user-detail-row"><span>ID</span><strong>#${escapeHtml(user.id ?? '-')}</strong></div>
         <div class="user-detail-row"><span>Email</span><strong>${escapeHtml(user.email || '-')}</strong></div>
         <div class="user-detail-row"><span>Jméno / Název</span><strong>${escapeHtml(user.name || '-')}</strong></div>
-        <div class="user-detail-row"><span>Role</span><strong><span class="role-badge ${roleClass}">${escapeHtml(user.role || 'user')}</span></strong></div>
-        <div class="user-detail-row"><span>Tenant</span><strong>${user.tenant_id ?? '-'}</strong></div>
+        <div class="user-detail-row"><span>Role</span><strong><span class="role-badge ${escapeHtml(roleClass)}">${escapeHtml(user.role || 'user')}</span></strong></div>
+        <div class="user-detail-row"><span>Tenant</span><strong>${escapeHtml(user.tenant_id ?? '-')}</strong></div>
         <div class="user-detail-row"><span>Licence</span><strong>${escapeHtml((user.license_plan || 'free').toUpperCase())} (${escapeHtml(user.license_status || 'active')})</strong></div>
         <div class="user-detail-row"><span>Stav účtu</span><strong>${user.is_deleted ? 'Smazaný' : (user.is_disabled ? 'Pozastavený' : 'Aktivní')}</strong></div>
-        <div class="user-detail-row"><span>Session verze</span><strong>${user.session_version ?? 0}</strong></div>
+        <div class="user-detail-row"><span>Session verze</span><strong>${escapeHtml(user.session_version ?? 0)}</strong></div>
         <div class="user-detail-row"><span>Registrován</span><strong>${formatDateTime(user.created_at)}</strong></div>
       </div>
       <div class="user-detail-info-card">
@@ -1118,8 +1242,9 @@ function renderUserDetailModal() {
                   const coords = hasCoords ? `${Number(ip.latitude).toFixed(5)}, ${Number(ip.longitude).toFixed(5)}` : null;
                   const sourceLabel = ip.geo_source || ip.source || '-';
                   const accuracyLabel = ip.geo_accuracy_m ? ` ±${Math.round(Number(ip.geo_accuracy_m))} m` : '';
-                  const mapLink = ip.maps_url
-                    ? `<a href="${escapeHtml(ip.maps_url)}" target="_blank" rel="noopener noreferrer">mapa</a>`
+                  const mapUrl = safeHttpUrl(ip.maps_url);
+                  const mapLink = mapUrl
+                    ? `<a href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener noreferrer">mapa</a>`
                     : '';
                   return `
                     <div class="user-detail-ip-item">
@@ -1173,12 +1298,12 @@ function renderUserDetailModal() {
   panelsEl.innerHTML = panelDefs.map((panel) => `
     <button
       class="user-detail-panel-card ${userDetailActivePanel === panel.key ? 'active' : ''}"
-      onclick="setUserDetailPanel('${panel.key}')"
+      ${adminActionAttributes('setUserDetailPanel', panel.key)}
       type="button"
     >
       <span class="user-detail-panel-icon">${panel.icon}</span>
       <span class="user-detail-panel-label">${panel.label}</span>
-      <span class="user-detail-panel-count">${panel.count}</span>
+      <span class="user-detail-panel-count">${escapeHtml(panel.count)}</span>
     </button>
   `).join('');
 
@@ -1200,7 +1325,7 @@ function renderUserDetailModal() {
   if (userDetailActivePanel === 'vehicles') {
     listEl.innerHTML = selected.map((vehicle) => {
       const label = vehicle.label || vehicle.nickname || `Vozidlo #${vehicle.id}`;
-      const encodedLabel = encodeURIComponent(label || '');
+
       const metaText = [
         `SPZ: ${vehicle.plate || '-'}`,
         `Rok: ${vehicle.year || '-'}`,
@@ -1214,15 +1339,15 @@ function renderUserDetailModal() {
             <div class="user-detail-list-meta">${escapeHtml(metaText)}</div>
           </div>
           <div class="user-detail-list-actions">
-            <button class="btn-edit btn-sm" onclick="stopEventSafely(event); editVehicleFromUserDetail(${vehicle.id})">Upravit</button>
-            <button class="btn-danger btn-sm" onclick="stopEventSafely(event); deleteVehicleFromUserDetail(${vehicle.id}, '${encodedLabel}')">Smazat</button>
+            <button class="btn-edit btn-sm" ${adminActionAttributes('editVehicleFromUserDetail', vehicle.id)}>Upravit</button>
+            <button class="btn-danger btn-sm" ${adminActionAttributes('deleteVehicleFromUserDetail', vehicle.id, encodeURIComponent(label || ''))}>Smazat</button>
           </div>
         </div>
       `;
     }).join('');
   } else if (userDetailActivePanel === 'reminders') {
     listEl.innerHTML = selected.map((reminder) => {
-      const encodedText = encodeURIComponent(reminder.text || '');
+
       const status = reminder.is_completed ? 'Dokončeno' : 'Aktivní';
       const statusClass = reminder.is_completed ? 'status-ok' : 'status-warn';
       const due = formatDate(reminder.due_date);
@@ -1236,9 +1361,9 @@ function renderUserDetailModal() {
           </div>
           <div class="user-detail-list-actions">
             <span class="status-pill ${statusClass}">${status}</span>
-            <button class="btn-secondary btn-sm" onclick="stopEventSafely(event); toggleReminderCompletionFromUserDetail(${reminder.id}, ${!reminder.is_completed})">${reminder.is_completed ? 'Obnovit' : 'Dokončit'}</button>
-            <button class="btn-edit btn-sm" onclick="stopEventSafely(event); quickEditReminderFromUserDetail(${reminder.id}, '${encodedText}')">Upravit</button>
-            <button class="btn-danger btn-sm" onclick="stopEventSafely(event); deleteReminderFromUserDetail(${reminder.id})">Smazat</button>
+            <button class="btn-secondary btn-sm" ${adminActionAttributes('toggleReminderCompletionFromUserDetail', reminder.id, !reminder.is_completed)}>${reminder.is_completed ? 'Obnovit' : 'Dokončit'}</button>
+            <button class="btn-edit btn-sm" ${adminActionAttributes('quickEditReminderFromUserDetail', reminder.id, encodeURIComponent(reminder.text || ''))}>Upravit</button>
+            <button class="btn-danger btn-sm" ${adminActionAttributes('deleteReminderFromUserDetail', reminder.id)}>Smazat</button>
           </div>
         </div>
       `;
@@ -1258,9 +1383,9 @@ function renderUserDetailModal() {
           </div>
           <div class="user-detail-list-actions">
             <span class="status-pill ${statusClass}">${escapeHtml(status)}</span>
-            <button class="btn-secondary btn-sm" onclick="stopEventSafely(event); updateReservationStatusFromUserDetail(${reservation.id}, 'CONFIRMED')">Potvrdit</button>
-            <button class="btn-secondary btn-sm" onclick="stopEventSafely(event); updateReservationStatusFromUserDetail(${reservation.id}, 'CANCELLED')">Zrušit</button>
-            <button class="btn-danger btn-sm" onclick="stopEventSafely(event); deleteReservationFromUserDetail(${reservation.id})">Smazat</button>
+            <button class="btn-secondary btn-sm" ${adminActionAttributes('updateReservationStatusFromUserDetail', reservation.id, 'CONFIRMED')}>Potvrdit</button>
+            <button class="btn-secondary btn-sm" ${adminActionAttributes('updateReservationStatusFromUserDetail', reservation.id, 'CANCELLED')}>Zrušit</button>
+            <button class="btn-danger btn-sm" ${adminActionAttributes('deleteReservationFromUserDetail', reservation.id)}>Smazat</button>
           </div>
         </div>
       `;
@@ -1281,8 +1406,8 @@ function renderUserDetailModal() {
             ${record.note ? `<div class="user-detail-list-note">${escapeHtml(record.note)}</div>` : ''}
           </div>
           <div class="user-detail-list-actions">
-            <button class="btn-edit btn-sm" onclick="stopEventSafely(event); editRecordFromUserDetail(${record.id})">Upravit</button>
-            <button class="btn-danger btn-sm" onclick="stopEventSafely(event); deleteRecordFromUserDetail(${record.id})">Smazat</button>
+            <button class="btn-edit btn-sm" ${adminActionAttributes('editRecordFromUserDetail', record.id)}>Upravit</button>
+            <button class="btn-danger btn-sm" ${adminActionAttributes('deleteRecordFromUserDetail', record.id)}>Smazat</button>
           </div>
         </div>
       `;
@@ -1643,32 +1768,32 @@ async function loadVehicles() {
       const createdDate = vehicle.created_at ? new Date(vehicle.created_at).toLocaleDateString('cs-CZ') : '-';
       const vehicleName = vehicle.nickname || `${vehicle.brand || ''} ${vehicle.model || ''}`.trim() || 'Bez názvu';
       return `
-        <div class="card" data-vehicle-id="${vehicle.id}">
+        <div class="card" data-vehicle-id="${escapeHtml(vehicle.id)}">
           <div class="card-header">
-            <h3 class="card-title">🚗 ${vehicleName}</h3>
-            <span class="card-id">#${vehicle.id}</span>
+            <h3 class="card-title">🚗 ${escapeHtml(vehicleName)}</h3>
+            <span class="card-id">#${escapeHtml(vehicle.id)}</span>
           </div>
           <div class="card-body">
             <div class="card-field">
               <span class="card-label">Vlastník</span>
-              <span class="card-value">${vehicle.owner_name || vehicle.user_email || '-'}</span>
+              <span class="card-value">${escapeHtml(vehicle.owner_name || vehicle.user_email || '-')}</span>
             </div>
             <div class="card-field">
               <span class="card-label">Značka / Model</span>
-              <span class="card-value">${vehicle.brand || '-'} ${vehicle.model || ''}</span>
+              <span class="card-value">${escapeHtml(vehicle.brand || '-')} ${escapeHtml(vehicle.model || '')}</span>
             </div>
             <div class="card-field">
               <span class="card-label">Rok</span>
-              <span class="card-value">${vehicle.year || '-'}</span>
+              <span class="card-value">${escapeHtml(vehicle.year || '-')}</span>
             </div>
             <div class="card-field">
               <span class="card-label">SPZ</span>
-              <span class="card-value">${vehicle.plate || '-'}</span>
+              <span class="card-value">${escapeHtml(vehicle.plate || '-')}</span>
             </div>
             ${vehicle.vin ? `
             <div class="card-field">
               <span class="card-label">VIN</span>
-              <span class="card-value" style="font-family: monospace; font-size: 13px;">${vehicle.vin}</span>
+              <span class="card-value" style="font-family: monospace; font-size: 13px;">${escapeHtml(vehicle.vin)}</span>
             </div>
             ` : ''}
             <div class="card-field">
@@ -1677,8 +1802,8 @@ async function loadVehicles() {
             </div>
           </div>
           <div class="card-actions">
-            <button class="btn-edit" onclick="editVehicle(${vehicle.id})">✏️ Upravit</button>
-            <button class="btn-danger" onclick="deleteVehicle(${vehicle.id}, '${vehicleName.replace(/'/g, "\\'")}')">🗑️ Smazat</button>
+            <button class="btn-edit" ${adminActionAttributes('editVehicle', vehicle.id)}>✏️ Upravit</button>
+            <button class="btn-danger" ${adminActionAttributes('deleteVehicle', vehicle.id, vehicleName)}>🗑️ Smazat</button>
           </div>
         </div>
       `;
@@ -1699,7 +1824,7 @@ async function loadVehicles() {
     }
     
   } catch (error) {
-    container.innerHTML = `<div class="error">Chyba při načítání: ${error.message}</div>`;
+    container.innerHTML = `<div class="error">Chyba při načítání: ${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -1816,28 +1941,28 @@ async function loadServices() {
     container.innerHTML = services.map(service => {
       const createdDate = service.created_at ? new Date(service.created_at).toLocaleDateString('cs-CZ') : '-';
       return `
-        <div class="card" data-service-id="${service.id}">
+        <div class="card" data-service-id="${escapeHtml(service.id)}">
           <div class="card-header">
-            <h3 class="card-title">🛠️ ${service.name || service.email || 'Bez názvu'}</h3>
-            <span class="card-id">#${service.id}</span>
+            <h3 class="card-title">🛠️ ${escapeHtml(service.name || service.email || 'Bez názvu')}</h3>
+            <span class="card-id">#${escapeHtml(service.id)}</span>
           </div>
           <div class="card-body">
             <div class="card-field">
               <span class="card-label">Email</span>
-              <span class="card-value">${service.email || '-'}</span>
+              <span class="card-value">${escapeHtml(service.email || '-')}</span>
             </div>
             <div class="card-field">
               <span class="card-label">Město</span>
-              <span class="card-value">${service.city || '-'}</span>
+              <span class="card-value">${escapeHtml(service.city || '-')}</span>
             </div>
             <div class="card-field">
               <span class="card-label">Telefon</span>
-              <span class="card-value">${service.phone || '-'}</span>
+              <span class="card-value">${escapeHtml(service.phone || '-')}</span>
             </div>
             ${service.ico ? `
             <div class="card-field">
               <span class="card-label">IČO</span>
-              <span class="card-value">${service.ico}</span>
+              <span class="card-value">${escapeHtml(service.ico)}</span>
             </div>
             ` : ''}
             <div class="card-field">
@@ -1846,8 +1971,8 @@ async function loadServices() {
             </div>
           </div>
           <div class="card-actions">
-            <button class="btn-edit" onclick="editService(${service.id})">✏️ Upravit</button>
-            <button class="btn-danger" onclick="deleteService(${service.id}, '${(service.name || service.email || '').replace(/'/g, "\\'")}')">🗑️ Smazat</button>
+            <button class="btn-edit" ${adminActionAttributes('editService', service.id)}>✏️ Upravit</button>
+            <button class="btn-danger" ${adminActionAttributes('deleteService', service.id, service.name || service.email || '')}>🗑️ Smazat</button>
           </div>
         </div>
       `;
@@ -1868,7 +1993,7 @@ async function loadServices() {
     }
     
   } catch (error) {
-    container.innerHTML = `<div class="error">Chyba při načítání: ${error.message}</div>`;
+    container.innerHTML = `<div class="error">Chyba při načítání: ${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -1908,8 +2033,8 @@ async function loadServiceRegistrationRequests() {
           </div>
           <div class="service-request-purpose"><strong>Účel registrace:</strong><br>${escapeHtml(item.registration_purpose || '-')}</div>
           <div class="service-request-actions">
-            <button class="btn-primary btn-sm" onclick="approveServiceRegistrationRequest(${item.id})">✅ Schválit</button>
-            <button class="btn-danger btn-sm" onclick="rejectServiceRegistrationRequest(${item.id})">❌ Zamítnout</button>
+            <button class="btn-primary btn-sm" ${adminActionAttributes('approveServiceRegistrationRequest', item.id)}>✅ Schválit</button>
+            <button class="btn-danger btn-sm" ${adminActionAttributes('rejectServiceRegistrationRequest', item.id)}>❌ Zamítnout</button>
           </div>
         </article>
       `;
@@ -2089,19 +2214,19 @@ async function loadRecords() {
         || record.vehicle_plate
         || (record.vehicle_id ? `#${record.vehicle_id}` : '-');
       return `
-        <div class="card" data-record-id="${record.id}">
+        <div class="card" data-record-id="${escapeHtml(record.id)}">
           <div class="card-header">
-            <h3 class="card-title">📋 ${record.description || 'Bez popisu'}</h3>
-            <span class="card-id">#${record.id}</span>
+            <h3 class="card-title">📋 ${escapeHtml(record.description || 'Bez popisu')}</h3>
+            <span class="card-id">#${escapeHtml(record.id)}</span>
           </div>
           <div class="card-body">
             <div class="card-field">
               <span class="card-label">Servis</span>
-              <span class="card-value">${serviceLabel}</span>
+              <span class="card-value">${escapeHtml(serviceLabel)}</span>
             </div>
             <div class="card-field">
               <span class="card-label">Vozidlo</span>
-              <span class="card-value">${vehicleLabel}</span>
+              <span class="card-value">${escapeHtml(vehicleLabel)}</span>
             </div>
             <div class="card-field">
               <span class="card-label">Datum provedení</span>
@@ -2110,25 +2235,25 @@ async function loadRecords() {
             ${record.mileage ? `
             <div class="card-field">
               <span class="card-label">Nájezd</span>
-              <span class="card-value">${record.mileage.toLocaleString('cs-CZ')} km</span>
+              <span class="card-value">${escapeHtml(record.mileage.toLocaleString('cs-CZ'))} km</span>
             </div>
             ` : ''}
             ${record.price ? `
             <div class="card-field">
               <span class="card-label">Cena</span>
-              <span class="card-value" style="color: #059669; font-weight: 700;">${record.price.toLocaleString('cs-CZ')} Kč</span>
+              <span class="card-value" style="color: #059669; font-weight: 700;">${escapeHtml(record.price.toLocaleString('cs-CZ'))} Kč</span>
             </div>
             ` : ''}
             ${record.category ? `
             <div class="card-field">
               <span class="card-label">Kategorie</span>
-              <span class="card-value">${record.category}</span>
+              <span class="card-value">${escapeHtml(record.category)}</span>
             </div>
             ` : ''}
           </div>
           <div class="card-actions">
-            <button class="btn-edit" onclick="editRecord(${record.id})">✏️ Upravit</button>
-            <button class="btn-danger" onclick="deleteRecord(${record.id})">🗑️ Smazat</button>
+            <button class="btn-edit" ${adminActionAttributes('editRecord', record.id)}>✏️ Upravit</button>
+            <button class="btn-danger" ${adminActionAttributes('deleteRecord', record.id)}>🗑️ Smazat</button>
           </div>
         </div>
       `;
@@ -2149,7 +2274,7 @@ async function loadRecords() {
     }
     
   } catch (error) {
-    container.innerHTML = `<div class="error">Chyba při načítání: ${error.message}</div>`;
+    container.innerHTML = `<div class="error">Chyba při načítání: ${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -2199,7 +2324,7 @@ function renderRecordServiceSelect(selectedVehicleId = null, selectedUserId = nu
 
   html += users.map((user) => {
     const label = buildRecordActorLabel(user);
-    return `<option value="${user.id}">${escapeHtml(label)}</option>`;
+    return `<option value="${escapeHtml(user.id)}">${escapeHtml(label)}</option>`;
   }).join('');
 
   // Pokud je u editace historicky přiřazen uživatel mimo tenant, zobrazíme ho explicitně.
@@ -2209,7 +2334,7 @@ function renderRecordServiceSelect(selectedVehicleId = null, selectedUserId = nu
   ) {
     const foreignUser = recordFormOptionsState.users.find((user) => Number(user.id) === Number(selectedUserId));
     if (foreignUser) {
-      html += `<option value="${foreignUser.id}">${escapeHtml(`${buildRecordActorLabel(foreignUser)} (mimo tenant)`)}`
+      html += `<option value="${escapeHtml(foreignUser.id)}">${escapeHtml(`${buildRecordActorLabel(foreignUser)} (mimo tenant)`)}`
         + '</option>';
     }
   }
@@ -2240,7 +2365,7 @@ async function loadRecordFormData(selectedVehicleId = null, selectedUserId = nul
           const label = vehicle.nickname
             || `${vehicle.brand || ''} ${vehicle.model || ''}`.trim()
             || `ID ${vehicle.id}`;
-          return `<option value="${vehicle.id}">${escapeHtml(`${label} (${vehicle.user_email || '-'})`)}</option>`;
+          return `<option value="${escapeHtml(vehicle.id)}">${escapeHtml(`${label} (${vehicle.user_email || '-'})`)}</option>`;
         }).join('');
 
       if (selectedVehicleId !== null && selectedVehicleId !== undefined && String(selectedVehicleId) !== '') {
@@ -2391,8 +2516,8 @@ async function loadAuditLog() {
     const action = document.getElementById('audit-action')?.value || '';
     
     let url = '/admin-api/audit?limit=100';
-    if (entityType) url += `&entity_type=${entityType}`;
-    if (action) url += `&action=${action}`;
+    if (entityType) url += `&entity_type=${encodeURIComponent(entityType)}`;
+    if (action) url += `&action=${encodeURIComponent(action)}`;
     
     const auditData = await apiRequest('GET', url);
     const logs = auditData.logs || [];
@@ -2413,19 +2538,19 @@ async function loadAuditLog() {
         <div class="audit-log-item">
           <div class="audit-log-header">
             <span class="audit-log-time">${timestamp}</span>
-            <span class="audit-log-project">${log.source_project || '?'}</span>
+            <span class="audit-log-project">${escapeHtml(log.source_project || '?')}</span>
           </div>
           <div class="audit-log-content">
-            <strong>${actor}</strong> ${actionText} <strong>${entityType}</strong>
-            ${entityId ? `#${entityId}` : ''}
+            <strong>${escapeHtml(actor)}</strong> ${escapeHtml(actionText)} <strong>${escapeHtml(entityType)}</strong>
+            ${entityId ? `#${escapeHtml(entityId)}` : ''}
           </div>
-          ${log.details ? `<div class="audit-log-details">${log.details}</div>` : ''}
+          ${log.details ? `<div class="audit-log-details">${escapeHtml(log.details)}</div>` : ''}
         </div>
       `;
     }).join('');
     
   } catch (error) {
-    listEl.innerHTML = `<div class="error">Chyba při načítání: ${error.message}</div>`;
+    listEl.innerHTML = `<div class="error">Chyba při načítání: ${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -2465,13 +2590,13 @@ async function loadDbInfo() {
     resultEl.innerHTML = `
       <div>
         <p><strong>Úložiště:</strong><br>${escapeHtml(info.db_path)}</p>
-        <p><strong>Počet tabulek:</strong> ${info.table_count}</p>
+        <p><strong>Počet tabulek:</strong> ${escapeHtml(info.table_count)}</p>
         ${info.total_size_kb ? `<p><strong>Velikost:</strong> ${info.total_size_kb.toFixed(2)} KB</p>` : ''}
         <p><strong>Tabulky:</strong><br>${escapeHtml(info.tables.join(', '))}</p>
       </div>
     `;
   } catch (error) {
-    resultEl.innerHTML = `<div style="color: #dc3545;">Chyba: ${error.message}</div>`;
+    resultEl.innerHTML = `<div style="color: #dc3545;">Chyba: ${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -2722,8 +2847,8 @@ function renderSettingsCategory(category) {
   
   const config = categoryConfigs[category] || { title: category, groups: [] };
   
-  let html = `<div class="settings-category active" data-category="${category}">`;
-  html += `<h2 style="margin-bottom: 24px; font-size: 24px; color: #1e293b;">${config.title}</h2>`;
+  let html = `<div class="settings-category active" data-category="${escapeHtml(category)}">`;
+  html += `<h2 style="margin-bottom: 24px; font-size: 24px; color: #1e293b;">${escapeHtml(config.title)}</h2>`;
   if (category === 'comgate') {
     html += `<div class="settings-group"><h4>Ověření připojení</h4><p>Zkontroluje dostupné platební metody. Nevytváří platbu a nic neúčtuje.</p><button type="button" class="btn btn-primary" id="comgate-check-connection">Ověřit spojení s Comgate</button><p id="comgate-check-result" role="status"></p><p>Potvrzování plateb: <code>https://app.toozservis.cz/api/v1/license/comgate/result</code><br>Návrat do aplikace: <code>https://app.toozservis.cz/web/payment-return.html</code></p><p>Tyto adresy nastavte také v portálu Comgate. Automatické prodlužování vyžaduje povolené opakované platby a běžící kontrolu předplatného v sekci Systém a kontrola.</p></div>`;
   }
@@ -2731,15 +2856,8 @@ function renderSettingsCategory(category) {
   
   config.groups.forEach(group => {
     html += `<div class="settings-group">`;
-    html += `<h4>${group.title}</h4>`;
+    html += `<h4>${escapeHtml(group.title)}</h4>`;
     
-    // Escape HTML pro bezpečnost
-    const escapeHtml = (text) => {
-      if (text === null || text === undefined) return '';
-      const div = document.createElement('div');
-      div.textContent = String(text);
-      return div.innerHTML;
-    };
     
     group.settings.forEach(setting => {
       const settingData = categorySettings[setting.key] || {};
@@ -3147,7 +3265,7 @@ function renderControlCenterPriorities(metrics) {
   listEl.innerHTML = priorities.map((item) => `
     <li class="cc-priority-item is-${item.tone}">
       <span class="cc-priority-text">${escapeHtml(item.text)}</span>
-      ${item.moduleId ? `<button class="cc-priority-action" type="button" onclick="focusControlCenterModule('${item.moduleId}', '${item.detailsId || ''}')">Otevřít</button>` : ''}
+      ${item.moduleId ? `<button class="cc-priority-action" type="button" ${adminActionAttributes('focusControlCenterModule', item.moduleId, item.detailsId || '')}>Otevřít</button>` : ''}
     </li>
   `).join('');
 }
@@ -3453,7 +3571,7 @@ function renderControlCenterTable(containerId, columns, rows) {
   const head = columns.map((col) => `<th>${escapeHtml(col.label)}</th>`).join('');
   const body = safeRows.map((row) => {
     const cells = columns.map((col) => {
-      const rawValue = typeof col.render === 'function' ? col.render(row) : row[col.key];
+      const rawValue = typeof col.render === 'function' ? col.render(row) : escapeHtml(row[col.key]);
       return `<td>${rawValue === undefined || rawValue === null || rawValue === '' ? '-' : rawValue}</td>`;
     }).join('');
     return `<tr>${cells}</tr>`;
@@ -4008,7 +4126,7 @@ async function loadControlCenterBackups() {
   try {
     const data = await apiRequest('GET', '/admin-api/control-center/backups');
     setControlCenterState('backups', data);
-    document.querySelectorAll('[onclick="createControlCenterBackup()"], [onclick="restoreControlCenterBackup()"]').forEach(button => {
+    document.querySelectorAll('[data-admin-click="createControlCenterBackup"], [data-admin-click="restoreControlCenterBackup"]').forEach(button => {
       button.disabled = data.local_snapshot_supported === false;
       button.title = data.note || '';
     });
@@ -4114,7 +4232,7 @@ async function loadControlCenterWebhookMonitor() {
     renderControlCenterTable(
       'cc-webhooks-table',
       [
-        { key: 'idx', label: '#', render: (row) => String(row.idx) },
+        { key: 'idx', label: '#', render: (row) => escapeHtml(String(row.idx)) },
         { key: 'line', label: 'Webhook log řádek', render: (row) => escapeHtml(row.line || '-') },
       ],
       rows.slice(0, 20).map((line, index) => ({ idx: index + 1, line })),
@@ -4352,14 +4470,14 @@ async function loadControlCenterUserInsight() {
       { key: 'expiration', label: 'Expiration', value: formatDateTime(license.expiration_date) },
       { key: 'next_renewal', label: 'Next renewal', value: formatDateTime(license.next_renewal_date) },
       { key: 'has_paid', label: 'LIVE paid', value: paymentsSummary.has_live_paid ? 'Ano' : 'Ne' },
-      { key: 'paid_live_count', label: 'LIVE paid count', value: String(paymentsSummary.live_paid_count ?? 0) },
-      { key: 'paid_test_count', label: 'TEST paid count', value: String(paymentsSummary.test_paid_count ?? 0) },
-      { key: 'payments_live_count', label: 'LIVE tx', value: String(paymentsSummary.count_live ?? 0) },
-      { key: 'payments_test_count', label: 'TEST tx', value: String(paymentsSummary.count_test ?? 0) },
+      { key: 'paid_live_count', label: 'LIVE paid count', value: escapeHtml(String(paymentsSummary.live_paid_count ?? 0)) },
+      { key: 'paid_test_count', label: 'TEST paid count', value: escapeHtml(String(paymentsSummary.test_paid_count ?? 0)) },
+      { key: 'payments_live_count', label: 'LIVE tx', value: escapeHtml(String(paymentsSummary.count_live ?? 0)) },
+      { key: 'payments_test_count', label: 'TEST tx', value: escapeHtml(String(paymentsSummary.count_test ?? 0)) },
       { key: 'last_paid', label: 'Last paid', value: formatDateTime(paymentsSummary.last_paid_at) },
       { key: 'online', label: 'Online', value: escapeHtml(presence.online_status || '-') },
       { key: 'last_seen', label: 'Last seen', value: formatDateTime(presence.last_seen_at) },
-      { key: 'sessions', label: 'Aktivní relace', value: String(presence.active_session_count ?? 0) },
+      { key: 'sessions', label: 'Aktivní relace', value: escapeHtml(String(presence.active_session_count ?? 0)) },
     ];
     renderControlCenterTable(
       'cc-insight-summary',
@@ -4694,6 +4812,7 @@ function showDashboard() {
 // ============================================
 
 window.addEventListener('DOMContentLoaded', () => {
+  registerAdminActions();
   const token = getAuthToken();
 
   window.addEventListener('keydown', (event) => {

@@ -203,16 +203,16 @@ def _is_maintenance_bypass_path(path: str) -> bool:
 def _register_exception_handler(app: FastAPI) -> None:
     from fastapi.exception_handlers import http_exception_handler
     from starlette.exceptions import HTTPException as StarletteHTTPException
-    from uuid import uuid4
 
     def private_failure(request, exc):
-        incident = uuid4().hex
+        from src.core.private_errors import incident_id
+        incident = incident_id(exc)
         route = getattr(request.scope.get("route"), "path", "unknown")
         # Never interpolate exception text: provider/SQL exceptions can contain
         # passwords, token-bearing URLs, personal data, and bind parameters.
         print(f"[ERROR] incident={incident} kind={type(exc).__name__} route={route}")
         return JSONResponse(status_code=500, headers={"Cache-Control": "no-store"}, content={
-            "detail": "Požadavek se nepodařilo dokončit. Zkuste to později; pokud problém trvá, sdělte podpoře číslo chyby.",
+            "detail": f"Požadavek se nepodařilo dokončit. Zkuste to později. Pokud problém trvá, sdělte podpoře kód chyby: {incident}.",
             "incident_id": incident,
         })
 

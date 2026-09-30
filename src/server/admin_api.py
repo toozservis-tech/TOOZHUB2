@@ -20,6 +20,7 @@ import ipaddress
 import secrets
 import string
 
+from src.core.private_errors import report_exception
 from src.core.auth import get_current_user_email, security
 from src.core.branding import APP_DISPLAY_NAME
 from src.core.rbac import is_admin, is_developer_admin
@@ -269,7 +270,7 @@ def log_developer_action(
             db.rollback()
         except Exception:
             pass
-        print(f"[ADMIN_AUDIT] Failed to persist audit action '{action_type}': {exc}")
+        report_exception(exc)
 
 
 def _safe_json_load(value: Any) -> Dict[str, Any]:
@@ -1097,13 +1098,13 @@ def resolve_job_name(job_name_raw: str) -> str:
 
 
 def safe_count_query(db: Session, query_str: str, params: Dict[str, Any] = None) -> int:
-    """Bezpečné provedení COUNT dotazu - vrací 0 při chybě"""
+    """Return the count or report failure; a failed query is not an empty database."""
     try:
         result = db.execute(text(query_str), params or {})
         return result.scalar() or 0
     except Exception as e:
-        print(f"⚠️ Warning: Query failed: {query_str}, Error: {e}")
-        return 0
+        report_exception(e)
+        raise HTTPException(500, "Počet záznamů se nepodařilo načíst.") from e
 
 
 def get_user_id_from_email(email: str, db: Session) -> Optional[int]:
@@ -1750,9 +1751,8 @@ def get_overview(
             total_reminders=total_reminders
         )
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání statistik: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání statistik.")
 
 
 @router.get("/users", response_model=List[UserSummary])
@@ -1970,9 +1970,8 @@ def get_all_users(
         
         return users
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání uživatelů: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání uživatelů.")
 
 
 @router.post("/users")
@@ -2047,9 +2046,8 @@ def create_user(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při vytváření uživatele: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při vytváření uživatele.")
 
 
 @router.patch("/users/{user_id}")
@@ -2127,9 +2125,8 @@ def update_user(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při úpravě uživatele: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při úpravě uživatele.")
 
 
 @router.delete("/users/{user_id}")
@@ -2199,9 +2196,8 @@ def get_user_vehicles(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání vozidel: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání vozidel.")
 
 
 @router.get("/users/{user_id}/detail")
@@ -2767,9 +2763,8 @@ def get_user_detail(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání detailu uživatele: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání detailu uživatele.")
 
 
 @router.get("/services", response_model=List[UserSummary])
@@ -2824,9 +2819,8 @@ def get_all_services(
         
         return services
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání servisů: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání servisů.")
 
 
 @router.post("/services")
@@ -2889,9 +2883,8 @@ def create_service(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při vytváření servisu: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při vytváření servisu.")
 
 
 @router.patch("/services/{service_id}")
@@ -2945,9 +2938,8 @@ def update_service(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při úpravě servisu: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při úpravě servisu.")
 
 
 @router.delete("/services/{service_id}")
@@ -3014,9 +3006,8 @@ def list_service_registration_requests(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání žádostí: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání žádostí.")
 
 
 @router.post("/service-registration-requests/{request_id}/approve")
@@ -3115,9 +3106,8 @@ def approve_service_registration_request(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při schvalování žádosti: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při schvalování žádosti.")
 
 
 @router.post("/service-registration-requests/{request_id}/reject")
@@ -3161,9 +3151,8 @@ def reject_service_registration_request(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při zamítání žádosti: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při zamítání žádosti.")
 
 
 @router.get("/vehicles")
@@ -3219,9 +3208,8 @@ def get_all_vehicles(
         
         return vehicles
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání vozidel: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání vozidel.")
 
 
 @router.post("/vehicles")
@@ -3290,9 +3278,8 @@ def create_vehicle(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při vytváření vozidla: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při vytváření vozidla.")
 
 
 @router.patch("/vehicles/{vehicle_id}")
@@ -3364,9 +3351,8 @@ def update_vehicle(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při úpravě vozidla: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při úpravě vozidla.")
 
 
 @router.delete("/vehicles/{vehicle_id}")
@@ -3475,15 +3461,8 @@ def get_all_records(
             "offset": offset
         }
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "records": [],
-            "total": 0,
-            "limit": limit,
-            "offset": offset,
-            "error": f"Chyba při načítání záznamů: {str(e)}"
-        }
+        report_exception(e)
+        raise HTTPException(500, "Chyba při načítání záznamů.") from e
 
 
 @router.get("/audit")
@@ -3556,15 +3535,8 @@ def get_audit_log(
             "offset": offset
         }
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "logs": [],
-            "total": 0,
-            "limit": limit,
-            "offset": offset,
-            "error": f"Chyba při načítání audit logu: {str(e)}"
-        }
+        report_exception(e)
+        raise HTTPException(500, "Chyba při načítání audit logu.") from e
 
 
 @router.post("/records")
@@ -3623,9 +3595,8 @@ def create_record(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při vytváření záznamu: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při vytváření záznamu.")
 
 
 @router.patch("/records/{record_id}")
@@ -3686,9 +3657,8 @@ def update_record(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při úpravě záznamu: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při úpravě záznamu.")
 
 
 @router.delete("/records/{record_id}")
@@ -3741,9 +3711,8 @@ def update_reminder_admin(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při úpravě připomínky: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při úpravě připomínky.")
 
 
 @router.delete("/reminders/{reminder_id}")
@@ -3807,9 +3776,8 @@ def update_reservation_admin(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při úpravě rezervace: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při úpravě rezervace.")
 
 
 @router.delete("/reservations/{reservation_id}")
@@ -3895,9 +3863,8 @@ def get_db_info(
             total_size_kb=size_kb
         )
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při získávání informací: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při získávání informací.")
 
 
 _SECRET_PLACEHOLDER = "••••••••"
@@ -3921,9 +3888,8 @@ def get_admin_settings(
         settings = load_admin_settings()
         return {"settings": _public_admin_settings(settings)}
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání nastavení: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání nastavení.")
 
 
 @router.put("/settings")
@@ -3961,9 +3927,8 @@ def update_admin_settings(
         save_admin_settings(settings)
         return {"message": f"Nastavení uloženo ({updated_count} položek)", "settings": _public_admin_settings(settings)}
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při ukládání nastavení: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při ukládání nastavení.")
 
 
 @router.post("/settings/init-defaults")
@@ -3977,9 +3942,8 @@ def init_default_admin_settings(
         save_admin_settings(settings)
         return {"message": "Chybějící nastavení byla doplněna", "settings": _public_admin_settings(settings)}
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při inicializaci výchozích nastavení: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při inicializaci výchozích nastavení.")
 
 
 # ============= DEVELOPER CONTROL CENTER =============
@@ -4031,7 +3995,7 @@ def get_control_center_health(
             db.execute(text("SELECT 1")).scalar()
         except Exception as exc:
             db_status = "error"
-            db_error = str(exc)
+            db_error = "Spojení s databází selhalo. Kód: " + report_exception(exc)
 
         settings = load_admin_settings()
         comgate_settings = settings.get("comgate", {})
@@ -4109,9 +4073,8 @@ def get_control_center_health(
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání health panelu: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání health panelu.")
 
 
 @router.get("/control-center/payments")
@@ -4277,9 +4240,8 @@ def get_control_center_payments(
             },
         }
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání plateb: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání plateb.")
 
 
 @router.post("/control-center/payments/resync")
@@ -4311,13 +4273,12 @@ def resync_control_center_payments(
             request=request,
             action_type="payments.resync",
             target_resource="license_subscription_jobs",
-            parameters={"error": str(e)},
+            parameters={"incident_id": report_exception(e)},
             result="failed",
             status_code=500,
         )
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při resync plateb: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při resync plateb.")
 
 
 @router.get("/control-center/user-insight/{user_id}")
@@ -4541,9 +4502,8 @@ def get_user_license_payment_insight(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání user insight: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání user insight.")
 
 
 def _load_user_for_control_action(db: Session, user_id: int) -> Customer:
@@ -4838,9 +4798,8 @@ def get_users_presence(
             "count": len(items),
         }
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání online/offline stavu: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání online/offline stavu.")
 
 
 @router.get("/control-center/security-monitor")
@@ -4940,9 +4899,8 @@ def get_security_monitor(
             ],
         }
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání security monitoru: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání security monitoru.")
 
 
 @router.post("/control-center/security/block-ip")
@@ -5014,13 +4972,12 @@ def block_ip_address(
             request=request,
             action_type="security.block_ip",
             target_resource=f"ip:{normalized_ip}",
-            parameters={"error": str(e)},
+            parameters={"incident_id": report_exception(e)},
             result="failed",
             status_code=500,
         )
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při blokaci IP: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při blokaci IP.")
 
 
 @router.post("/control-center/security/unblock-ip")
@@ -5081,13 +5038,12 @@ def unblock_ip_address(
             request=request,
             action_type="security.unblock_ip",
             target_resource=f"ip:{normalized_ip}",
-            parameters={"error": str(e)},
+            parameters={"incident_id": report_exception(e)},
             result="failed",
             status_code=500,
         )
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při odblokování IP: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při odblokování IP.")
 
 
 @router.get("/control-center/backups")
@@ -5174,13 +5130,12 @@ def create_control_center_backup(
             request=request,
             action_type="backup.create",
             target_resource=f"backup:{backup_id}",
-            parameters={"error": str(e)},
+            parameters={"incident_id": report_exception(e)},
             result="failed",
             status_code=500,
         )
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při vytváření backupu: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při vytváření backupu.")
 
 
 @router.get("/control-center/backups/{backup_id}/download")
@@ -5325,13 +5280,12 @@ def restore_control_center_backup(
             request=request,
             action_type="backup.restore",
             target_resource=action_target,
-            parameters={"error": str(e)},
+            parameters={"incident_id": report_exception(e)},
             result="failed",
             status_code=500,
         )
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při restore: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při restore.")
 
 
 @router.get("/control-center/system-logs")
@@ -5472,7 +5426,7 @@ def run_control_center_storage_cleanup(
                 file_path.unlink()
                 deleted_logs += 1
         except Exception as exc:
-            errors.append(f"log:{file_path} -> {exc}")
+            errors.append("Odstranění provozního záznamu selhalo. Kód: " + report_exception(exc))
 
     for backup_dir in old_backups:
         try:
@@ -5482,7 +5436,7 @@ def run_control_center_storage_cleanup(
                 shutil.rmtree(backup_dir, ignore_errors=False)
                 deleted_backups += 1
         except Exception as exc:
-            errors.append(f"backup:{backup_dir} -> {exc}")
+            errors.append("Odstranění zálohy selhalo. Kód: " + report_exception(exc))
 
     result = {
         "deleted_logs": deleted_logs,
@@ -5734,13 +5688,12 @@ def run_control_center_job(
             request=request,
             action_type="jobs.run",
             target_resource=job_name,
-            parameters={"error": str(e)},
+            parameters={"incident_id": report_exception(e)},
             result="failed",
             status_code=500,
         )
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při spuštění jobu: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při spuštění jobu.")
 
 
 @router.post("/control-center/jobs/pause")
@@ -6066,13 +6019,12 @@ def execute_internal_control_command(
             request=request,
             action_type="command.execute",
             target_resource=command,
-            parameters={"error": str(e)},
+            parameters={"incident_id": report_exception(e)},
             result="failed",
             status_code=500,
         )
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Command failed: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Command failed.")
 
 
 # ============= TENANTS & INSTANCES (Multi-tenant) =============
@@ -6097,9 +6049,8 @@ def list_tenants(
             created_at=t.created_at
         ) for t in tenants]
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání tenants: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání tenants.")
 
 
 @router.get("/tenants/{tenant_id}/instances", response_model=List[InstanceListItem])
@@ -6133,6 +6084,5 @@ def list_instances(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání instancí: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Chyba při načítání instancí.")

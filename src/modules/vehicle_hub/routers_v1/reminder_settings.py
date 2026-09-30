@@ -1,6 +1,7 @@
 """
 Reminder Settings API v1.0 router (Nastavení připomínek)
 """
+from src.core.private_errors import report_exception
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any
@@ -134,6 +135,5 @@ def update_reminder_settings(
         raise
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=400, detail=f"Chyba při ukládání nastavení: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Nastavení připomínek se nepodařilo uložit.") from e

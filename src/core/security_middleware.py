@@ -13,6 +13,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from src.core.branding import APP_SERVER_PRODUCT_TOKEN
+from src.core.browser_policy import ADMIN_CONTENT_SECURITY_POLICY
 from src.core.config import ALLOWED_ORIGINS, ENVIRONMENT
 
 # Rate limiting - ukládání požadavků
@@ -68,6 +69,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors *;"
             )
         
+        if request.url.path.startswith(('/web_admin/', '/admin-static/')) or request.url.path in {'/web_admin', '/admin-static', '/admin-login', '/admin-login.js'}:
+            csp = ADMIN_CONTENT_SECURITY_POLICY
+            response.headers['X-Frame-Options'] = 'DENY'
+            response.headers['Cache-Control'] = 'no-store'
+
         # Nenahrazuj existující CSP, pokud už existuje
         if "content-security-policy" not in (k.lower() for k in response.headers.keys()):
             response.headers["Content-Security-Policy"] = csp

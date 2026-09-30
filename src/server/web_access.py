@@ -46,6 +46,10 @@ def require_web_admin(token, db):
 def admin_login():
     return FileResponse(Path(__file__).with_name('admin_login.html'), headers={'Cache-Control':'no-store', 'X-Robots-Tag':'noindex, nofollow'})
 
+@router.get('/admin-login.js', include_in_schema=False)
+def admin_login_script():
+    return FileResponse(Path(__file__).with_name('admin_login.js'), media_type='text/javascript', headers={'Cache-Control':'no-store', 'X-Robots-Tag':'noindex, nofollow'})
+
 @router.post('/admin-web-session', include_in_schema=False)
 def open_session(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()), db: Session = Depends(get_db)):
     payload = require_web_admin(credentials.credentials, db)
