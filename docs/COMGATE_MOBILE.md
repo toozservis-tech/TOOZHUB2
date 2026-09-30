@@ -29,6 +29,8 @@ Server kontroluje cenu, měnu, obchod, identifikátor, referenci a testovací re
 
 ## Ověření
 
+30. 9. 2026: přihlášená iOS aplikace ověřila spojení s Comgate a načetla skutečný katalog. Při přípravě testovací objednávky původního účtu byl opraven nesoulad jednorázové nabídky a požadavku `initRecurring`. Jednorázová objednávka nyní žádné oprávnění k opakovaným platbám nevyžaduje. Klient posílá `expected_recurring`; změna způsobu prodlužování mezi nabídkou a odesláním se odmítne ještě před bránou. Starší klient dostane požadavek na aktualizaci. Telefon plátce se zbytečně nepředává, kontaktem je e-mail. Přesný připravený serverový stav prošel 105 testy; platba přes skutečnou testovací bránu zatím není dokončena.
+
 Přesný serverový commit bez jiných rozpracovaných změn: 100 úspěšných testů. Offline iOS: 5 úspěšných kontrol navigace a souhlasů. Sestavení pro simulátor a nepodepsané zařízení uspělo.
 
 Izolované testy: `tests/api/test_mobile_billing.py`, původní `test_license_comgate_utils.py`, viditelnost plateb, role administrátorů a veřejné výjimky webu. Žádné skutečné platby ani e-maily. Nativní formulář se ověřuje v oddělené offline instalaci s `--preview-billing`; tato ukázka nesmí nic odeslat. Testy navigace zůstávají zachované.

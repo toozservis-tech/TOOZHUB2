@@ -14485,9 +14485,10 @@
                         plan: planKey, billing_period: quote.billing_period, request_id: requestId,
                         expected_amount_halers: quote.amount_halers, expected_currency: quote.currency,
                         expected_test_mode: quote.test_mode, contract_version: quote.contract_version,
+                        expected_recurring: quote.recurring,
                         accept_terms: !!document.getElementById('licenseAgreeTerms')?.checked,
                         accept_immediate_service: !!document.getElementById('licenseAgreeDigitalStart')?.checked,
-                        accept_recurring: !!document.getElementById('licenseAgreeDigitalStart')?.checked,
+                        accept_recurring: quote.recurring && !!document.getElementById('licenseAgreeDigitalStart')?.checked,
                     });
                     sessionStorage.removeItem(key);
                     const requiresPayment = !(checkoutPayload && checkoutPayload.requires_payment === false);

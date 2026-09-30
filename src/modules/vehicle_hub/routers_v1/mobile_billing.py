@@ -44,6 +44,7 @@ class Purchase(Selection):
     expected_amount_halers: int
     expected_currency: str
     expected_test_mode: bool
+    expected_recurring: bool | None = None
     contract_version: str
     accept_terms: bool
     accept_immediate_service: bool
@@ -103,7 +104,9 @@ def quote(payload: Selection, current_user: Customer = Depends(get_current_user)
 def checkout(payload: Purchase, request: Request, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
     if payload.contract_version != CONTRACT_VERSION:
         raise HTTPException(409, "Podmínky se změnily. Načtěte objednávku znovu.")
-    if not all([payload.accept_terms, payload.accept_immediate_service, payload.accept_recurring]):
+    if payload.expected_recurring is None:
+        raise HTTPException(409, "Aktualizujte aplikaci a načtěte objednávku znovu.")
+    if not all([payload.accept_terms, payload.accept_immediate_service]):
         raise HTTPException(400, "Před objednáním potvrďte podmínky a souhlasy.")
     # Serialise reservations by tenant; commit before contacting the gateway.
     tenant_id = _tenant(current_user)
@@ -138,8 +141,11 @@ def checkout(payload: Purchase, request: Request, current_user: Customer = Depen
     if (payload.billing_period != quote["billing_period"]
         or payload.expected_amount_halers != quote["amount_halers"]
         or payload.expected_currency != quote["currency"]
-        or payload.expected_test_mode != quote["test_mode"]):
+        or payload.expected_test_mode != quote["test_mode"]
+        or payload.expected_recurring != quote["recurring"]):
         raise HTTPException(409, "Cena nebo režim platby se změnily. Načtěte objednávku znovu.")
+    if quote["recurring"] and not payload.accept_recurring:
+        raise HTTPException(400, "Potvrďte souhlas s pravidelným prodlužováním.")
     if not billing._load_comgate_config()["configured"]:
         raise HTTPException(503, "Online platby zatím nejsou dostupné.")
     # UUID is recorded in full; the gateway reference stays within its length limit.
@@ -155,7 +161,7 @@ def checkout(payload: Purchase, request: Request, current_user: Customer = Depen
         result = billing.create_comgate_checkout(billing.ComgateCheckoutRequest(
             plan=payload.plan, billing_period=payload.billing_period, checkout_ref=ref,
             expected_amount=payload.expected_amount_halers, expected_currency=payload.expected_currency,
-            expected_test_mode=payload.expected_test_mode), request, current_user, db)
+            expected_test_mode=payload.expected_test_mode, expected_recurring=payload.expected_recurring), request, current_user, db)
     except HTTPException as exc:
         # Unknown network outcomes stay reserved: never create a second charge blindly.
         if exc.status_code in {400, 409} or (exc.headers or {}).get("X-Comgate-Not-Created") == "1":

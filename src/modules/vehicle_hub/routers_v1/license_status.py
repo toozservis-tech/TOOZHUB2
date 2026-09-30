@@ -133,6 +133,7 @@ class ComgateCheckoutRequest(BaseModel):
     expected_amount: Optional[int] = None
     expected_currency: Optional[str] = None
     expected_test_mode: Optional[bool] = None
+    expected_recurring: Optional[bool] = None
 
 
 class ComgateCheckoutResponse(BaseModel):
@@ -1773,6 +1774,9 @@ def create_comgate_checkout(
     tenant_id_int = int(tenant_id)
     subscription = _get_subscription(db, tenant_id_int)
     subscription_status = _normalize_subscription_status(subscription.status) if subscription else ""
+    recurring = subscription_status != "legacy_manual"
+    if payload.expected_recurring is not None and payload.expected_recurring != recurring:
+        raise HTTPException(409, "Způsob prodlužování se změnil. Načtěte objednávku znovu.")
     legacy_quote: Optional[Dict[str, Any]] = None
     effective_billing_period = billing_period
 
@@ -1825,8 +1829,6 @@ def create_comgate_checkout(
 
     ref_id = payload.checkout_ref or _build_comgate_ref_id(tenant_id_int, plan, effective_billing_period)
     full_name = str(getattr(current_user, "name", "") or "").strip() or str(current_user.email).strip()
-    phone_raw = str(getattr(current_user, "phone", "") or "").strip()
-    phone = phone_raw.replace(" ", "")
 
     create_payload: Dict[str, str] = {
         "merchant": str(cfg["merchant"]),
@@ -1840,19 +1842,18 @@ def create_comgate_checkout(
         "delivery": "ELECTRONIC_DELIVERY",
         "category": "OTHER",
         "refId": ref_id,
-        "method": str(cfg.get("subscription_method") or "CARD"),
+        "method": str(cfg.get("subscription_method") or "CARD") if recurring else str(cfg["method"]),
         "country": str(cfg["country"]),
         "lang": str(cfg["lang"]),
         "email": str(current_user.email),
         "fullName": full_name,
-        "initRecurring": "true",
         "test": "1" if bool(cfg["test_mode"]) else "0",
         "url_paid": _build_frontend_return_url(plan, "paid", effective_billing_period),
         "url_cancelled": _build_frontend_return_url(plan, "cancelled", effective_billing_period),
         "url_pending": _build_frontend_return_url(plan, "pending", effective_billing_period),
     }
-    if phone:
-        create_payload["phone"] = phone
+    if recurring:
+        create_payload["initRecurring"] = "true"
 
     create_result = _post_comgate(str(cfg["create_url"]), create_payload)
     if str(create_result.get("code", "")) != "0":
@@ -1908,7 +1909,7 @@ def create_comgate_checkout(
     ) == "1"
     tx_payload = dict(create_result)
     tx_payload["checkout_test_mode"] = bool(cfg["test_mode"])
-    tx_payload["checkout_recurring"] = not fallback_non_recurring
+    tx_payload["checkout_recurring"] = recurring and not fallback_non_recurring
     if legacy_quote:
         tx_payload["legacy_quote"] = legacy_quote
 

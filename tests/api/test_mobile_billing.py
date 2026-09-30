@@ -39,7 +39,7 @@ def request(trans=None):
 
 def purchase(**changes):
     data=dict(plan='basic', billing_period='monthly', request_id=uuid4(), expected_amount_halers=9900,
-              expected_currency='CZK', expected_test_mode=False, contract_version=mobile.CONTRACT_VERSION,
+              expected_currency='CZK', expected_test_mode=False, expected_recurring=True, contract_version=mobile.CONTRACT_VERSION,
               accept_terms=True, accept_immediate_service=True, accept_recurring=True)
     data.update(changes)
     return mobile.Purchase(**data)
@@ -69,7 +69,7 @@ def test_checkout_records_consents_and_is_idempotent(setup, monkeypatch):
     assert len(calls[0]['label'])<=16 and 'payment-return.html' in calls[0]['url_paid']
     assert 'secret' not in json.dumps(result)
 
-@pytest.mark.parametrize('changes', [dict(accept_terms=False),dict(accept_recurring=False),dict(accept_immediate_service=False),dict(contract_version='old'),dict(expected_amount_halers=1),dict(expected_currency='EUR'),dict(expected_test_mode=True)])
+@pytest.mark.parametrize('changes', [dict(accept_terms=False),dict(accept_recurring=False),dict(accept_immediate_service=False),dict(contract_version='old'),dict(expected_amount_halers=1),dict(expected_currency='EUR'),dict(expected_test_mode=True),dict(expected_recurring=False),dict(expected_recurring=None)])
 def test_rejects_invalid_order_before_gateway(setup, changes):
     db,user,cfg=setup
     with pytest.raises(HTTPException): mobile.checkout(purchase(**changes),request(),user,db)
@@ -241,3 +241,47 @@ def test_definite_rejection_releases_pending_order(setup,monkeypatch):
     monkeypatch.setattr(billing,'_post_comgate',lambda *a:dict(code='1301',message='unknown merchant'))
     with pytest.raises(HTTPException):mobile.checkout(purchase(),request(),user,db)
     assert db.query(LicensePaymentTransaction).one().provider_status=='CANCELLED'
+
+def legacy_subscription(setup):
+    from src.modules.vehicle_hub.models import LicenseSubscription
+    db, user, cfg = setup
+    sub = LicenseSubscription(tenant_id=1, provider='comgate', status='legacy_manual',
+        plan_current='basic', billing_period='monthly', auto_renew_enabled=False,
+        credit_balance_halers=1)
+    db.add(sub); db.commit()
+    return sub
+
+def test_legacy_one_time_payment_never_requests_recurring_authority(setup, monkeypatch):
+    db, user, cfg = setup
+    sub = legacy_subscription(setup)
+    user.phone = '+420777000000'
+    quote = mobile.quote(mobile.Selection(plan='basic'), user, db)
+    assert quote['recurring'] is False and quote['amount_halers'] == 9899
+    result, calls = created(setup, monkeypatch, purchase(expected_amount_halers=9899,
+        expected_recurring=False, accept_recurring=False))
+    assert 'initRecurring' not in calls[0] and 'phone' not in calls[0]
+    assert calls[0]['method'] == cfg['method']
+    row = db.query(LicensePaymentTransaction).one()
+    details = json.loads(row.payload_json)
+    assert details['checkout_recurring'] is False
+    assert details['legal_consents']['recurring'] is False
+    monkeypatch.setattr(billing, '_post_comgate', lambda *a: paid_response(row, price='9899'))
+    assert asyncio.run(billing.comgate_result(request(row.trans_id), db)).status_code == 200
+    assert sub.auto_renew_enabled is False and not sub.init_recurring_id
+
+def test_one_time_quote_cannot_silently_become_recurring(setup):
+    db, user, cfg = setup
+    sub = legacy_subscription(setup)
+    quote = mobile.quote(mobile.Selection(plan='basic'), user, db)
+    # Change between displaying the quote and submitting the checkout, at the same price.
+    sub.status = 'canceled'; sub.credit_balance_halers = 0; db.commit()
+    with pytest.raises(HTTPException) as error:
+        mobile.checkout(purchase(expected_recurring=quote['recurring']), request(), user, db)
+    assert error.value.status_code == 409
+    assert db.query(LicensePaymentTransaction).count() == 0
+
+def test_recurring_checkout_requests_only_consented_authority(setup, monkeypatch):
+    db, user, cfg = setup
+    _, calls = created(setup, monkeypatch)
+    assert calls[0]['initRecurring'] == 'true'
+    assert json.loads(db.query(LicensePaymentTransaction).one().payload_json)['legal_consents']['recurring'] is True
