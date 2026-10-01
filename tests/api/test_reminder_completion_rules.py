@@ -160,7 +160,12 @@ def test_recurring_reminder_cannot_be_completed_via_customer_update(db_session) 
 
 def test_recurring_reminder_cannot_be_completed_via_service_workspace_update(db_session) -> None:
     _, user, service, vehicle = _seed_context(db_session)
+    from src.modules.vehicle_hub.service_access import create_or_update_vehicle_service_link
+    create_or_update_vehicle_service_link(db_session, tenant_id=user.tenant_id,
+        service_customer_id=service.id, owner_customer_id=user.id, vehicle_id=vehicle.id,
+        approved_by_customer_id=user.id, source_type='direct_user_grant')
     reminder = Reminder(
+        created_by_service_customer_id=service.id,
         tenant_id=user.tenant_id,
         customer_id=user.id,
         vehicle_id=vehicle.id,

@@ -59,6 +59,7 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
         "tables": {"reminders"},
         "columns": {
             "reminders": {
+                "created_by_service_customer_id",
                 "notify_at",
                 "last_notified_at",
                 "notification_method",
@@ -71,6 +72,8 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
         },
     },
     "service_workspace": {
+        "columns": {"service_customer_links": {"consented_at", "consented_by_customer_id"},
+                    "reminders": {"created_by_service_customer_id"}},
         "tables": {
             "service_customer_links",
             "service_customer_invites",

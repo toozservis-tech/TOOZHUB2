@@ -19,7 +19,8 @@ from src.core.branding import APP_SERVER_PRODUCT_TOKEN
 from src.core.private_errors import report_exception
 from src.core.rbac import is_admin
 from ..database import get_db
-from ..models import Customer, ServiceAccessRequest, ServiceCustomerLink, ServiceVehicleAccess, Vehicle, VehicleServiceLink
+from ..models import Customer, ServiceAccessRequest, ServiceCustomerLink, ServiceCustomerInvite, ServiceVehicleAccess, Vehicle, VehicleServiceLink
+from ..service_contact_consent import lock_service_contacts
 from ..ownership import get_owned_vehicle, get_owned_vehicle_ids, get_primary_vehicle_owner, lock_vehicle_access
 from ..schema_management import assert_module_ready
 from ..service_access import create_or_update_vehicle_service_link, revoke_vehicle_service_link, vehicle_label
@@ -717,6 +718,13 @@ def disconnect_my_service_contact(
     if not service:
         raise HTTPException(status_code=404, detail="Servis nebyl nalezen.")
 
+    lock_service_contacts(db, service_id)
+    invitations = db.query(ServiceCustomerInvite).filter(
+        ServiceCustomerInvite.service_customer_id == service_id,
+        func.lower(ServiceCustomerInvite.invite_email) == _normalize_email(current_user.email),
+        ServiceCustomerInvite.status.in_(['pending', 'accepted']),
+    ).all()
+
     link_row = (
         db.query(ServiceCustomerLink)
         .filter(
@@ -741,7 +749,7 @@ def disconnect_my_service_contact(
     pending_ids = {row[0] for row in db.query(ServiceAccessRequest.vehicle_id).filter_by(
         service_customer_id=service_id, owner_customer_id=current_user.id, status="pending").all()}
     vehicle_ids = legacy_ids | pending_ids | {row.vehicle_id for row in access_rows}
-    if not link_row and not vehicle_ids:
+    if not link_row and not vehicle_ids and not invitations:
         return {
             "disconnected": False,
             "service_id": int(service_id),
@@ -758,6 +766,11 @@ def disconnect_my_service_contact(
         if link_row:
             link_row.status = "archived"
             link_row.updated_at = now
+            link_row.consented_at = None
+            link_row.consented_by_customer_id = None
+        for invitation in invitations:
+            invitation.status = 'cancelled'
+            invitation.updated_at = now
         for vehicle_id in sorted(vehicle_ids):
             # Never revoke the new owner's grant if a transfer won the race.
             owner = get_primary_vehicle_owner(db, db.get(Vehicle, vehicle_id))

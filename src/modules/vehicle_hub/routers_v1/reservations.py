@@ -23,6 +23,7 @@ from ..models import (
     ServiceCustomerLink,
     ServiceCustomerInvite,
     ServiceVehicleAccess,
+    VehicleServiceLink,
     VehicleOwnership,
 )
 from ..schema_management import assert_module_ready
@@ -38,6 +39,7 @@ from ..email_notifications import (
     send_reservation_status_email,
     send_reservation_rescheduled_email,
 )
+from ..service_access import get_active_vehicle_service_link
 from ..ownership import get_owned_vehicle, get_owned_vehicle_rows, get_primary_vehicle_owner
 
 router = APIRouter(prefix="/reservations", tags=["reservations-v1"])
@@ -343,71 +345,16 @@ def get_reservation_vehicle_options(
 
     if role_key == "service":
         service_id = int(current_user.id)
-        source_by_vehicle: dict[int, str] = {}
-
-        shared_rows = (
-            db.query(ServiceVehicleAccess.vehicle_id)
-            .filter(
-                ServiceVehicleAccess.service_customer_id == service_id,
-                ServiceVehicleAccess.status == "active",
-                ServiceVehicleAccess.vehicle_id.isnot(None),
-            )
-            .all()
-        )
-        for (vehicle_id,) in shared_rows:
-            if vehicle_id is None:
-                continue
-            source_by_vehicle[int(vehicle_id)] = "service_access"
-
-        reservation_rows = (
-            db.query(ReservationModel.vehicle_id)
-            .filter(
-                ReservationModel.service_id == service_id,
-                ReservationModel.vehicle_id.isnot(None),
-            )
-            .all()
-        )
-        for (vehicle_id,) in reservation_rows:
-            if vehicle_id is None:
-                continue
-            source_by_vehicle.setdefault(int(vehicle_id), "reservation_history")
-
-        linked_vehicle_rows = (
-            db.query(VehicleOwnership.vehicle_id)
-            .join(
-                ServiceCustomerLink,
-                ServiceCustomerLink.customer_id == VehicleOwnership.customer_id,
-            )
-            .filter(
-                VehicleOwnership.is_active.is_(True),
-                ServiceCustomerLink.service_customer_id == service_id,
-                ServiceCustomerLink.status == "active",
-            )
-            .all()
-        )
-        for (vehicle_id,) in linked_vehicle_rows:
-            if vehicle_id is None:
-                continue
-            source_by_vehicle.setdefault(int(vehicle_id), "linked_customer")
-
-        vehicle_ids = sorted(source_by_vehicle.keys())
-        if not vehicle_ids:
-            return []
-
-        query = db.query(VehicleModel).filter(VehicleModel.id.in_(vehicle_ids))
-        vehicles = query.order_by(VehicleModel.created_at.desc(), VehicleModel.id.desc()).all()
-
-        return [
-            {
-                "id": int(vehicle.id),
-                "name": _reservation_vehicle_label(vehicle),
-                "plate": getattr(vehicle, "plate", None),
-                "owner_email": getattr(get_primary_vehicle_owner(db, vehicle), "email", None) or getattr(vehicle, "user_email", None),
-                "is_shared": True,
-                "source": source_by_vehicle.get(int(vehicle.id), "service_access"),
-            }
-            for vehicle in vehicles
-        ]
+        rows = (db.query(VehicleServiceLink, VehicleModel)
+            .join(VehicleModel, VehicleModel.id == VehicleServiceLink.vehicle_id)
+            .filter(VehicleServiceLink.service_customer_id == service_id,
+                VehicleServiceLink.status == 'approved',
+                VehicleServiceLink.scope_vehicle_history_read.is_(True))
+            .order_by(VehicleModel.created_at.desc(), VehicleModel.id.desc()).all())
+        return [{'id': int(vehicle.id), 'name': _reservation_vehicle_label(vehicle),
+            'plate': vehicle.plate, 'owner_email': getattr(get_primary_vehicle_owner(db, vehicle), 'email', None),
+            'is_shared': True, 'source': 'service_access'} for link, vehicle in rows
+            if get_active_vehicle_service_link(db, service_customer_id=service_id, vehicle_id=vehicle.id)]
 
     if _is_admin_role(role_key):
         query = db.query(VehicleModel)

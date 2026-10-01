@@ -76,7 +76,7 @@ def db_context(tmp_path: Path):
         engine.dispose()
 
 
-def test_user_vehicle_options_fallback_to_email_without_tenant_match(db_context) -> None:
+def test_user_vehicle_options_require_ownership_for_cross_tenant_email_match(db_context) -> None:
     db = db_context["db"]
     user = db_context["user"]
     tenant_b = db_context["tenant_b"]
@@ -98,10 +98,14 @@ def test_user_vehicle_options_fallback_to_email_without_tenant_match(db_context)
         db=db,
     )
     vehicle_ids = {int(item["id"]) for item in payload}
-    assert vehicle.id in vehicle_ids
+    assert vehicle.id not in vehicle_ids
+    from src.modules.vehicle_hub.ownership import ensure_vehicle_owner_assignment
+    vehicle.tenant_id = user.tenant_id
+    ensure_vehicle_owner_assignment(db, vehicle=vehicle, owner=user); db.commit()
+    assert vehicle.id in {item['id'] for item in reservations_router.get_reservation_vehicle_options(current_user=user, db=db)}
 
 
-def test_service_vehicle_options_include_linked_customer_vehicles(db_context) -> None:
+def test_service_vehicle_options_require_explicit_vehicle_grant(db_context) -> None:
     db = db_context["db"]
     tenant_a = db_context["tenant_a"]
     user = db_context["user"]
@@ -135,9 +139,18 @@ def test_service_vehicle_options_include_linked_customer_vehicles(db_context) ->
         current_user=service,
         db=db,
     )
+    assert payload == [], "A contact alone must not reveal vehicles."
+    from src.modules.vehicle_hub.service_access import create_or_update_vehicle_service_link
+    grant = create_or_update_vehicle_service_link(db, tenant_id=user.tenant_id,
+        service_customer_id=service.id, owner_customer_id=user.id, vehicle_id=vehicle.id,
+        approved_by_customer_id=user.id, source_type='direct_user_grant')
+    db.commit()
+    payload = reservations_router.get_reservation_vehicle_options(current_user=service, db=db)
     matched = [item for item in payload if int(item["id"]) == vehicle.id]
     assert matched, "Linked vehicle must be available for service reservation."
-    assert matched[0]["source"] in {"linked_customer", "service_access", "reservation_history"}
+    assert matched[0]["source"] == "service_access"
+    grant.status = 'revoked'; db.commit()
+    assert reservations_router.get_reservation_vehicle_options(current_user=service, db=db) == []
 
 
 def test_create_reservation_persists_source_platform(db_context, monkeypatch: pytest.MonkeyPatch) -> None:

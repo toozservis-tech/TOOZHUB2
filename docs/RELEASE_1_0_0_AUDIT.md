@@ -212,3 +212,34 @@ Výmaz účtu zahrnuje jeho historické soukromé archivy, původní přílohy a
 Ověření: 440 společných serverových kontrol prošlo; následný reproduktor výmazu a všechny související kontroly vlastnictví, VIN a výmazu 55/55 (441 unikátních scénářů společné sady). Izolovaný PostgreSQL ověřuje skutečné cizí klíče, poslední potvrzený snapshot a odmítnutí čtyř typů starých formulářů po převodu. Native iOS: 30 unit testů a samostatný test zobrazení s pouze syntetickými údaji; uložený snímek byl vizuálně zkontrolován. Podepsaná simulátorová sestava i Release pro zařízení prošly. V produkční databázi byla provedena pouze čtecí kontrola počtů: žádná vozidla s více různými historickými vlastníky a žádné aktivní vlastnictví bez vozidla. Nebyl proveden převod ani výmaz skutečného účtu.
 
 Změna schématu je pouze doplňující (`20261001_0011`), automatické mazání či sloučení existujících dat neprovádí. Retenční povinnosti servisu, schvalování samoobslužného převodu oběma stranami, úplná provozní záloha a ostatní otevřené body před vydáním nadále zůstávají. Výsledek této etapy není potvrzením kompletního GDPR souladu, bezchybnosti celé aplikace ani souhlasem s veřejným vydáním.
+
+### 2026-10-01: service contact invitation consent and reminder privacy
+
+- Removed automatic linking by knowledge of an existing customer's email. Send,
+  resend and the legacy link-existing action now require the signed-in recipient's
+  explicit decision. Only pending, unexpired invitations to that account may be
+  accepted. An unverified new email cannot accept an invitation.
+- Added nullable contact consent timestamp/actor and service reminder authorship.
+  Migration `20261001_0012` is additive and does not infer consent or authorship
+  for historical rows. Existing records remain intact. Legacy contacts without
+  consent or an active vehicle grant no longer expose customer data. Historical
+  reminders with unknown authors remain available to the customer/admin, but
+  cannot safely be attributed to a service.
+- Contact acceptance shares contact details, not the customer's complete fleet.
+  Service customer lists/counts and reservation vehicle options now use active
+  vehicle-specific grants. A service may manage only its own reminders while
+  the required contact/vehicle authorization remains active.
+- PostgreSQL transaction locks serialize accept/decline/disconnect; repeated
+  acceptance creates one contact, and replay cannot restore a disconnected one.
+  Send/resend share a persistent attempt budget. Mail URLs contain no invitation
+  token or customer identity and open a public instruction page, then the app.
+- Tests: 65 offline/isolated PostgreSQL privacy, invitation, concurrent-flow and
+  recovery tests passed. Security regression: 251 passed; one old reminder fixture
+  lacked service authorship and a grant. Corrected fixture and schema smoke:
+  4 passed. Native account/security suite: 46 passed, including six invitation
+  tests (negative/malformed acknowledgements, stale session, duplicate tap).
+  No invitations or account consents were sent/changed in production by tests.
+- Native Profile → Pozvánky servisů shows incoming invitations and explicit
+  acceptance/rejection. A cancelled request or switched account cannot receive
+  stale success or private results. Visual review includes readable light
+  background and white acceptance-button text. Camera is not verified by this.

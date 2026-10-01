@@ -87,7 +87,13 @@ def test_service_workspace_link_existing_and_ingest(api_url):
     )
     assert link_response.status_code == 200, link_response.text
     link_payload = link_response.json()
-    assert link_payload["linked"] is True
+    assert link_payload["linked"] is False
+    inbox = requests.get(f"{api_url}/api/v1/services/workspace/invitations/incoming", headers=customer_headers, timeout=8)
+    assert inbox.status_code == 200, inbox.text
+    invitation_id = next(item['id'] for item in inbox.json()['items'] if item['service_email'] == service_email)
+    accepted = requests.post(f"{api_url}/api/v1/services/workspace/invitations/accept",
+        headers=customer_headers, json={'invitation_id': invitation_id}, timeout=8)
+    assert accepted.status_code == 200 and accepted.json()['accepted'] is True
 
     grant_response = requests.post(
         f"{api_url}/api/v1/services/vehicle-access",

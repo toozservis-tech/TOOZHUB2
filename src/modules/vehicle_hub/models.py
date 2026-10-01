@@ -152,6 +152,9 @@ class ServiceCustomerLink(Base):
 
     status = Column(String, default="active", nullable=False, index=True)  # active, archived
     note = Column(Text, nullable=True)
+    # Old automatic links are retained, but are not evidence of customer consent.
+    consented_at = Column(DateTime, nullable=True)
+    consented_by_customer_id = Column(Integer, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -589,6 +592,8 @@ class Reminder(Base):
     
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)
+    # Null means personal/legacy origin; never infer a service author from a link.
+    created_by_service_customer_id = Column(Integer, nullable=True)
     
     type = Column(String, nullable=False)  # STK, OLEJ, SERVIS, VLASTNI, GENERAL
     text = Column(Text, nullable=False)

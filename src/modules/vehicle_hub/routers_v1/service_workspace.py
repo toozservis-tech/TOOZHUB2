@@ -19,18 +19,24 @@ import secrets
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import func
+from pydantic import BaseModel, EmailStr, Field, model_validator
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from src.core.branding import APP_DISPLAY_NAME
-from src.core.config import DATA_DIR, FRONTEND_BASE_URL
+from src.core.mfa import limit_attempt
+from src.core.private_errors import report_exception
+from src.core.config import DATA_DIR, FRONTEND_BASE_URL, PUBLIC_API_BASE_URL
 from src.modules.email_client.service import EmailService
 from src.modules.email_client.templates import render_email_layout, render_panel
 from ..database import get_db
+from ..account_state import customer_is_deleted, customer_is_disabled
+from ..email_verification import pending_verification
+from ..service_contact_consent import has_contact_consent, lock_service_contacts
 from ..models import (
     Customer,
     Reminder as ReminderModel,
@@ -120,7 +126,15 @@ class PendingVehicleRegistrationRequest(BaseModel):
 
 
 class AcceptServiceInviteRequest(BaseModel):
-    token: str = Field(min_length=12, max_length=512)
+    token: Optional[str] = Field(default=None, min_length=12, max_length=512)
+    invitation_id: Optional[int] = Field(default=None, gt=0)
+    decision: Literal["accept", "decline"] = "accept"
+
+    @model_validator(mode="after")
+    def one_identifier(self):
+        if (self.token is None) == (self.invitation_id is None):
+            raise ValueError("Vyberte právě jednu pozvánku.")
+        return self
 
 
 class IngestDocumentRequest(BaseModel):
@@ -211,18 +225,19 @@ def _get_active_link(
             ServiceCustomerLink.customer_id == customer_id,
             ServiceCustomerLink.status == "active",
         )
-        .first()
+        .populate_existing().first()
     )
 
 
 def _get_linked_customer_or_404(db: Session, current_user: Customer, customer_id: int) -> Customer:
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
-    if not customer:
+    if not customer or customer_is_disabled(customer) or customer_is_deleted(customer):
         raise HTTPException(status_code=404, detail="Zákazník nebyl nalezen.")
 
     link = _get_active_link(db, service_customer_id=current_user.id, customer_id=customer.id)
-    if not link:
-        raise HTTPException(status_code=403, detail="Tento zákazník není propojen se servisním účtem.")
+    if not link or not (has_contact_consent(link, customer.id) or _get_shared_vehicle_ids_for_pair(
+        db, service_customer_id=current_user.id, customer_id=customer.id)):
+        raise HTTPException(status_code=403, detail="Zákazník musí nejprve potvrdit propojení nebo sdílet konkrétní vozidlo.")
     return customer
 
 
@@ -394,17 +409,12 @@ def _upsert_service_customer_link(
 
 
 def _build_invitation_url(token: str) -> str:
-    base = str(FRONTEND_BASE_URL or "").strip().rstrip("/")
-    if not base:
-        base = "http://127.0.0.1:8000"
-
-    if base.endswith("/web/index.html"):
-        return f"{base}?invite_token={token}"
-    if base.endswith("/index.html"):
-        return f"{base}?invite_token={token}"
-    if base.endswith("/web"):
-        return f"{base}/index.html?invite_token={token}"
-    return f"{base}/web/index.html?invite_token={token}"
+    # Invitations are selected from the authenticated recipient's inbox. No
+    # bearer token/customer identity is placed in email URLs, logs or referrers.
+    parts = urlsplit(PUBLIC_API_BASE_URL.rstrip('/'))
+    if parts.scheme not in {'https', 'http'} or not parts.netloc or parts.username or parts.password:
+        raise HTTPException(503, 'Odkaz do aplikace není správně nastavený.')
+    return f"{parts.scheme}://{parts.netloc}/web/service-invitation.html"
 
 
 def _send_invitation_email(
@@ -427,12 +437,12 @@ def _send_invitation_email(
 
 servis {service_name} Vám poslal pozvánku do aplikace {APP_DISPLAY_NAME}.
 
-Po registraci nebo přihlášení potvrďte propojení účtu kliknutím na odkaz:
+Otevřete aplikaci, přihlaste se stejným e-mailem a v Profilu vyberte Pozvánky servisů. Tam můžete propojení potvrdit nebo odmítnout:
 {invitation_url}
 
 {f"Zpráva od servisu: {custom_message}" if custom_message else ""}
 
-Díky tomuto propojení uvidíte servisní historii a plánované úkony pro vaše vozidla.
+Po potvrzení získá servis vaše kontaktní údaje. Přístup ke konkrétním vozidlům a jejich historii schvalujete samostatně.
 """
 
     panels = [
@@ -455,11 +465,12 @@ Díky tomuto propojení uvidíte servisní historii a plánované úkony pro va�
 
     html_body = render_email_layout(
         title="Pozvánka od servisu",
-        subtitle="Propojení účtu se servisním workspace.",
+        subtitle="O propojení rozhodujete vy.",
         intro=f"Dobrý den {recipient_name},",
         paragraphs=[
             f"servis {service_name} Vám poslal pozvánku do aplikace {APP_DISPLAY_NAME}.",
-            "Po potvrzení propojení získáte přístup k evidenci servisních úkonů a plánovaným úkolům pro Vaše vozidla.",
+            "Přihlaste se v aplikaci stejným e-mailem a otevřete Profil → Pozvánky servisů. Pozvánku můžete přijmout nebo odmítnout.",
+            "Po přijetí získá servis vaše kontaktní údaje. Vozidla a jejich historii sdílíte samostatně.",
         ],
         panels=panels,
         cta_label="Otevřít pozvánku",
@@ -469,22 +480,19 @@ Díky tomuto propojení uvidíte servisní historii a plánované úkony pro va�
     )
 
     try:
-        email_service.send_simple_email(
+        return bool(email_service.send_simple_email(
             to=invite_email,
             subject=f"Pozvánka od servisu do aplikace {APP_DISPLAY_NAME}",
             body=body,
             html_body=html_body,
-        )
-        return True
+        ))
     except Exception as exc:
-        print(f"[SERVICE_WORKSPACE] Odeslání pozvánky selhalo: {exc}")
+        report_exception(exc)
         return False
 
 
 def _invitation_status_meta(status_raw: str, *, accepted_at: Optional[datetime]) -> tuple[str, str, bool]:
     status = str(status_raw or "").strip().lower()
-    if accepted_at and status != "accepted":
-        status = "accepted"
 
     if status == "accepted":
         return "accepted", "Vyřízená (přijato)", True
@@ -492,6 +500,8 @@ def _invitation_status_meta(status_raw: str, *, accepted_at: Optional[datetime])
         return "pending", "Čeká na přijetí", False
     if status == "expired":
         return "expired", "Vypršela", False
+    if status == "declined":
+        return "declined", "Odmítnutá zákazníkem", True
     if status == "cancelled":
         return "cancelled", "Zrušená", False
     return status or "unknown", "Neznámý stav", False
@@ -1975,7 +1985,11 @@ def list_service_customers(
             service_customer_id=current_user.id,
             customer_id=customer.id,
         )
-        customer_vehicles = _get_customer_vehicle_rows(db, customer)
+        if customer_is_deleted(customer) or customer_is_disabled(customer):
+            continue
+        if not has_contact_consent(link, customer.id) and not shared_vehicle_ids:
+            continue
+        customer_vehicles = [row for row in _get_customer_vehicle_rows(db, customer) if row.id in shared_vehicle_ids]
         last_service_date = (
             db.query(func.max(ServiceRecordModel.performed_at))
             .join(VehicleOwnership, VehicleOwnership.vehicle_id == ServiceRecordModel.vehicle_id)
@@ -1983,6 +1997,7 @@ def list_service_customers(
                 VehicleOwnership.customer_id == customer.id,
                 VehicleOwnership.is_active.is_(True),
                 ServiceRecordModel.user_id == current_user.id,
+                ServiceRecordModel.vehicle_id.in_(shared_vehicle_ids),
             )
             .scalar()
         )
@@ -2208,33 +2223,9 @@ def link_existing_customer(
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
 
-    customer = _find_customer_by_email(db, payload.customer_email)
-    if not customer:
-        raise HTTPException(status_code=404, detail="Účet s tímto emailem nebyl nalezen.")
-
-    if customer.id == current_user.id:
-        raise HTTPException(status_code=400, detail="Nelze propojit servisní účet se sebou samým.")
-
-    try:
-        _, created = _upsert_service_customer_link(
-            db,
-            service_customer_id=current_user.id,
-            service_tenant_id=current_user.tenant_id,
-            target_customer=customer,
-            note=(payload.note or "").strip() or None,
-        )
-        db.commit()
-        return {
-            "linked": True,
-            "created": created,
-            "message": "Klient byl úspěšně propojen." if created else "Klient už byl propojen, vazba byla aktualizována.",
-            "customer_id": customer.id,
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Nepodařilo se propojit klienta: {exc}") from exc
+    result = send_service_invitation(SendServiceInviteRequest(
+        invite_email=payload.customer_email, invite_message=payload.note), current_user=current_user, db=db)
+    return {**result, "linked": False, "created": False, "pending_confirmation": True}
 
 
 @router.get("/invitations")
@@ -2245,6 +2236,7 @@ def list_service_invitations(
 ):
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
+    lock_service_contacts(db, current_user.id)
 
     rows = (
         db.query(ServiceCustomerInvite)
@@ -2302,46 +2294,12 @@ def send_service_invitation(
     if not invite_email:
         raise HTTPException(status_code=422, detail="Email pozvánky je povinný.")
 
-    existing_customer = _find_customer_by_email(db, invite_email)
-    if existing_customer and existing_customer.id == current_user.id:
-        raise HTTPException(status_code=400, detail="Nelze poslat pozvánku na servisní účet.")
+    if invite_email == _normalize_email(current_user.email):
+        raise HTTPException(400, "Pozvánku nelze odeslat na vlastní účet.")
+    limit_attempt(db, current_user.id, 'service-invitation-send', limit=10)
+    lock_service_contacts(db, current_user.id)
 
     try:
-        # U existujícího účtu provedeme okamžité propojení bez čekání.
-        if existing_customer:
-            _, created = _upsert_service_customer_link(
-                db,
-                service_customer_id=current_user.id,
-                service_tenant_id=current_user.tenant_id,
-                target_customer=existing_customer,
-                note="Propojeno přes pozvánku servisu",
-            )
-            audit_invite = ServiceCustomerInvite(
-                service_tenant_id=current_user.tenant_id,
-                service_customer_id=current_user.id,
-                invite_email=invite_email,
-                invite_name=(payload.invite_name or "").strip() or None,
-                invite_message=(payload.invite_message or "").strip() or None,
-                token=secrets.token_urlsafe(24),
-                status="accepted",
-                linked_customer_id=existing_customer.id,
-                linked_customer_tenant_id=existing_customer.tenant_id,
-                sent_at=datetime.utcnow(),
-                accepted_at=datetime.utcnow(),
-                expires_at=datetime.utcnow() + timedelta(days=30),
-            )
-            db.add(audit_invite)
-            db.commit()
-            return {
-                "already_linked": not created,
-                "linked_now": True,
-                "email_sent": False,
-                "message": (
-                    "Účet už byl propojen." if not created else "Existující účet byl automaticky propojen se servisem."
-                ),
-                "customer_id": existing_customer.id,
-            }
-
         # Zneplatnit staré čekající pozvánky pro stejný e-mail od stejného servisu.
         (
             db.query(ServiceCustomerInvite)
@@ -2389,14 +2347,15 @@ def send_service_invitation(
             "message": (
                 "Pozvánka byla odeslána na email zákazníka."
                 if email_sent
-                else "Pozvánka je vytvořena, ale SMTP není dostupné. Pošlete zákazníkovi registrační odkaz ručně."
+                else "Pozvánka je připravená v aplikaci zákazníka, ale e-mail se nepodařilo odeslat. Zkuste jej odeslat znovu."
             ),
         }
     except HTTPException:
         raise
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Nepodařilo se vytvořit pozvánku: {exc}") from exc
+        report_exception(exc)
+        raise HTTPException(status_code=500, detail="Pozvánku se nepodařilo vytvořit. Zkuste to znovu.") from exc
 
 
 @router.post("/invitations/{invite_id}/resend")
@@ -2408,6 +2367,8 @@ def resend_service_invitation(
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
 
+    limit_attempt(db, current_user.id, 'service-invitation-send', limit=10)
+    lock_service_contacts(db, current_user.id)
     invite = (
         db.query(ServiceCustomerInvite)
         .filter(
@@ -2429,29 +2390,6 @@ def resend_service_invitation(
         raise HTTPException(status_code=422, detail="Pozvánka nemá validní email.")
 
     try:
-        existing_customer = _find_customer_by_email(db, invite_email)
-        if existing_customer and existing_customer.id != current_user.id:
-            _upsert_service_customer_link(
-                db,
-                service_customer_id=current_user.id,
-                service_tenant_id=current_user.tenant_id,
-                target_customer=existing_customer,
-                note="Propojeno přes opětovné odeslání pozvánky",
-            )
-            invite.status = "accepted"
-            invite.accepted_at = now
-            invite.linked_customer_id = existing_customer.id
-            invite.linked_customer_tenant_id = existing_customer.tenant_id
-            invite.updated_at = now
-            db.commit()
-            return {
-                "resent": False,
-                "linked_now": True,
-                "status": "accepted",
-                "message": "Účet zákazníka už existuje, pozvánka byla rovnou označena jako vyřízená.",
-                "customer_id": existing_customer.id,
-            }
-
         invite.token = secrets.token_urlsafe(32)
         invite.status = "pending"
         invite.sent_at = now
@@ -2479,14 +2417,15 @@ def resend_service_invitation(
             "message": (
                 "Pozvánka byla znovu odeslána."
                 if email_sent
-                else "Pozvánka byla obnovena, ale SMTP není dostupné. Odkaz pošlete zákazníkovi ručně."
+                else "Pozvánka je obnovená v aplikaci zákazníka, ale e-mail se nepodařilo odeslat."
             ),
         }
     except HTTPException:
         raise
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Opětovné odeslání pozvánky selhalo: {exc}") from exc
+        report_exception(exc)
+        raise HTTPException(status_code=500, detail="Pozvánku se nepodařilo znovu odeslat. Zkuste to později.") from exc
 
 
 @router.delete("/invitations/{invite_id}")
@@ -2498,6 +2437,7 @@ def delete_service_invitation(
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
 
+    lock_service_contacts(db, current_user.id)
     invite = (
         db.query(ServiceCustomerInvite)
         .filter(
@@ -2510,68 +2450,95 @@ def delete_service_invitation(
         raise HTTPException(status_code=404, detail="Pozvánka nebyla nalezena.")
 
     try:
-        db.delete(invite)
+        invite.status = "cancelled"
+        invite.updated_at = datetime.utcnow()
         db.commit()
         return {"deleted": True, "invite_id": invite_id}
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Smazání pozvánky selhalo: {exc}") from exc
+        report_exception(exc)
+        raise HTTPException(status_code=500, detail="Pozvánku se nepodařilo zrušit. Zkuste to znovu.") from exc
+
+
+def _require_invitation_recipient(db, customer):
+    if str(customer.role or '').lower() != 'user' or customer_is_disabled(customer) or customer_is_deleted(customer):
+        raise HTTPException(403, 'Pozvánky potvrzuje přihlášený zákazník svým vlastním účtem.')
+    if pending_verification(db, customer.id):
+        raise HTTPException(403, 'Nejprve ověřte svůj e-mail.')
+
+
+@router.get("/invitations/incoming")
+def list_incoming_service_invitations(current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_service_workspace_schema(db)
+    _require_invitation_recipient(db, current_user)
+    rows = (db.query(ServiceCustomerInvite, Customer)
+        .join(Customer, Customer.id == ServiceCustomerInvite.service_customer_id)
+        .filter(func.lower(ServiceCustomerInvite.invite_email) == _normalize_email(current_user.email),
+            ServiceCustomerInvite.status == 'pending', ServiceCustomerInvite.expires_at > datetime.utcnow(),
+            or_(ServiceCustomerInvite.invite_message.is_(None), ~ServiceCustomerInvite.invite_message.startswith('__RESERVATION_AUTO_LINK__:')),
+            Customer.role.in_(['service','admin','developer_admin']),
+            Customer.is_disabled.is_not(True), Customer.is_deleted.is_not(True))
+        .order_by(ServiceCustomerInvite.sent_at.desc()).limit(100).all())
+    return {'items': [{'id': row.id, 'service_name': service.name or 'Servis',
+        'service_email': service.email, 'message': row.invite_message,
+        'expires_at': row.expires_at.isoformat()} for row, service in rows
+        if service.role in {'service', 'admin', 'developer_admin'}
+        and not customer_is_disabled(service) and not customer_is_deleted(service)
+        and not str(row.invite_message or '').startswith('__RESERVATION_AUTO_LINK__:')]}
 
 
 @router.post("/invitations/accept")
-def accept_service_invitation(
-    payload: AcceptServiceInviteRequest,
-    current_user: Customer = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+def accept_service_invitation(payload: AcceptServiceInviteRequest,
+    current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
     _ensure_service_workspace_schema(db)
-
-    token = str(payload.token or "").strip()
-    invite = db.query(ServiceCustomerInvite).filter(ServiceCustomerInvite.token == token).first()
+    _require_invitation_recipient(db, current_user)
+    query = db.query(ServiceCustomerInvite).filter(
+        func.lower(ServiceCustomerInvite.invite_email) == _normalize_email(current_user.email))
+    query = query.filter(ServiceCustomerInvite.id == payload.invitation_id) if payload.invitation_id else query.filter(ServiceCustomerInvite.token == payload.token.strip())
+    invite = query.first()
     if not invite:
-        raise HTTPException(status_code=404, detail="Pozvánka nebyla nalezena.")
-
+        raise HTTPException(404, 'Pozvánka nebyla nalezena.')
+    lock_service_contacts(db, invite.service_customer_id)
+    invite = query.populate_existing().first()
+    if not invite:
+        raise HTTPException(404, 'Pozvánka nebyla nalezena.')
+    service = db.get(Customer, invite.service_customer_id, populate_existing=True)
+    if not service or service.role not in {'service', 'admin', 'developer_admin'} or customer_is_disabled(service) or customer_is_deleted(service):
+        raise HTTPException(409, 'Servis už není dostupný.')
+    link = _get_active_link(db, service_customer_id=service.id, customer_id=current_user.id)
+    if invite.status == 'accepted':
+        if payload.decision == 'accept' and invite.linked_customer_id == current_user.id and has_contact_consent(link, current_user.id):
+            return {'accepted': True, 'message': 'Pozvánka už byla přijata.'}
+        raise HTTPException(409, 'Propojení není aktivní. Vyžádejte si novou pozvánku.')
+    if invite.status != 'pending':
+        raise HTTPException(409, 'Pozvánka už není aktivní.')
     now = datetime.utcnow()
-    if invite.status == "accepted":
-        if invite.linked_customer_id == current_user.id:
-            return {"accepted": True, "message": "Pozvánka už byla dříve přijata."}
-        raise HTTPException(status_code=409, detail="Pozvánka už byla použita jiným účtem.")
-
-    if invite.status != "pending":
-        raise HTTPException(status_code=400, detail="Pozvánka není aktivní.")
-
-    if invite.expires_at and invite.expires_at < now:
-        invite.status = "expired"
-        invite.updated_at = now
-        db.commit()
-        raise HTTPException(status_code=400, detail="Pozvánka vypršela.")
-
-    if _normalize_email(current_user.email) != _normalize_email(invite.invite_email):
-        raise HTTPException(status_code=403, detail="Pozvánka patří jinému e-mailu.")
-
+    if not invite.expires_at or invite.expires_at <= now:
+        raise HTTPException(409, 'Platnost pozvánky vypršela.')
+    if str(invite.invite_message or '').startswith('__RESERVATION_AUTO_LINK__:'):
+        raise HTTPException(409, 'Tento odkaz patří k rezervaci.')
     try:
-        _upsert_service_customer_link(
-            db,
-            service_customer_id=invite.service_customer_id,
-            service_tenant_id=invite.service_tenant_id,
-            target_customer=current_user,
-            note="Propojeno přes přijatou pozvánku",
-        )
-        invite.status = "accepted"
-        invite.accepted_at = now
-        invite.linked_customer_id = current_user.id
-        invite.linked_customer_tenant_id = current_user.tenant_id
+        if payload.decision == 'decline':
+            invite.status = 'declined'
+        else:
+            link, _ = _upsert_service_customer_link(db, service_customer_id=service.id,
+                service_tenant_id=service.tenant_id, target_customer=current_user,
+                note='Propojení výslovně potvrzené zákazníkem v aplikaci.')
+            link.consented_at = now
+            link.consented_by_customer_id = current_user.id
+            invite.status = 'accepted'
+            invite.accepted_at = now
+            invite.linked_customer_id = current_user.id
+            invite.linked_customer_tenant_id = current_user.tenant_id
         invite.updated_at = now
         db.commit()
-        return {
-            "accepted": True,
-            "message": "Pozvánka byla přijata a účet je propojen se servisem.",
-        }
-    except HTTPException:
-        raise
+        return {'accepted': payload.decision == 'accept', 'message': (
+            'Propojení potvrzeno. Přístup ke konkrétním vozidlům schválíte samostatně.'
+            if payload.decision == 'accept' else 'Pozvánka byla odmítnuta.')}
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Přijetí pozvánky selhalo: {exc}") from exc
+        report_exception(exc)
+        raise HTTPException(500, 'Rozhodnutí se nepodařilo uložit. Zkuste to znovu.') from exc
 
 
 @router.get("/customers/{customer_id}/vehicles")
@@ -2606,7 +2573,7 @@ def list_customer_vehicles(
             "created_at": vehicle.created_at.isoformat() if vehicle.created_at else None,
             "is_shared": int(vehicle.id) in shared_vehicle_ids,
         }
-        for vehicle in vehicles
+        for vehicle in vehicles if int(vehicle.id) in shared_vehicle_ids
     ]
 
 
@@ -2766,6 +2733,9 @@ def create_pending_vehicle_registration(
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
 
+    limit_attempt(db, current_user.id, 'service-invitation-send', limit=10)
+    lock_service_contacts(db, current_user.id)
+
     invite_email = _normalize_email(payload.invite_email)
     if not invite_email:
         raise HTTPException(status_code=422, detail="Email budoucího vlastníka je povinný.")
@@ -2790,6 +2760,9 @@ def create_pending_vehicle_registration(
     existing_customer = _find_customer_by_email(db, invite_email)
     if existing_customer and existing_customer.id == current_user.id:
         raise HTTPException(status_code=400, detail="Nelze předregistrovat vozidlo na servisní účet.")
+    if existing_customer:
+        # Knowing an email is not permission to link or populate an account.
+        _get_linked_customer_or_404(db, current_user, existing_customer.id)
 
     try:
         if existing_customer:
@@ -2929,7 +2902,29 @@ def create_pending_vehicle_registration(
         raise
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Předregistrace vozidla selhala: {exc}") from exc
+        report_exception(exc)
+        raise HTTPException(status_code=500, detail="Vozidlo se nepodařilo zaevidovat. Zkuste to znovu.") from exc
+
+
+def _can_manage_workspace_reminder(db, service, reminder, *, for_write=False):
+    if reminder.created_by_service_customer_id != service.id:
+        return False
+    try:
+        _get_linked_customer_or_404(db, service, reminder.customer_id)
+        if reminder.vehicle_id:
+            if for_write:
+                require_service_vehicle_link(db, current_user=service,
+                    vehicle_id=reminder.vehicle_id, require_create_record=True)
+            else:
+                link = get_active_vehicle_service_link(db, service_customer_id=service.id,
+                    vehicle_id=reminder.vehicle_id)
+                if not link or not link.scope_vehicle_history_read:
+                    return False
+        return True
+    except HTTPException as exc:
+        if exc.status_code not in {403, 404}:
+            raise
+        return False
 
 
 @router.get("/reminders")
@@ -2966,7 +2961,8 @@ def list_service_workspace_reminders(
         db.query(ReminderModel, Customer, VehicleModel)
         .join(Customer, Customer.id == ReminderModel.customer_id)
         .outerjoin(VehicleModel, VehicleModel.id == ReminderModel.vehicle_id)
-        .filter(ReminderModel.customer_id.in_(linked_customer_ids))
+        .filter(ReminderModel.customer_id.in_(linked_customer_ids),
+            ReminderModel.created_by_service_customer_id == current_user.id)
     )
 
     if customer_id:
@@ -2985,6 +2981,8 @@ def list_service_workspace_reminders(
 
     output = []
     for reminder, customer, vehicle in rows:
+        if not _can_manage_workspace_reminder(db, current_user, reminder):
+            continue
         vehicle_label = (
             (getattr(vehicle, "nickname", None) or None)
             or " ".join([part for part in [getattr(vehicle, "brand", None), getattr(vehicle, "model", None)] if part]).strip()
@@ -3024,6 +3022,7 @@ def create_service_workspace_reminder(
 ):
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
+    lock_service_contacts(db, current_user.id)
 
     customer = _get_linked_customer_or_404(db, current_user, int(payload.customer_id))
     vehicle = None
@@ -3037,7 +3036,10 @@ def create_service_workspace_reminder(
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vybrané vozidlo klienta nebylo nalezeno.")
 
+    if vehicle:
+        require_service_vehicle_link(db, current_user=current_user, vehicle_id=vehicle.id, require_create_record=True)
     reminder = ReminderModel(
+        created_by_service_customer_id=current_user.id,
         tenant_id=getattr(customer, "tenant_id", None) or getattr(current_user, "tenant_id", None) or 1,
         customer_id=customer.id,
         vehicle_id=int(payload.vehicle_id) if payload.vehicle_id else None,
@@ -3090,6 +3092,7 @@ def update_service_workspace_reminder(
 ):
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
+    lock_service_contacts(db, current_user.id)
 
     linked_customer_ids = [
         int(item[0])
@@ -3114,7 +3117,7 @@ def update_service_workspace_reminder(
         )
         .first()
     )
-    if not reminder:
+    if not reminder or not _can_manage_workspace_reminder(db, current_user, reminder, for_write=True):
         raise HTTPException(status_code=404, detail="Připomínka nebyla nalezena.")
 
     fields_set = set(getattr(payload, "model_fields_set", set()) or set())
@@ -3173,6 +3176,7 @@ def delete_service_workspace_reminder(
 ):
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
+    lock_service_contacts(db, current_user.id)
 
     linked_customer_ids = [
         int(item[0])
@@ -3197,7 +3201,7 @@ def delete_service_workspace_reminder(
         )
         .first()
     )
-    if not reminder:
+    if not reminder or not _can_manage_workspace_reminder(db, current_user, reminder, for_write=True):
         raise HTTPException(status_code=404, detail="Připomínka nebyla nalezena.")
 
     db.delete(reminder)

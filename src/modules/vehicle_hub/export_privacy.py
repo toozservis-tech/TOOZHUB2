@@ -20,7 +20,7 @@ EXPORT_FIELDS = {
     ),
     'ServiceCustomerLink': (
         'id', 'service_tenant_id', 'service_customer_id', 'customer_tenant_id', 'customer_id', 'status',
-        'note', 'created_at', 'updated_at',
+        'note', 'consented_at', 'consented_by_customer_id', 'created_at', 'updated_at',
     ),
     'ServiceCustomerInvite': (
         'id', 'service_tenant_id', 'service_customer_id', 'invite_email', 'invite_name', 'invite_message',
@@ -55,6 +55,7 @@ EXPORT_FIELDS = {
         'note', 'start_datetime', 'end_datetime', 'status', 'source_platform', 'created_at',
     ),
     'Reminder': (
+        'created_by_service_customer_id',
         'id', 'tenant_id', 'customer_id', 'vehicle_id', 'type', 'text',
         'due_date', 'notify_at', 'notification_method', 'last_notified_at', 'is_manual', 'is_completed',
         'recurrence_group_id', 'recurrence_index', 'repeat_interval_days', 'created_at',

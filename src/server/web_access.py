@@ -16,6 +16,7 @@ from src.modules.vehicle_hub.account_state import customer_is_deleted, customer_
 from src.modules.vehicle_hub.email_verification import pending_verification
 
 PUBLIC_WEB_PAGES = {
+    "service-invitation.html",
     "open-app.html", "payment-return.html", "assets/mastercard-mark.svg", "chatbot/widget.js", "chatbot/robot-logo.png",
     "reset-password.html", "verify-email.html", "cookies.html", "obchodni-podminky.html",
     "ochrana-osobnich-udaju.html", "platebni-podminky.html", "reklamacni-rad.html",
