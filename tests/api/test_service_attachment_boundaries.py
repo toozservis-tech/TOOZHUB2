@@ -1,5 +1,6 @@
 """File access stays bound to the authorized vehicle, including legacy metadata."""
 from datetime import date
+from pathlib import PurePosixPath
 import json
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from src.modules.vehicle_hub.models import Customer, Tenant, Vehicle, ServiceRec
 from src.modules.vehicle_hub.ownership import ensure_vehicle_owner_assignment
 from src.modules.vehicle_hub.routers_v1 import service_records as records
 from src.modules.vehicle_hub.routers_v1.auth import get_current_user
+from src.core import file_storage
 
 
 @pytest.fixture
@@ -32,7 +34,9 @@ def files(tmp_path, monkeypatch):
         ensure_vehicle_owner_assignment(db,vehicle=car,owner=user)
         rows.append((user,car))
     db.commit()
-    root=tmp_path/'attachments';root.mkdir()
+    root=tmp_path/'service_record_attachments';root.mkdir()
+    monkeypatch.setattr(file_storage, 'DATA_DIR', tmp_path)
+    monkeypatch.setattr(file_storage, '_config', lambda: None)
     own_key=f'tenant_{rows[0][0].tenant_id}/vehicle_{rows[0][1].id}/own.txt'
     foreign_key=f'tenant_{rows[1][0].tenant_id}/vehicle_{rows[1][1].id}/foreign.txt'
     for key,data in [(own_key,b'OWN FILE'),(foreign_key,b'PRIVATE FOREIGN INVOICE')]:
@@ -173,3 +177,48 @@ def test_own_document_summary_still_refreshes_using_bound_vehicle(files,monkeypa
     assert response.status_code==200,response.text
     assert parsed==[b'OWN FILE']
     assert json.loads(response.json()['attachments'])[0]['parsed_summary']['supplier_name']=='Fixture supplier'
+
+
+@pytest.mark.parametrize('method', ['post', 'put'])
+@pytest.mark.parametrize('field', ['storage_key', 'path'])
+def test_new_missing_file_cannot_be_committed_as_a_record_attachment(files, method, field):
+    s = files
+    missing = str(PurePosixPath(s.own_key).with_name('never-uploaded.pdf'))
+    url = f'/api/v1/vehicles/{s.car.id}/records'
+    if method == 'put':
+        row = ServiceRecord(vehicle_id=s.car.id, tenant_id=s.owner.tenant_id, user_id=s.owner.id,
+                            description='Original fixture', category='JINE')
+        s.db.add(row); s.db.commit(); url += f'/{row.id}'
+    response = s.client.request(method, url, json=record_body([{field: missing}]))
+    assert response.status_code == 409, response.text
+    if method == 'put':
+        s.db.refresh(row)
+        assert row.attachments is None and row.description == 'Original fixture'
+    else:
+        assert s.db.query(ServiceRecord).count() == 0
+
+
+def test_existing_unavailable_legacy_reference_is_preserved_on_unrelated_edit(files):
+    s = files
+    raw = json.dumps([{'storage_key': s.own_key, 'file_name': 'Original document'}])
+    row = ServiceRecord(vehicle_id=s.car.id, tenant_id=s.owner.tenant_id, user_id=s.owner.id,
+                        description='Original fixture', category='JINE', attachments=raw)
+    s.db.add(row); s.db.commit()
+    (s.root/s.own_key).unlink()  # Synthetic fixture only; imitate a lost original.
+    response = s.client.put(f'/api/v1/vehicles/{s.car.id}/records/{row.id}',
+                            json={'note': 'Updated note', 'attachments': raw})
+    assert response.status_code == 200, response.text
+    s.db.refresh(row)
+    assert row.note == 'Updated note' and row.attachments == raw
+    # The old broken reference cannot be duplicated onto another/new record.
+    response = s.client.post(f'/api/v1/vehicles/{s.car.id}/records', json=record_body(json.loads(raw)))
+    assert response.status_code == 409, response.text
+
+
+@pytest.mark.parametrize('raw', ['[invalid', '{}', '[null]', '["not a file"]'])
+def test_invalid_attachment_json_never_creates_an_unrecoverable_record(files, raw):
+    s = files
+    payload = record_body([]); payload['attachments'] = raw
+    response = s.client.post(f'/api/v1/vehicles/{s.car.id}/records', json=payload)
+    assert response.status_code == 422, response.text
+    assert s.db.query(ServiceRecord).count() == 0

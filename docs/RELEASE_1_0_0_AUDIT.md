@@ -1,5 +1,12 @@
 # SprávaVozidel 1.0.0 — kontrola před prvním vydáním
 
+## Trvalé uložení nových příloh a obnova (1. 10. 2026)
+
+- Potvrzená chyba: nový servisní záznam mohl uložit formálně platnou cestu k neexistujícímu souboru. U nové přílohy se nyní po kontrole oprávnění ověřuje skutečný cloudový objekt; místní cache nenahrazuje úspěšný upload. Chybějící či prázdný soubor vyžádá nové nahrání, výpadek služby zachová záznam beze změn a vrátí srozumitelnou chybu bez interních údajů. Ověření nepřesměruje přihlašovací údaje na jinou adresu a nestahuje celý dokument.
+- Již uložené reference zůstávají při úpravě poznámky zachované, i pokud originál chybí. Nelze je však nově připojit k jinému záznamu. Kontroly oddělení vlastníků a servisních oprávnění platí před přístupem k souboru. Poškozený nově zadaný JSON příloh se odmítne; původní obyčejné textové poznámky zůstávají podporované.
+- Před opravou selhalo devět reprodukčních scénářů. Po opravě prošlo 61 cílených testů, včetně neplatných cest, cizích příloh, soukromí po převodu, chybějícího objektu při existující místní cache, přesměrování poskytovatele a zachování starého záznamu. Read-only kontrola skutečného úložiště ověřila dostupný odkaz i očekávané odmítnutí známého chybějícího objektu; žádná zákaznická data se neměnila.
+- Nástroje pro šifrovanou kopii a izolovanou obnovu jsou v `CLOUD_RECOVERY.md`. Patnáct syntetických testů prošlo; reálný úplný capture zastavily chybějící starší soubory. Nejde o hotové automatické produkční zálohování ani o prokázanou obnovu všech původních dat. Tento bod zůstává překážkou vydání.
+
 ## Vyhledání SPZ a formulář podpory (1. 10. 2026)
 
 - Servisní vyhledání sjednocuje velikost písmen, mezery včetně nezalomitelných mezer a spojovníky na obou stranách porovnání. Původní chyba normalizovala jen vstup a nenacházela uložené značky s mezerou. Dva skutečné neúspěšné dotazy majitele byly porovnány pouze pro čtení; oba mají po normalizaci odpovídající vozidlo. Databázové SPZ se nepřepisují. Vyhledání nadále nedává oprávnění číst historii; nejednoznačná SPZ vyžádá VIN místo výběru prvního vozidla.

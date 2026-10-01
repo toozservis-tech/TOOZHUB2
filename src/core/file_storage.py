@@ -47,6 +47,39 @@ def persist_file(path: Path, content: bytes, *, replace=False):
     _atomic(path, content)
 
 
+def require_persisted_file(path: Path) -> None:
+    """Check a new committed reference against durable storage, never stale cache.
+
+    Authorization and vehicle/path boundaries are the caller's responsibility.
+    In cloud mode a local file is not evidence of a successful durable upload.
+    Read only the first response chunk and do not populate the cache.
+    """
+    object_key = _key(path)
+    config = _config()
+    unavailable = 'Příloha nebyla nalezena v úložišti. Nahrajte ji prosím znovu.'
+    if not config:
+        if not path.is_file() or path.stat().st_size == 0:
+            raise HTTPException(409, unavailable)
+        return
+    base, headers = config
+    try:
+        with httpx.stream('GET', base + object_key, headers=headers, timeout=20,
+                          follow_redirects=False) as response:
+            if response.status_code in (400, 404):
+                response.read()
+                body = response.json()
+                if isinstance(body, dict) and (str(body.get('statusCode')) == '404'
+                        or body.get('error') in ('not_found', 'Not Found')):
+                    raise HTTPException(409, unavailable)
+            response.raise_for_status()
+            if response.status_code != 200:
+                raise HTTPException(503, 'Úložiště souborů nyní nelze ověřit. Zkuste to později.')
+            if not next(response.iter_bytes(chunk_size=1), b''):
+                raise HTTPException(409, unavailable)
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(503, 'Úložiště souborů nyní nelze ověřit. Zkuste to později.') from None
+
+
 def cached_file(path: Path, *, refresh=False) -> Path:
     object_key = _key(path)
     config = _config()

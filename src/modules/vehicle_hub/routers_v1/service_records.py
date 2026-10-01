@@ -2,7 +2,7 @@
 Service Records API v1.0 router
 """
 from __future__ import annotations
-from src.core.file_storage import persist_file, cached_file
+from src.core.file_storage import persist_file, cached_file, require_persisted_file
 
 from datetime import datetime
 import base64
@@ -190,15 +190,40 @@ def _resolve_attachment_file(relative_key: str, *, vehicle_id: int) -> Path | No
 def _validate_record_attachment_references(attachments_raw: str | None, *, vehicle_id: int, db=None, actor=None, record_id=None) -> None:
     # Legacy plain-text annotations contain no managed file references. For JSON
     # attachments, validate both keys so a later fallback cannot change authority.
-    for item in _parse_attachments_payload(attachments_raw):
+    existing = db.get(ServiceRecordModel, record_id) if db is not None and record_id else None
+    existing_keys = set()
+    if existing is not None and existing.vehicle_id == vehicle_id:
+        existing_keys = {str(item[field]) for item in _parse_attachments_payload(existing.attachments)
+                         for field in ('storage_key', 'path') if item.get(field)}
+    # Plain-text legacy annotations have no managed files. Reject malformed new
+    # JSON instead of persisting metadata that neither clients nor backups can use.
+    items = _parse_attachments_payload(attachments_raw)
+    if attachments_raw and (existing is None or attachments_raw != existing.attachments):
+        try:
+            parsed = json.loads(attachments_raw)
+        except (ValueError, TypeError):
+            if attachments_raw.lstrip().startswith(('[', '{')):
+                raise HTTPException(422, 'Seznam příloh má neplatný formát.') from None
+        else:
+            if not isinstance(parsed, list) or any(not isinstance(item, dict) for item in parsed):
+                raise HTTPException(422, 'Seznam příloh má neplatný formát.')
+    new_files = {}
+    for item in items:
         for field in ("storage_key", "path"):
             key = item.get(field)
-            if key is not None and _attachment_path_for_vehicle(str(key), vehicle_id=vehicle_id) is None:
+            path = _attachment_path_for_vehicle(str(key), vehicle_id=vehicle_id) if key is not None else None
+            if key is not None and path is None:
                 raise HTTPException(status_code=422, detail="Příloha nepatří k tomuto vozidlu nebo má neplatnou cestu.")
             if key is not None and db is not None:
                 require_attachment_private(db, vehicle_id=vehicle_id, key=str(key), actor=actor)
                 from ..vehicle_privacy import require_attachment_write_period
                 require_attachment_write_period(db, vehicle_id=vehicle_id, key=str(key), record_id=record_id)
+            if key is not None and str(key) not in existing_keys:
+                new_files[str(key)] = path
+    # Authorize every reference before reading any file. Preserve already saved
+    # historical metadata on note edits, but do not copy missing links elsewhere.
+    for path in new_files.values():
+        require_persisted_file(path)
 
 
 def _extract_attachment_file_paths(attachments_raw: str | None, *, vehicle_id: int) -> list[Path]:
