@@ -237,7 +237,9 @@ def _build(vehicle, records, points, *, generated_at=None):
         if record.note: story.append(p('Poznámka: '+str(record.note),'body'))
         story.extend([Spacer(1,4),HRFlowable(width='100%',thickness=.5,color=LINE),Spacer(1,10)])
     if points:
-        story.extend([p('Podklady ke grafu','heading'),p('Přehled bodů použitých v grafu. Údaje se mohou vztahovat k téže návštěvě servisu.','small')])
+        evidence_intro = p('Přehled bodů použitých v grafu. Údaje se mohou vztahovat k téže návštěvě servisu.','small')
+        evidence_intro.keepWithNext = True
+        story.extend([p('Podklady ke grafu','heading'), evidence_intro])
         rows=[[p('DATUM','label'),p('STAV KM','label'),p('ZDROJ','label'),p('KONTROLA','label')]]
         for point in points:
             source={'stk':'STK / emise','service':'Servis','manual':'Ruční zápis'}.get(point.source_type,'Záznam')

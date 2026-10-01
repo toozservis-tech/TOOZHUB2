@@ -77,6 +77,15 @@ def test_text_is_literal_and_prices_keep_decimals_without_treating_missing_as_ze
     assert 'Částka neuvedena' in text
 
 
+def test_evidence_heading_stays_with_first_table_row_on_page_boundary():
+    records = [record(description=f'Oprava č. {i+1}: '+('Kontrola podvozku, řízení a čerpadla. '*9),note='Poznámka k provedené práci. '*24) for i in range(12)]
+    pages = PdfReader(BytesIO(build(records, points(45)))).pages
+    for page in pages:
+        text = page.extract_text()
+        if 'Podklady ke grafu' in text:
+            assert 'DATUM' in text and '45 000' in text
+
+
 def test_many_points_on_same_day_and_rollback_are_visible():
     pts=points(3)
     for p in pts:p.date=datetime(2026,10,1)
