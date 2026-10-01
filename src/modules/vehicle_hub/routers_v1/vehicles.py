@@ -55,6 +55,7 @@ from ..ownership import (
     get_primary_vehicle_owner,
     get_primary_vehicle_owner_assignment,
     release_vehicle_owner_assignment,
+    lock_vehicle_access,
     transfer_vehicle_to_new_owner,
     user_owns_vehicle,
 )
@@ -1829,35 +1830,6 @@ def _apply_vehicle_claim_payload(vehicle: VehicleModel, vehicle_data: VehicleCre
         vehicle.insurance_valid_until = vehicle_data.insurance_valid_until
 
 
-def _revoke_vehicle_service_links_for_owner_release(
-    db: Session,
-    *,
-    vehicle_id: int,
-    revoked_by_customer_id: int,
-    reason: str,
-) -> None:
-    from ..models import VehicleServiceLink
-
-    now = datetime.utcnow()
-    (
-        db.query(VehicleServiceLink)
-        .filter(
-            VehicleServiceLink.vehicle_id == int(vehicle_id),
-            VehicleServiceLink.status == "approved",
-        )
-        .update(
-            {
-                VehicleServiceLink.status: "revoked",
-                VehicleServiceLink.revoked_at: now,
-                VehicleServiceLink.revoked_by_customer_id: int(revoked_by_customer_id),
-                VehicleServiceLink.revoked_reason: reason,
-                VehicleServiceLink.updated_at: now,
-            },
-            synchronize_session=False,
-        )
-    )
-
-
 @router.post("/parse-orv", response_model=ORVParseResponseV1)
 def parse_orv(
     payload: ORVParseRequestV1,
@@ -1942,8 +1914,14 @@ def create_vehicle(
 
         existing_global_vehicle = _find_existing_vehicle_by_vin_globally(db=db, vin=normalized_vin)
         if existing_global_vehicle is not None:
-            active_owner_assignment = get_primary_vehicle_owner_assignment(db, int(existing_global_vehicle.id))
+            # A second claimant must observe the winner after waiting for the lock.
+            existing_global_vehicle = (db.query(VehicleModel).filter_by(id=existing_global_vehicle.id)
+                .with_for_update().populate_existing().one())
+            if _normalize_vin(existing_global_vehicle.vin or "") != normalized_vin:
+                raise HTTPException(409, "Údaje vozidla se změnily. Načtěte je znovu.")
             active_owner = get_primary_vehicle_owner(db, existing_global_vehicle)
+            # The owner lookup may just have migrated a valid legacy assignment.
+            active_owner_assignment = get_primary_vehicle_owner_assignment(db, int(existing_global_vehicle.id))
             if active_owner and active_owner.id == current_user.id and active_owner_assignment and active_owner_assignment.is_active:
                 logger.warning("[VEHICLE_CREATE] error_code=VEHICLE_DUPLICATE details={which_field: vin, scope: global_same_owner}")
                 return JSONResponse(
@@ -2631,25 +2609,18 @@ def delete_vehicle(
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
     
-    # Kontrola přístupu - pouze vlastník může smazat
+    lock_vehicle_access(db, vehicle_id)
+    owner = get_primary_vehicle_owner(db, vehicle)
     owner_decision = vehicle_write_policy(
-        role=current_user.role,
-        is_owner=user_owns_vehicle(db, current_user, vehicle),
+        role=current_user.role, is_owner=bool(owner and owner.id == current_user.id),
     )
     if not owner_decision.allowed:
-        raise HTTPException(status_code=403, detail="Nemáte oprávnění smazat toto vozidlo")
-    
-    try:
-        released = release_vehicle_owner_assignment(db, vehicle=vehicle, owner=current_user)
-        if not released:
-            raise HTTPException(status_code=409, detail="Aktuální vlastnická vazba vozidla už není aktivní.")
+        raise HTTPException(status_code=403, detail="Nemáte oprávnění odebrat toto vozidlo")
 
-        _revoke_vehicle_service_links_for_owner_release(
-            db,
-            vehicle_id=vehicle_id,
-            revoked_by_customer_id=current_user.id,
-            reason="Vozidlo bylo odebráno z profilu vlastníka.",
-        )
+    try:
+        if not owner or not release_vehicle_owner_assignment(
+                db, vehicle=vehicle, owner=owner, revoked_by_customer_id=current_user.id):
+            raise HTTPException(status_code=409, detail="Aktuální vlastnická vazba vozidla už není aktivní.")
 
         db.commit()
 
@@ -2663,4 +2634,5 @@ def delete_vehicle(
         db.rollback()
         if isinstance(e, HTTPException):
             raise
-        raise HTTPException(status_code=500, detail=f"Chyba při odebrání vozidla z profilu: {str(e)}")
+        report_exception(e)
+        raise HTTPException(status_code=500, detail="Vozidlo se nepodařilo odebrat. Zkuste to znovu.") from e

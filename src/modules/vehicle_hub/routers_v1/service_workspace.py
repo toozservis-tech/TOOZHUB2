@@ -48,10 +48,11 @@ from ..models import (
     VehicleServiceLink,
 )
 from ..orv_scans import apply_orv_scan_to_vehicle
-from ..ownership import ensure_vehicle_owner_assignment, get_owned_vehicle, get_owned_vehicle_rows, get_primary_vehicle_owner
+from ..ownership import ensure_vehicle_owner_assignment, get_owned_vehicle, get_owned_vehicle_rows, get_primary_vehicle_owner, lock_vehicle_access
 from ..schema_management import assert_module_ready
 from ..service_access import (
     create_or_update_vehicle_service_link,
+    get_active_vehicle_service_link,
     log_vehicle_lookup,
     masked_vin,
     normalize_lookup_query,
@@ -244,7 +245,9 @@ def _get_shared_vehicle_ids_for_pair(db: Session, *, service_customer_id: int, c
     )
     for (vehicle_id,) in access_rows:
         if vehicle_id:
-            shared_ids.add(int(vehicle_id))
+            link = get_active_vehicle_service_link(db, service_customer_id=service_customer_id, vehicle_id=int(vehicle_id))
+            if link and link.scope_vehicle_history_read:
+                shared_ids.add(int(vehicle_id))
 
     return shared_ids
 
@@ -2076,6 +2079,12 @@ def create_service_access_request(
             query=raw_query,
         )
 
+    if vehicle:
+        lock_vehicle_access(db, vehicle.id)
+        db.refresh(vehicle)
+        owner_customer = get_primary_vehicle_owner(db, vehicle)
+        result_status = "matched" if owner_customer else "owner_missing"
+
     audit = log_vehicle_lookup(
         db,
         current_user=current_user,
@@ -2095,15 +2104,7 @@ def create_service_access_request(
         db.commit()
         raise HTTPException(status_code=400, detail="Servis nemůže žádat o přístup ke svému vlastnímu vozidlu.")
 
-    active_link = (
-        db.query(VehicleServiceLink.id)
-        .filter(
-            VehicleServiceLink.service_customer_id == current_user.id,
-            VehicleServiceLink.vehicle_id == vehicle.id,
-            VehicleServiceLink.status == "approved",
-        )
-        .first()
-    )
+    active_link = get_active_vehicle_service_link(db, service_customer_id=current_user.id, vehicle_id=vehicle.id)
     if active_link:
         db.commit()
         raise HTTPException(status_code=409, detail="Servis už má k tomuto vozidlu schválený přístup.")
@@ -2192,6 +2193,8 @@ def list_approved_service_vehicles(
                 "last_shared_at": link.updated_at.isoformat() if link.updated_at else None,
             }
             for link, vehicle, owner in rows
+            if link.scope_vehicle_history_read and get_active_vehicle_service_link(
+                db, service_customer_id=current_user.id, vehicle_id=vehicle.id) is not None
         ]
     }
 

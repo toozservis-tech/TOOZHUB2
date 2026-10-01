@@ -18,9 +18,10 @@ from .models import (
     ServiceVehicleLookupAudit,
     ServiceRecord,
     Vehicle,
+    VehicleOwnership,
     VehicleServiceLink,
 )
-from .ownership import get_primary_vehicle_owner
+from .ownership import get_primary_vehicle_owner, get_primary_vehicle_owner_assignment, lock_vehicle_access
 
 _VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 
@@ -53,15 +54,35 @@ def get_active_vehicle_service_link(
     service_customer_id: int,
     vehicle_id: int,
 ) -> Optional[VehicleServiceLink]:
-    return (
+    link = (
         db.query(VehicleServiceLink)
         .filter(
             VehicleServiceLink.service_customer_id == int(service_customer_id),
             VehicleServiceLink.vehicle_id == int(vehicle_id),
             VehicleServiceLink.status == "approved",
         )
-        .first()
+        .populate_existing().first()
     )
+    if link is None:
+        return None
+    owner = get_primary_vehicle_owner_assignment(db, vehicle_id)
+    if owner:
+        return link if owner.customer_id == link.owner_customer_id else None
+    # Never restore a grant for a released vehicle using stale legacy fields.
+    if db.query(VehicleOwnership.id).filter_by(vehicle_id=vehicle_id).first():
+        return None
+    vehicle = db.get(Vehicle, vehicle_id)
+    customer = db.get(Customer, link.owner_customer_id)
+    if not vehicle or not customer or customer.is_deleted or customer.is_disabled:
+        return None
+    if (vehicle.tenant_id == customer.tenant_id
+            and str(vehicle.user_email or '').strip().lower() == str(customer.email or '').strip().lower()):
+        return link
+    # The creating service may document its own as-yet unclaimed preregistration.
+    if (link.source_type == "pending_owner_registration" and link.owner_customer_id == service_customer_id
+            and vehicle.tenant_id == customer.tenant_id):
+        return link
+    return None
 
 
 def service_can_read_vehicle(db: Session, current_user: Customer, vehicle_id: int) -> bool:
@@ -82,6 +103,8 @@ def require_service_vehicle_link(
     vehicle_id: int,
     require_create_record: bool = False,
 ) -> VehicleServiceLink:
+    if require_create_record:
+        lock_vehicle_access(db, vehicle_id)
     link = get_active_vehicle_service_link(
         db,
         service_customer_id=int(current_user.id),
@@ -200,6 +223,21 @@ def create_or_update_vehicle_service_link(
     source_request_id: Optional[int] = None,
     note: Optional[str] = None,
 ) -> VehicleServiceLink:
+    lock_vehicle_access(db, vehicle_id)
+    vehicle = db.query(Vehicle).filter_by(id=vehicle_id).populate_existing().one()
+    owner = get_primary_vehicle_owner(db, vehicle)
+    pending_registration = (
+        source_type == "pending_owner_registration" and owner is None
+        and service_customer_id == owner_customer_id == approved_by_customer_id
+        and not db.query(VehicleOwnership.id).filter_by(vehicle_id=vehicle_id).first()
+    )
+    if not pending_registration and (owner is None or owner.id != owner_customer_id):
+        raise HTTPException(409, "Vlastník vozidla se změnil. Načtěte přístupová oprávnění znovu.")
+    if source_request_id is not None:
+        request = db.query(ServiceAccessRequest).filter_by(id=source_request_id).populate_existing().first()
+        if (request is None or request.status != "pending" or request.vehicle_id != vehicle_id
+                or request.owner_customer_id != owner_customer_id or request.service_customer_id != service_customer_id):
+            raise HTTPException(409, "Žádost už není platná. Načtěte přístupová oprávnění znovu.")
     now = datetime.utcnow()
     resolved_tenant_id = tenant_id
     if resolved_tenant_id is None:
@@ -215,9 +253,10 @@ def create_or_update_vehicle_service_link(
             VehicleServiceLink.service_customer_id == int(service_customer_id),
             VehicleServiceLink.vehicle_id == int(vehicle_id),
         )
-        .first()
+        .populate_existing().first()
     )
     if link:
+        link.tenant_id = int(resolved_tenant_id or vehicle.tenant_id)
         link.owner_customer_id = int(owner_customer_id)
         link.source_request_id = source_request_id
         link.source_type = source_type
@@ -314,6 +353,7 @@ def revoke_vehicle_service_link(
     revoked_by_customer_id: int,
     reason: Optional[str],
 ) -> Optional[VehicleServiceLink]:
+    lock_vehicle_access(db, vehicle_id)
     now = datetime.utcnow()
     link = (
         db.query(VehicleServiceLink)
@@ -322,7 +362,7 @@ def revoke_vehicle_service_link(
             VehicleServiceLink.vehicle_id == int(vehicle_id),
             VehicleServiceLink.status == "approved",
         )
-        .first()
+        .populate_existing().first()
     )
     if link:
         link.status = "revoked"
@@ -331,34 +371,28 @@ def revoke_vehicle_service_link(
         link.revoked_reason = reason
         link.updated_at = now
 
-    legacy_access = (
+    legacy_accesses = (
         db.query(ServiceVehicleAccess)
         .filter(
             ServiceVehicleAccess.service_customer_id == int(service_customer_id),
             ServiceVehicleAccess.vehicle_id == int(vehicle_id),
             ServiceVehicleAccess.status == "active",
         )
-        .first()
+        .populate_existing().all()
     )
-    if legacy_access:
+    for legacy_access in legacy_accesses:
         legacy_access.status = "revoked"
         legacy_access.revoked_at = now
         legacy_access.updated_at = now
 
-    if link:
-        linked_request = (
-            db.query(ServiceAccessRequest)
-            .filter(ServiceAccessRequest.approved_link_id == link.id)
-            .order_by(ServiceAccessRequest.id.desc())
-            .first()
-        )
-        if linked_request:
-            linked_request.status = "revoked"
-            linked_request.decided_at = now
-            linked_request.decided_by_customer_id = int(revoked_by_customer_id)
-            linked_request.decision_note = reason
-            linked_request.updated_at = now
-
+    db.query(ServiceAccessRequest).filter(
+        ServiceAccessRequest.vehicle_id == vehicle_id,
+        ServiceAccessRequest.service_customer_id == service_customer_id,
+        ServiceAccessRequest.status.in_(["pending", "approved"]),
+    ).update({ServiceAccessRequest.status: "revoked", ServiceAccessRequest.decided_at: now,
+        ServiceAccessRequest.decided_by_customer_id: int(revoked_by_customer_id),
+        ServiceAccessRequest.decision_note: reason, ServiceAccessRequest.updated_at: now}, synchronize_session="fetch")
+    db.flush()
     return link
 
 
@@ -369,6 +403,15 @@ def backfill_vehicle_service_links_from_legacy_access(db: Session) -> None:
         .all()
     )
     for row in rows:
+        lock_vehicle_access(db, row.vehicle_id)
+        # Existing explicit consent (including a revocation) wins over legacy data.
+        if db.query(VehicleServiceLink.id).filter_by(
+                vehicle_id=row.vehicle_id, service_customer_id=row.service_customer_id).first():
+            continue
+        vehicle = db.get(Vehicle, row.vehicle_id)
+        owner = get_primary_vehicle_owner(db, vehicle) if vehicle else None
+        if owner is None or owner.id != row.customer_id:
+            continue
         create_or_update_vehicle_service_link(
             db,
             tenant_id=getattr(row, "tenant_id", None),

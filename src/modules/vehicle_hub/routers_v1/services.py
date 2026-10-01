@@ -16,10 +16,11 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from src.core.branding import APP_SERVER_PRODUCT_TOKEN
+from src.core.private_errors import report_exception
 from src.core.rbac import is_admin
 from ..database import get_db
 from ..models import Customer, ServiceAccessRequest, ServiceCustomerLink, ServiceVehicleAccess, Vehicle, VehicleServiceLink
-from ..ownership import get_owned_vehicle, get_owned_vehicle_ids
+from ..ownership import get_owned_vehicle, get_owned_vehicle_ids, get_primary_vehicle_owner, lock_vehicle_access
 from ..schema_management import assert_module_ready
 from ..service_access import create_or_update_vehicle_service_link, revoke_vehicle_service_link, vehicle_label
 from .auth import get_current_user
@@ -382,6 +383,8 @@ def resolve_service_access_request(
     )
     if not request_row:
         raise HTTPException(status_code=404, detail="Žádost o přístup nebyla nalezena.")
+    lock_vehicle_access(db, request_row.vehicle_id)
+    db.refresh(request_row)
     if str(request_row.status or "") != "pending":
         raise HTTPException(status_code=409, detail="Žádost už byla vyřízena.")
 
@@ -405,10 +408,6 @@ def resolve_service_access_request(
         raise HTTPException(status_code=422, detail="Rozhodnutí musí být approved nebo rejected.")
 
     try:
-        request_row.decided_at = datetime.utcnow()
-        request_row.decided_by_customer_id = current_user.id
-        request_row.decision_note = (payload.note or "").strip() or None
-
         if decision == "approved":
             link = create_or_update_vehicle_service_link(
                 db,
@@ -433,6 +432,9 @@ def resolve_service_access_request(
         else:
             request_row.status = "rejected"
 
+        request_row.decided_at = datetime.utcnow()
+        request_row.decided_by_customer_id = current_user.id
+        request_row.decision_note = (payload.note or "").strip() or None
         request_row.updated_at = datetime.utcnow()
         db.commit()
         return {
@@ -446,7 +448,8 @@ def resolve_service_access_request(
         raise
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Nepodařilo se uložit rozhodnutí o žádosti: {exc}") from exc
+        report_exception(exc)
+        raise HTTPException(status_code=500, detail="Nepodařilo se uložit rozhodnutí o žádosti. Zkuste to znovu.") from exc
 
 
 @router.get("/vehicle-access", response_model=VehicleServiceLinkListOutV1)
@@ -518,6 +521,7 @@ def grant_vehicle_access_to_service(
     if role_key in {"service"}:
         raise HTTPException(status_code=403, detail="Servisní účet nemůže měnit oprávnění zákaznického vozidla.")
 
+    lock_vehicle_access(db, int(payload.vehicle_id))
     vehicle = get_owned_vehicle(db, current_user, int(payload.vehicle_id), tenant_id=getattr(current_user, "tenant_id", None))
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nebylo nalezeno nebo vám nepatří.")
@@ -534,16 +538,16 @@ def grant_vehicle_access_to_service(
         raise HTTPException(status_code=404, detail="Servis nebyl nalezen.")
 
     conflict_rows = (
-        db.query(ServiceVehicleAccess, Customer)
-        .join(Customer, ServiceVehicleAccess.service_customer_id == Customer.id)
+        db.query(VehicleServiceLink, Customer)
+        .join(Customer, VehicleServiceLink.service_customer_id == Customer.id)
         .filter(
-            ServiceVehicleAccess.customer_id == current_user.id,
-            ServiceVehicleAccess.vehicle_id == vehicle.id,
-            ServiceVehicleAccess.status == "active",
-            ServiceVehicleAccess.service_customer_id != service.id,
+            VehicleServiceLink.owner_customer_id == current_user.id,
+            VehicleServiceLink.vehicle_id == vehicle.id,
+            VehicleServiceLink.status == "approved",
+            VehicleServiceLink.service_customer_id != service.id,
             Customer.role.in_(["service", "developer_admin"]),
         )
-        .order_by(ServiceVehicleAccess.updated_at.desc())
+        .order_by(VehicleServiceLink.updated_at.desc())
         .all()
     )
     conflict_services = [
@@ -581,11 +585,9 @@ def grant_vehicle_access_to_service(
     try:
         revoked_conflict_service_ids: list[int] = []
         if conflict_services and conflict_strategy == "replace":
-            now = datetime.utcnow()
             for conflict_access, _conflict_service in conflict_rows:
-                conflict_access.status = "revoked"
-                conflict_access.revoked_at = now
-                conflict_access.updated_at = now
+                revoke_vehicle_service_link(db, service_customer_id=conflict_access.service_customer_id,
+                    vehicle_id=vehicle.id, revoked_by_customer_id=current_user.id, reason="Vlastník nahradil servis jiným servisem.")
                 revoked_conflict_service_ids.append(int(conflict_access.service_customer_id))
 
         _upsert_service_customer_link(
@@ -625,7 +627,8 @@ def grant_vehicle_access_to_service(
         raise
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Nepodařilo se uložit oprávnění: {exc}") from exc
+        report_exception(exc)
+        raise HTTPException(status_code=500, detail="Nepodařilo se uložit oprávnění. Zkuste to znovu.") from exc
 
 
 @router.delete("/vehicle-access/{service_id}/{vehicle_id}")
@@ -643,6 +646,7 @@ def revoke_vehicle_access_for_service(
     if role_key in {"service"}:
         raise HTTPException(status_code=403, detail="Servisní účet nemůže měnit oprávnění zákaznického vozidla.")
 
+    lock_vehicle_access(db, int(vehicle_id))
     vehicle = get_owned_vehicle(db, current_user, int(vehicle_id), tenant_id=getattr(current_user, "tenant_id", None))
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nebylo nalezeno nebo vám nepatří.")
@@ -682,7 +686,8 @@ def revoke_vehicle_access_for_service(
         }
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Nepodařilo se odebrat oprávnění: {exc}") from exc
+        report_exception(exc)
+        raise HTTPException(status_code=500, detail="Nepodařilo se odebrat oprávnění. Zkuste to znovu.") from exc
 
 
 @router.delete("/my-contacts/{service_id}")
@@ -722,16 +727,21 @@ def disconnect_my_service_contact(
         .first()
     )
     access_rows = (
-        db.query(ServiceVehicleAccess)
+        db.query(VehicleServiceLink)
         .filter(
-            ServiceVehicleAccess.service_customer_id == service_id,
-            ServiceVehicleAccess.customer_id == current_user.id,
-            ServiceVehicleAccess.status == "active",
+            VehicleServiceLink.service_customer_id == service_id,
+            VehicleServiceLink.owner_customer_id == current_user.id,
+            VehicleServiceLink.status == "approved",
         )
         .all()
     )
 
-    if not link_row and not access_rows:
+    legacy_ids = {row[0] for row in db.query(ServiceVehicleAccess.vehicle_id).filter_by(
+        service_customer_id=service_id, customer_id=current_user.id, status="active").all()}
+    pending_ids = {row[0] for row in db.query(ServiceAccessRequest.vehicle_id).filter_by(
+        service_customer_id=service_id, owner_customer_id=current_user.id, status="pending").all()}
+    vehicle_ids = legacy_ids | pending_ids | {row.vehicle_id for row in access_rows}
+    if not link_row and not vehicle_ids:
         return {
             "disconnected": False,
             "service_id": int(service_id),
@@ -741,17 +751,29 @@ def disconnect_my_service_contact(
         }
 
     try:
+        for vehicle_id in sorted(vehicle_ids):
+            lock_vehicle_access(db, vehicle_id)
         now = datetime.utcnow()
         revoked_vehicle_ids: list[int] = []
         if link_row:
             link_row.status = "archived"
             link_row.updated_at = now
-        for access in access_rows:
-            access.status = "revoked"
-            access.revoked_at = now
-            access.updated_at = now
-            if access.vehicle_id is not None:
-                revoked_vehicle_ids.append(int(access.vehicle_id))
+        for vehicle_id in sorted(vehicle_ids):
+            # Never revoke the new owner's grant if a transfer won the race.
+            owner = get_primary_vehicle_owner(db, db.get(Vehicle, vehicle_id))
+            if owner is None or owner.id != current_user.id:
+                db.query(ServiceVehicleAccess).filter_by(service_customer_id=service_id,
+                    customer_id=current_user.id, vehicle_id=vehicle_id, status="active").update(
+                    {ServiceVehicleAccess.status: "revoked", ServiceVehicleAccess.revoked_at: now}, synchronize_session="fetch")
+                db.query(ServiceAccessRequest).filter_by(service_customer_id=service_id,
+                    owner_customer_id=current_user.id, vehicle_id=vehicle_id, status="pending").update(
+                    {ServiceAccessRequest.status: "revoked", ServiceAccessRequest.decided_at: now,
+                     ServiceAccessRequest.decided_by_customer_id: current_user.id}, synchronize_session="fetch")
+                continue
+            revoke_vehicle_service_link(db, service_customer_id=service_id,
+                vehicle_id=vehicle_id, revoked_by_customer_id=current_user.id,
+                reason="Vlastník odpojil servisní kontakt.")
+            revoked_vehicle_ids.append(int(vehicle_id))
         db.commit()
         return {
             "disconnected": True,
@@ -763,7 +785,8 @@ def disconnect_my_service_contact(
         }
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Nepodařilo se servis odpojit: {exc}") from exc
+        report_exception(exc)
+        raise HTTPException(status_code=500, detail="Nepodařilo se servis odpojit. Zkuste to znovu.") from exc
 
 
 @router.get("/discovery")

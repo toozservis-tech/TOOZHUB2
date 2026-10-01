@@ -134,3 +134,27 @@ Izolovaný reprodukční test potvrdil chybu: držitel přístupu k vozidlu A mo
 - Stažení výslovně vrací `private, no-store` a `nosniff`.
 
 Důkazy: 21 nových testů `test_service_attachment_boundaries.py` a 37 předchozích multi-role testů prošlo. Reproduktor původně selhal očekávaným 200 místo 403; po opravě odmítne požadavek ještě před voláním úložiště. Funkční testy současně ověřují stažení správné přílohy, vložení do záznamu, obnovení jejího obsahu pro parser a historický adresář po převodu. Starší test obnovení vytěženého přehledu byl přesunut výhradně do dočasného adresáře a doplněn o ID vozidla; nečte cloudové soubory. Všechny soubory a osoby jsou testovací. Další typy úložišť, retenční politika a posouzení historie přístupů zůstávají samostatnou součástí auditu.
+
+
+## Odvolání souhlasů, převody a PostgreSQL souběh (1. 10. 2026)
+
+Nalezené chyby byly reprodukované výhradně na syntetických účtech: odpojení servisního kontaktu a nahrazení servisu měnilo jen starší `service_vehicle_access`, zatímco současná autorita `vehicle_service_links` zůstávala schválená. Interní převod navíc přepisoval vlastníka schváleného souhlasu místo jeho odvolání. Osm z devíti počátečních regresních scénářů před opravou selhalo.
+
+- Odpojení/nahrazení, odebrání vozidla, převod i administrátorské přeřazení používají společné odvolání. Uzavřou aktuální i historické oprávnění a příslušné čekající žádosti. Historie oprav a servisní fotodokumentace se nemaže.
+- Starý souhlas nepřejde na nového vlastníka; ten musí udělit vlastní. I chybně obnovená stará schválená vazba se při čtení porovnává s aktuálním vlastníkem. Servisní seznamy používají stejnou kontrolu a respektují rozsah čtení.
+- Požadavky na schválení, odebrání/převod a servisní zápisy se řadí přes společný zámek vozidla. Po získání zámku se znovu načte aktuální vlastnictví/souhlas. Duplicitní rozhodnutí vrací 409. Opakované přidělení vlastnictví nevytváří další aktivní řádek.
+- Při převzetí stejného již existujícího VIN současně dvěma účty uspěje pouze jeden. Před změnou se znovu ověřuje VIN. Nově vytvořená vazba při migraci starého vlastníka se zohlední hned v témže požadavku, takže ji cizí účet nemůže přeskočit.
+- Administrátor může odebrat vazbu skutečného vlastníka (dříve akce nesprávně hledala vlastnictví samotného administrátora). Chyby upravených operací vracejí obecný popis, nikoli SQL či interní výjimku. Vnější autentizace/MFA zůstává povinná.
+- Převod staršího oprávnění už nikdy neobnovuje výslovně odvolaný souhlas.
+
+Ověření: 407 společných serverových testů prošlo, následný test ochrany legacy VIN a související scénáře 19/19 (celkem 408 unikátních kontrol v sadě). Nových 16 SQLite scénářů je v `tests/api/test_vehicle_sharing_lifecycle.py`. Skutečný PostgreSQL 17.11: 10 integračních scénářů, paralelní oddělená spojení (až 6 současně), import s datem i bez data, jeden vítěz převodu, opakovaná vlastnická vazba, ztráta souhlasu během zápisu, duplicitní oprava, souběžné žádosti/rozhodnutí a trvalé odhlášení. Testovací cluster přijímá pouze lokální Unix socket, nikoli síťová spojení; po testu se zastaví. Žádné zákaznické řádky ani dokumenty se neměnily.
+
+## Ověření obnovy a dosud chybějící provozní zálohy (1. 10. 2026)
+
+`tests/postgresql/test_backup_restore.py` provedl skutečný `pg_dump` a `pg_restore --single-transaction --exit-on-error` do nově vytvořené prázdné databáze. Porovnává kontrolní otisky a počty všech 43 registrovaných tabulek, 11 syntetických řádků a 2 souborů. Po obnově ověřil i vazby servisní evidence, odvolané oprávnění, neplatnost odhlášené relace a pokračování sekvence nových ID. Výstupní manifest je v místních podkladech `work/v1-postgresql-restore-manifest.json`.
+
+Jde o ověření mechanismu obnovy syntetických dat. Není to důkaz úplné obnovitelnosti produkce ani všech modulů/importů, cloudových objektů, šifrovacích klíčů nebo opětovného uplatnění pozdějších výmazů. [PostgreSQL uvádí konzistentní snapshot pg_dump](https://www.postgresql.org/docs/17/backup-dump.html); soubory mimo databázi, aplikační konfigurace a klíče musí mít vlastní koordinovaný postup.
+
+Přímá kontrola Supabase Dashboard → Database → Backups potvrdila **Free Plan does not include project backups**. Žádný nový tarif ani placená služba nebyly aktivované. Stávající administrátorský panel správně označuje svou lokální zálohu jako SQLite-only; nepokrývá aktuální PostgreSQL + Supabase Storage. Starý `scripts/backup_volume_data.sh` míří na původní Hetzner/SQLite a nebyl spuštěn. Před vydáním je potřeba doplnit automatické šifrované zálohy databáze i souborů, oddělené uložení a obnovu klíčů, retenci, kontrolu poslední úspěšné zálohy a zkoušku úplné obnovy bez oživení odstraněných dat.
+
+Další návazné auditní body: přidání zcela nového stejného VIN různými cestami (současná oprava pokrývá převzetí existujícího řádku), důkaz oprávněnosti převodu uvolněného VIN a oddělení osobních údajů původního vlastníka od technické historie, ruční záznamy/km při opakování offline požadavku, další typy souborů a rezervace/připomínky. Veřejné vydání stále není schválené.

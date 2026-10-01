@@ -6,10 +6,43 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .models import Customer, Vehicle, VehicleOwnership
+from .models import Customer, Vehicle, VehicleOwnership, VehicleServiceLink, ServiceVehicleAccess, ServiceAccessRequest
+
+
+def lock_vehicle_access(db: Session, vehicle_id: int) -> None:
+    """Common first lock for ownership, sharing decisions and service writes.
+
+    Lock only the identity: callers may have deliberately edited vehicle fields.
+    Ownership/grant queries must be refreshed after this transaction-level lock.
+    """
+    if db.query(Vehicle.id).filter(Vehicle.id == vehicle_id).with_for_update().first() is None:
+        raise HTTPException(404, "Vozidlo nebylo nalezeno.")
+
+
+def revoke_vehicle_sharing_for_owner_change(
+    db: Session, *, vehicle_id: int, actor_id: int, reason: str,
+) -> None:
+    """Revoke both permission models and outstanding decisions, retain evidence."""
+    lock_vehicle_access(db, vehicle_id)
+    now = datetime.utcnow()
+    db.query(VehicleServiceLink).filter(
+        VehicleServiceLink.vehicle_id == vehicle_id, VehicleServiceLink.status == "approved",
+    ).update({VehicleServiceLink.status: "revoked", VehicleServiceLink.revoked_at: now,
+        VehicleServiceLink.revoked_by_customer_id: actor_id, VehicleServiceLink.revoked_reason: reason,
+        VehicleServiceLink.updated_at: now}, synchronize_session="fetch")
+    db.query(ServiceVehicleAccess).filter(
+        ServiceVehicleAccess.vehicle_id == vehicle_id, ServiceVehicleAccess.status == "active",
+    ).update({ServiceVehicleAccess.status: "revoked", ServiceVehicleAccess.revoked_at: now,
+        ServiceVehicleAccess.updated_at: now}, synchronize_session="fetch")
+    db.query(ServiceAccessRequest).filter(
+        ServiceAccessRequest.vehicle_id == vehicle_id, ServiceAccessRequest.status.in_(["pending", "approved"]),
+    ).update({ServiceAccessRequest.status: "revoked", ServiceAccessRequest.decided_at: now,
+        ServiceAccessRequest.decided_by_customer_id: actor_id, ServiceAccessRequest.decision_note: reason,
+        ServiceAccessRequest.updated_at: now}, synchronize_session="fetch")
 
 
 def _normalize_email(email: Optional[str]) -> str:
@@ -32,6 +65,7 @@ def get_primary_vehicle_owner_assignment(db: Session, vehicle_id: int) -> Option
             VehicleOwnership.is_primary.is_(True),
         )
         .order_by(VehicleOwnership.id.asc())
+        .populate_existing()
         .first()
     )
 
@@ -72,6 +106,12 @@ def ensure_vehicle_owner_assignment(
     assigned_by_customer_id: Optional[int] = None,
     ownership_origin: str = "manual",
 ) -> VehicleOwnership:
+    lock_vehicle_access(db, int(vehicle.id))
+    previous = get_primary_vehicle_owner_assignment(db, int(vehicle.id))
+    has_previous_period = previous is None and db.query(VehicleOwnership.id).filter_by(vehicle_id=vehicle.id).first() is not None
+    if (previous and previous.customer_id != owner.id) or has_previous_period:
+        revoke_vehicle_sharing_for_owner_change(db, vehicle_id=int(vehicle.id),
+            actor_id=assigned_by_customer_id or owner.id, reason="Změnil se vlastník vozidla. Nový vlastník musí přístup schválit znovu.")
     now = datetime.utcnow()
     (
         db.query(VehicleOwnership)
@@ -88,7 +128,7 @@ def ensure_vehicle_owner_assignment(
                 VehicleOwnership.revoked_at: now,
                 VehicleOwnership.updated_at: now,
             },
-            synchronize_session=False,
+            synchronize_session="fetch",
         )
     )
 
@@ -99,9 +139,12 @@ def ensure_vehicle_owner_assignment(
             VehicleOwnership.customer_id == owner.id,
             VehicleOwnership.ownership_type == "owner",
         )
+        .populate_existing()
         .first()
     )
     if existing:
+        if not existing.is_active:
+            existing.owned_from = now
         existing.is_active = True
         existing.is_primary = True
         existing.ownership_origin = ownership_origin or existing.ownership_origin or "manual"
@@ -162,7 +205,9 @@ def release_vehicle_owner_assignment(
     *,
     vehicle: Vehicle,
     owner: Customer,
+    revoked_by_customer_id: Optional[int] = None,
 ) -> bool:
+    lock_vehicle_access(db, int(vehicle.id))
     now = datetime.utcnow()
     updated = (
         db.query(VehicleOwnership)
@@ -179,9 +224,12 @@ def release_vehicle_owner_assignment(
                 VehicleOwnership.revoked_at: now,
                 VehicleOwnership.updated_at: now,
             },
-            synchronize_session=False,
+            synchronize_session="fetch",
         )
     )
+    if updated:
+        revoke_vehicle_sharing_for_owner_change(db, vehicle_id=int(vehicle.id),
+            actor_id=revoked_by_customer_id or owner.id, reason="Vozidlo bylo odebráno z profilu vlastníka.")
     db.flush()
     return bool(updated)
 
@@ -194,44 +242,13 @@ def transfer_vehicle_to_new_owner(
     assigned_by_customer_id: Optional[int] = None,
     ownership_origin: str = "vin_claim",
 ) -> VehicleOwnership:
-    from .models import VehicleServiceLink
-
-    release_time = datetime.utcnow()
-    (
-        db.query(VehicleOwnership)
-        .filter(
-            VehicleOwnership.vehicle_id == vehicle.id,
-            VehicleOwnership.customer_id != new_owner.id,
-            VehicleOwnership.is_active.is_(True),
-        )
-        .update(
-            {
-                VehicleOwnership.is_active: False,
-                VehicleOwnership.is_primary: False,
-                VehicleOwnership.owned_until: release_time,
-                VehicleOwnership.revoked_at: release_time,
-                VehicleOwnership.updated_at: release_time,
-            },
-            synchronize_session=False,
-        )
-    )
+    lock_vehicle_access(db, int(vehicle.id))
+    previous = get_primary_vehicle_owner_assignment(db, int(vehicle.id))
+    if previous is None or previous.customer_id != new_owner.id:
+        revoke_vehicle_sharing_for_owner_change(db, vehicle_id=int(vehicle.id),
+            actor_id=assigned_by_customer_id or new_owner.id, reason="Převod vozidla. Nový vlastník musí přístup servisu schválit znovu.")
     vehicle.tenant_id = new_owner.tenant_id
     vehicle.user_email = new_owner.email
-    (
-        db.query(VehicleServiceLink)
-        .filter(
-            VehicleServiceLink.vehicle_id == vehicle.id,
-            VehicleServiceLink.status == "approved",
-        )
-        .update(
-            {
-                VehicleServiceLink.owner_customer_id: new_owner.id,
-                VehicleServiceLink.tenant_id: new_owner.tenant_id,
-                VehicleServiceLink.updated_at: release_time,
-            },
-            synchronize_session=False,
-        )
-    )
     db.flush()
     return ensure_vehicle_owner_assignment(
         db,

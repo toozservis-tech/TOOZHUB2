@@ -64,7 +64,7 @@ from src.modules.vehicle_hub.account_state import (
     increment_customer_session_version,
 )
 from src.modules.vehicle_hub.ownership import (
-    ensure_vehicle_owner_assignment,
+    transfer_vehicle_to_new_owner,
     get_primary_vehicle_owner,
 )
 from src.modules.vehicle_hub.tenant_provisioning import (
@@ -197,33 +197,10 @@ def _reassign_vehicle_primary_owner(
     owner: Customer,
     assigned_by_customer_id: Optional[int],
 ) -> None:
-    now = datetime.utcnow()
-    (
-        db.query(VehicleOwnership)
-        .filter(
-            VehicleOwnership.vehicle_id == vehicle.id,
-            VehicleOwnership.is_active.is_(True),
-            VehicleOwnership.is_primary.is_(True),
-            VehicleOwnership.customer_id != owner.id,
-        )
-        .update(
-            {
-                VehicleOwnership.is_active: False,
-                VehicleOwnership.is_primary: False,
-                VehicleOwnership.revoked_at: now,
-                VehicleOwnership.updated_at: now,
-            },
-            synchronize_session=False,
-        )
+    transfer_vehicle_to_new_owner(
+        db, vehicle=vehicle, new_owner=owner,
+        assigned_by_customer_id=assigned_by_customer_id, ownership_origin="admin_transfer",
     )
-    ensure_vehicle_owner_assignment(
-        db,
-        vehicle=vehicle,
-        owner=owner,
-        assigned_by_customer_id=assigned_by_customer_id,
-    )
-    vehicle.tenant_id = owner.tenant_id
-    vehicle.user_email = owner.email
 
 
 def _json_serialize_for_audit(value: Any) -> str:
