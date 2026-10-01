@@ -89,6 +89,7 @@ function renderLogoutNotice() {
     const message = AdminBrowserSession.logoutNotice();
     el('logoutNotice').hidden = !message;
     el('logoutMessage').textContent = message || '';
+    el('retryLogout').hidden = !AdminBrowserSession.hasPendingLogouts();
 }
 window.addEventListener('admin-logout-updated', renderLogoutNotice);
 el('retryLogout').addEventListener('click', async () => {

@@ -227,3 +227,15 @@ test('unconfirmed logout remains retryable and successful retry leaves a newer l
  assert.equal(result.sent[0].headers.Authorization,undefined);assert.equal(result.sent[0].credentials,'omit');
  }finally{await f.context.close();}
 });
+
+
+test('generic HTTP success cannot discard an unconfirmed logout receipt',async()=>{
+ const f=await fixture();try{
+ const result=await f.page.evaluate(async({token})=>{
+  AdminBrowserSession.set(token,'admin');window.fetch=async()=>new Response('{}',{status:200});
+  await AdminBrowserSession.logout();await AdminBrowserSession.retryLogouts();
+  return {pending:AdminBrowserSession.hasPendingLogouts(),token:AdminBrowserSession.token()};
+ },tokenWithReceipt('c'));
+ assert.deepEqual(result,{pending:true,token:null});
+ }finally{await f.context.close();}
+});

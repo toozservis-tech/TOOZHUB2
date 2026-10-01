@@ -1,4 +1,4 @@
-// Shared by both administrator dashboards. Never store credentials in localStorage,
+// Shared by both administrator dashboards. Never store access credentials in localStorage,
 // forward them to another origin, or accept a response from a previous session.
 (function (global) {
     'use strict';
@@ -154,6 +154,7 @@
         }
         return result;
     }
+    function hasPendingLogouts() { return receipts().size > 0; }
     function logoutNotice() {
         return receipts().size ? 'V tomto prohlížeči jste odhlášeni. Potvrzení odhlášení serverem čeká na spojení.' : sessionStorage.getItem(LOGOUT_WARNING);
     }
@@ -177,12 +178,12 @@
     }
     async function logout() {
         const oldToken = token(), receipt = queueLogout(oldToken);
-        sessionStorage.setItem(LOGOUT_WARNING, 'V prohlížeči jste odhlášeni. Server zatím odhlášení nepotvrdil.');
+        sessionStorage.setItem(LOGOUT_WARNING, receipt ? 'Server zatím odhlášení nepotvrdil.' : 'V prohlížeči jste odhlášeni. Server odhlášení staršího přístupu nepotvrdil; zůstává platný do vypršení. Změna hesla ukončí všechna přihlášení.');
         // Use the captured bearer, never a possibly newer shared browser cookie.
         const headers = oldToken ? {Authorization:'Bearer ' + oldToken} : {};
         const closing = fetch('/admin-web-session', {method:'DELETE', headers, credentials:oldToken ? 'omit' : 'same-origin',
-            cache:'no-store', redirect:'error', keepalive:true}).then(response => {
-                if (!response.ok) throw new Error('Logout unconfirmed');
+            cache:'no-store', redirect:'error', keepalive:true}).then(async response => {
+                if (!response.ok || (await response.json()).ok !== true) throw new Error('Logout unconfirmed');
                 if (receipt) { localStorage.removeItem(receipt); volatileReceipts.delete(receipt); }
                 sessionStorage.removeItem(LOGOUT_WARNING); notifyLogout();
             }).catch(() => { notifyLogout(); });
@@ -213,6 +214,6 @@
     document.addEventListener('visibilitychange', () => {
         if (protectedPage && !document.hidden && deadline && Date.now() >= deadline) end('expired');
     });
-    global.AdminBrowserSession = Object.freeze({token, snapshot, assertCurrent, set, end, request, verify, logout, protect, sameOriginURL, retryLogouts, logoutNotice});
+    global.AdminBrowserSession = Object.freeze({token, snapshot, assertCurrent, set, end, request, verify, logout, protect, sameOriginURL, retryLogouts, logoutNotice, hasPendingLogouts});
     void retryLogouts();
 })(window);
