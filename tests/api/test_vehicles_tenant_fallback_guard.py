@@ -77,3 +77,44 @@ def test_get_vehicles_returns_only_same_tenant_records(db_session) -> None:
 
     returned_ids = {item.id for item in vehicles}
     assert returned_ids == {own.id}
+
+
+def test_listing_validation_failure_is_explicit_and_private(db_session, monkeypatch, capsys, caplog):
+    marker = 'PRIVATE_VEHICLE_INFORMATION'
+    own = _seed_vehicle(db_session, tenant_id=100, user_email='private-list@example.invalid', nickname=marker)
+    current_user = SimpleNamespace(email=own.user_email, tenant_id=100)
+    class InvalidSchema:
+        @staticmethod
+        def model_validate(*args, **kwargs):
+            raise ValueError(marker)
+    monkeypatch.setattr(vehicles_router, 'VehicleOutV1', InvalidSchema)
+    with pytest.raises(HTTPException) as error:
+        vehicles_router.get_vehicles(current_user=current_user, db=db_session)
+    assert error.value.status_code == 500  # Must not pretend this is an empty account.
+    assert marker not in error.value.detail
+    captured = capsys.readouterr()
+    assert marker not in captured.out + captured.err + caplog.text
+    assert current_user.email not in captured.out + captured.err + caplog.text
+
+
+@pytest.mark.parametrize('integrity', [True, False])
+def test_creation_error_does_not_expose_database_or_private_values(db_session, monkeypatch, capsys, caplog, integrity):
+    import json
+    from sqlalchemy.exc import IntegrityError
+    from src.modules.licensing import service as licensing_service
+    marker = 'PRIVATE_SQL_OR_CREDENTIAL_VALUE'
+    monkeypatch.setattr(licensing_service, 'assert_vehicle_quota', lambda *args: None)
+    def fail(**kwargs):
+        if integrity:
+            raise IntegrityError('SELECT ' + marker, {}, ValueError(marker))
+        raise RuntimeError(marker)
+    monkeypatch.setattr(vehicles_router, '_find_existing_vehicle_by_vin_globally', fail)
+    current_user = SimpleNamespace(email='private-create@example.invalid', tenant_id=100)
+    response = vehicles_router.create_vehicle(vehicles_router.VehicleCreateV1(
+        nickname='Fixture only', stk_valid_until=date(2030, 1, 1)), current_user, db_session)
+    assert response.status_code == (400 if integrity else 500)
+    assert marker not in response.body.decode()
+    assert len(json.loads(response.body)['error']['details']['incident_id']) == 32
+    captured = capsys.readouterr()
+    assert marker not in captured.out + captured.err + caplog.text
+    assert current_user.email not in captured.out + captured.err + caplog.text

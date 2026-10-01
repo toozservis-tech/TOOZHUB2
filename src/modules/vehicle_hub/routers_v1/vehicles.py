@@ -18,7 +18,7 @@ import re
 import secrets
 import threading
 import unicodedata
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Depends, Body
 from fastapi.responses import FileResponse
@@ -38,6 +38,7 @@ except Exception:
 
 from src.core.config import DATA_DIR
 from src.core.rbac import is_admin, vehicle_write_policy
+from src.core.private_errors import report_exception
 from ..database import get_db
 from ..models import (
     Vehicle as VehicleModel,
@@ -90,6 +91,8 @@ TACHOMETER_LANDING_PATH = "/"
 TACHOMETER_SEARCH_PATH = "/Home/Search"
 TACHOMETER_CHALLENGE_TTL_SECONDS = 10 * 60
 _TACHOMETER_HTTP_TIMEOUT_SECONDS = 20
+_TACHOMETER_MAX_CHALLENGES_PER_CUSTOMER = 20
+_TACHOMETER_MAX_CHALLENGES = 256
 _TACHOMETER_CAPTCHA_ERROR_TEXT = "Špatně opsaný kód z obrázku"
 _TACHOMETER_CHALLENGE_STORE: Dict[str, Dict[str, Any]] = {}
 _TACHOMETER_CHALLENGE_LOCK = threading.Lock()
@@ -338,12 +341,66 @@ def _same_origin_external_url(raw_url: str | None) -> str | None:
     if not raw_url:
         return None
     value = html.unescape(str(raw_url)).strip()
-    if not value or value.lower().startswith("javascript:"):
+    if not value or "\\" in value or any(ord(char) <= 32 or ord(char) == 127 for char in value):
         return None
-    absolute = urljoin(TACHOMETER_BASE_URL, value)
-    if not absolute.startswith(TACHOMETER_BASE_URL):
+    try:
+        parts = urlsplit(urljoin(TACHOMETER_BASE_URL, value))
+        if (parts.scheme.lower() != "https" or parts.hostname != "www.kontrolatachometru.cz"
+                or parts.port not in (None, 443) or parts.username is not None or parts.password is not None):
+            return None
+    except ValueError:
         return None
-    return absolute
+    return urlunsplit(("https", "www.kontrolatachometru.cz", parts.path or "/", parts.query, parts.fragment))
+
+
+def _tachometer_request(session: requests.Session, method: str, url: str, *, data=None,
+                        max_bytes: int = 2 * 1024 * 1024) -> requests.Response:
+    """Follow only verified HTTPS redirects, never forwarding VIN, form tokens or cookies elsewhere."""
+    def limited_response(response, **_kwargs):
+        if getattr(response, "_sv_bounded_response", False):
+            return response
+        chunks = []
+        total = 0
+        try:
+            for chunk in response.iter_content(chunk_size=65536):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise requests.RequestException("Tachometer response exceeds limit")
+                chunks.append(chunk)
+            response._content = b"".join(chunks)
+            response._content_consumed = True
+            response._sv_bounded_response = True
+        finally:
+            response.close()
+        return response
+
+    target = _same_origin_external_url(url)
+    if target is None:
+        raise requests.RequestException("Invalid tachometer origin")
+    for hop in range(4):
+        request = session.post if method == "POST" else session.get
+        kwargs = {"data": data} if method == "POST" else {}
+        # requests also consumes a redirect body while preparing Response.next,
+        # even with automatic redirects disabled. Bound it in the response hook.
+        response = request(target, timeout=_TACHOMETER_HTTP_TIMEOUT_SECONDS,
+                           allow_redirects=False, stream=True,
+                           hooks={"response": limited_response}, **kwargs)
+        limited_response(response)
+        if response.status_code in {301, 302, 303, 307, 308}:
+            location = response.headers.get("Location")
+            response.close()
+            try:
+                redirected = _same_origin_external_url(urljoin(target, location)) if location else None
+            except ValueError:
+                redirected = None
+            if redirected is None or hop == 3:
+                raise requests.RequestException("Invalid tachometer redirect")
+            if response.status_code == 303 or (method == "POST" and response.status_code in {301, 302}):
+                method, data = "GET", None
+            target = redirected
+            continue
+        return response
+    raise requests.RequestException("Tachometer redirect limit")
 
 
 def _extract_tachometer_document_links(fragment_html: str, protocol_number: str | None) -> list[dict[str, Any]]:
@@ -524,20 +581,20 @@ def _follow_tachometer_detail_reference(
     try:
         kind = str(detail_reference.get("kind") or "")
         if kind == "url":
-            url = str(detail_reference.get("url") or "")
-            if not url.startswith(TACHOMETER_BASE_URL):
+            url = _same_origin_external_url(detail_reference.get("url"))
+            if url is None:
                 return None
-            response = session.get(url, timeout=_TACHOMETER_HTTP_TIMEOUT_SECONDS)
+            response = _tachometer_request(session, "GET", url)
             response.raise_for_status()
             return response.text
         if kind == "form":
-            action = str(detail_reference.get("action") or "")
-            if not action.startswith(TACHOMETER_BASE_URL):
+            action = _same_origin_external_url(detail_reference.get("action"))
+            if action is None:
                 return None
             inputs = detail_reference.get("inputs")
             if not isinstance(inputs, dict):
                 inputs = {}
-            response = session.post(action, data=inputs, timeout=_TACHOMETER_HTTP_TIMEOUT_SECONDS)
+            response = _tachometer_request(session, "POST", action, data=inputs)
             response.raise_for_status()
             return response.text
     except requests.RequestException:
@@ -675,6 +732,8 @@ def _get_accessible_vehicle_or_404(vehicle_id: int, current_user: Customer, db: 
 
 def _build_tachometer_session() -> requests.Session:
     session = requests.Session()
+    # Do not pick up unrelated .netrc credentials from the server environment.
+    session.trust_env = False
     session.headers.update(
         {
             "User-Agent": "Mozilla/5.0 (compatible; SpravaVozidel/1.0; +https://app.toozservis.cz)",
@@ -687,17 +746,40 @@ def _build_tachometer_session() -> requests.Session:
     return session
 
 
+def _captcha_mime_type(content: bytes) -> str:
+    """Only small raster images can be relayed to clients, not HTML/SVG payloads."""
+    if not PILLOW_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Ověření obrázku není nyní dostupné. Zkuste to později.")
+    try:
+        with Image.open(BytesIO(content)) as image:
+            mime = {"PNG": "image/png", "JPEG": "image/jpeg", "GIF": "image/gif", "WEBP": "image/webp"}.get(image.format)
+            if mime is None or image.width * image.height > 2_000_000:
+                raise ValueError("Invalid captcha image")
+            image.verify()
+            return mime
+    except (ValueError, OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        raise HTTPException(status_code=502, detail="Ověřovací obrázek není použitelný. Načtěte jej prosím znovu.") from exc
+
+
 def _create_tachometer_session(
     *,
     expected_vin: Optional[str],
     vehicle_id: Optional[int],
+    customer_id: int,
 ) -> VehicleTachometerInitResponse:
     _cleanup_tachometer_challenge_store()
+    session_id = secrets.token_urlsafe(24)
+    with _TACHOMETER_CHALLENGE_LOCK:
+        count = sum(1 for item in _TACHOMETER_CHALLENGE_STORE.values() if item.get("customer_id") == customer_id)
+        if count >= _TACHOMETER_MAX_CHALLENGES_PER_CUSTOMER or len(_TACHOMETER_CHALLENGE_STORE) >= _TACHOMETER_MAX_CHALLENGES:
+            raise HTTPException(status_code=429, detail="Je otevřeno příliš mnoho ověřovacích obrázků. Dokončete ověření nebo to zkuste později.")
+        # Reserve capacity before downloading, including requests still in flight.
+        _TACHOMETER_CHALLENGE_STORE[session_id] = {"created_at": datetime.utcnow(), "customer_id": customer_id}
+    ready = False
     try:
         with _build_tachometer_session() as session:
-            page_response = session.get(
+            page_response = _tachometer_request(session, "GET",
                 urljoin(TACHOMETER_BASE_URL, TACHOMETER_LANDING_PATH),
-                timeout=_TACHOMETER_HTTP_TIMEOUT_SECONDS,
             )
             page_response.raise_for_status()
             token = _extract_hidden_token(page_response.text)
@@ -708,9 +790,8 @@ def _create_tachometer_session(
                     detail="Nepodařilo se načíst captcha z Kontroly tachometru.",
                 )
 
-            captcha_response = session.get(
-                urljoin(TACHOMETER_BASE_URL, captcha_src),
-                timeout=_TACHOMETER_HTTP_TIMEOUT_SECONDS,
+            captcha_response = _tachometer_request(session, "GET", captcha_src,
+                max_bytes=512 * 1024,
             )
             captcha_response.raise_for_status()
             captcha_bytes = captcha_response.content
@@ -720,7 +801,7 @@ def _create_tachometer_session(
                     detail="Captcha obrázek je prázdný. Zkuste to prosím znovu.",
                 )
 
-            session_id = secrets.token_urlsafe(24)
+            captcha_mime = _captcha_mime_type(captcha_bytes)
             with _TACHOMETER_CHALLENGE_LOCK:
                 _TACHOMETER_CHALLENGE_STORE[session_id] = {
                     "created_at": datetime.utcnow(),
@@ -728,24 +809,28 @@ def _create_tachometer_session(
                     "cookies": session.cookies.copy(),
                     "expected_vin": expected_vin,
                     "vehicle_id": vehicle_id,
+                    "customer_id": customer_id,
                 }
+                ready = True
 
             return VehicleTachometerInitResponse(
                 session_id=session_id,
                 captcha_image_base64=base64.b64encode(captcha_bytes).decode("ascii"),
-                captcha_mime_type=(
-                    captcha_response.headers.get("Content-Type", "image/png").split(";", 1)[0].strip()
-                    or "image/png"
-                ),
+                captcha_mime_type=captcha_mime,
                 expires_in_seconds=TACHOMETER_CHALLENGE_TTL_SECONDS,
             )
     except HTTPException:
         raise
     except requests.RequestException as exc:
+        report_exception(exc)
         raise HTTPException(
             status_code=502,
-            detail=f"Nepodařilo se spojit s kontrolatachometru.cz: {exc}",
+            detail="Nepodařilo se bezpečně načíst ověřovací obrázek. Zkuste to prosím znovu později.",
         ) from exc
+    finally:
+        if not ready:
+            with _TACHOMETER_CHALLENGE_LOCK:
+                _TACHOMETER_CHALLENGE_STORE.pop(session_id, None)
 
 
 def _lookup_tachometer_with_session(
@@ -753,25 +838,23 @@ def _lookup_tachometer_with_session(
     session_id: str,
     vin: str,
     captcha_code: str,
+    customer_id: int,
+    vehicle_id: Optional[int] = None,
 ) -> TachometerLookupResponse:
     _cleanup_tachometer_challenge_store()
     with _TACHOMETER_CHALLENGE_LOCK:
         challenge = _TACHOMETER_CHALLENGE_STORE.get(session_id)
-    if not challenge:
-        raise HTTPException(
-            status_code=410,
-            detail="Captcha session vypršela nebo je neplatná. Načtěte nový obrázek.",
-        )
-
-    expected_vin = challenge.get("expected_vin")
-    if expected_vin and expected_vin != vin:
-        raise HTTPException(
-            status_code=409,
-            detail="Captcha session patří k jinému vozidlu. Načtěte nový obrázek pro aktuální VIN.",
-        )
-
-    if len(captcha_code) < 2:
-        raise HTTPException(status_code=422, detail="Zadejte captcha kód z obrázku.")
+        if not challenge or challenge.get("customer_id") != customer_id:
+            raise HTTPException(status_code=410, detail="Ověřovací obrázek vypršel nebo není dostupný. Načtěte nový obrázek.")
+        if ((challenge.get("expected_vin") and challenge["expected_vin"] != vin)
+                or challenge.get("vehicle_id") not in {None, vehicle_id}):
+            raise HTTPException(status_code=409, detail="Ověřovací obrázek patří k jinému vozidlu. Načtěte nový obrázek.")
+        if len(captcha_code) < 2:
+            raise HTTPException(status_code=422, detail="Zadejte captcha kód z obrázku.")
+        if challenge.get("in_flight"):
+            raise HTTPException(status_code=409, detail="Ověření již probíhá. Vyčkejte na jeho dokončení.")
+        # Claim before network IO. A repeated tap may not submit or save twice.
+        challenge["in_flight"] = True
 
     try:
         with _build_tachometer_session() as session:
@@ -785,14 +868,13 @@ def _lookup_tachometer_with_session(
                     "Content-Type": "application/x-www-form-urlencoded",
                 }
             )
-            response = session.post(
+            response = _tachometer_request(session, "POST",
                 urljoin(TACHOMETER_BASE_URL, TACHOMETER_SEARCH_PATH),
                 data={
                     "__RequestVerificationToken": challenge.get("request_verification_token", ""),
                     "VIN": vin,
                     "captcha$TB": captcha_code,
                 },
-                timeout=_TACHOMETER_HTTP_TIMEOUT_SECONDS,
             )
             if not (200 <= response.status_code < 300):
                 lowered = (response.text or "").lower()
@@ -827,13 +909,22 @@ def _lookup_tachometer_with_session(
                 latest_check_date=latest.check_date,
                 inspections=inspections,
             )
-    except HTTPException:
+    except HTTPException as exc:
+        if exc.status_code in {404, 410}:
+            with _TACHOMETER_CHALLENGE_LOCK:
+                if _TACHOMETER_CHALLENGE_STORE.get(session_id) is challenge:
+                    _TACHOMETER_CHALLENGE_STORE.pop(session_id, None)
         raise
     except requests.RequestException as exc:
+        report_exception(exc)
         raise HTTPException(
             status_code=502,
             detail="Portál kontrolatachometru.cz je dočasně nedostupný. Zkuste to prosím znovu později.",
         ) from exc
+    finally:
+        with _TACHOMETER_CHALLENGE_LOCK:
+            if _TACHOMETER_CHALLENGE_STORE.get(session_id) is challenge:
+                challenge["in_flight"] = False
 
 
 def _store_tachometer_mileage_result(
@@ -843,6 +934,15 @@ def _store_tachometer_mileage_result(
     current_user: Customer,
     db: Session,
 ) -> tuple[dict, int]:
+    # Serialise imports for this vehicle across server workers before checking
+    # existing records. Refresh a potentially stale ORM object after acquiring.
+    vehicle = (db.query(VehicleModel).filter(VehicleModel.id == vehicle.id)
+               .with_for_update().populate_existing().one())
+    # Access or VIN may have changed while the external provider was responding.
+    if not can_access_vehicle(vehicle.id, current_user, db):
+        raise HTTPException(status_code=403, detail="Přístup k vozidlu se změnil. Údaje nebyly uloženy.")
+    if _normalize_vin(vehicle.vin or "") != lookup.vin:
+        raise HTTPException(status_code=409, detail="VIN vozidla se změnil. Načtěte údaje znovu pro aktuální vozidlo.")
     effective_current_mileage = max(
         getattr(vehicle, "current_mileage_km", None) or lookup.latest_mileage_km,
         lookup.latest_mileage_km,
@@ -864,17 +964,21 @@ def _store_tachometer_mileage_result(
         record_note_parts.append(f"Protokol: {latest.protocol_number}")
     if latest.inspection_type:
         record_note_parts.append(f"Typ: {latest.inspection_type}")
-    existing_record = (
+    existing_query = (
         db.query(ServiceRecordModel)
         .filter(
             ServiceRecordModel.vehicle_id == vehicle.id,
             ServiceRecordModel.description == record_description,
             ServiceRecordModel.mileage == lookup.latest_mileage_km,
-            ServiceRecordModel.performed_at == performed_at,
             ServiceRecordModel.is_deleted.is_(False),
         )
-        .first()
     )
+    if latest.check_date is not None:
+        existing_query = existing_query.filter(ServiceRecordModel.performed_at == performed_at)
+    else:
+        # An unknown inspection date must not turn every retry into a new record.
+        existing_query = existing_query.filter(ServiceRecordModel.note == " | ".join(record_note_parts))
+    existing_record = existing_query.first()
     if existing_record is None:
         existing_record = ServiceRecordModel(
             tenant_id=vehicle.tenant_id,
@@ -1761,7 +1865,7 @@ def create_vehicle(
     # Zkontrolovat tenant_id
     tenant_id = getattr(current_user, 'tenant_id', None)
     if not tenant_id:
-        logger.error(f"[VEHICLE_CREATE] User {current_user.email} nemá tenant_id")
+        logger.error("[VEHICLE_CREATE] Tenant missing")
         return JSONResponse(
             status_code=403,
             content={
@@ -1773,7 +1877,6 @@ def create_vehicle(
             }
         )
     
-    logger.info(f"[VEHICLE_CREATE] tenant_id={tenant_id} vin={vehicle_data.vin} plate={vehicle_data.plate}")
     
     try:
         # Validace povinných polí
@@ -1791,7 +1894,7 @@ def create_vehicle(
         try:
             assert_vehicle_quota(db, tenant_id)
         except LicenseError as e:
-            logger.warning(f"[VEHICLE_CREATE] error_code={e.code} details={e.details}")
+            logger.warning("[VEHICLE_CREATE] Quota check denied")
             return JSONResponse(
                 status_code=e.status_code,
                 content={
@@ -1956,14 +2059,14 @@ def create_vehicle(
             )
         else:
             # Obecná IntegrityError
-            logger.error(f"[VEHICLE_CREATE] error_code=INTEGRITY_ERROR details={{error: {error_str}}}")
+            reference = report_exception(e)
             return JSONResponse(
                 status_code=400,
                 content={
                     "error": {
                         "code": "INTEGRITY_ERROR",
                         "message": "Chyba při ukládání vozidla do databáze",
-                        "details": {"error": error_str}
+                        "details": {"incident_id": reference}
                     }
                 }
             )
@@ -1972,7 +2075,7 @@ def create_vehicle(
         # LicenseError dědí z HTTPException
         if hasattr(e, 'code'):
             # LicenseError
-            logger.warning(f"[VEHICLE_CREATE] error_code={e.code} details={getattr(e, 'details', {})}")
+            logger.warning("[VEHICLE_CREATE] License check denied")
             return JSONResponse(
                 status_code=e.status_code,
                 content={
@@ -1999,17 +2102,14 @@ def create_vehicle(
     
     except Exception as e:
         db.rollback()
-        import traceback
-        error_traceback = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-        logger.error(f"[VEHICLE_CREATE] error_code=UNKNOWN_ERROR details={{error: {str(e)}}}")
-        logger.error(f"[VEHICLE_CREATE] Traceback:\n{error_traceback}")
+        reference = report_exception(e)
         return JSONResponse(
             status_code=500,
             content={
                 "error": {
                     "code": "UNKNOWN_ERROR",
-                    "message": f"Neočekávaná chyba: {str(e)}",
-                    "details": {"error_type": type(e).__name__}
+                    "message": "Vozidlo se nepodařilo uložit. Zkuste to znovu nebo kontaktujte podporu.",
+                    "details": {"incident_id": reference}
                 }
             }
         )
@@ -2021,25 +2121,14 @@ def get_vehicles(
     db: Session = Depends(get_db)
 ):
     """Vrací všechna vozidla uživatele"""
-    import logging
-    import traceback
-    logger = logging.getLogger(__name__)
     _ensure_vehicle_photo_column(db)
-    
+
     try:
-        logger.info(f"[VEHICLES] ========================================")
-        logger.info(f"[VEHICLES] GET /api/v1/vehicles - Načítání vozidel")
-        logger.info(f"[VEHICLES] User: {current_user.email}")
-        logger.info(f"[VEHICLES] Tenant ID: {getattr(current_user, 'tenant_id', 'N/A')}")
-        print(f"[VEHICLES] Načítání vozidel pro uživatele: {current_user.email}")
-        print(f"[VEHICLES] Tenant ID uživatele: {getattr(current_user, 'tenant_id', 'N/A')}")
-        
+
         tenant_id = getattr(current_user, "tenant_id", None)
         if tenant_id is None:
-            logger.error("[VEHICLES] User bez tenant_id - fail safe 403")
             raise HTTPException(status_code=403, detail="Uživatel nemá přiřazený tenant")
 
-        print(f"[VEHICLES] Filtrování podle tenant_id: {tenant_id}")
         owned_vehicle_ids = set()
         from ..models import VehicleOwnership
         current_user_id = getattr(current_user, "id", None)
@@ -2089,74 +2178,17 @@ def get_vehicles(
                 .all()
             )
 
-        print(f"[VEHICLES] Nalezeno {len(vehicles)} vozidel")
-        
-        # Zkusit explicitně serializovat každé vozidlo, abychom zachytili případné chyby
-        result = []
-        for idx, vehicle in enumerate(vehicles):
-            try:
-                # Zkontrolovat, zda vozidlo má všechny potřebné atributy
-                if not hasattr(vehicle, 'id'):
-                    logger.warning(f"[VEHICLES] WARNING: Vozidlo #{idx} nemá ID, přeskočeno")
-                    print(f"[VEHICLES] WARNING: Vozidlo nemá ID, přeskočeno")
-                    continue
-                
-                logger.debug(f"[VEHICLES] Serializuji vozidlo ID {vehicle.id}")
-                
-                # Zkusit vytvořit VehicleOutV1 pro validaci
-                vehicle_dict = {
-                    'id': vehicle.id,
-                    'user_email': getattr(vehicle, 'user_email', None),
-                    'nickname': getattr(vehicle, 'nickname', None),
-                    'brand': getattr(vehicle, 'brand', None),
-                    'model': getattr(vehicle, 'model', None),
-                    'year': getattr(vehicle, 'year', None),
-                    'engine': getattr(vehicle, 'engine', None),
-                    'vin': getattr(vehicle, 'vin', None),
-                    'plate': getattr(vehicle, 'plate', None),
-                    'notes': getattr(vehicle, 'notes', None),
-                    'photo_path': getattr(vehicle, 'photo_path', None),
-                    'stk_valid_until': getattr(vehicle, 'stk_valid_until', None),
-                    'current_mileage_km': getattr(vehicle, 'current_mileage_km', None),
-                    'last_stk_mileage_km': getattr(vehicle, 'last_stk_mileage_km', None),
-                    'mileage_checked_at': getattr(vehicle, 'mileage_checked_at', None),
-                    'tyres_info': getattr(vehicle, 'tyres_info', None),
-                    'insurance_provider': getattr(vehicle, 'insurance_provider', None),
-                    'insurance_valid_until': getattr(vehicle, 'insurance_valid_until', None),
-                    'tenant_id': getattr(vehicle, 'tenant_id', None),
-                    'created_at': getattr(vehicle, 'created_at', None)
-                }
-                
-                # Validovat pomocí schématu
-                VehicleOutV1(**vehicle_dict)
-                result.append(vehicle)
-            except Exception as veh_error:
-                import traceback
-                vehicle_id = getattr(vehicle, 'id', 'unknown')
-                error_traceback = "".join(traceback.format_exception(type(veh_error), veh_error, veh_error.__traceback__))
-                logger.error(f"[VEHICLES] ERROR: Chyba při validaci vozidla ID {vehicle_id}: {veh_error}")
-                logger.error(f"[VEHICLES] Traceback:\n{error_traceback}")
-                print(f"[VEHICLES] ERROR: Chyba při validaci vozidla ID {vehicle_id}: {veh_error}")
-                traceback.print_exc()
-                # Pokračovat s dalšími vozidly místo selhání celého dotazu
-        
-        logger.info(f"[VEHICLES] ✅ Úspěšně načteno {len(result)} vozidel")
-        print(f"[VEHICLES] Vracím {len(result)} validních vozidel")
-        return result
+
+        # Validate the complete response. Never silently hide a broken record or
+        # print a ValidationError containing private values.
+        for vehicle in vehicles:
+            VehicleOutV1.model_validate(vehicle, from_attributes=True)
+        return vehicles
     except HTTPException:
         raise
-    except Exception as e:
-        import traceback
-        error_traceback = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-        error_msg = str(e) if str(e) else "Neznámá chyba"
-        logger.error(f"[VEHICLES] ❌ FATAL ERROR: {error_msg}")
-        logger.error(f"[VEHICLES] Traceback:\n{error_traceback}")
-        print(f"[VEHICLES] FATAL ERROR: {error_msg}")
-        traceback.print_exc()
-        error_type = type(e).__name__
-        print(f"[ERROR] Chyba při načítání vozidel: {error_type}: {error_msg}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání vozidel: {error_type}: {error_msg}")
+    except Exception as exc:
+        reference = report_exception(exc)
+        raise HTTPException(status_code=500, detail="Vozidla se nepodařilo načíst. Kód pro podporu: " + reference) from exc
 
 
 @router.post("/tachometer/challenge", response_model=TachometerChallengeResponse)
@@ -2168,12 +2200,11 @@ def create_tachometer_challenge(
     Načte captcha challenge z kontrolatachometru.cz.
     Uživatel opíše kód a následně zavolá /tachometer/lookup.
     """
-    _ = current_user
     expected_vin = None
     if payload and payload.vin:
         normalized_vin = _normalize_vin(payload.vin)
         expected_vin = normalized_vin if len(normalized_vin) == 17 else None
-    challenge = _create_tachometer_session(expected_vin=expected_vin, vehicle_id=None)
+    challenge = _create_tachometer_session(expected_vin=expected_vin, vehicle_id=None, customer_id=current_user.id)
     return TachometerChallengeResponse(
         challenge_id=challenge.session_id,
         captcha_image_base64=challenge.captcha_image_base64,
@@ -2190,7 +2221,6 @@ def lookup_tachometer(
     """
     Ověří captcha kód a vrátí poslední známý stav km ze STK/emisí.
     """
-    _ = current_user
     vin = _normalize_vin(payload.vin)
     if len(vin) < 5:
         raise HTTPException(status_code=422, detail="VIN není ve validním formátu.")
@@ -2198,6 +2228,7 @@ def lookup_tachometer(
         session_id=payload.challenge_id,
         vin=vin,
         captcha_code=str(payload.captcha_code or "").strip(),
+        customer_id=current_user.id,
     )
 
 
@@ -2214,7 +2245,7 @@ def init_vehicle_tachometer(
             status_code=422,
             detail="Pro kontrolu tachometru musí mít vozidlo uložené validní VIN (17 znaků).",
         )
-    return _create_tachometer_session(expected_vin=vin, vehicle_id=vehicle.id)
+    return _create_tachometer_session(expected_vin=vin, vehicle_id=vehicle.id, customer_id=current_user.id)
 
 
 @router.post("/{vehicle_id}/tachometer/submit", response_model=VehicleTachometerSubmitResponse)
@@ -2232,23 +2263,12 @@ def submit_vehicle_tachometer(
             detail="Pro kontrolu tachometru musí mít vozidlo uložené validní VIN (17 znaků).",
         )
 
-    with _TACHOMETER_CHALLENGE_LOCK:
-        stored_session = _TACHOMETER_CHALLENGE_STORE.get(payload.session_id)
-    if not stored_session:
-        raise HTTPException(
-            status_code=410,
-            detail="Captcha session vypršela nebo je neplatná. Načtěte nový obrázek.",
-        )
-    if stored_session.get("vehicle_id") not in {None, vehicle.id}:
-        raise HTTPException(
-            status_code=409,
-            detail="Captcha session patří k jinému vozidlu. Načtěte nový obrázek pro aktuální VIN.",
-        )
-
     lookup = _lookup_tachometer_with_session(
         session_id=payload.session_id,
         vin=vin,
         captcha_code=str(payload.captcha_code or "").strip(),
+        customer_id=current_user.id,
+        vehicle_id=vehicle.id,
     )
     vehicle_payload, created_record_id = _store_tachometer_mileage_result(
         vehicle=vehicle,

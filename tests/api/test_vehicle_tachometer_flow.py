@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import requests
+import base64
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -13,6 +14,8 @@ from src.modules.vehicle_hub.models import Customer, ServiceRecord, Tenant, Vehi
 from src.modules.vehicle_hub.ownership import ensure_vehicle_owner_assignment
 from src.modules.vehicle_hub.routers_v1 import vehicles as vehicles_router
 
+
+CAPTCHA_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAE0lEQVR4nGP8//8/AwMDEwMYAAAkBgMBXaJOiAAAAABJRU5ErkJggg==")
 
 START_HTML = """
 <html>
@@ -140,16 +143,14 @@ DETAIL_HTML_WITH_FINDINGS = """
 """
 
 
-class _FakeResponse:
+class _FakeResponse(requests.Response):
     def __init__(self, text: str = "", content: bytes = b"", status_code: int = 200, headers: dict | None = None):
-        self.text = text
-        self.content = content
+        super().__init__()
+        self._content = content or text.encode("utf-8")
+        self._content_consumed = True
+        self.encoding = "utf-8"
         self.status_code = status_code
-        self.headers = headers or {}
-
-    def raise_for_status(self) -> None:
-        if 400 <= self.status_code:
-            raise requests.HTTPError(f"{self.status_code} error")
+        self.headers.update(headers or {})
 
 
 class _FakeSession:
@@ -166,18 +167,18 @@ class _FakeSession:
     def __exit__(self, exc_type, exc, tb):
         return False
 
-    def get(self, url: str, timeout: int = 20):
+    def get(self, url: str, timeout: int = 20, *, allow_redirects=False, stream=True, hooks=None):
         if url.rstrip("/").endswith("www.kontrolatachometru.cz"):
             return _FakeResponse(text=START_HTML, status_code=200)
         if url.endswith("/Home/CaptchaPartial"):
             return _FakeResponse(
-                content=b"fake-captcha",
+                content=CAPTCHA_PNG,
                 status_code=200,
                 headers={"Content-Type": "image/png"},
             )
         raise AssertionError(f"Unexpected GET url: {url}")
 
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
+    def post(self, url: str, data: dict | None = None, timeout: int = 20, *, allow_redirects=False, stream=True, hooks=None):
         _FakeSession.last_post_data = dict(data or {})
         if not url.endswith("/Home/Search"):
             raise AssertionError(f"Unexpected POST url: {url}")
@@ -185,7 +186,7 @@ class _FakeSession:
 
 
 class _FakeSessionHtml500(_FakeSession):
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
+    def post(self, url: str, data: dict | None = None, timeout: int = 20, *, allow_redirects=False, stream=True, hooks=None):
         _FakeSession.last_post_data = dict(data or {})
         if not url.endswith("/Home/Search"):
             raise AssertionError(f"Unexpected POST url: {url}")
@@ -193,7 +194,7 @@ class _FakeSessionHtml500(_FakeSession):
 
 
 class _FakeSessionNoResults(_FakeSession):
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
+    def post(self, url: str, data: dict | None = None, timeout: int = 20, *, allow_redirects=False, stream=True, hooks=None):
         _FakeSession.last_post_data = dict(data or {})
         if not url.endswith("/Home/Search"):
             raise AssertionError(f"Unexpected POST url: {url}")
@@ -201,7 +202,7 @@ class _FakeSessionNoResults(_FakeSession):
 
 
 class _FakeSessionInlineDetail(_FakeSession):
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
+    def post(self, url: str, data: dict | None = None, timeout: int = 20, *, allow_redirects=False, stream=True, hooks=None):
         _FakeSession.last_post_data = dict(data or {})
         if not url.endswith("/Home/Search"):
             raise AssertionError(f"Unexpected POST url: {url}")
@@ -209,7 +210,7 @@ class _FakeSessionInlineDetail(_FakeSession):
 
 
 class _FakeSessionDetailForm(_FakeSession):
-    def post(self, url: str, data: dict | None = None, timeout: int = 20):
+    def post(self, url: str, data: dict | None = None, timeout: int = 20, *, allow_redirects=False, stream=True, hooks=None):
         _FakeSession.last_post_data = dict(data or {})
         if url.endswith("/Home/Search"):
             return _FakeResponse(text=RESULT_HTML_WITH_DETAIL_FORM, status_code=200)
@@ -663,3 +664,279 @@ def test_submit_vehicle_tachometer_returns_not_found_when_no_rows_exist(db_sessi
 
     assert exc.value.status_code == 404
     assert "nebyly nalezeny žádné údaje STK/emisí" in str(exc.value.detail)
+
+
+@pytest.mark.parametrize('url', [
+    'https://www.kontrolatachometru.cz.evil.invalid/a',
+    'https://www.kontrolatachometru.cz@evil.invalid/a',
+    'https://user:password@www.kontrolatachometru.cz/a',
+    'https://www.kontrolatachometru.cz:8443/a',
+    'https://www.kontrolatachometru.cz:bad/a',
+    'https://www.kontrolatachometru.cz./a',
+    'http://www.kontrolatachometru.cz/a', 'http://127.0.0.1/private',
+    '//evil.invalid/a', 'file:///etc/passwd', 'javascript:alert(1)',
+    'https://www.kontrolatachometru.cz\\@evil.invalid/a',
+    '/Home/one\ntwo', 'https://[broken/a',
+])
+def test_tachometer_rejects_non_official_origin(url):
+    assert vehicles_router._same_origin_external_url(url) is None
+
+
+@pytest.mark.parametrize('url', ['/protocol.pdf?x=1&amp;y=2', 'https://WWW.KONTROLATACHOMETRU.CZ:443/protocol.pdf?x=1&y=2'])
+def test_tachometer_canonicalises_official_links(url):
+    assert vehicles_router._same_origin_external_url(url) == 'https://www.kontrolatachometru.cz/protocol.pdf?x=1&y=2'
+
+
+class _RedirectSession:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.calls = []
+    def get(self, url, **kwargs):
+        return self._request('GET', url, kwargs)
+    def post(self, url, **kwargs):
+        return self._request('POST', url, kwargs)
+    def _request(self, method, url, kwargs):
+        assert kwargs['allow_redirects'] is False
+        assert kwargs['stream'] is True
+        self.calls.append((method, url, kwargs.get('data')))
+        return next(self.responses)
+
+
+@pytest.mark.parametrize('target', [
+    'https://www.kontrolatachometru.cz.evil.invalid/collect',
+    'https://www.kontrolatachometru.cz@evil.invalid/collect',
+    'https://www.kontrolatachometru.cz:8443/collect',
+    'http://www.kontrolatachometru.cz/collect', '//127.0.0.1/private',
+    'https://[malformed/collect',
+])
+def test_redirect_cannot_forward_vin_token_or_captcha(target):
+    session = _RedirectSession([_FakeResponse(status_code=307, headers={'Location': target})])
+    with pytest.raises(requests.RequestException):
+        vehicles_router._tachometer_request(session, 'POST', vehicles_router.TACHOMETER_BASE_URL + '/Home/Search',
+                                             data={'VIN': 'SYNTHETIC', 'captcha$TB': 'fixture'})
+    assert len(session.calls) == 1
+
+
+@pytest.mark.parametrize('status,method,preserve', [(307,'POST',True), (308,'POST',True), (302,'GET',False), (303,'GET',False)])
+def test_same_origin_redirect_preserves_only_appropriate_body(status, method, preserve):
+    session = _RedirectSession([_FakeResponse(status_code=status, headers={'Location': '/Home/Result'}), _FakeResponse(text=RESULT_HTML)])
+    body = {'VIN': 'SYNTHETIC', '__RequestVerificationToken': 'fixture'}
+    response = vehicles_router._tachometer_request(session, 'POST', vehicles_router.TACHOMETER_BASE_URL + '/Home/Search', data=body)
+    assert response.text == RESULT_HTML
+    assert session.calls[-1] == (method, vehicles_router.TACHOMETER_BASE_URL + '/Home/Result', body if preserve else None)
+
+
+def test_redirect_loop_and_streamed_size_are_bounded():
+    session = _RedirectSession([_FakeResponse(status_code=302, headers={'Location': '/loop'}) for _ in range(4)])
+    with pytest.raises(requests.RequestException):
+        vehicles_router._tachometer_request(session, 'GET', '/loop')
+    assert len(session.calls) == 4
+    session = _RedirectSession([_FakeResponse(content=b'x' * 200_000, headers={'Content-Length': '1'})])
+    with pytest.raises(requests.RequestException):
+        vehicles_router._tachometer_request(session, 'GET', '/image', max_bytes=100_000)
+
+
+@pytest.mark.parametrize('content', [b'<html>private</html>', b'<svg onload="alert(1)"/>', b'not an image', CAPTCHA_PNG[:40]])
+def test_non_raster_or_corrupt_captcha_is_not_relayed(content):
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as denied:
+        vehicles_router._captcha_mime_type(content)
+    assert denied.value.status_code == 502
+    assert content.decode('utf-8', errors='ignore') not in denied.value.detail
+
+
+def test_captcha_mime_is_detected_from_actual_content():
+    assert vehicles_router._captcha_mime_type(CAPTCHA_PNG) == 'image/png'
+
+
+def _fixture_challenge(monkeypatch, *, customer_id=17, vehicle_id=None):
+    monkeypatch.setattr(vehicles_router.requests, 'Session', _FakeSession)
+    return vehicles_router._create_tachometer_session(expected_vin='TMBJF73T2B9044629', vehicle_id=vehicle_id, customer_id=customer_id)
+
+
+def test_challenge_cannot_be_used_by_different_customer_or_vehicle(monkeypatch):
+    from fastapi import HTTPException
+    challenge = _fixture_challenge(monkeypatch, vehicle_id=51)
+    for customer, vehicle, vin, status in [(18,51,'TMBJF73T2B9044629',410), (17,52,'TMBJF73T2B9044629',409),
+                                          (17,None,'TMBJF73T2B9044629',409), (17,51,'OTHER',409)]:
+        with pytest.raises(HTTPException) as denied:
+            vehicles_router._lookup_tachometer_with_session(session_id=challenge.session_id, vin=vin,
+                captcha_code='fixture', customer_id=customer, vehicle_id=vehicle)
+        assert denied.value.status_code == status
+        assert challenge.session_id in vehicles_router._TACHOMETER_CHALLENGE_STORE
+    result = vehicles_router._lookup_tachometer_with_session(session_id=challenge.session_id,
+        vin='TMBJF73T2B9044629', captcha_code='fixture', customer_id=17, vehicle_id=51)
+    assert result.latest_mileage_km == 416588
+    with pytest.raises(HTTPException) as replay:
+        vehicles_router._lookup_tachometer_with_session(session_id=challenge.session_id,
+            vin='TMBJF73T2B9044629', captcha_code='fixture', customer_id=17, vehicle_id=51)
+    assert replay.value.status_code == 410
+
+
+def test_simultaneous_lookup_only_contacts_provider_once(monkeypatch):
+    from fastapi import HTTPException
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    challenge = _fixture_challenge(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+    class Blocking(_FakeSession):
+        calls = 0
+        def post(self, *args, **kwargs):
+            Blocking.calls += 1
+            entered.set()
+            assert release.wait(5)
+            return super().post(*args, **kwargs)
+    monkeypatch.setattr(vehicles_router.requests, 'Session', Blocking)
+    args = dict(session_id=challenge.session_id, vin='TMBJF73T2B9044629', captcha_code='fixture', customer_id=17)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        running = pool.submit(vehicles_router._lookup_tachometer_with_session, **args)
+        try:
+            assert entered.wait(5)
+            with pytest.raises(HTTPException) as busy:
+                vehicles_router._lookup_tachometer_with_session(**args)
+            assert busy.value.status_code == 409
+        finally:
+            release.set()
+        assert running.result().latest_mileage_km == 416588
+    assert Blocking.calls == 1
+
+
+def test_wrong_captcha_can_retry_without_consuming_other_challenges(monkeypatch):
+    from fastapi import HTTPException
+    challenge = _fixture_challenge(monkeypatch)
+    other = _fixture_challenge(monkeypatch, customer_id=18)
+    class WrongOnce(_FakeSession):
+        calls = 0
+        def post(self, *args, **kwargs):
+            WrongOnce.calls += 1
+            if WrongOnce.calls == 1:
+                return _FakeResponse(text=vehicles_router._TACHOMETER_CAPTCHA_ERROR_TEXT)
+            return super().post(*args, **kwargs)
+    monkeypatch.setattr(vehicles_router.requests, 'Session', WrongOnce)
+    args = dict(session_id=challenge.session_id, vin='TMBJF73T2B9044629', captcha_code='fixture', customer_id=17)
+    with pytest.raises(HTTPException) as wrong:
+        vehicles_router._lookup_tachometer_with_session(**args)
+    assert wrong.value.status_code == 422
+    assert vehicles_router._lookup_tachometer_with_session(**args).latest_mileage_km == 416588
+    assert other.session_id in vehicles_router._TACHOMETER_CHALLENGE_STORE
+
+
+def test_failed_creation_frees_capacity_and_does_not_expose_provider_error(monkeypatch, capsys):
+    from fastapi import HTTPException
+    marker = 'PRIVATE_PROVIDER_TOKEN'
+    class Failed(_FakeSession):
+        def get(self, *args, **kwargs):
+            raise requests.ConnectionError('https://user:' + marker + '@invalid.test?VIN=private')
+    monkeypatch.setattr(vehicles_router.requests, 'Session', Failed)
+    with pytest.raises(HTTPException) as unavailable:
+        vehicles_router._create_tachometer_session(expected_vin=None, vehicle_id=None, customer_id=17)
+    assert unavailable.value.status_code == 502
+    assert marker not in unavailable.value.detail
+    assert marker not in capsys.readouterr().out
+    assert vehicles_router._TACHOMETER_CHALLENGE_STORE == {}
+
+
+def test_challenge_capacity_is_per_customer_and_globally_bounded(monkeypatch):
+    from fastapi import HTTPException
+    monkeypatch.setattr(vehicles_router, '_TACHOMETER_MAX_CHALLENGES_PER_CUSTOMER', 2)
+    monkeypatch.setattr(vehicles_router, '_TACHOMETER_MAX_CHALLENGES', 3)
+    _fixture_challenge(monkeypatch)
+    _fixture_challenge(monkeypatch)
+    with pytest.raises(HTTPException) as limit:
+        _fixture_challenge(monkeypatch)
+    assert limit.value.status_code == 429
+    _fixture_challenge(monkeypatch, customer_id=18)
+    with pytest.raises(HTTPException) as global_limit:
+        _fixture_challenge(monkeypatch, customer_id=19)
+    assert global_limit.value.status_code == 429
+    assert len(vehicles_router._TACHOMETER_CHALLENGE_STORE) == 3
+
+
+def test_repeated_import_reuses_record_and_history(db_session, monkeypatch):
+    owner, vehicle = _seed_owned_vehicle(db_session)
+    monkeypatch.setattr(vehicles_router.requests, 'Session', _FakeSession)
+    ids = []
+    for _ in range(2):
+        challenge = vehicles_router.init_vehicle_tachometer(vehicle.id, owner, db_session)
+        result = vehicles_router.submit_vehicle_tachometer(vehicle.id,
+            vehicles_router.VehicleTachometerSubmitRequest(session_id=challenge.session_id, captcha_code='fixture'), owner, db_session)
+        ids.append(result.created_record_id)
+    assert ids[0] == ids[1]
+    assert db_session.query(ServiceRecord).count() == 1
+    assert db_session.query(vehicles_router.VehicleTachometerHistoryEntryModel).count() == 2
+
+
+def test_import_checks_access_again_after_provider_response(db_session, monkeypatch):
+    from fastapi import HTTPException
+    owner, vehicle = _seed_owned_vehicle(db_session)
+    lookup = vehicles_router.TachometerLookupResponse(vin=vehicle.vin, latest_mileage_km=416588,
+        latest_check_date=None, inspections=vehicles_router._parse_tachometer_inspections(RESULT_HTML))
+    monkeypatch.setattr(vehicles_router, 'can_access_vehicle', lambda *args: False)
+    with pytest.raises(HTTPException) as denied:
+        vehicles_router._store_tachometer_mileage_result(vehicle=vehicle, lookup=lookup, current_user=owner, db=db_session)
+    assert denied.value.status_code == 403
+    assert db_session.query(ServiceRecord).count() == 0
+    assert vehicle.current_mileage_km == 410000
+
+
+def test_import_does_not_apply_data_after_vin_changed(db_session):
+    from fastapi import HTTPException
+    owner, vehicle = _seed_owned_vehicle(db_session)
+    lookup = vehicles_router.TachometerLookupResponse(vin='OTHER_VIN', latest_mileage_km=416588,
+        latest_check_date=None, inspections=vehicles_router._parse_tachometer_inspections(RESULT_HTML))
+    with pytest.raises(HTTPException) as denied:
+        vehicles_router._store_tachometer_mileage_result(vehicle=vehicle, lookup=lookup, current_user=owner, db=db_session)
+    assert denied.value.status_code == 409
+    assert db_session.query(ServiceRecord).count() == 0
+    assert vehicle.current_mileage_km == 410000
+
+
+def test_unknown_inspection_date_is_still_idempotent(db_session):
+    owner, vehicle = _seed_owned_vehicle(db_session)
+    lookup = vehicles_router.TachometerLookupResponse(vin=vehicle.vin, latest_mileage_km=416588,
+        latest_check_date=None, inspections=[vehicles_router.TachometerInspectionOut(mileage_km=416588, protocol_number='UNKNOWN-DATE')])
+    ids = []
+    for _ in range(2):
+        _, record_id = vehicles_router._store_tachometer_mileage_result(vehicle=vehicle, lookup=lookup, current_user=owner, db=db_session)
+        ids.append(record_id)
+    assert ids[0] == ids[1]
+    assert db_session.query(ServiceRecord).count() == 1
+    assert db_session.query(vehicles_router.VehicleTachometerHistoryEntryModel).count() == 1
+
+
+@pytest.mark.parametrize('oversized', [False, True])
+def test_requests_transport_checks_redirect_before_following_and_bounds_its_body(oversized):
+    """Use the real requests Session redirect machinery; the adapter contains no network."""
+    from io import BytesIO
+    from requests.adapters import BaseAdapter
+    class FixtureRaw(BytesIO):
+        released = False
+        def release_conn(self):
+            self.released = True
+    class FixtureAdapter(BaseAdapter):
+        calls = []
+        last_raw = None
+        def send(self, request, **kwargs):
+            self.calls.append(request)
+            response = requests.Response()
+            response.status_code = 307
+            response.request = request
+            response.url = request.url
+            response.headers['Location'] = 'https://www.kontrolatachometru.cz.evil.invalid/collect'
+            response.headers['Content-Length'] = '1'
+            self.last_raw = FixtureRaw(b'x' * (100_000 if oversized else 1))
+            response.raw = self.last_raw
+            return response
+        def close(self):
+            pass
+    with requests.Session() as session:
+        session.trust_env = False
+        adapter = FixtureAdapter()
+        session.mount('https://', adapter)
+        with pytest.raises(requests.RequestException) as rejected:
+            vehicles_router._tachometer_request(session, 'POST', '/Home/Search',
+                data={'VIN': 'fixture', 'captcha$TB': 'synthetic'}, max_bytes=2000)
+        assert ('exceeds limit' if oversized else 'Invalid tachometer redirect') in str(rejected.value)
+        assert len(adapter.calls) == 1
+        assert adapter.calls[0].url == vehicles_router.TACHOMETER_BASE_URL + '/Home/Search'
+        assert adapter.last_raw.closed or adapter.last_raw.released
