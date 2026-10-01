@@ -1916,8 +1916,6 @@ def create_vehicle(
         # Validace povinných polí
         if not vehicle_data.nickname or len(vehicle_data.nickname.strip()) < 2:
             raise HTTPException(status_code=422, detail="Zadejte název vozidla (min. 2 znaky)")
-        if not vehicle_data.stk_valid_until:
-            raise HTTPException(status_code=422, detail="Zadejte platnost STK (datum)")
         _validate_mileage_consistency(
             current_mileage_km=vehicle_data.current_mileage_km,
             last_stk_mileage_km=vehicle_data.last_stk_mileage_km,
@@ -2474,7 +2472,7 @@ def update_vehicle(
         vehicle.plate = vehicle_data.plate
     if vehicle_data.notes is not None:
         vehicle.notes = vehicle_data.notes
-    if vehicle_data.stk_valid_until is not None:
+    if "stk_valid_until" in vehicle_data.model_fields_set:
         vehicle.stk_valid_until = vehicle_data.stk_valid_until
     if vehicle_data.current_mileage_km is not None:
         vehicle.current_mileage_km = vehicle_data.current_mileage_km

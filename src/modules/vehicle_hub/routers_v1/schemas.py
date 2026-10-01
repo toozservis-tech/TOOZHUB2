@@ -19,7 +19,7 @@ class VehicleCreateV1(BaseModel):
     vin: Optional[str] = None
     plate: Optional[str] = None
     notes: Optional[str] = None
-    stk_valid_until: date
+    stk_valid_until: Optional[date] = None
     current_mileage_km: Optional[int] = Field(default=None, ge=0)
     last_stk_mileage_km: Optional[int] = Field(default=None, ge=0)
     tyres_info: Optional[str] = None

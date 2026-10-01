@@ -5126,7 +5126,7 @@
 
         function getVehicleStkStatusMeta(stkDateValue) {
             if (!(stkDateValue instanceof Date) || Number.isNaN(stkDateValue.getTime())) {
-                return { className: 'stk-unknown', label: 'Bez STK' };
+                return { className: 'stk-unknown', label: 'Platnost STK neznámá' };
             }
 
             const today = new Date();
@@ -5536,51 +5536,10 @@
                 const viewMode = getVehicleViewMode();
                 let html = `<div class="cards-grid vehicle-view vehicle-view-${escapeHtml(viewMode)}">`;
                 vehicles.forEach(vehicle => {
-                    // Formátování STK platnosti - zkontrolovat databázi i poznámky
-                    let stkText = 'Nezadáno';
-                    let stkDateValue = null;
-
-                    // 1. Zkusit načíst z databáze (stk_valid_until)
-                    if (vehicle.stk_valid_until) {
-                        try {
-                            const stkDate = new Date(vehicle.stk_valid_until);
-                            if (!isNaN(stkDate.getTime())) {
-                                stkDateValue = stkDate;
-                                stkText = stkDate.toLocaleDateString('cs-CZ');
-                            }
-                        } catch (e) {
-                            stkText = vehicle.stk_valid_until;
-                        }
-                    }
-
-                    // 2. Pokud není v databázi, zkusit najít v poznámkách
-                    if (stkText === 'Nezadáno' && vehicle.notes) {
-                        const notesText = vehicle.notes;
-                        // Hledat různé formáty STK datumu v poznámkách
-                        const stkPatterns = [
-                            /Technická prohlídka do:\s*(\d{4}-\d{2}-\d{2})/i,
-                            /STK platnost do:\s*(\d{4}-\d{2}-\d{2})/i,
-                            /STK do:\s*(\d{4}-\d{2}-\d{2})/i,
-                            /platnost STK.*?(\d{4}-\d{2}-\d{2})/i,
-                            /(\d{4}-\d{2}-\d{2}).*?STK/i
-                        ];
-
-                        for (const pattern of stkPatterns) {
-                            const match = notesText.match(pattern);
-                            if (match && match[1]) {
-                                try {
-                                    const stkDate = new Date(match[1]);
-                                    if (!isNaN(stkDate.getTime())) {
-                                        stkDateValue = stkDate;
-                                        stkText = stkDate.toLocaleDateString('cs-CZ');
-                                        break;
-                                    }
-                                } catch (e) {
-                                    // Pokračovat na další pattern
-                                }
-                            }
-                        }
-                    }
+                    // Only the dedicated expiry field is authoritative; notes may be historical.
+                    const inspectionDate = inspectionDateOnly(vehicle.stk_valid_until);
+                    const stkDateValue = inspectionDate ? new Date(inspectionDate + 'T12:00:00') : null;
+                    const stkText = stkDateValue ? stkDateValue.toLocaleDateString('cs-CZ') : 'Nezadáno';
 
                     // Formátování motoru - obsah, kód motoru místo "nm"
                     let engineText = 'Nezadáno';
@@ -6262,7 +6221,7 @@
                             <input type="text" id="serviceAddVehicleEngine" placeholder="2.0 TDI">
                         </div>
                         <div class="form-group">
-                            <label for="serviceAddVehicleStk">Platnost STK *</label>
+                            <label for="serviceAddVehicleStk">Platnost STK (pokud ji znáte)</label>
                             <input type="date" id="serviceAddVehicleStk">
                         </div>
                         <div class="form-group full-width">
@@ -6408,8 +6367,8 @@
                 showAlert('Vyplňte SPZ.', 'error');
                 return;
             }
-            if (!stk) {
-                showAlert('Vyplňte platnost STK.', 'error');
+            if (stk && !inspectionDateOnly(stk)) {
+                showAlert('Datum STK není platné.', 'error');
                 return;
             }
 
@@ -6422,7 +6381,7 @@
                 year: Number.isFinite(yearRaw) && yearRaw > 0 ? yearRaw : null,
                 engine: engine || null,
                 notes: notes || null,
-                stk_valid_until: stk,
+                stk_valid_until: stk || null,
                 tyres_info: null
             };
 
@@ -6475,7 +6434,7 @@
             const engine = document.getElementById('vehicleEngine').value.trim();
             const notes = document.getElementById('vehicleNotes').value.trim();
             const stkRaw = stkInput ? stkInput.value.trim() : '';
-            const stkDate = normalizeDateInput(stkRaw);
+            const stkDate = inspectionDateOnly(normalizeDateInput(stkRaw));
 
             // Vyčistit předchozí chyby
             clearFieldError('vehicleName', 'vehicleNameError');
@@ -6491,16 +6450,13 @@
                 setFieldError('vehiclePlate', 'vehiclePlateError', 'Zadejte SPZ vozidla');
                 hasError = true;
             }
-            if (!stkRaw) {
-                setFieldError('vehicleStkDate', 'vehicleStkError', 'Zadejte platnost STK');
-                hasError = true;
-            } else if (!stkDate) {
+            if (stkRaw && !stkDate) {
                 setFieldError('vehicleStkDate', 'vehicleStkError', 'Datum STK není platné (RRRR-MM-DD)');
                 hasError = true;
             }
 
             if (hasError) {
-                showAlert('Doplňte povinná pole: název vozidla, SPZ a platnost STK.', 'error');
+                showAlert('Zkontrolujte název vozidla, SPZ a případné zadané datum STK.', 'error');
                 return;
             }
 
@@ -6543,7 +6499,7 @@
                 engine_code: engineCode || null,
                 tyres_info: tyres || null,
                 notes: fullNotes || null,
-                stk_valid_until: stkDate,
+                stk_valid_until: stkDate || null,
                 insurance_provider: null,
                 insurance_valid_until: null
             };
@@ -11703,7 +11659,7 @@
                             <button class="btn reminder-pill-btn reminder-pill-btn--servis" ${legacyActionAttributes("click", "applyReminderTemplate_f6a1c20e")}><span class="tpl-main">SERVIS</span><span class="tpl-sub">Pravidelný servis za 6 měsíců</span></button>
                         </div>
                             <div class="reminder-note">
-                                Kliknutím se předvyplní typ a text; u STK se datum dopočítá podle zvoleného vozidla.
+                                Kliknutím se předvyplní typ a text; u STK se použije pouze známé datum platnosti vybraného vozidla.
                             </div>
                         </div>
                     </div>
@@ -11834,32 +11790,16 @@
             showCreateReminderForm();
         }
 
+        function inspectionDateOnly(value) {
+            if (typeof value !== 'string') return '';
+            const raw = value.trim();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return '';
+            const date = new Date(raw + 'T00:00:00Z');
+            return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === raw ? raw : '';
+        }
+
         function computeStkTemplateDueDate(vehicle) {
-            if (vehicle && typeof vehicle.stk_valid_until === 'string') {
-                const raw = vehicle.stk_valid_until.slice(0, 10);
-                if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-                    return raw;
-                }
-            }
-
-            const parsedFromVehicle = vehicle && vehicle.stk_valid_until
-                ? new Date(vehicle.stk_valid_until)
-                : null;
-            if (parsedFromVehicle && !Number.isNaN(parsedFromVehicle.getTime())) {
-                return toDateInputValue(parsedFromVehicle);
-            }
-
-            // Fallback: pokud chybí datum STK, odhad podle stáří vozidla.
-            const now = new Date();
-            let monthsAhead = 24;
-            const yearNumber = Number(vehicle?.year);
-            if (Number.isFinite(yearNumber) && yearNumber > 1900) {
-                const ageYears = now.getFullYear() - yearNumber;
-                monthsAhead = ageYears < 4 ? 48 : 24;
-            }
-            const target = new Date(now);
-            target.setMonth(target.getMonth() + monthsAhead);
-            return toDateInputValue(target);
+            return inspectionDateOnly(vehicle?.stk_valid_until);
         }
 
         function setupCreateReminderTemplateBehavior(vehicles, preset) {

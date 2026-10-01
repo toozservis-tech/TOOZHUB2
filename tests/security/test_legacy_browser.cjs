@@ -209,3 +209,32 @@ test('successful empty deletion responses are not reported as failures',async()=
  assert.equal(result,null);assert.deepEqual(f.errors,[]);
  }finally{await f.context.close();}
 });
+
+test('unknown STK never comes from vehicle age or historical notes and remains optional in forms',async()=>{
+ const f=await fixture();try{
+ const {page}=f;
+ const dates=await page.evaluate(()=>{
+  const values=[undefined,null,'','bad','2027-02-29','2030-05-06garbage','2028-02-29','2001-01-01'];
+  return values.map(value=>computeStkTemplateDueDate({year:2026,stk_valid_until:value}));
+ });
+ assert.deepEqual(dates,['','','','','','','2028-02-29','2001-01-01']);
+ assert.equal(await page.locator('#vehicleStkDate').getAttribute('required'),null);
+ await page.evaluate(async()=>{
+  apiCall=async url=>url==='/api/v1/vehicles'?[{id:21,nickname:'No known STK',year:2026,plate:'TEST001',notes:'STK do: 2099-01-01',stk_valid_until:null}]:{};
+  await loadVehicles();
+ });
+ assert.ok((await page.locator('#vehiclesContainer').textContent()).includes('Platnost STK neznámá'));
+ assert.ok(!(await page.locator('#vehiclesContainer').textContent()).includes('STK OK'));
+ await page.evaluate(async()=>{
+  window.__inspectionWrites=[];
+  apiCall=async (url,method,body)=>{if(method==='POST')window.__inspectionWrites.push({url,body});return url==='/api/v1/vehicles'&&method!=='POST'?[]:{id:77};};
+  document.getElementById('vehicleName').value='Unknown date fixture';
+  document.getElementById('vehiclePlate').value='TEST001';
+  document.getElementById('vehicleStkDate').value='';
+  await handleAddVehicle();
+ });
+ const writes=await page.evaluate(()=>window.__inspectionWrites);
+ assert.equal(writes.length,1); assert.equal(writes[0].body.stk_valid_until,null);
+ assert.deepEqual(f.errors,[]);
+ }finally{await f.context.close();}
+});

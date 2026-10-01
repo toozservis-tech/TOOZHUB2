@@ -2627,9 +2627,6 @@ def create_customer_vehicle(
     normalized_vin = str(payload.vin or "").strip().upper() or None
     if payload.orv_scan_id and not normalized_vin:
         raise HTTPException(status_code=422, detail="ORV scan vyžaduje doplněný VIN před uložením vozidla.")
-    normalized_stk = payload.stk_valid_until
-    if not normalized_stk:
-        raise HTTPException(status_code=422, detail="Vyplňte platnost STK.")
     if (
         payload.current_mileage_km is not None
         and payload.last_stk_mileage_km is not None
