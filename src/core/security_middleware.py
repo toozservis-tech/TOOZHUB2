@@ -70,7 +70,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors *;"
             )
         
-        if request.url.path.startswith(('/web_admin/', '/admin-static/')) or request.url.path in {'/web_admin', '/admin-static', '/admin-login', '/admin-login.js'}:
+        if request.url.path.startswith(('/web_admin/', '/admin-static/')) or request.url.path in {'/web_admin', '/admin-static', '/admin-login', '/admin-login.js', '/admin-session.js'}:
             csp = ADMIN_CONTENT_SECURITY_POLICY
             response.headers['X-Frame-Options'] = 'DENY'
             response.headers['Cache-Control'] = 'no-store'

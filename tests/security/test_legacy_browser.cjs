@@ -15,15 +15,17 @@ async function fixture({policy=true}={}){
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());requests.push({url:req.url(),method:req.method()});
   if(url.origin!==origin)return route.abort('blockedbyclient');
+  if(url.pathname==='/admin-session.js')return route.fulfill({contentType:'text/javascript',body:fs.readFileSync(path.join(root,'src/server/admin_session.js'))});
   if(url.pathname.startsWith('/web/')){
    const file=path.resolve(root,'.'+url.pathname);
    if(file.startsWith(root+'/web/')&&fs.existsSync(file)&&fs.statSync(file).isFile())return route.fulfill({status:200,body:fs.readFileSync(file),contentType:file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.html')?'text/html':'image/png',headers:policy?{'Content-Security-Policy':csp}:{}});
   }
-  const defaults={'/health':{status:'ok'},'/user/security/admin-status':{required:true,enrolled:true,verified:true},'/user/me':{id:1,email:'admin@example.invalid',role:'admin'},'/api/v1/system/capabilities':{modules:{}},'/api/v1/vehicles':[]};
+  const defaults={'/health':{status:'ok'},'/user/security/admin-status':{required:true,enrolled:true,verified:true,valid_until:Math.floor(Date.now()/1000)+900},'/user/me':{id:1,email:'admin@example.invalid',role:'admin'},'/api/v1/system/capabilities':{modules:{}},'/api/v1/vehicles':[]};
   return route.fulfill({status:200,json:defaults[url.pathname]||{}});
  });
- await page.goto(origin+'/web/index.html');await page.waitForFunction(()=>typeof API_URL==='string');
- await page.evaluate(()=>{accessToken='synthetic-session';currentUser={id:1,email:'admin@example.invalid',role:'admin'};});
+ await page.addInitScript(()=>{if(window===window.top)sessionStorage.setItem('adminAccessToken','synthetic-session');});
+ await page.goto(origin+'/web/index.html');await page.waitForFunction(()=>currentUser?.role==='admin' && document.getElementById('dashboard').classList.contains('active'));
+ await page.waitForFunction(()=>document.getElementById('vehiclesContainer').textContent.includes('Zatím nemáte žádná vozidla'));
  return {page,context,errors,requests,consoleMessages};
 }
 async function inert(page){
@@ -37,8 +39,9 @@ test('legacy page and extracted scripts initialize under strict CSP',async()=>{
  assert.equal(await f.page.locator('[onclick],[oninput],[onsubmit],[onchange],script:not([src])').count(),0);
  await f.page.evaluate(()=>{const s=document.createElement('script');s.textContent='window.__xss=1';document.body.append(s);const b=document.createElement('button');b.setAttribute('onclick','window.__xss=1');b.click();});
  assert.equal(await f.page.evaluate(()=>window.__xss),undefined);
- await f.page.locator('#loginModeServiceBtn').click();assert.equal(await f.page.locator('#loginTitle').textContent(),'Přihlášení servisu');
- await f.page.locator('#loginModeUserBtn').click();assert.equal(await f.page.locator('#loginTitle').textContent(),'Přihlášení');
+ assert.equal(await f.page.locator('#dashboard').isVisible(),true);
+ assert.equal(await f.page.locator('#authSection').isVisible(),false);
+ assert.ok(f.requests.some(r=>new URL(r.url).pathname==='/user/security/admin-status'));
  assert.deepEqual(f.errors,[]);
  }finally{await f.context.close();}
 });
@@ -167,5 +170,42 @@ test('record detail to editor keeps text, attachment names and values intact',as
  assert.equal(await page.locator('#serviceDescription-edit-41').inputValue(),poison);
  assert.equal(await page.locator('#serviceNote-edit-41').inputValue(),poison);
  await inert(page);assert.deepEqual(f.errors,[]);
+ }finally{await f.context.close();}
+});
+
+test('a stale vehicle photo never creates a new preview after session change',async()=>{
+ const f=await fixture();try{
+ const result=await f.page.evaluate(async()=>{
+  const native=fetch;let deliver;
+  window.fetch=(url,init)=>String(url).includes('/vehicles/21/photo')?new Promise(resolve=>{deliver=resolve;}):native(url,init);
+  const img=document.createElement('img');
+  const loading=hydrateVehiclePhotoPreview(21,img).then(()=> 'LOADED',e=>e.name);
+  AdminBrowserSession.set('new-synthetic-session','admin');
+  deliver(new Response(new Blob(['SYNTHETIC PHOTO'],{type:'image/png'})));
+  return {result:await loading,src:img.getAttribute('src'),cached:vehiclePhotoObjectUrls.has('21')};
+ });
+ assert.deepEqual(result,{result:'AbortError',src:null,cached:false});
+ }finally{await f.context.close();}
+});
+
+test('late geolocation never repopulates storage for a changed session',async()=>{
+ const f=await fixture();try{
+ const result=await f.page.evaluate(()=>{
+  let deliver;
+  navigator.geolocation.getCurrentPosition=callback=>{deliver=callback;};
+  captureClientGeolocation(true);
+  AdminBrowserSession.set('new-synthetic-session','admin');
+  deliver({coords:{latitude:50,longitude:14,accuracy:10}});
+  return sessionStorage.getItem('clientGeoTelemetry');
+ });
+ assert.equal(result,null);
+ }finally{await f.context.close();}
+});
+
+test('successful empty deletion responses are not reported as failures',async()=>{
+ const f=await fixture();try{
+ await f.page.route('**/api/v1/attachments/51',r=>r.fulfill({status:204}));
+ const result=await f.page.evaluate(()=>apiCall('/api/v1/attachments/51','DELETE'));
+ assert.equal(result,null);assert.deepEqual(f.errors,[]);
  }finally{await f.context.close();}
 });

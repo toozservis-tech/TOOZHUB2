@@ -22,7 +22,7 @@ async function fixture({policy=true,login=false}={}) {
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url()); requests.push({path:url.pathname,method:req.method()});
   if(url.origin!==origin) throw Error('Unexpected external request: '+url.origin);
-  const files={'/web_admin/':'web_admin/index.html','/admin-login':'src/server/admin_login.html','/admin-login.js':'src/server/admin_login.js'};
+  const files={'/web_admin/':'web_admin/index.html','/admin-login':'src/server/admin_login.html','/admin-login.js':'src/server/admin_login.js','/admin-session.js':'src/server/admin_session.js'};
   let file=files[url.pathname];
   if(['/admin.js','/workspace.js','/operator-panel.js','/admin.css','/workspace.css'].some(x=>url.pathname==='/web_admin'+x))file=url.pathname.slice(1);
   if(file) return route.fulfill({status:200,body:fs.readFileSync(path.join(root,file)),contentType:file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html',headers:policy?{'Content-Security-Policy':csp}:{}});
@@ -179,6 +179,49 @@ test('navigation, record edit and cancellation of deletion remain functional wit
  assert.equal(f.requests.filter(r=>r.method==='DELETE').length,0);
  await page.locator('.nav-item[data-section="users"]').click();
  assert.equal(await page.locator('#section-users').isVisible(),true);
+ assert.deepEqual(f.errors,[]);
+ }finally{await f.context.close();}
+});
+
+test('deletion confirmed after session change is cancelled before any mutation',async()=>{
+ const f=await fixture();try{
+ const result=await f.page.evaluate(async()=>{
+  let confirm;
+  requestDeletionConfirmation=()=>new Promise(resolve=>{confirm=resolve;});
+  const operation=apiRequest('DELETE','/admin-api/users/11').then(()=> 'DELETED',e=>e.name);
+  AdminBrowserSession.set('new-synthetic-session','admin');
+  confirm({reason:'Synthetic confirmation'});
+  return await operation;
+ });
+ assert.equal(result,'AbortError');assert.equal(f.requests.filter(r=>r.method==='DELETE').length,0);
+ }finally{await f.context.close();}
+});
+
+test('admin sign-in rejects a forged ordinary-user verification response',async()=>{
+ const f=await fixture({login:true});try{
+ await f.page.route('**/user/security/admin-status',r=>r.fulfill({json:{required:false,verified:true,valid_until:Math.floor(Date.now()/1000)+900}}));
+ await f.page.locator('#email').fill('admin@example.invalid');await f.page.locator('#password').fill('synthetic-password');await f.page.locator('#submit').click();
+ await f.page.waitForFunction(()=>document.getElementById('error').textContent.includes('nepodařilo potvrdit'));
+ assert.equal(await f.page.evaluate(()=>sessionStorage.getItem('adminAccessToken')),null);
+ assert.equal(f.requests.filter(r=>r.path==='/admin-web-session').length,0);
+ }finally{await f.context.close();}
+});
+
+test('restarting MFA sign-in rejects a late challenge response',async()=>{
+ const f=await fixture({login:true});try{
+ await f.page.route('**/user/login',r=>r.fulfill({json:{two_factor_required:true,challenge_token:'synthetic-challenge'}}));
+ await f.page.locator('#email').fill('admin@example.invalid');await f.page.locator('#password').fill('synthetic-password');await f.page.locator('#submit').click();
+ await f.page.locator('#code').waitFor({state:'visible'});
+ await f.page.evaluate(()=>{
+  const native=fetch;
+  window.fetch=(url,options)=>String(url).endsWith('/user/login/2fa')?new Promise(resolve=>window.deliverChallenge=()=>resolve(new Response(JSON.stringify({access_token:'LATE-TOKEN'})))):native(url,options);
+ });
+ await f.page.locator('#code').fill('123456');await f.page.locator('#submit').click();
+ await f.page.waitForFunction(()=>typeof deliverChallenge==='function');await f.page.locator('#restart').click();
+ await f.page.evaluate(async()=>{deliverChallenge();await new Promise(resolve=>setTimeout(resolve,0));});
+ assert.equal(await f.page.locator('#password').isVisible(),true);
+ assert.equal(await f.page.evaluate(()=>sessionStorage.getItem('adminAccessToken')),null);
+ assert.equal(f.requests.filter(r=>r.path==='/admin-web-session').length,0);
  assert.deepEqual(f.errors,[]);
  }finally{await f.context.close();}
 });

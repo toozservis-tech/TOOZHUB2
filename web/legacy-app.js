@@ -474,7 +474,7 @@
 
         function loadClientGeoTelemetry() {
             try {
-                const raw = localStorage.getItem('clientGeoTelemetry');
+                const raw = sessionStorage.getItem('clientGeoTelemetry');
                 if (!raw) return null;
                 const parsed = JSON.parse(raw);
                 if (!parsed || typeof parsed !== 'object') return null;
@@ -489,7 +489,7 @@
             if (!payload) return;
             clientGeoTelemetry = payload;
             try {
-                localStorage.setItem('clientGeoTelemetry', JSON.stringify(payload));
+                sessionStorage.setItem('clientGeoTelemetry', JSON.stringify(payload));
             } catch (e) {
                 // ignore localStorage errors
             }
@@ -498,7 +498,7 @@
         function clearClientGeoTelemetry() {
             clientGeoTelemetry = null;
             try {
-                localStorage.removeItem('clientGeoTelemetry');
+                sessionStorage.removeItem('clientGeoTelemetry');
             } catch (e) {
                 // ignore localStorage errors
             }
@@ -542,6 +542,9 @@
         }
 
         function captureClientGeolocation(force = false) {
+            const session = AdminBrowserSession.snapshot();
+            if (!session.token) return;
+            try { AdminBrowserSession.assertCurrent(session); } catch { return; }
             if (typeof navigator === 'undefined' || !navigator.geolocation) return;
 
             const now = Date.now();
@@ -550,6 +553,7 @@
 
             navigator.geolocation.getCurrentPosition(
                 (position) => {
+                    try { AdminBrowserSession.assertCurrent(session); } catch { return; }
                     const coords = position && position.coords ? position.coords : null;
                     if (!coords) return;
                     const lat = Number(coords.latitude);
@@ -684,11 +688,7 @@
             }
             clearBodyScrollLocks();
 
-            // Pokud uživatel není přihlášený, zobrazit přihlašovací okno
-            if (!isAuthenticated()) {
-                showLogin();
-                // Bez automatického otvírání licence modalu
-            }
+            // The shared bootstrap verifies the administrator before showing data.
 
             initAuthPromoSequence();
             document.addEventListener('visibilitychange', () => {
@@ -773,79 +773,7 @@
         }
 
         // API URL - centrální funkce pro získání BASE URL
-        function getApiBaseUrl() {
-            // PRODUKČNÍ REŽIM – běžíme na app.toozservis.cz → API je na stejném originu
-            // HARD RULE: Pokud jsme na produkci, ignoruj localStorage override
-            if (window.location.hostname === "app.toozservis.cz") {
-                const origin = window.location.origin;
-
-                return origin;
-            }
-
-            // Pokud je aplikace vložena v iframe na toozservis.cz, použít app.toozservis.cz
-            try {
-                // Zkusit detekovat, zda jsme v iframe (pokud je parent jiný origin)
-                if (window.self !== window.top) {
-                    // Jsme v iframe - použít produkční API URL
-                    const parentHostname = window.top.location.hostname;
-                    if (parentHostname && (parentHostname.includes('toozservis.cz') || parentHostname.includes('webnode.com'))) {
-
-                        return "https://app.toozservis.cz";
-                    }
-                }
-            } catch (e) {
-                // Cross-origin iframe - nemůžeme přistupovat k window.top.location
-                // Ale můžeme použít produkční URL pokud hostname obsahuje toozservis.cz
-                if (window.location.hostname.includes('toozservis.cz') || window.location.hostname.includes('webnode.com')) {
-
-                    return "https://app.toozservis.cz";
-                }
-            }
-
-            // DEV/LOKÁL – nejdřív zkusíme localStorage (nový klíč + legacy), pak fallback na localhost
-            const stored = (typeof SpravaVozidelStorage !== 'undefined')
-                ? SpravaVozidelStorage.getLocal('apiUrl')
-                : localStorage.getItem('toozhub_api_url');
-            if (stored && stored.trim() !== "") {
-                const storedUrl = stored.trim();
-                // Validace: musí být http(s) URL a nesmí končit /web ani mít path
-                if (storedUrl.startsWith('http://') || storedUrl.startsWith('https://')) {
-                    if (!storedUrl.includes('/web') && !storedUrl.match(/\/[^\/]+$/)) {
-
-                        return storedUrl;
-                    } else {
-                        console.warn("[API] Uložená URL obsahuje /web nebo path - ignoruji:");
-                        if (typeof SpravaVozidelStorage !== 'undefined') {
-                            SpravaVozidelStorage.removeLocal('apiUrl');
-                        } else {
-                            localStorage.removeItem('toozhub_api_url');
-                            localStorage.removeItem('sprava_vozidel_api_url');
-                        }
-                    }
-                } else {
-                    console.warn("[API] Neplatná uložená URL - ignoruji:");
-                    if (typeof SpravaVozidelStorage !== 'undefined') {
-                        SpravaVozidelStorage.removeLocal('apiUrl');
-                    } else {
-                        localStorage.removeItem('toozhub_api_url');
-                        localStorage.removeItem('sprava_vozidel_api_url');
-                    }
-                }
-            }
-
-            // Fallback: preferovat stejný origin jako je načtený frontend.
-            // Díky tomu funguje app i na nestandardních portech (např. test/staging).
-            const sameOriginFallback = window.location.origin;
-            if (sameOriginFallback && /^https?:\/\//.test(sameOriginFallback)) {
-
-                return sameOriginFallback;
-            }
-
-            // Poslední záchrana pro lokální vývoj
-            const hardFallback = "http://127.0.0.1:8000";
-
-            return hardFallback;
-        }
+        function getApiBaseUrl() { return window.location.origin; }
 
         // Alias pro zpětnou kompatibilitu
         function getApiUrl() {
@@ -1138,10 +1066,6 @@
             if (accessToken) {
                 headers['Authorization'] = `Bearer ${accessToken}`;
 
-            } else if (currentUser && currentUser.email) {
-                // Fallback na X-User-Email header (legacy)
-                headers['X-User-Email'] = currentUser.email;
-
             }
             appendClientGeoHeaders(headers);
 
@@ -1175,21 +1099,7 @@
                 const url = `${API_URL}${endpoint}`;
 
 
-                // Vytvořit timeout promise (jen pokud není signal)
-                let timeoutPromise = null;
-                if (!signal) {
-                    timeoutPromise = new Promise((_, reject) => {
-                        setTimeout(() => reject(new Error('Požadavek překročil časový limit')), timeout);
-                    });
-                }
-
-                // Race mezi fetch a timeout (nebo jen fetch pokud je signal)
-                const fetchPromise = fetch(url, options);
-                const response = signal
-                    ? await fetchPromise
-                    : await Promise.race([fetchPromise, timeoutPromise]);
-
-
+                const response = await AdminBrowserSession.request(url, {...options, timeoutMs: timeout});
 
                 // Debug tracking - uložit request info
                 const requestInfo = {
@@ -1213,6 +1123,7 @@
                 const isJson = contentType && contentType.includes('application/json');
 
                 if (response.ok) {
+                    if (response.status === 204) return null;
                     if (!isJson) {
                         console.warn("[API] Response není JSON, ale status je OK");
                         const text = await response.text();
@@ -1223,30 +1134,13 @@
 
                     return result;
                 } else {
-                    // Automatické odhlášení pouze při 401 mimo krátké stabilizační okno po loginu.
-                    // 403 často znamená oprávnění nebo WAF blokaci, ne nutně vypršenou relaci.
-                    if (response.status === 401 || response.status === 403) {
-                        let authErrorMsg = 'Vaše relace vypršela. Prosím přihlaste se znovu.';
-                        try {
-                            if (isJson) {
-                                const error = await response.json();
-                                if (error.detail) {
-                                    authErrorMsg = error.detail;
-                                }
-                            }
-                        } catch (e) {
-                            // Ignorovat chyby při parsování
+                    if (response.status === 403) {
+                        let message = 'K této operaci nemáte oprávnění.';
+                        if (isJson) {
+                            const error = await response.json();
+                            if (typeof error.detail === 'string') message = error.detail;
                         }
-
-                        const inGraceWindow = isWithinAuthAutoLogoutGraceWindow();
-                        const shouldAutoLogout = response.status === 401 && !inGraceWindow;
-                        if (shouldAutoLogout) {
-                            console.warn("Klientskou operaci se nepodařilo dokončit.");
-                            handleLogout();
-                        } else {
-                            console.warn("Klientskou operaci se nepodařilo dokončit.");
-                        }
-                        throw new Error(authErrorMsg);
+                        throw new Error(message);
                     }
 
                     // 404 Not Found - poskytnout užitečnější zprávu s detailními informacemi
@@ -1374,12 +1268,10 @@
 
             if (accessToken) {
                 headers['Authorization'] = `Bearer ${accessToken}`;
-            } else if (currentUser && currentUser.email) {
-                headers['X-User-Email'] = currentUser.email;
             }
             appendClientGeoHeaders(headers);
 
-            const response = await fetch(`${API_URL}${endpoint}`, {
+            const response = await AdminBrowserSession.request(`${API_URL}${endpoint}`, {
                 method,
                 headers,
                 body: formData,
@@ -1477,12 +1369,10 @@
             };
             if (accessToken) {
                 headers['Authorization'] = `Bearer ${accessToken}`;
-            } else if (currentUser && currentUser.email) {
-                headers['X-User-Email'] = currentUser.email;
             }
             appendClientGeoHeaders(headers);
 
-            const response = await fetch(`${API_URL}/api/v1/vehicles/${key}/photo?v=${Date.now()}`, {
+            const response = await AdminBrowserSession.request(`${API_URL}/api/v1/vehicles/${key}/photo?v=${Date.now()}`, {
                 method: 'GET',
                 headers,
                 credentials: 'include',
@@ -1975,18 +1865,12 @@
         }
 
         function getAuthStorageItem(key) {
-            if (!key) return null;
-            const fromSession = sessionStorage.getItem(key);
-            if (fromSession !== null && fromSession !== undefined) return fromSession;
-            return localStorage.getItem(key);
+            if (key === AUTH_STORAGE_KEYS.token) return AdminBrowserSession.token();
+            if (key === AUTH_STORAGE_KEYS.user) return currentUser ? JSON.stringify(currentUser) : null;
+            return null;
         }
 
-        function clearAuthStorage() {
-            [AUTH_STORAGE_KEYS.token, AUTH_STORAGE_KEYS.user, AUTH_STORAGE_KEYS.loggedIn].forEach((key) => {
-                localStorage.removeItem(key);
-                sessionStorage.removeItem(key);
-            });
-        }
+        function clearAuthStorage() { AdminBrowserSession.end('expired'); }
 
         function markAuthSessionEstablished() {
             authSessionEstablishedAt = Date.now();
@@ -2001,40 +1885,14 @@
         }
 
         function saveAuthSession(token, user, persistent = false) {
-            clearAuthStorage();
-            accessToken = token || null;
-            currentUser = user || null;
-            const target = persistent ? localStorage : sessionStorage;
-
-            if (token) {
-                target.setItem(AUTH_STORAGE_KEYS.token, token);
-            }
-            if (user) {
-                target.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
-            }
-            target.setItem(AUTH_STORAGE_KEYS.loggedIn, 'true');
-            if (token && user) {
-                markAuthSessionEstablished();
-            } else {
-                clearAuthSessionEstablishedMark();
-            }
+            AdminBrowserSession.set(token, user?.role);
+            accessToken = token; currentUser = user;
+            markAuthSessionEstablished();
         }
 
         function persistCurrentUserToActiveStorage(user) {
-            if (!user || typeof user !== 'object') return;
-            try {
-                const serialized = JSON.stringify(user);
-                if (sessionStorage.getItem(AUTH_STORAGE_KEYS.token)) {
-                    sessionStorage.setItem(AUTH_STORAGE_KEYS.user, serialized);
-                    sessionStorage.setItem(AUTH_STORAGE_KEYS.loggedIn, 'true');
-                }
-                if (localStorage.getItem(AUTH_STORAGE_KEYS.token)) {
-                    localStorage.setItem(AUTH_STORAGE_KEYS.user, serialized);
-                    localStorage.setItem(AUTH_STORAGE_KEYS.loggedIn, 'true');
-                }
-            } catch (error) {
-                console.warn("[AUTH] Uložení profilu do storage se nezdařilo:");
-            }
+            // Personal profiles stay in memory and are always reloaded from the server.
+            if (user && typeof user === 'object') currentUser = user;
         }
 
         async function ensureCurrentUserProfileLoaded(options = {}) {
@@ -2054,13 +1912,7 @@
             return !!(currentUser && currentUser.email);
         }
 
-        function getStaySignedInPreference() {
-            const raw = String(localStorage.getItem(AUTH_STORAGE_KEYS.staySignedIn) || '').toLowerCase();
-            if (!raw) {
-                return true;
-            }
-            return raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on';
-        }
+        function getStaySignedInPreference() { return false; }
 
         function updateRememberedLoginPreferences() {
             const emailInput = document.getElementById('loginEmail');
@@ -2286,202 +2138,9 @@
         }
 
         // Přihlášení - Cloudflare-safe verze
-        async function handleLogin() {
-            // Vyčistit předchozí chyby
-            const errorContainer = document.getElementById('loginErrorContainer');
-            if (errorContainer) {
-                errorContainer.innerHTML = '';
-            }
-            resetTwoFactorChallengeState({ keepError: true });
-
-            const email = document.getElementById('loginEmail').value.trim();
-            const password = document.getElementById('loginPassword').value;
-            const selectedLoginMode = getSelectedLoginMode();
-            const staySignedIn = document.getElementById('staySignedInCheckbox')?.checked === true;
-
-            if (!email || !password) {
-                showFormError('loginErrorContainer', 'Vyplňte prosím email a heslo');
-                return;
-            }
-
-            // Validace emailu
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                showFormError('loginErrorContainer', 'Neplatný formát emailu');
-                return;
-            }
-
-            try {
-                // Získat API URL
-                const apiUrl = getApiBaseUrl();
-                if (!apiUrl) {
-                    throw new Error('API URL není nastavena');
-                }
-                const loginUrl = `${apiUrl}/user/login`;
-
-
-                captureClientGeolocation(false);
-                const loginHeaders = {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8'
-                };
-                appendClientGeoHeaders(loginHeaders);
-
-                // Cloudflare-safe fetch request
-                const response = await fetch(loginUrl, {
-                    method: 'POST',
-                    headers: loginHeaders,
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        email,
-                        password,
-                        expected_role: selectedLoginMode
-                    })
-                });
-
-
-
-                // Kontrola Content-Type hlavičky
-                const contentType = response.headers.get('content-type');
-                const isJson = contentType && contentType.includes('application/json');
-
-                // Ošetření Cloudflare challenge (403 s HTML)
-                if (response.status === 403 && !isJson) {
-                    throw new Error('Bezpečnostní ochrana (Cloudflare) dočasně zablokovala požadavek. Obnovte stránku (F5) a zkuste znovu.');
-                }
-
-                // Ošetření 401 (Unauthorized)
-                if (response.status === 401) {
-                    throw new Error('Neplatný email nebo heslo');
-                }
-
-                if (response.status === 403) {
-                    let detail = 'Přístup byl odmítnut.';
-                    if (isJson) {
-                        try {
-                            const err = await response.json();
-                            detail = err.detail || detail;
-                        } catch (e) {
-                            // ignore malformed JSON
-                        }
-                    }
-                    throw new Error(detail);
-                }
-
-                // Kontrola, zda je odpověď OK
-                if (!response.ok) {
-                    let errorMessage = 'Nepodařilo se přihlásit';
-                    try {
-                        if (isJson) {
-                            const error = await response.json();
-                            errorMessage = error.detail || error.message || errorMessage;
-                        } else {
-                            errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-                        }
-                    } catch (e) {
-                        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-                    }
-                    throw new Error(errorMessage);
-                }
-
-                // Parsování JSON odpovědi
-                if (!isJson) {
-                    throw new Error('Server vrátil neočekávaný formát odpovědi');
-                }
-
-                const data = await response.json();
-
-                if (data.two_factor_required && data.challenge_token) {
-                    openTwoFactorChallenge(data.challenge_token, data.challenge_expires_in || 300);
-                    updateRememberedLoginPreferences();
-                    showAlert('Zadejte 6místný kód z autentizační aplikace pro dokončení přihlášení.', 'info');
-                    return;
-                }
-
-                // Nový i legacy formát odpovědi
-                const loginToken = data.access_token || data.token || null;
-                const loginUser = (data.user && typeof data.user === 'object')
-                    ? data.user
-                    : (data.email ? data : null);
-
-                if (loginToken || loginUser) {
-                    saveAuthSession(loginToken, loginUser, staySignedIn);
-                } else {
-                    throw new Error('Server vrátil neplatná přihlašovací data.');
-                }
-
-                // Safari fallback: některé odpovědi nemusí obsahovat kompletní user payload.
-                if (currentUser && typeof currentUser === 'object' && !currentUser.email && email) {
-                    currentUser.email = email;
-                    persistCurrentUserToActiveStorage(currentUser);
-                }
-                if ((!currentUser || !currentUser.email) && accessToken) {
-                    await ensureCurrentUserProfileLoaded({ force: true });
-                }
-                updateRememberedLoginPreferences();
-
-                const loggedInRole = String(currentUser?.role || 'user').toLowerCase();
-                if (selectedLoginMode === 'service' && loggedInRole !== 'service' && loggedInRole !== 'admin' && loggedInRole !== 'developer_admin') {
-                    clearLocalAuthSession();
-                    setLoginMode('user');
-                    throw new Error('Tento účet není servisní. Přepněte na režim Uživatel.');
-                }
-                if (selectedLoginMode === 'user' && loggedInRole === 'service') {
-                    clearLocalAuthSession();
-                    setLoginMode('service');
-                    throw new Error('Tento účet je servisní. Přepnuli jsme režim na Servis, přihlaste se znovu.');
-                }
-
-                // Vyčistit chyby před přesměrováním
-                if (errorContainer) {
-                    errorContainer.innerHTML = '';
-                }
-                resetTwoFactorChallengeState({ keepError: true });
-
-                // Zavřít všechna modální okna při přihlášení
-                if (typeof closeVehicleModal === 'function') closeVehicleModal();
-                if (typeof closeAddServiceRecordModal === 'function') closeAddServiceRecordModal();
-                if (typeof closeServiceRecordDetailModal === 'function') closeServiceRecordDetailModal();
-
-                // Zobrazit dashboard
-                if (typeof showDashboard === 'function') {
-                    showDashboard();
-                }
-
-                if (!isAuthenticated()) {
-                    throw new Error('Přihlášení proběhlo, ale relace nebyla dokončena. Obnovte stránku a zkuste to znovu.');
-                }
-
-                if (typeof switchTab === 'function') {
-                    if (loggedInRole === 'service' || (selectedLoginMode === 'service' && (loggedInRole === 'admin' || loggedInRole === 'developer_admin'))) {
-                        setTimeout(() => switchTab('serviceWorkspace'), 120);
-                    }
-                }
-
-                // LICENSE_UI_START: Načíst licenci po loginu (1. místo)
-                if (typeof loadLicenseStatus === 'function') {
-                    await loadLicenseStatus();
-                }
-
-                if (typeof showAlert === 'function') {
-                    showAlert('Přihlášení úspěšné!', 'success');
-                }
-            } catch (error) {
-                console.error("[LOGIN] Error:");
-                if (error.name === 'TypeError' && (error.message || '').toLowerCase().includes('fetch')) {
-                    console.error("[LOGIN] Síťová chyba nebo CORS – zkontrolujte, zda backend běží na");
-                }
-                let errorMessage = error.message || 'Nepodařilo se přihlásit';
-                const errorLower = String(errorMessage).toLowerCase();
-                if (errorLower.includes('není servisní')) {
-                    setLoginMode('user');
-                    errorMessage = `${errorMessage} Každý účet má jednu roli. Pro servis použijte samostatný servisní účet.`;
-                } else if (errorLower.includes('je servisní')) {
-                    setLoginMode('service');
-                }
-                showFormError('loginErrorContainer', errorMessage);
-            }
+        async function handleLogin(event) {
+            event?.preventDefault();
+            AdminBrowserSession.end('verification');
         }
 
         // Zajistit globální dostupnost handleLogin
@@ -2924,8 +2583,6 @@
 
             if (accessToken) {
                 headers['Authorization'] = `Bearer ${accessToken}`;
-            } else if (currentUser && currentUser.email) {
-                headers['X-User-Email'] = currentUser.email;
             }
             appendClientGeoHeaders(headers);
 
@@ -2942,7 +2599,7 @@
 
             let response;
             try {
-                response = await fetch(`${API_URL}/api/v1/ares/${encodeURIComponent(ico)}`, options);
+                response = await AdminBrowserSession.request(`${API_URL}/api/v1/ares/${encodeURIComponent(ico)}`, options);
             } catch (error) {
                 if (error.name === 'AbortError') {
                     throw error;
@@ -3411,61 +3068,7 @@
         }
 
         // Odhlášení
-        function handleLogout() {
-            // Zastavit sledování aktivity
-            stopInactivityTimer();
-            stopLicenseRefresh();
-            stopClientGeoRefresh();
-            closeMobileNavbarMenu();
-            pushSwRegistration = null;
-            comgateConfigCache = null;
-            comgateConfigLoadedAt = 0;
-            selectedLicenseBillingPeriod = 'monthly';
-            currentLicensePlanForUi = 'free';
-            currentLicenseSubscriptionForUi = null;
-            pendingPaymentReturnInfo = null;
-            pendingPaidPlanForCheckout = '';
-            syncLicenseBillingButtons();
-            resetManagedServiceContactsFooter();
-
-            currentUser = null;
-            accessToken = null;
-            clearAuthStorage();
-            clearAuthSessionEstablishedMark();
-            resetTwoFactorChallengeState({ keepError: true });
-
-            const authSection = document.getElementById('authSection');
-            const dashboard = document.getElementById('dashboard');
-            const navbar = document.getElementById('mainNavbar');
-            const userBadge = document.getElementById('userBadge');
-            const logoutBtn = document.getElementById('logout-btn');
-
-            // Skrýt navbar
-            if (navbar) {
-                navbar.classList.add('hidden');
-            }
-            if (userBadge) {
-                userBadge.classList.add('hidden');
-            }
-            if (logoutBtn) {
-                logoutBtn.classList.add('hidden');
-            }
-
-            if (authSection) {
-                authSection.classList.remove('hidden');
-                authSection.style.display = '';
-            }
-
-            if (dashboard) {
-                dashboard.classList.remove('active');
-                dashboard.style.display = 'none';
-            }
-
-            // Command Bot DOČASNĚ VYPNUT
-            // updateCommandBotVisibility();
-
-            showLogin();
-        }
+        function handleLogout() { void AdminBrowserSession.logout(); }
 
         // Sledování aktivity pro automatické odhlášení
         let inactivityTimer = null;
@@ -3528,7 +3131,7 @@
 
         // Jednotná kontrola auth stavu
         function isAuthenticated() {
-            return !!(accessToken && currentUser && currentUser.email);
+            return !!(AdminBrowserSession.token() && currentUser && currentUser.email);
         }
 
         function clearBodyScrollLocks() {
@@ -3790,79 +3393,11 @@
         }
 
         // Zobrazení přihlášení (skrýt dashboard)
-        function showLogin() {
-            const authSection = document.getElementById('authSection');
-            const dashboard = document.getElementById('dashboard');
-            const navbar = document.getElementById('mainNavbar');
-            const userBadge = document.getElementById('userBadge');
-            const logoutBtn = document.getElementById('logout-btn');
-
-            stopClientGeoRefresh();
-            stopReminderNotificationHeartbeat();
-            stopSystemNotificationsPolling();
-            closeMobileNavbarMenu();
-            clearBodyScrollLocks();
-
-            if (!authSection || !dashboard) {
-                console.error("[AUTH] authSection nebo dashboard neexistuje!");
-                return;
-            }
-
-            // Zavřít license modal pokud je otevřený
-            closeLicenseModal();
-            const licenseDropdown = document.getElementById('licenseQuickDropdown');
-            if (licenseDropdown) {
-                licenseDropdown.classList.add('hidden');
-            }
-
-            // Zobrazit auth section
-            authSection.classList.remove('hidden');
-            authSection.style.display = '';
-            authSection.style.visibility = 'visible';
-
-            // Skrýt dashboard
-            dashboard.classList.remove('active');
-            dashboard.style.display = 'none';
-
-            // Skrýt navbar
-            if (navbar) {
-                navbar.classList.add('hidden');
-            }
-            if (userBadge) {
-                userBadge.classList.add('hidden');
-            }
-            if (logoutBtn) {
-                logoutBtn.classList.add('hidden');
-            }
-            const serviceTabBtn = document.getElementById('serviceWorkspaceTabButton');
-            if (serviceTabBtn) {
-                serviceTabBtn.classList.add('hidden');
-            }
-            const servicesDirectoryTabBtn = document.getElementById('servicesDirectoryTabButton');
-            if (servicesDirectoryTabBtn) {
-                servicesDirectoryTabBtn.classList.add('hidden');
-            }
-            servicesDirectoryState.loadedAt = 0;
-            servicesDirectoryState.payload = null;
-            resetManagedServiceContactsFooter();
-
-            // Command Bot DOČASNĚ VYPNUT
-            // updateCommandBotVisibility();
-
-            // Zobrazit login formulář
-            document.getElementById('registerForm')?.classList.add('hidden');
-            document.getElementById('loginForm')?.classList.remove('hidden');
-            initLoginModeFromState();
-            initRememberedLoginPreferences();
-            resetTwoFactorChallengeState({ keepError: true });
-
-            // Vyčistit chyby
-            clearFormError('loginErrorContainer');
-            clearFormError('registerErrorContainer');
-        }
+        function showLogin() { AdminBrowserSession.end('verification'); }
 
         // Zobrazení dashboardu (skrýt login)
         function showDashboard() {
+            document.getElementById('adminSessionLoading')?.remove();
             const dashboardStartTs = performance.now();
             // Kontrola auth stavu
             if (!isAuthenticated()) {
@@ -4002,7 +3537,7 @@
                 }
                 appendClientGeoHeaders(headers);
 
-                const response = await fetch(`${apiUrl}/api/v1/license/status`, {
+                const response = await AdminBrowserSession.request(`${apiUrl}/api/v1/license/status`, {
                     method: 'GET',
                     headers,
                     credentials: 'include',
@@ -4949,7 +4484,7 @@
                 };
                 appendClientGeoHeaders(upgradeHeaders);
 
-                const response = await fetch(`${apiUrl}/api/v1/license/upgrade`, {
+                const response = await AdminBrowserSession.request(`${apiUrl}/api/v1/license/upgrade`, {
                     method: 'POST',
                     headers: upgradeHeaders,
                     credentials: 'include',
@@ -7597,7 +7132,7 @@
                 throw new Error('Příloha nemá platný odkaz.');
             }
 
-            const token = accessToken || localStorage.getItem('token');
+            const token = AdminBrowserSession.token();
             if (!token) {
                 throw new Error('Pro otevření přílohy musíte být přihlášeni.');
             }
@@ -7608,7 +7143,7 @@
             };
             appendClientGeoHeaders(headers);
             API_URL = getApiBaseUrl();
-            const response = await fetch(`${API_URL}${normalizedUrl}`, {
+            const response = await AdminBrowserSession.request(`${API_URL}${normalizedUrl}`, {
                 method: 'GET',
                 headers,
                 credentials: 'include',
@@ -9636,10 +9171,7 @@
                 }
 
                 // Získat token pro autentizaci (stejně jako v apiCall)
-                let token = accessToken;
-                if (!token) {
-                    token = localStorage.getItem('token');
-                }
+                const token = AdminBrowserSession.token();
                 if (!token) {
                     showAlert('Musíte být přihlášeni', 'error');
                     return;
@@ -9654,7 +9186,7 @@
                 appendClientGeoHeaders(pdfHeaders);
 
                 // Zavolat API endpoint pro generování PDF
-                const response = await fetch(url, {
+                const response = await AdminBrowserSession.request(url, {
                     method: 'GET',
                     headers: pdfHeaders
                 });
@@ -10854,125 +10386,26 @@
         }
 
         // Kontrola přihlášení při načtení stránky
-        window.addEventListener('DOMContentLoaded', () => {
-            // Inicializovat API_URL
-            function initApiUrl() {
-                try {
-                    API_URL = getApiBaseUrl();
-
-                } catch (e) {
-                    console.error("[APP] Chyba při inicializaci API_URL:");
-                    API_URL = "http://127.0.0.1:8001"; // Fallback
-                }
-            }
-
-            // Inicializovat API URL hned
-            initApiUrl();
-            capturePendingServiceInviteTokenFromUrl();
-            capturePendingReservationClaimTokenFromUrl();
-            capturePendingPaymentReturnFromUrl();
-
-            // Nastavit DEV API URL panel (skrýt v produkci)
-            setupDevApiUrlPanel();
-
-            // Zobrazit tlačítko konfigurace jen v DEV režimu (ne v produkci)
-            const isProduction = window.location.hostname === "app.toozservis.cz";
-            const location = getLocation();
-            const urlParams = new URLSearchParams(location.search || '');
-            const isAdmin = urlParams.get('admin') === '1';
-            const configButton = document.getElementById('configButton');
-            if (configButton) {
-                // V produkci tlačítko skrýt, v DEV zobrazit jen pro admina
-                if (isProduction) {
-                    configButton.classList.add('hidden');
-                } else if (isAdmin) {
-                    configButton.classList.remove('hidden');
-                } else {
-                    configButton.classList.add('hidden');
-                }
-            }
-
-            // V DEV režimu, pokud není nastavená API URL a je admin, zobrazit konfiguraci
-            if (!isProduction && !API_URL && isAdmin) {
-                showApiUrlConfig();
-            }
-
-            // Pravidelná kontrola stavu serveru každých 30 sekund
-            serverStatusCheckInterval = setInterval(checkServerStatus, 30000);
-
-            // Načíst uložený JWT token a uživatele
-            const savedToken = getAuthStorageItem(AUTH_STORAGE_KEYS.token);
-            const savedUser = getAuthStorageItem(AUTH_STORAGE_KEYS.user);
-
-            // DIAGNOSTIKA PŘI STARTU
-
-
-
-
-
-            // Kontrola JWT expirace (pokud je token JWT)
-            if (savedToken) {
-                try {
-                    // Pokusit dekódovat JWT token (bez ověření podpisu)
-                    const parts = savedToken.split('.');
-                    if (parts.length === 3) {
-                        const payload = JSON.parse(atob(parts[1]));
-                        if (payload.exp) {
-                            const expDate = new Date(payload.exp * 1000);
-                            const now = new Date();
-
-                            if (expDate < now) {
-                                console.warn("[APP] Token vypršel! Odhlašuji uživatele.");
-                                handleLogout();
-                                return;
-                            } else {
-                                const minutesLeft = Math.floor((expDate - now) / 60000);
-
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.warn("[APP] Nelze dekódovat token (možná není JWT):");
-                }
-            }
-
-            if (savedToken) {
-                accessToken = savedToken;
-
-            }
-
-            if (savedUser) {
-                try {
-                    currentUser = JSON.parse(savedUser);
-
-                } catch (e) {
-                    console.error("[AUTH] Chyba při parsování uživatele:");
-                    clearAuthStorage();
-                    currentUser = null;
-                }
-            }
-
-            checkServerStatus().then(() => {
-
-            }).catch(err => {
-                console.error("[APP] Health check selhal:");
-            });
-
-            // Inicializovat sledování aktivity
-            setupActivityTracking();
-
-            // Rozhodnout, zda zobrazit login nebo dashboard
-            if (isAuthenticated()) {
-
+        window.addEventListener('DOMContentLoaded', async () => {
+            AdminBrowserSession.protect(clearLegacySessionData);
+            API_URL = getApiBaseUrl();
+            document.getElementById('configButton')?.classList.add('hidden');
+            accessToken = AdminBrowserSession.token();
+            if (!accessToken) return;
+            try {
+                await AdminBrowserSession.verify();
+                const profile = await apiCall('/user/me', 'GET');
+                if (!['admin', 'developer_admin'].includes(profile?.role)) throw new Error('Přístup je určen administrátorům.');
+                currentUser = profile;
+                markAuthSessionEstablished();
+                capturePendingPaymentReturnFromUrl();
+                setupActivityTracking();
+                serverStatusCheckInterval = setInterval(checkServerStatus, 30000);
+                void checkServerStatus();
                 showDashboard();
-            } else {
-
-                showLogin();
-                if (pendingServiceInviteToken) {
-                    showAlert('Máte pozvánku od servisu. Přihlaste se nebo se zaregistrujte, pozvánka se po přihlášení automaticky přijme.', 'info');
-                } else if (pendingReservationClaimToken) {
-                    showAlert('Máte odkaz pro přiřazení klienta k rezervaci. Přihlaste se jako servis, vazba se po přihlášení automaticky potvrdí.', 'info');
-                }
+            } catch {
+                AdminBrowserSession.end('verification');
+                return;
             }
 
             document.addEventListener('click', (event) => {
@@ -17210,7 +16643,7 @@
                 }
                 appendClientGeoHeaders(headers);
 
-                const response = await fetch(`${API_URL}/user/me/export`, {
+                const response = await AdminBrowserSession.request(`${API_URL}/user/me/export`, {
                     method: 'GET',
                     headers,
                     credentials: 'include',
@@ -17470,12 +16903,11 @@
 
         async function replaceSecuritySession(result) {
             if (!result?.access_token) return;
-            saveAuthSession(result.access_token, currentUser, getStaySignedInPreference());
-            if (['admin', 'developer_admin'].includes(currentUser?.role)) {
-                const sessionResponse = await fetch('/admin-web-session', {method:'POST', headers:{Authorization:'Bearer '+result.access_token}});
-                if (!sessionResponse.ok) throw new Error('Přihlaste se znovu pro otevření administrace.');
-                sessionStorage.setItem('adminAccessToken', result.access_token);
-            }
+            saveAuthSession(result.access_token, currentUser);
+            await AdminBrowserSession.verify();
+            const response = await AdminBrowserSession.request('/admin-web-session', {method:'POST'});
+            if (!response.ok) throw new Error('Přihlaste se znovu pro otevření administrace.');
+            await response.text();
         }
 
         async function startTotpSetup() {
@@ -18411,3 +17843,19 @@
                 debugBtn.classList.add('hidden');
             }
         });
+
+// Session closure must also remove local previews and stop background refreshes.
+function clearLegacySessionData() {
+    stopInactivityTimer(); stopLicenseRefresh(); stopClientGeoRefresh(); stopReminderNotificationHeartbeat(); stopSystemNotificationsPolling();
+    clearInterval(serverStatusCheckInterval); serverStatusCheckInterval = null;
+    currentUser = null; accessToken = null; authSecuritySettingsCache = null; clearClientGeoTelemetry();
+    stopAuthStoryAutoplay(); servicesDirectoryState.payload = null;
+    pendingTwoFactorChallenge = null; pendingServiceInviteToken = null; pendingReservationClaimToken = null;
+    comgateConfigCache = null; currentLicenseSubscriptionForUi = null; debugRequests = [];
+    reservationsUiState.all = []; serviceWorkspaceState.customers = [];
+    serviceWorkspaceState.customerVehicles = {}; serviceWorkspaceState.documents = []; serviceWorkspaceState.invitations = [];
+    for (const url of vehiclePhotoObjectUrls.values()) URL.revokeObjectURL(url);
+    vehiclePhotoObjectUrls.clear();
+    if (activeAttachmentPreviewUrl) URL.revokeObjectURL(activeAttachmentPreviewUrl);
+    activeAttachmentPreviewUrl = null;
+}

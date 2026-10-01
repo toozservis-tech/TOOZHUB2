@@ -15,7 +15,7 @@ def test_admin_policy_on_login_and_dashboard_aliases():
     def page(path: str):
         return HTMLResponse('<h1>fixture</h1>')
     with TestClient(app) as client:
-        for path in ['/admin-login','/admin-login.js','/web_admin/','/web_admin/index.html','/admin-static/index.html']:
+        for path in ['/admin-login','/admin-login.js','/admin-session.js','/web_admin/','/web_admin/index.html','/admin-static/index.html']:
             response = client.get(path)
             assert response.status_code == 200
             assert response.headers['content-security-policy'] == ADMIN_CONTENT_SECURITY_POLICY

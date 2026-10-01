@@ -15,10 +15,9 @@
         }
         const requestInfo = {
           method: method,
-          url: url,
+          url: new URL(url, window.location.origin).pathname,
           status: status,
-          timestamp: new Date().toISOString(),
-          responseBody: (responseBody || '').substring(0, 200)
+          timestamp: new Date().toISOString()
         };
         window.debugRequests.unshift(requestInfo);
         if (window.debugRequests.length > 3) {
@@ -83,7 +82,7 @@
 
 
         try {
-          const res = await fetch(url, { method:"GET", headers:{Accept:"application/json"}, signal: vinAbort.signal });
+          const res = await AdminBrowserSession.request(url, { method:"GET", headers:{Accept:"application/json"}, signal: vinAbort.signal });
           const text = await res.text();
           let data=null;
           try{ data=JSON.parse(text); }catch(e){}
@@ -213,7 +212,7 @@
 
 
         try {
-          const res = await fetch(url, { method:"GET", headers:{Accept:"application/json"}, signal: aresAbort.signal });
+          const res = await AdminBrowserSession.request(url, { method:"GET", headers:{Accept:"application/json"}, signal: aresAbort.signal });
           const text = await res.text();
           let data=null;
           try{ data=JSON.parse(text); }catch(e){}

@@ -4,12 +4,9 @@
 // ============================================
 
 const API_BASE = "";
-const ADMIN_TOKEN_KEY = 'adminAccessToken';
-const LEGACY_TOKEN_KEY = 'accessToken';
 const ADMIN_ROLE_KEY = 'adminRole';
 
 // Globální proměnné
-let authToken = null;
 let currentSection = "overview";
 let currentAdminRole = null;
 const LIST_FETCH_PAGE_SIZE = 50;
@@ -58,18 +55,7 @@ let systemCapabilities = {};
 // AUTH & TOKEN MANAGEMENT
 // ============================================
 
-function getAuthToken() {
-  // Tokens in URLs leak into history/referrers; persistent legacy tokens are not reused.
-  localStorage.removeItem(ADMIN_TOKEN_KEY);
-  localStorage.removeItem(LEGACY_TOKEN_KEY);
-  if (!authToken) authToken = sessionStorage.getItem(ADMIN_TOKEN_KEY);
-  return authToken;
-}
-
-function setAuthToken(token) {
-  authToken = token;
-  sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
-}
+function getAuthToken() { return AdminBrowserSession.token(); }
 
 function setAdminRole(role) {
   currentAdminRole = role || null;
@@ -87,17 +73,7 @@ function getStoredAdminRole() {
   return currentAdminRole;
 }
 
-function clearAuthToken() {
-  const currentToken = authToken;
-  const legacyToken = localStorage.getItem(LEGACY_TOKEN_KEY);
-  authToken = null;
-  sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-  localStorage.removeItem(ADMIN_TOKEN_KEY);
-  if (legacyToken && currentToken && legacyToken === currentToken) {
-    localStorage.removeItem(LEGACY_TOKEN_KEY);
-  }
-  setAdminRole(null);
-}
+function clearAuthToken() { AdminBrowserSession.end('expired'); }
 
 // ============================================
 // CENTRÁLNÍ API HELPER
@@ -135,6 +111,7 @@ function showSuccess(message) {
 }
 
 async function apiRequest(method, path, body = null) {
+  const session = AdminBrowserSession.snapshot();
   if (method === "DELETE" && /\/(users|services|vehicles|records|reminders|reservations)\/\d+$/.test(path)) {
     const confirmed = await requestDeletionConfirmation(path);
     if (!confirmed) throw new Error("Odstranění zrušeno.");
@@ -165,7 +142,7 @@ async function apiRequest(method, path, body = null) {
     }
     
     const url = API_BASE + path;
-    const res = await fetch(url, options);
+    const res = await AdminBrowserSession.request(url, options, session);
     
     // Pokud je 401 Unauthorized, zkusit přesměrovat na login
     if (res.status === 401 || res.headers.get('X-Admin-Verification') === 'required') {
@@ -195,6 +172,7 @@ async function apiRequest(method, path, body = null) {
     if (sync) sync.textContent = 'Poslední odpověď ' + new Date().toLocaleTimeString('cs-CZ', {hour:'2-digit', minute:'2-digit'});
     return result;
   } catch (error) {
+    if (error.name === "AbortError") throw error;
     // Pokud je to network error (Failed to fetch), zobrazit uživatelsky přívětivou zprávu
     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
       const friendlyError = 'Nelze se připojit k serveru. Zkontrolujte, zda server běží na ' + (API_BASE || window.location.origin);
@@ -4774,17 +4752,9 @@ function handleAdminLogin(event) {
   location.replace('/admin-login');
 }
 
-async function handleAdminLogout() {
-  await fetch('/admin-web-session', {method: 'DELETE'});
-  clearAuthToken();
-  location.replace('/admin-login');
-}
+async function handleAdminLogout() { await AdminBrowserSession.logout(); }
 
-function showLoginScreen() {
-  clearAuthToken();
-  document.getElementById('dashboard-screen')?.classList.add('hidden');
-  location.replace('/admin-login');
-}
+function showLoginScreen() { AdminBrowserSession.end('verification'); }
 
 function showDashboard() {
   closeAllControlCenterDetails();
@@ -4812,6 +4782,11 @@ function showDashboard() {
 // ============================================
 
 window.addEventListener('DOMContentLoaded', () => {
+  AdminBrowserSession.protect(() => {
+    currentAdminRole = null; usersAllCache = []; usersFilteredCache = []; userDetailData = null;
+    userDetailReturnContext = null; recordFormOptionsState.users = []; recordFormOptionsState.vehicles = [];
+    for (const key of Object.keys(controlCenterDataState)) controlCenterDataState[key] = null;
+  });
   registerAdminActions();
   const token = getAuthToken();
 
@@ -4835,12 +4810,11 @@ window.addEventListener('DOMContentLoaded', () => {
   
   if (token) {
     // Zkusit načíst uživatele - pokud selže (token neplatný), zobrazit přihlášení
-    apiRequest('GET', '/user/security/admin-status')
-      .then(status => {
-        if (!status.verified || !status.valid_until) throw new Error('Ověření administrátora je nutné.');
-        const remaining = Math.min(900000, Math.max(0, status.valid_until * 1000 - Date.now()));
-        setTimeout(showLoginScreen, remaining);
-        return apiRequest('GET', '/admin-api/users');
+    AdminBrowserSession.verify()
+      .then(() => apiRequest('GET', '/user/me'))
+      .then(profile => {
+        if (!['admin', 'developer_admin'].includes(profile.role)) throw new Error('Přístup je určen administrátorům.');
+        setAdminRole(profile.role);
       })
       .then(() => {
         showDashboard();

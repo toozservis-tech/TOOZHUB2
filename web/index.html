@@ -8972,7 +8972,8 @@
             <!-- LICENSE MODAL END -->
 
             <!-- Přihlašovací sekce -->
-            <div id="authSection" class="auth-shell">
+            <p id="adminSessionLoading" role="status" style="padding:24px;color:#102d31;background:#e1f5ef;border-radius:12px">Ověřuji přihlášení administrátora…</p>
+            <div id="authSection" class="auth-shell hidden">
                 <div class="auth-layout">
                     <div class="auth-section">
                         <div id="alertContainer" data-testid="alert-container"></div>
@@ -9563,6 +9564,7 @@
     -->
 
     <script src="storage_migration.js"></script>
+    <script src="/admin-session.js"></script>
     <script src="legacy-actions.js"></script>
     <script src="legacy-app.js"></script>
     
