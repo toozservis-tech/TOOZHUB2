@@ -67,7 +67,7 @@ def _point_sort_key(point: MileageTimelinePoint) -> tuple[datetime, int, int, st
     return (point.date, point.mileage_km, source_rank, point.record_id)
 
 
-def collect_vehicle_mileage_timeline_points(db: Session, vehicle_id: int) -> list[MileageTimelinePoint]:
+def collect_vehicle_mileage_timeline_points(db: Session, vehicle_id: int, actor=None) -> list[MileageTimelinePoint]:
     points: list[MileageTimelinePoint] = []
 
     service_records = (
@@ -79,6 +79,9 @@ def collect_vehicle_mileage_timeline_points(db: Session, vehicle_id: int) -> lis
         .all()
     )
     for record in service_records:
+        if actor is not None:
+            from .vehicle_privacy import record_for_actor
+            record = record_for_actor(db, record, actor)
         normalized_date = _normalize_datetime(getattr(record, "performed_at", None))
         normalized_mileage = _normalize_int(getattr(record, "mileage", None))
         if normalized_date is None or normalized_mileage is None:

@@ -107,6 +107,8 @@ def ensure_vehicle_owner_assignment(
     ownership_origin: str = "manual",
 ) -> VehicleOwnership:
     lock_vehicle_access(db, int(vehicle.id))
+    from .vehicle_privacy import prepare_owner_change
+    prepare_owner_change(db, vehicle, owner.id)
     previous = get_primary_vehicle_owner_assignment(db, int(vehicle.id))
     has_previous_period = previous is None and db.query(VehicleOwnership.id).filter_by(vehicle_id=vehicle.id).first() is not None
     if (previous and previous.customer_id != owner.id) or has_previous_period:
@@ -250,6 +252,14 @@ def may_restore_vehicle_profile(db: Session, *, vehicle: Vehicle, customer: Cust
         latest = history[0]
         # Ambiguous legacy periods must be resolved by an administrator.
         newest = latest.owned_from or latest.assigned_at
+        from .models import VehicleOwnershipArchive
+        # Deleting the last owner's account must not revive a prior owner's claim.
+        if db.query(VehicleOwnershipArchive.id).filter(
+            VehicleOwnershipArchive.vehicle_id == vehicle.id,
+            VehicleOwnershipArchive.owner_customer_id.is_(None),
+            VehicleOwnershipArchive.created_at >= newest,
+        ).first():
+            return False
         contenders = {row.customer_id for row in history if (row.owned_from or row.assigned_at) == newest}
         return latest.customer_id == customer.id and contenders == {customer.id}
 
@@ -283,6 +293,8 @@ def transfer_vehicle_to_new_owner(
     ownership_origin: str = "vin_claim",
 ) -> VehicleOwnership:
     lock_vehicle_access(db, int(vehicle.id))
+    from .vehicle_privacy import prepare_owner_change
+    prepare_owner_change(db, vehicle, new_owner.id)
     previous = get_primary_vehicle_owner_assignment(db, int(vehicle.id))
     if previous is None or previous.customer_id != new_owner.id:
         revoke_vehicle_sharing_for_owner_change(db, vehicle_id=int(vehicle.id),

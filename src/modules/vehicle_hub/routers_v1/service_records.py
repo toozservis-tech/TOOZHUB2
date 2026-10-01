@@ -26,6 +26,9 @@ from sqlalchemy import desc, nullslast
 from src.core.config import DATA_DIR
 from src.core.private_errors import report_exception
 from ..database import get_db
+from ..vehicle_privacy import (record_for_actor, can_read_record_private, require_private_record,
+    require_attachment_private, register_attachment)
+from ..ownership import lock_vehicle_access
 from ..mileage_reports import collect_vehicle_mileage_timeline_points, render_mileage_timeline_chart_png, summarize_mileage_timeline
 from ..models import (
     Customer,
@@ -184,7 +187,7 @@ def _resolve_attachment_file(relative_key: str, *, vehicle_id: int) -> Path | No
     return cached_file(candidate) if candidate is not None else None
 
 
-def _validate_record_attachment_references(attachments_raw: str | None, *, vehicle_id: int) -> None:
+def _validate_record_attachment_references(attachments_raw: str | None, *, vehicle_id: int, db=None, actor=None, record_id=None) -> None:
     # Legacy plain-text annotations contain no managed file references. For JSON
     # attachments, validate both keys so a later fallback cannot change authority.
     for item in _parse_attachments_payload(attachments_raw):
@@ -192,6 +195,10 @@ def _validate_record_attachment_references(attachments_raw: str | None, *, vehic
             key = item.get(field)
             if key is not None and _attachment_path_for_vehicle(str(key), vehicle_id=vehicle_id) is None:
                 raise HTTPException(status_code=422, detail="Příloha nepatří k tomuto vozidlu nebo má neplatnou cestu.")
+            if key is not None and db is not None:
+                require_attachment_private(db, vehicle_id=vehicle_id, key=str(key), actor=actor)
+                from ..vehicle_privacy import require_attachment_write_period
+                require_attachment_write_period(db, vehicle_id=vehicle_id, key=str(key), record_id=record_id)
 
 
 def _extract_attachment_file_paths(attachments_raw: str | None, *, vehicle_id: int) -> list[Path]:
@@ -343,6 +350,7 @@ def _store_attachment_for_vehicle(
     vehicle_id: int,
     vehicle: VehicleModel,
     current_user: Customer,
+    db: Session,
     file_name: str,
     file_mime_type: str,
     content: bytes,
@@ -378,6 +386,7 @@ def _store_attachment_for_vehicle(
     persist_file(target_file, content)
 
     storage_key = target_file.relative_to(SERVICE_RECORD_ATTACHMENTS_DIR).as_posix()
+    register_attachment(db, vehicle_id=vehicle_id, key=storage_key, actor=current_user)
     return {
         "file_name": filename,
         "mime_type": mime_type,
@@ -769,11 +778,12 @@ def create_service_record(
     try:
         assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
         # Kontrola přístupu k vozidlu
+        lock_vehicle_access(db, vehicle_id)
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
         
         # Načíst vozidlo kvůli tenant kontextu
-        vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+        vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).populate_existing().first()
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
 
@@ -789,7 +799,7 @@ def create_service_record(
                 require_create_record=True,
             )
 
-        _validate_record_attachment_references(record_data.attachments, vehicle_id=vehicle_id)
+        _validate_record_attachment_references(record_data.attachments, vehicle_id=vehicle_id, db=db, actor=current_user)
         # Vytvořit záznam
         user_id = current_user.id
         record = ServiceRecordModel(
@@ -832,10 +842,11 @@ def upload_service_record_attachment(
     db: Session = Depends(get_db),
 ):
     """Nahraje doklad (PDF/fotka/text) a vrátí metadata pro uložení do attachments záznamu."""
+    lock_vehicle_access(db, vehicle_id)
     if not can_access_vehicle(vehicle_id, current_user, db):
         raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
 
-    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).populate_existing().first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
 
@@ -850,6 +861,7 @@ def upload_service_record_attachment(
 
     content = _decode_base64_payload(payload.file_content_base64)
     attachment_meta = _store_attachment_for_vehicle(
+        db=db,
         vehicle_id=vehicle_id,
         vehicle=vehicle,
         current_user=current_user,
@@ -857,6 +869,7 @@ def upload_service_record_attachment(
         file_mime_type=payload.file_mime_type,
         content=content,
     )
+    db.commit()
     return {
         "file_name": attachment_meta["file_name"],
         "mime_type": attachment_meta["mime_type"],
@@ -877,10 +890,11 @@ def create_service_record_from_document(
     Automaticky vytvoří servisní záznam z nahraného dokladu (PDF/fotka/text).
     Používá stejný parser jako servisní workspace, aby se neduplikovala logika.
     """
+    lock_vehicle_access(db, vehicle_id)
     if not can_access_vehicle(vehicle_id, current_user, db):
         raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
 
-    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).populate_existing().first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
 
@@ -899,6 +913,7 @@ def create_service_record_from_document(
 
     raw_content = _decode_base64_payload(payload.file_content_base64)
     attachment_meta = _store_attachment_for_vehicle(
+        db=db,
         vehicle_id=vehicle_id,
         vehicle=vehicle,
         current_user=current_user,
@@ -998,10 +1013,11 @@ def preview_service_record_from_document(
     Vytěží data z dokladu a vrátí předvyplnění formuláře servisního záznamu.
     Záznam se v této fázi NEukládá.
     """
+    lock_vehicle_access(db, vehicle_id)
     if not can_access_vehicle(vehicle_id, current_user, db):
         raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
 
-    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).populate_existing().first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
 
@@ -1071,16 +1087,18 @@ def download_service_record_attachment(
     db: Session = Depends(get_db),
 ):
     """Bezpečné stažení přílohy servisního záznamu."""
+    lock_vehicle_access(db, vehicle_id)
     if not can_access_vehicle(vehicle_id, current_user, db):
         raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
 
-    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).populate_existing().first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
 
     if _attachment_path_for_vehicle(key, vehicle_id=vehicle_id) is None:
         raise HTTPException(status_code=403, detail="Příloha nepatří k tomuto vozidlu.")
 
+    require_attachment_private(db, vehicle_id=vehicle_id, key=key, actor=current_user)
     attachment_file = _resolve_attachment_file(key, vehicle_id=vehicle_id)
     if not attachment_file or not attachment_file.is_file():
         raise HTTPException(status_code=404, detail="Příloha nebyla nalezena.")
@@ -1117,11 +1135,12 @@ def generate_service_records_pdf(
         from datetime import datetime, date
         
         # Kontrola přístupu k vozidlu
+        lock_vehicle_access(db, vehicle_id)
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
         
         # Načíst vozidlo
-        vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+        vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).populate_existing().first()
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
         
@@ -1130,7 +1149,8 @@ def generate_service_records_pdf(
             ServiceRecordModel.vehicle_id == vehicle_id,
             ServiceRecordModel.is_deleted.is_(False),
         ).order_by(nullslast(ServiceRecordModel.performed_at.asc())).all()
-        mileage_timeline_points = collect_vehicle_mileage_timeline_points(db, vehicle_id)
+        records = [record_for_actor(db, record, current_user) for record in records]
+        mileage_timeline_points = collect_vehicle_mileage_timeline_points(db, vehicle_id, actor=current_user)
         mileage_timeline_summary = summarize_mileage_timeline(mileage_timeline_points)
         
         # Zkontrolovat, zda je dostupný ReportLab
@@ -1151,8 +1171,8 @@ def generate_service_records_pdf(
             )
         
         # Vytvořit PDF
-        from src.core.config import PDF_DIR
-        PDF_DIR.mkdir(parents=True, exist_ok=True)
+        # A per-request buffer cannot collide with another account's report.
+        pdf_buffer = BytesIO()
         
         # Název souboru - zajistit ASCII kompatibilitu
         vehicle_name = vehicle.nickname or vehicle.plate or f"vozidlo_{vehicle_id}"
@@ -1167,7 +1187,6 @@ def generate_service_records_pdf(
         if not safe_name:  # Pokud by bylo prázdné, použít výchozí
             safe_name = f"vozidlo_{vehicle_id}"
         filename = f"servisni_zaznamy_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        pdf_path = PDF_DIR / filename
         
         # Pomocná funkce pro escape HTML a UTF-8
         def escape_html(text):
@@ -1215,32 +1234,8 @@ def generate_service_records_pdf(
             
             canvas_obj.restoreState()
         
-        # Zajistit, že cesta k PDF je ASCII-safe (pro Windows kompatibilitu)
-        pdf_path_str = str(pdf_path)
-        try:
-            # Zkusit vytvořit PDF s UTF-8 cestou
-            doc = SimpleDocTemplate(
-                pdf_path_str, 
-                pagesize=A4,
-                rightMargin=20*mm,
-                leftMargin=20*mm,
-                topMargin=30*mm,
-                bottomMargin=25*mm
-            )
-        except (UnicodeEncodeError, OSError) as e:
-            # Pokud selže, použít ASCII-safe cestu
-            import tempfile
-            temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf', dir=str(PDF_DIR))
-            temp_pdf.close()
-            pdf_path = Path(temp_pdf.name)
-            doc = SimpleDocTemplate(
-                str(pdf_path), 
-                pagesize=A4,
-                rightMargin=20*mm,
-                leftMargin=20*mm,
-                topMargin=30*mm,
-                bottomMargin=25*mm
-            )
+        doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, rightMargin=20*mm,
+            leftMargin=20*mm, topMargin=30*mm, bottomMargin=25*mm)
         story = []
         styles = getSampleStyleSheet()
         
@@ -1587,8 +1582,7 @@ def generate_service_records_pdf(
         from fastapi.responses import Response
         from urllib.parse import quote
         
-        with open(pdf_path, 'rb') as f:
-            pdf_content = f.read()
+        pdf_content = pdf_buffer.getvalue()
         
         # Kódovat název souboru pro Content-Disposition header (RFC 5987)
         # Použít ASCII-safe název a UTF-8 encoded verzi
@@ -1602,7 +1596,9 @@ def generate_service_records_pdf(
             content=pdf_content,
             media_type='application/pdf',
             headers={
-                'Content-Disposition': content_disposition
+                'Content-Disposition': content_disposition,
+                'Cache-Control': 'private, no-store',
+                'X-Content-Type-Options': 'nosniff'
             }
         )
     except HTTPException:
@@ -1623,6 +1619,7 @@ def get_service_records(
     try:
         assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
         # Kontrola přístupu k vozidlu
+        lock_vehicle_access(db, vehicle_id)
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
         
@@ -1634,7 +1631,8 @@ def get_service_records(
             query = query.filter(ServiceRecordModel.is_deleted.is_(False))
         records = query.order_by(nullslast(desc(ServiceRecordModel.performed_at))).all()
         
-        return records
+        return [record_for_actor(db, row, current_user) for row in records
+                if not row.is_deleted or can_read_record_private(db, row, current_user)]
     except HTTPException:
         raise
     except Exception as e:
@@ -1654,6 +1652,7 @@ def get_service_record(
     try:
         assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
         # Kontrola přístupu k vozidlu
+        lock_vehicle_access(db, vehicle_id)
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
         
@@ -1666,6 +1665,9 @@ def get_service_record(
             raise HTTPException(status_code=404, detail="Servisní záznam nenalezen")
         if bool(getattr(record, "is_deleted", False)) and not include_deleted:
             raise HTTPException(status_code=404, detail="Servisní záznam byl archivován")
+
+        if not can_read_record_private(db, record, current_user):
+            return record_for_actor(db, record, current_user)
 
         refreshed = _refresh_record_attachments_summary(record)
         if refreshed:
@@ -1697,6 +1699,7 @@ def update_service_record(
         forbid_service_record_mutation(current_user)
         assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
         # Kontrola přístupu k vozidlu
+        lock_vehicle_access(db, vehicle_id)
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
         
@@ -1707,10 +1710,11 @@ def update_service_record(
         
         if not record:
             raise HTTPException(status_code=404, detail="Servisní záznam nenalezen")
+        require_private_record(db, record, current_user)
         if bool(getattr(record, "is_deleted", False)):
             raise HTTPException(status_code=409, detail="Archivovaný servisní záznam nelze upravovat")
 
-        _validate_record_attachment_references(record_data.attachments, vehicle_id=vehicle_id)
+        _validate_record_attachment_references(record_data.attachments, vehicle_id=vehicle_id, db=db, actor=current_user, record_id=record.id)
         previous_snapshot = _service_record_snapshot(record)
         
         # Aktualizace polí
@@ -1776,6 +1780,7 @@ def delete_service_record(
         forbid_service_record_mutation(current_user)
         assert_module_ready(db, "service_records", detail_prefix="Servisní historie není připravena")
         # Kontrola přístupu k vozidlu
+        lock_vehicle_access(db, vehicle_id)
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
 
@@ -1786,6 +1791,7 @@ def delete_service_record(
 
         if not record:
             raise HTTPException(status_code=404, detail="Servisní záznam nenalezen")
+        require_private_record(db, record, current_user)
         if bool(getattr(record, "is_deleted", False)):
             return {"message": "Servisní záznam je již archivovaný"}
         

@@ -654,23 +654,26 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
     vehicles = list(reversed(get_owned_vehicle_rows(db, customer, tenant_id=customer.tenant_id)))
     vehicle_ids = [v.id for v in vehicles]
     vehicle_record_condition = ServiceRecordModel.vehicle_id.in_(vehicle_ids) if vehicle_ids else (ServiceRecordModel.id == -1)
-    vehicle_reminder_condition = ReminderModel.vehicle_id.in_(vehicle_ids) if vehicle_ids else (ReminderModel.id == -1)
-    vehicle_reservation_condition = ReservationModel.vehicle_id.in_(vehicle_ids) if vehicle_ids else (ReservationModel.id == -1)
-    vehicle_intake_condition = ServiceIntake.vehicle_id.in_(vehicle_ids) if vehicle_ids else (ServiceIntake.id == -1)
-    vehicle_document_condition = ServiceDocumentIngestion.vehicle_id.in_(vehicle_ids) if vehicle_ids else (ServiceDocumentIngestion.id == -1)
-    vehicle_customer_command_condition = CustomerCommand.vehicle_id.in_(vehicle_ids) if vehicle_ids else (CustomerCommand.id == -1)
+    from src.modules.vehicle_hub.models import VehicleOwnershipArchive, VehicleRecordPrivacy
+    from src.modules.vehicle_hub.vehicle_privacy import record_for_actor, can_read_record_private
+    archives = db.query(VehicleOwnershipArchive).filter_by(owner_customer_id=customer.id).all()
+    archived_record_ids = db.query(VehicleRecordPrivacy.record_id).filter_by(owner_customer_id=customer.id)
 
     service_records = db.query(ServiceRecordModel).filter(
         or_(
             ServiceRecordModel.user_id == customer.id,
             vehicle_record_condition,
+            ServiceRecordModel.created_by_service_customer_id == customer.id,
+            ServiceRecordModel.id.in_(archived_record_ids),
         )
     ).order_by(ServiceRecordModel.performed_at.asc()).all()
+
+    service_records = [record_for_actor(db, row, customer) for row in service_records
+        if not row.is_deleted or can_read_record_private(db, row, customer)]
 
     reminders = db.query(ReminderModel).filter(
         or_(
             ReminderModel.customer_id == customer.id,
-            vehicle_reminder_condition,
         )
     ).order_by(ReminderModel.created_at.asc()).all()
 
@@ -678,7 +681,6 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
         or_(
             ReservationModel.customer_id == customer.id,
             ReservationModel.service_id == customer.id,
-            vehicle_reservation_condition,
         )
     ).order_by(ReservationModel.start_datetime.asc()).all()
 
@@ -686,7 +688,6 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
         or_(
             ServiceIntake.customer_id == customer.id,
             ServiceIntake.service_id == customer.id,
-            vehicle_intake_condition,
         )
     ).order_by(ServiceIntake.created_at.asc()).all()
 
@@ -709,7 +710,6 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
         or_(
             ServiceDocumentIngestion.customer_id == customer.id,
             ServiceDocumentIngestion.service_customer_id == customer.id,
-            vehicle_document_condition,
         )
     ).order_by(ServiceDocumentIngestion.created_at.asc()).all()
 
@@ -745,7 +745,6 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
     customer_commands = db.query(CustomerCommand).filter(
         or_(
             func.lower(CustomerCommand.customer_email) == normalized_email,
-            vehicle_customer_command_condition,
         )
     ).order_by(CustomerCommand.created_at.asc()).all()
 
@@ -768,6 +767,7 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
         "security_settings": model_to_export_dict(security_settings) if security_settings else None,
         "counts": {
             "vehicles": len(vehicles),
+            "vehicle_archives": len(archives),
             "service_records": len(service_records),
             "reminders": len(reminders),
             "reservations": len(reservations),
@@ -783,6 +783,8 @@ def export_current_customer_bundle(customer: Customer, *, email: str, db, app_ve
             "customer_commands": len(customer_commands),
         },
         "vehicles": [model_to_export_dict(v) for v in vehicles],
+        "vehicle_archives": [{"id": row.id, "vehicle_id": row.vehicle_id,
+            "created_at": row.created_at.isoformat(), "profile": json.loads(row.profile_json)} for row in archives],
         "service_records": [model_to_export_dict(v) for v in service_records],
         "reminders": [model_to_export_dict(v) for v in reminders],
         "reservations": [model_to_export_dict(v) for v in reservations],

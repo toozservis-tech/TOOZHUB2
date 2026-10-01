@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Customer, ServiceRecord as ServiceRecordModel, Vehicle as VehicleModel
 from ..ownership import get_owned_vehicle_ids
+from ..vehicle_privacy import private_record_filter
+from src.core.rbac import is_admin
 from .auth import can_access_vehicle, get_current_user
 from .schemas import (
     AnalyticsCategoryBreakdownOutV1,
@@ -70,6 +72,7 @@ def _build_scoped_query(
         VehicleModel.id == ServiceRecordModel.vehicle_id,
     )
 
+    query = query.filter(ServiceRecordModel.is_deleted.is_(False), private_record_filter(db, current_user))
     role_key = _normalize_role(getattr(current_user, "role", None))
     tenant_id = getattr(current_user, "tenant_id", None)
 
@@ -77,8 +80,9 @@ def _build_scoped_query(
         if not can_access_vehicle(vehicle_id, current_user, db):
             raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
         query = query.filter(ServiceRecordModel.vehicle_id == vehicle_id)
-        if role_key == "admin" and tenant_id:
-            query = query.filter(ServiceRecordModel.tenant_id == tenant_id)
+        return query
+
+    if is_admin(role_key):
         return query
 
     if role_key == "user":

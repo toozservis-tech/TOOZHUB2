@@ -1006,3 +1006,38 @@ class RepairEvidencePhoto(Base):
     size_bytes = Column(Integer, nullable=False)
     client_id = Column(String(36), nullable=False)
     __table_args__ = (UniqueConstraint("session_id", "client_id", name="uq_repair_photo_client"),)
+
+
+class VehicleOwnershipArchive(Base):
+    """Private profile at the end of an ownership period; never sent to a buyer."""
+    __tablename__ = 'vehicle_ownership_archives'
+    id = Column(Integer, primary_key=True)
+    vehicle_id = Column(Integer, ForeignKey('vehicles.id', ondelete='CASCADE'), nullable=False, index=True)
+    owner_customer_id = Column(Integer, ForeignKey('customers.id', ondelete='SET NULL'), nullable=True, index=True)
+    period_key = Column(String, nullable=False, unique=True)
+    profile_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class VehicleRecordPrivacy(Base):
+    __tablename__ = 'vehicle_record_privacy'
+    record_id = Column(Integer, ForeignKey('service_records.id', ondelete='CASCADE'), primary_key=True)
+    archive_id = Column(Integer, ForeignKey('vehicle_ownership_archives.id', ondelete='SET NULL'), nullable=True, index=True)
+    owner_customer_id = Column(Integer, ForeignKey('customers.id', ondelete='SET NULL'), nullable=True, index=True)
+
+
+class VehicleRepairPrivacy(Base):
+    __tablename__ = 'vehicle_repair_privacy'
+    session_id = Column(Integer, ForeignKey('repair_photo_sessions.id', ondelete='CASCADE'), primary_key=True)
+    archive_id = Column(Integer, ForeignKey('vehicle_ownership_archives.id', ondelete='SET NULL'), nullable=True, index=True)
+    owner_customer_id = Column(Integer, ForeignKey('customers.id', ondelete='SET NULL'), nullable=True, index=True)
+
+
+class VehicleAttachmentPrivacy(Base):
+    """Ownership of uploaded files, including uploads not yet attached to a record."""
+    __tablename__ = 'vehicle_attachment_privacy'
+    storage_key = Column(String, primary_key=True)
+    vehicle_id = Column(Integer, ForeignKey('vehicles.id', ondelete='CASCADE'), nullable=False, index=True)
+    owner_customer_id = Column(Integer, ForeignKey('customers.id', ondelete='SET NULL'), nullable=True, index=True)
+    author_customer_id = Column(Integer, ForeignKey('customers.id', ondelete='SET NULL'), nullable=True, index=True)
+    archive_id = Column(Integer, ForeignKey('vehicle_ownership_archives.id', ondelete='SET NULL'), nullable=True, index=True)

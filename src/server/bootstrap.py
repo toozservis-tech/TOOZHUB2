@@ -454,6 +454,10 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
         global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _file_erasure_task
         db = SessionLocal()
         try:
+            from src.modules.vehicle_hub.models import (VehicleOwnershipArchive, VehicleRecordPrivacy,
+                VehicleRepairPrivacy, VehicleAttachmentPrivacy)
+            for privacy_model in (VehicleOwnershipArchive, VehicleRecordPrivacy, VehicleRepairPrivacy, VehicleAttachmentPrivacy):
+                privacy_model.__table__.create(bind=db.get_bind(), checkfirst=True)
             from src.core.session_revocation import RevokedAccessToken
             RevokedAccessToken.__table__.create(bind=db.get_bind(), checkfirst=True)
             from src.modules.vehicle_hub.email_verification import EmailVerification

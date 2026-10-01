@@ -16,8 +16,9 @@ from sqlalchemy.exc import IntegrityError
 from src.core.config import DATA_DIR
 from src.core.rbac import is_admin
 from ..database import get_db
-from ..models import Customer, RepairPhotoSession, RepairEvidencePhoto, Vehicle
-from ..ownership import user_owns_vehicle
+from ..models import Customer, RepairPhotoSession, RepairEvidencePhoto, Vehicle, VehicleRepairPrivacy
+from ..ownership import user_owns_vehicle, lock_vehicle_access
+from ..vehicle_privacy import may_read_repair_private
 from ..service_access import require_service_vehicle_link
 from .auth import get_current_user
 
@@ -52,11 +53,17 @@ def session_or_404(db, user, session_id, write=False):
     if row is None: raise HTTPException(404, "Oprava nenalezena.")
     vehicle = vehicle_or_404(db, row.vehicle_id)
     if is_admin(user.role): return row
+    boundary = db.get(VehicleRepairPrivacy, row.id)
     if write:
+        lock_vehicle_access(db, row.vehicle_id)
+        # Re-read the boundary after a concurrent transfer has completed.
+        boundary = db.get(VehicleRepairPrivacy, row.id, populate_existing=True)
+        if boundary is not None: raise HTTPException(409, "Oprava patří k uzavřenému období vlastnictví. Založte novou opravu.")
         if row.service_id != user.id: raise HTTPException(403, "Tato dokumentace patří jinému servisu.")
         may_create(db, user, row.vehicle_id)
-    elif row.service_id != user.id and not user_owns_vehicle(db, user, vehicle):
+    elif row.service_id != user.id and not user_owns_vehicle(db, user, vehicle) and not (boundary and boundary.owner_customer_id == user.id):
         raise HTTPException(403, "K této dokumentaci nemáte přístup.")
+    if not may_read_repair_private(db, row, user): raise HTTPException(403, "Dokumentace patří k předchozímu vlastnictví vozidla.")
     return row
 
 def session_out(row):
@@ -73,10 +80,12 @@ def sessions(vehicle_id: int, user: Customer = Depends(get_current_user), db: Se
         if user.role != "service": raise HTTPException(403, "K vozidlu nemáte přístup.")
         # A service keeps access to its own photographs, even after sharing is revoked.
         query = query.filter_by(service_id=user.id)
-    return [session_out(row) for row in query.order_by(RepairPhotoSession.created_at.desc(), RepairPhotoSession.id.desc()).all()]
+    return [session_out(row) for row in query.order_by(RepairPhotoSession.created_at.desc(), RepairPhotoSession.id.desc()).all()
+            if may_read_repair_private(db, row, user)]
 
 @router.post("/vehicles/{vehicle_id}")
 def create_session(vehicle_id: int, payload: SessionCreate, user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    lock_vehicle_access(db, vehicle_id)
     vehicle_or_404(db, vehicle_id); may_create(db, user, vehicle_id)
     title = payload.title.strip()
     if not title: raise HTTPException(422, "Vyplňte název opravy.")

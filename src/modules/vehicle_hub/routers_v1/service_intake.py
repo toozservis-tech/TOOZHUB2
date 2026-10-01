@@ -7,6 +7,9 @@ from typing import List, Optional
 
 from ..database import get_db
 from ..models import ServiceIntake as ServiceIntakeModel, Vehicle as VehicleModel, Customer
+from src.core.rbac import is_admin
+from ..ownership import lock_vehicle_access, get_primary_vehicle_owner_assignment
+from ..service_access import require_service_vehicle_link
 from .auth import get_current_user, require_role
 from .schemas import ServiceIntakeCreateV1, ServiceIntakeOutV1
 
@@ -21,6 +24,9 @@ def create_service_intake(
 ):
     """Vytvoří nový příjem zakázky v servisu (pouze pro role service)"""
     service_id = current_user.id
+    lock_vehicle_access(db, intake_data.vehicle_id)
+    if not is_admin(current_user.role):
+        require_service_vehicle_link(db, current_user=current_user, vehicle_id=intake_data.vehicle_id, require_create_record=True)
     
     # Ověřit, že vozidlo existuje
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == intake_data.vehicle_id).first()
@@ -32,8 +38,13 @@ def create_service_intake(
     if not customer:
         raise HTTPException(status_code=404, detail="Zákazník nenalezen")
     
+    owner = get_primary_vehicle_owner_assignment(db, vehicle.id)
+    if owner is None or owner.customer_id != customer.id:
+        raise HTTPException(409, "Zákazník musí být aktuálním vlastníkem vozidla.")
+
     # Vytvořit intake
     intake = ServiceIntakeModel(
+        tenant_id=vehicle.tenant_id,
         service_id=service_id,
         vehicle_id=intake_data.vehicle_id,
         customer_id=intake_data.customer_id,
@@ -65,7 +76,7 @@ def get_service_intake(
         raise HTTPException(status_code=404, detail="Příjem zakázky nenalezen")
     
     # Kontrola, zda patří aktuálnímu servisu
-    if intake.service_id != current_user.id and current_user.role != "admin":
+    if intake.service_id != current_user.id and not is_admin(current_user.role):
         raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto příjmu zakázky")
     
     return intake
@@ -81,7 +92,7 @@ def list_service_intakes(
     service_id_to_query = service_id if service_id else current_user.id
     
     # Admin může vidět všechny, service pouze své
-    if current_user.role != "admin" and service_id_to_query != current_user.id:
+    if not is_admin(current_user.role) and service_id_to_query != current_user.id:
         raise HTTPException(status_code=403, detail="Nemáte přístup k příjmům zakázek jiného servisu")
     
     intakes = db.query(ServiceIntakeModel).filter(

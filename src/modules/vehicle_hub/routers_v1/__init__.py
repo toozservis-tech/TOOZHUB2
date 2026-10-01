@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from . import (
     vehicles,
+    vehicle_archives,
     service_records,
     analytics,
     service_intake,
@@ -30,6 +31,7 @@ api_router = APIRouter(prefix="/api/v1", tags=["api-v1"])
 
 # Zahrnout všechny sub-routery
 api_router.include_router(vehicles.router)
+api_router.include_router(vehicle_archives.router)
 api_router.include_router(service_records.router)
 api_router.include_router(analytics.router)  # Náklady, kategorie, měsíční trendy
 api_router.include_router(service_intake.router)

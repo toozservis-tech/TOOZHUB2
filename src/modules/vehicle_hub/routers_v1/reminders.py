@@ -220,6 +220,7 @@ def get_reminders(
             from sqlalchemy import desc, nullslast
             last_oil_service = db.query(ServiceRecordModel).filter(
                 ServiceRecordModel.vehicle_id == vehicle.id,
+                ServiceRecordModel.is_deleted.is_(False),
                 ServiceRecordModel.category.isnot(None),
                 ServiceRecordModel.category == "OLEJ"
             ).order_by(nullslast(desc(ServiceRecordModel.performed_at))).first()
@@ -231,6 +232,7 @@ def get_reminders(
                 # Najít nejnovější záznam s mileage
                 latest_record = db.query(ServiceRecordModel).filter(
                     ServiceRecordModel.vehicle_id == vehicle.id,
+                ServiceRecordModel.is_deleted.is_(False),
                     ServiceRecordModel.mileage.isnot(None)
                 ).order_by(nullslast(desc(ServiceRecordModel.performed_at))).first()
                 
@@ -284,11 +286,16 @@ def get_reminders(
             # 3. Obecné připomínky (next_service_due_date z servisních záznamů)
             upcoming_services = db.query(ServiceRecordModel).filter(
                 ServiceRecordModel.vehicle_id == vehicle.id,
+                ServiceRecordModel.is_deleted.is_(False),
                 ServiceRecordModel.next_service_due_date.isnot(None),
                 ServiceRecordModel.next_service_due_date <= thirty_days_later
             ).order_by(ServiceRecordModel.next_service_due_date.asc()).all()
             
             for service in upcoming_services:
+                from ..vehicle_privacy import record_for_actor
+                service = record_for_actor(db, service, current_user)
+                if service.next_service_due_date is None:
+                    continue
                 days_until = (service.next_service_due_date - today).days
                 if days_until < 0:
                     text = f"Plánovaný servis: {service.description} (byl před {abs(days_until)} dny)"

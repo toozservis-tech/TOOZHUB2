@@ -753,6 +753,8 @@ def _vehicle_permissions(vehicle: VehicleModel, current_user: Customer, db: Sess
 
 
 def _require_vehicle_management(vehicle: VehicleModel, current_user: Customer, db: Session) -> None:
+    lock_vehicle_access(db, vehicle.id)
+    db.refresh(vehicle)
     if not vehicle_write_policy(role=current_user.role, is_owner=user_owns_vehicle(db, current_user, vehicle)).allowed:
         raise HTTPException(status_code=403, detail="Údaje a úvodní fotografii vozidla může měnit vlastník nebo administrátor. Servis používá servisní záznamy a fotodokumentaci oprav.")
 
@@ -2311,7 +2313,8 @@ def record_vehicle_mileage(
 ):
     """Zapíše aktuální stav tachometru a uloží auditní záznam do servisní historie."""
     _ensure_vehicle_photo_column(db)
-    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
+    lock_vehicle_access(db, vehicle_id)
+    vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).populate_existing().first()
 
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")

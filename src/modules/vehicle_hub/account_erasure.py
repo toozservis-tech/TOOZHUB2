@@ -69,7 +69,19 @@ def erase_account(db, customer) -> dict[str, int]:
         m.VehicleOwnership.ownership_type == "owner", m.VehicleOwnership.is_active.is_(True),
     ).with_for_update().all()
     shared_ids = {row.vehicle_id for row in other_owners}
-    vehicle_ids = owned_ids - shared_ids
+    historical_ids = {vehicle_id for (vehicle_id,) in db.query(m.VehicleOwnershipArchive.vehicle_id).filter(
+        m.VehicleOwnershipArchive.vehicle_id.in_(owned_ids - shared_ids),
+        m.VehicleOwnershipArchive.owner_customer_id.isnot(None),
+        m.VehicleOwnershipArchive.owner_customer_id != account_id)}
+    # The current account cannot erase another person's original documents.
+    # Close its own period first so the normal erasure graph removes only its data.
+    from .vehicle_privacy import prepare_owner_change
+    for vehicle in db.query(m.Vehicle).filter(m.Vehicle.id.in_(historical_ids)).with_for_update().populate_existing():
+        prepare_owner_change(db, vehicle, None)
+        db.add(m.VehicleOwnershipArchive(vehicle_id=vehicle.id, owner_customer_id=None,
+            period_key=f"owner-erased:{vehicle.id}:{account_id}", profile_json="{}"))
+    db.flush()
+    vehicle_ids = owned_ids - shared_ids - historical_ids
     vehicles = db.query(m.Vehicle).filter(m.Vehicle.id.in_(vehicle_ids)).with_for_update().all()
     for vehicle in vehicles:
         file("vehicle_photos", vehicle.photo_path)
@@ -90,20 +102,46 @@ def erase_account(db, customer) -> dict[str, int]:
         {"user_email": "removed-account@invalid"}, synchronize_session=False)
     db.flush()
 
+    # Completed ownership periods remain private and participate in erasure.
+    archives = db.query(m.VehicleOwnershipArchive).filter(or_(
+        m.VehicleOwnershipArchive.owner_customer_id == account_id,
+        m.VehicleOwnershipArchive.vehicle_id.in_(vehicle_ids))).all()
+    archive_ids = [row.id for row in archives]
+    for row in archives:
+        profile = json.loads(row.profile_json)
+        file("vehicle_photos", profile.get("photo_path"))
+        file("vehicle_orv_scans", profile.get("orv_front_image_path"))
+        file("vehicle_orv_scans", profile.get("orv_back_image_path"))
+    archived_records = db.query(m.VehicleRecordPrivacy.record_id).filter_by(owner_customer_id=account_id)
+    archived_repairs = db.query(m.VehicleRepairPrivacy.session_id).filter_by(owner_customer_id=account_id)
+    attachment_condition = or_(m.VehicleAttachmentPrivacy.owner_customer_id == account_id,
+        m.VehicleAttachmentPrivacy.author_customer_id == account_id,
+        m.VehicleAttachmentPrivacy.vehicle_id.in_(vehicle_ids))
+    for row in db.query(m.VehicleAttachmentPrivacy).filter(attachment_condition):
+        file("service_record_attachments", row.storage_key)
+    # Keep a deny tombstone until the file erasure queue has succeeded.
+    db.query(m.VehicleAttachmentPrivacy).filter_by(owner_customer_id=account_id).update(
+        {"owner_customer_id": None, "author_customer_id": None}, synchronize_session=False)
+    detach(m.VehicleAttachmentPrivacy, m.VehicleAttachmentPrivacy.author_customer_id)
+
     sessions = db.query(m.RepairPhotoSession).filter(or_(
         m.RepairPhotoSession.service_id == account_id, m.RepairPhotoSession.vehicle_id.in_(vehicle_ids),
+        m.RepairPhotoSession.id.in_(archived_repairs),
     ))
     session_ids = [row.id for row in sessions.all()]
     photo_condition = or_(m.RepairEvidencePhoto.session_id.in_(session_ids), m.RepairEvidencePhoto.author_id == account_id)
     for row in db.query(m.RepairEvidencePhoto).filter(photo_condition).with_for_update():
         file("private_repair_photos", row.file_path)
     remove(m.RepairEvidencePhoto, photo_condition)
+    remove(m.VehicleRepairPrivacy, m.VehicleRepairPrivacy.session_id.in_(session_ids))
     remove(m.RepairPhotoSession, m.RepairPhotoSession.id.in_(session_ids))
 
     # User-created content is removed, including copies of attachments and audit snapshots.
     record_condition = or_(m.ServiceRecord.vehicle_id.in_(vehicle_ids), m.ServiceRecord.user_id == account_id,
-                           m.ServiceRecord.created_by_service_customer_id == account_id)
+                           m.ServiceRecord.created_by_service_customer_id == account_id,
+                           m.ServiceRecord.id.in_(archived_records))
     record_ids = [row.id for row in db.query(m.ServiceRecord).filter(record_condition)]
+    record_condition = m.ServiceRecord.id.in_(record_ids)
     for row in db.query(m.ServiceRecord).filter(record_condition).with_for_update():
         for path in _attachments(row.attachments):
             file("service_record_attachments", path)
@@ -125,6 +163,7 @@ def erase_account(db, customer) -> dict[str, int]:
                     for path in _attachments(attachments if isinstance(attachments, str) else json.dumps(attachments)):
                         file("service_record_attachments", path)
     remove(m.ServiceRecordAuditLog, audit_condition)
+    remove(m.VehicleRecordPrivacy, m.VehicleRecordPrivacy.record_id.in_(record_ids))
     remove(m.ServiceRecord, record_condition)
     detach(m.ServiceRecord, m.ServiceRecord.deleted_by_user_id, deletion_reason=None)
 
@@ -192,6 +231,10 @@ def erase_account(db, customer) -> dict[str, int]:
     remove(m.VehicleOwnership, or_(m.VehicleOwnership.customer_id == account_id,
                                    m.VehicleOwnership.vehicle_id.in_(vehicle_ids)))
     detach(m.VehicleOwnership, m.VehicleOwnership.assigned_by_customer_id)
+    for model in (m.VehicleRecordPrivacy, m.VehicleRepairPrivacy, m.VehicleAttachmentPrivacy):
+        db.query(model).filter(model.archive_id.in_(archive_ids)).update({"archive_id": None}, synchronize_session=False)
+    remove(m.VehicleAttachmentPrivacy, m.VehicleAttachmentPrivacy.vehicle_id.in_(vehicle_ids))
+    remove(m.VehicleOwnershipArchive, m.VehicleOwnershipArchive.id.in_(archive_ids))
     remove(m.Vehicle, m.Vehicle.id.in_(vehicle_ids))
 
     # Apple transaction ownership cannot be reassigned to a newly created account.
@@ -223,6 +266,11 @@ def erase_account(db, customer) -> dict[str, int]:
             surviving.add(private_path(directory, value))
     for photo, front, back in db.query(m.Vehicle.photo_path, m.Vehicle.orv_front_image_path, m.Vehicle.orv_back_image_path):
         keep("vehicle_photos", photo); keep("vehicle_orv_scans", front); keep("vehicle_orv_scans", back)
+    for (profile_json,) in db.query(m.VehicleOwnershipArchive.profile_json):
+        profile = json.loads(profile_json)
+        keep("vehicle_photos", profile.get("photo_path"))
+        keep("vehicle_orv_scans", profile.get("orv_front_image_path"))
+        keep("vehicle_orv_scans", profile.get("orv_back_image_path"))
     for front, back in db.query(m.VehicleORVScan.front_image_path, m.VehicleORVScan.back_image_path):
         keep("vehicle_orv_scans", front); keep("vehicle_orv_scans", back)
     for (path,) in db.query(m.RepairEvidencePhoto.file_path): keep("private_repair_photos", path)
