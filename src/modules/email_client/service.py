@@ -18,6 +18,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 from src.core.branding import APP_DISPLAY_NAME
+from src.core.private_errors import report_exception
 from src.core.config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
 from src.modules.email_client.templates import build_app_url, render_email_layout, render_panel
 from html import escape
@@ -33,6 +34,7 @@ class EmailMessage:
     cc: Optional[List[str]] = None
     bcc: Optional[List[str]] = None
     attachments: Optional[List[Path]] = None
+    reply_to: Optional[str] = None
 
 
 class EmailService:
@@ -96,6 +98,8 @@ class EmailService:
             payload = {"from": self.from_email, "to": message.to, "subject": message.subject, "text": message.body}
             if html_body:
                 payload["html"] = html_body
+            if message.reply_to:
+                payload['reply_to'] = message.reply_to
             for field in ("cc", "bcc"):
                 if getattr(message, field):
                     payload[field] = getattr(message, field)
@@ -123,6 +127,8 @@ class EmailService:
         msg["From"] = self.from_email
         msg["To"] = ", ".join(message.to)
         msg["Subject"] = message.subject
+        if message.reply_to:
+            msg['Reply-To'] = message.reply_to
         
         if message.cc:
             msg["Cc"] = ", ".join(message.cc)
@@ -160,7 +166,7 @@ class EmailService:
                 # SSL připojení pro port 465
                 print(f"[EMAIL] Connecting to {self.host}:{self.port} using SMTP_SSL")
                 with smtplib.SMTP_SSL(self.host, self.port, timeout=30, context=ssl.create_default_context()) as server:
-                    print(f"[EMAIL] Connected, authenticating as {self.username}")
+                    print("[EMAIL] Connected, authenticating")
                     server.login(self.username, self.password)
                     print(f"[EMAIL] Authenticated, sending email to {len(all_recipients)} recipient(s)")
                     server.sendmail(self.from_email, all_recipients, msg.as_string())
@@ -171,23 +177,23 @@ class EmailService:
                 with smtplib.SMTP(self.host, self.port, timeout=30) as server:
                     print(f"[EMAIL] Connected, starting TLS")
                     server.starttls(context=ssl.create_default_context())
-                    print(f"[EMAIL] TLS started, authenticating as {self.username}")
+                    print("[EMAIL] TLS started, authenticating")
                     server.login(self.username, self.password)
                     print(f"[EMAIL] Authenticated, sending email to {len(all_recipients)} recipient(s)")
                     server.sendmail(self.from_email, all_recipients, msg.as_string())
                     print(f"[EMAIL] Email successfully sent")
             return True
         except smtplib.SMTPAuthenticationError as e:
-            print(f"[EMAIL] Authentication failed: {e}")
+            report_exception(e)
             raise ValueError("SMTP autentizace selhala - zkontrolujte uživatelské jméno a heslo")
         except smtplib.SMTPConnectError as e:
-            print(f"[EMAIL] Connection failed: {e}")
+            report_exception(e)
             raise ValueError(f"Nelze se připojit k SMTP serveru {self.host}:{self.port}")
         except smtplib.SMTPException as e:
-            print(f"[EMAIL] SMTP error: {e}")
+            report_exception(e)
             raise
         except Exception as e:
-            print(f"[EMAIL] Unexpected error: {type(e).__name__}: {e}")
+            report_exception(e)
             raise
     
     def _add_attachment(self, msg: MIMEMultipart, file_path: Path) -> None:
@@ -212,7 +218,8 @@ class EmailService:
         to: str,
         subject: str,
         body: str,
-        html_body: Optional[str] = None
+        html_body: Optional[str] = None,
+        reply_to: Optional[str] = None,
     ) -> bool:
         """
         Zjednodušené odeslání emailu.
@@ -230,7 +237,8 @@ class EmailService:
             to=[to],
             subject=subject,
             body=body,
-            html_body=html_body
+            html_body=html_body,
+            reply_to=reply_to,
         )
         return self.send_email(message)
     

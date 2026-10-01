@@ -1,10 +1,19 @@
 # SprávaVozidel 1.0.0 — kontrola před prvním vydáním
 
+## Vyhledání SPZ a formulář podpory (1. 10. 2026)
+
+- Servisní vyhledání sjednocuje velikost písmen, mezery včetně nezalomitelných mezer a spojovníky na obou stranách porovnání. Původní chyba normalizovala jen vstup a nenacházela uložené značky s mezerou. Dva skutečné neúspěšné dotazy majitele byly porovnány pouze pro čtení; oba mají po normalizaci odpovídající vozidlo. Databázové SPZ se nepřepisují. Vyhledání nadále nedává oprávnění číst historii; nejednoznačná SPZ vyžádá VIN místo výběru prvního vozidla.
+- Podpora používá explicitní `SUPPORT_EMAIL`, nebo platnou odesílací adresu používaného `EmailService`, tedy i `EMAIL_FROM` u Resendu. Odstraněna závislost na pouhé existenci starých SMTP proměnných. Příjemce se ověřuje jako jedna adresa; odpověď směruje přes `Reply-To` na přihlášeného uživatele. Výsledek vyžaduje přijetí poskytovatelem. Chyby neodhalují interní text výjimky a selhání následného auditu nevybízí k duplicitnímu odeslání již přijaté zprávy. Frekvence má limit 5 požadavků na účet za 15 minut a doplňkový limit IP.
+- iOS má oddělený stav formuláře podpory: chyba nepřekryje profil a zachová rozepsanou zprávu. Zobrazuje potvrzení úspěchu, blokuje další klepnutí během odesílání a kontroluje minimální délky. Přiložení technické diagnostiky je viditelná volba, standardně vypnutá.
+- Ověření: **54 kontrol PostgreSQL / e-mailových transportů**, **191 dalších bezpečnostních regresí** a **40 iOS testů** prošlo. PostgreSQL sada zahrnuje 14 testů kopie/obnovy na syntetických datech. Reprodukce před opravou servisního hledání a podpory selhala v 11 scénářích; po opravě prošlo všech 14 scénářů této cílené sady. Automatické e-mailové testy nepoužily skutečnou poštu; skutečné doručení po opravě se tím ještě nepotvrzuje.
+
 ## Ranní oprava přístupu administrátora (1. 10. 2026)
 
 Hlášení majitele odhalilo chybu, kterou dřívější SQLite testy MFA nepokryly. Produkční ovladač PostgreSQL může po úspěšném `INSERT … ON CONFLICT` vrátit `rowcount = -1`; kód to považoval za vyčerpaný limit. Výsledkem bylo odmítnutí i prvního platného pokusu o nastavení autentikátoru, ověření kódu nebo obnovení administrátorské relace.
 
 Počet pokusů se nadále omezuje atomicky v databázi. Úspěch nyní potvrzuje explicitní `RETURNING`, nikoli nepřenosná hodnota `rowcount`. Ochrana nebyla vypnuta, produkční limity ani faktory majitele nebyly smazány.
+
+Po nasazení majitel autentikátor aktivoval. Podepsaná aktualizace iOS zachovala přihlášení i po restartu a administrátorský přehled načetl skutečná data. Průvodce má QR kód, ruční zadání, srozumitelné kroky a odpočet omezení. Čekající nastavení zůstává pouze v paměti nejvýše 10 minut, aby šlo přepnout do autentikátoru; mimo aktivní aplikaci jej kryje ochranná obrazovka.
 
 Reprodukce před opravou: oba nové testy na skutečném izolovaném PostgreSQL selhaly; souběžně uspělo 0 z 8 místo očekávaných 5. Po opravě prošlo 18 kontrol: původní sada MFA a tři PostgreSQL scénáře. Ověřují prvních pět pokusů, odmítnutí šestého, další časové okno, osm souběžných spojení a celé HTTP přihlášení administrátora → nastavení → aktivaci → zneplatnění starého tokenu → nové přihlášení s kódem → odmítnutí opakovaného kódu → další přísné ověření. Účty i klíče těchto testů jsou výhradně syntetické.
 
@@ -67,7 +76,7 @@ Testy nevytvářejí ani nemažou skutečné účty, nestrhávají platby a nepo
 ## Co stále brání vydání do světa
 
 1. Dokončení osobních kroků vlastníka v App Store Connect, založení produktů/podepisovacích údajů a skutečný sandboxový nákup, obnova, refundace, serverové notifikace a TestFlight. Zaplacené členství samo tyto kroky nenahrazuje.
-2. Nastavení autentikátoru vlastníkem hlavního administrátorského účtu. Klíč musí zůstat v jeho správě. Dokončit ověřený postup obnovy při ztrátě autentikátoru; nesmí vzniknout obejití druhého faktoru pouhou znalostí e-mailu.
+2. Autentikátor hlavního administrátora už vlastník nastavil. Zbývá dokončit ověřený postup obnovy při jeho ztrátě; nesmí vzniknout obejití druhého faktoru pouhou znalostí e-mailu.
 3. Fotoaparát ověřený přímo na fyzickém iPhonu. Úspěch simulátoru nedokazuje funkčnost snímání; dřívější černý náhled a zelené fotografie nejsou uzavřená závada.
 4. Úplná scénářová kontrola rezervací, připomínek, servisních vazeb, všech tlačítek a navigace s více oddělenými účty, včetně přerušení spojení a souběžných požadavků. Kontrola běhu na PostgreSQL a obnova zálohy do odděleného prostředí.
 5. Dokončení bezpečnostní kontroly relací a ostatních alternativních/veřejných stránek/skriptů, starších samostatných záznamů chyb mimo opravené administrátorské API, závislostí, obnovy klíčů, provozních upozornění a limitů. Žádné tvrzení o stoprocentní nezneužitelnosti.

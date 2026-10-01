@@ -183,7 +183,7 @@ class SupportContactRequest(BaseModel):
     subject: str = Field(min_length=3, max_length=180)
     message: str = Field(min_length=10, max_length=4000)
     phone: Optional[str] = Field(default=None, max_length=64)
-    include_diagnostics: bool = True
+    include_diagnostics: bool = False
     page_url: Optional[str] = Field(default=None, max_length=500)
     user_agent: Optional[str] = Field(default=None, max_length=600)
 

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.core.rbac import is_service, normalize_role
@@ -24,16 +25,28 @@ from .models import (
 from .ownership import get_primary_vehicle_owner, get_primary_vehicle_owner_assignment, lock_vehicle_access
 
 _VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
+# All Unicode whitespace, including non-breaking spaces copied from documents.
+_LOOKUP_SEPARATORS = ''.join(chr(i) for i in range(0x3100) if chr(i).isspace()) + '-'
+_LOOKUP_TRANSLATION = str.maketrans('', '', _LOOKUP_SEPARATORS)
 
 
 def normalize_lookup_query(raw_value: Optional[str]) -> tuple[str, str]:
     value = str(raw_value or "").strip().upper()
-    collapsed = re.sub(r"\s+", "", value)
+    collapsed = value.translate(_LOOKUP_TRANSLATION)
     if not collapsed:
         return "", "unknown"
     if _VIN_RE.fullmatch(collapsed):
         return collapsed, "vin"
     return collapsed, "plate"
+
+
+def normalized_lookup_column(db: Session, column):
+    value = func.upper(column)
+    if db.get_bind().dialect.name == 'postgresql':
+        return func.translate(value, _LOOKUP_SEPARATORS, '')
+    for separator in _LOOKUP_SEPARATORS:
+        value = func.replace(value, separator, '')
+    return value
 
 
 def masked_vin(vin: Optional[str]) -> Optional[str]:
@@ -176,10 +189,12 @@ def resolve_vehicle_for_lookup(
 
     candidate_query = db.query(Vehicle).order_by(Vehicle.created_at.asc(), Vehicle.id.asc())
 
-    if identifier_type == "vin":
-        vehicle = candidate_query.filter(Vehicle.vin == normalized_query).first()
-    else:
-        vehicle = candidate_query.filter(Vehicle.plate == normalized_query).first()
+    column = Vehicle.vin if identifier_type == 'vin' else Vehicle.plate
+    matches = candidate_query.filter(normalized_lookup_column(db, column) == normalized_query).limit(2).all()
+    if len(matches) > 1:
+        raise HTTPException(409, detail=("Pro tuto SPZ existuje více vozidel. Zadejte VIN pro jednoznačné vyhledání."
+            if identifier_type == 'plate' else "Identifikace vozidla není jednoznačná. Kontaktujte podporu."))
+    vehicle = matches[0] if matches else None
 
     if not vehicle:
         return None, None, normalized_query, identifier_type, "not_found"

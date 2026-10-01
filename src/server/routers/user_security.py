@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import os
+from email.utils import getaddresses
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import EmailStr, TypeAdapter, ValidationError
 
 from src.core.auth import get_current_user_email
 from src.core.branding import APP_DISPLAY_NAME, APP_SUPPORT_DISPLAY_NAME
 from src.core.security import verify_password, create_access_token, decode_access_token_payload
 from src.core import mfa
+from src.core.private_errors import report_exception
 from src.modules.vehicle_hub.account_state import increment_customer_session_version
 from src.server.routers.user_auth import _limit_auth
 from src.modules.email_client.templates import render_email_layout, render_list, render_panel
@@ -36,6 +39,17 @@ from src.server.security_tracking import extract_client_ip, log_security_event, 
 
 
 router = APIRouter()
+
+
+def support_recipient(sender: str) -> str:
+    raw = os.getenv('SUPPORT_EMAIL', '').strip() or sender or os.getenv('SMTP_USER', '').strip()
+    try:
+        addresses = getaddresses([raw])
+        if '\r' in raw or '\n' in raw or len(addresses) != 1:
+            raise ValueError()
+        return str(TypeAdapter(EmailStr).validate_python(addresses[0][1]))
+    except (ValueError, ValidationError):
+        raise HTTPException(503, 'Podpora je dočasně nedostupná. Zpráva nebyla odeslána; zkuste to prosím později.') from None
 
 
 @router.get("/user/security/settings", response_model=SecuritySettingsResponse)
@@ -285,8 +299,8 @@ def contact_support(
     if not customer:
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
 
-    category = (payload.category or "obecné").strip()[:64]
-    subject = (payload.subject or "").strip()
+    category = ' '.join((payload.category or 'obecné').split())[:64]
+    subject = ' '.join((payload.subject or '').split())
     message = (payload.message or "").strip()
     phone = (payload.phone or "").strip() or None
 
@@ -295,16 +309,11 @@ def contact_support(
     if len(message) < 10:
         raise HTTPException(status_code=400, detail="Zpráva musí mít alespoň 10 znaků")
 
-    support_email = (
-        os.getenv("SUPPORT_EMAIL", "").strip()
-        or os.getenv("SMTP_FROM", "").strip()
-        or os.getenv("SMTP_USER", "").strip()
-    )
-    if not support_email:
-        raise HTTPException(
-            status_code=503,
-            detail="Podpora není dostupná - chybí konfigurace cílového emailu",
-        )
+    email_service = EmailService()
+    support_email = support_recipient(email_service.from_email)
+    if not email_service.is_configured():
+        raise HTTPException(503, 'Podpora je dočasně nedostupná. Zpráva nebyla odeslána; zkuste to prosím později.')
+    _limit_auth(request, 'support-contact', normalized_email, calls=5, period=900)
 
     source_ip = extract_client_ip(request)
     created_at = datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")
@@ -367,36 +376,29 @@ def contact_support(
         footer_note=f"Interní e-mail podpory · {APP_SUPPORT_DISPLAY_NAME}",
     )
 
-    email_service = EmailService()
-    if not email_service.is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Podpora není dostupná - SMTP není nakonfigurováno",
-        )
-
     try:
-        email_service.send_simple_email(
+        sent = email_service.send_simple_email(
             to=support_email,
             subject=subject_line,
             body=body,
             html_body=html_body,
+            reply_to=customer.email,
+        )
+        if sent is not True:
+            raise RuntimeError('Email delivery was not accepted')
+    except Exception as exc:
+        reference = report_exception(exc)
+        raise HTTPException(503, detail=f'Zprávu se nepodařilo odeslat. Zkuste to prosím později. Číslo chyby: {reference}') from None
+
+    try:
+        log_security_event(
+            event_type='support_contact_submitted', request=request, user_email=customer.email,
+            customer_id=customer.id, tenant_id=customer.tenant_id, endpoint=str(request.url.path),
+            details={'has_phone': bool(phone), 'include_diagnostics': bool(payload.include_diagnostics)},
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Nepodařilo se odeslat zprávu podpory: {exc}") from exc
+        # The provider already accepted the message. An audit failure must not
+        # tell the user to resend the same request or expose its contents.
+        report_exception(exc)
 
-    log_security_event(
-        event_type="support_contact_submitted",
-        request=request,
-        user_email=customer.email,
-        customer_id=customer.id,
-        tenant_id=customer.tenant_id,
-        endpoint=str(request.url.path),
-        details={
-            "category": category,
-            "subject": subject[:120],
-            "has_phone": bool(phone),
-            "include_diagnostics": bool(payload.include_diagnostics),
-        },
-    )
-
-    return {"message": "Požadavek byl odeslán na podporu."}
+    return {'sent': True, 'message': 'Zpráva byla odeslána podpoře. Odpovíme na váš e-mail.'}
