@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import unicodedata
 from datetime import date, datetime
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PyPDF2 import PdfReader
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -233,7 +235,7 @@ def test_renders_mileage_chart_png_without_crash(db_session) -> None:
     assert len(png_bytes) > 1_000
 
 
-def test_pdf_report_embeds_mileage_chart_image(db_session, monkeypatch, tmp_path: Path) -> None:
+def test_pdf_report_contains_logo_and_readable_vector_chart(db_session, monkeypatch, tmp_path: Path) -> None:
     owner, vehicle = _seed_owned_vehicle(db_session)
     _seed_multi_source_points(db_session, vehicle)
     pdf_dir = tmp_path / "pdf"
@@ -248,7 +250,14 @@ def test_pdf_report_embeds_mileage_chart_image(db_session, monkeypatch, tmp_path
 
     assert response.media_type == "application/pdf"
     assert response.body.startswith(b"%PDF")
+    # The logo is an image; chart labels and values remain selectable vector text.
     assert b"/Subtype /Image" in response.body
+    first_page = PdfReader(BytesIO(response.body)).pages[0].extract_text()
+    assert "Vývoj stavu kilometrů" in first_page
+    assert "Ruční zápis" in first_page
+    assert "01.02.2024" in "\n".join(page.extract_text().replace(" ", "") for page in PdfReader(BytesIO(response.body)).pages)
+    assert response.headers["cache-control"] == "private, no-store"
+    assert not list(pdf_dir.iterdir())
 
 
 def test_pdf_report_with_chart_is_valid_and_readable(db_session, monkeypatch, tmp_path: Path) -> None:
