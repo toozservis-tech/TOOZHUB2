@@ -24,6 +24,7 @@ from typing import Any, List, Optional
 from sqlalchemy import desc, nullslast
 
 from src.core.config import DATA_DIR
+from src.core.private_errors import report_exception
 from ..database import get_db
 from ..mileage_reports import collect_vehicle_mileage_timeline_points, render_mileage_timeline_chart_png, summarize_mileage_timeline
 from ..models import (
@@ -786,10 +787,8 @@ def create_service_record(
         raise
     except Exception as e:
         db.rollback()
-        print(f"[SERVICE_RECORDS] Error creating record for vehicle {vehicle_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při vytváření servisního záznamu: {str(e)}")
+        reference = report_exception(e)
+        raise HTTPException(status_code=500, detail=f"Servisní záznam se nepodařilo zpracovat. Kód chyby: {reference}") from None
 
 
 @router.post("/{vehicle_id}/records/attachments/upload")
@@ -806,6 +805,15 @@ def upload_service_record_attachment(
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+
+    access_link = None
+    if str(getattr(current_user, "role", "") or "").strip().lower() == "service":
+        access_link = require_service_vehicle_link(
+            db,
+            current_user=current_user,
+            vehicle_id=vehicle_id,
+            require_create_record=True,
+        )
 
     content = _decode_base64_payload(payload.file_content_base64)
     attachment_meta = _store_attachment_for_vehicle(
@@ -842,6 +850,15 @@ def create_service_record_from_document(
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+
+    access_link = None
+    if str(getattr(current_user, "role", "") or "").strip().lower() == "service":
+        access_link = require_service_vehicle_link(
+            db,
+            current_user=current_user,
+            vehicle_id=vehicle_id,
+            require_create_record=True,
+        )
 
     source_type = str(payload.source_type or "invoice").strip().lower()
     if source_type not in ALLOWED_SOURCE_TYPES:
@@ -909,14 +926,6 @@ def create_service_record_from_document(
     )
 
     tenant_id = vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1
-    access_link = None
-    if str(getattr(current_user, "role", "") or "").strip().lower() == "service":
-        access_link = require_service_vehicle_link(
-            db,
-            current_user=current_user,
-            vehicle_id=vehicle_id,
-            require_create_record=True,
-        )
     record = ServiceRecordModel(
         tenant_id=tenant_id,
         vehicle_id=vehicle_id,
@@ -962,6 +971,15 @@ def preview_service_record_from_document(
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+
+    access_link = None
+    if str(getattr(current_user, "role", "") or "").strip().lower() == "service":
+        access_link = require_service_vehicle_link(
+            db,
+            current_user=current_user,
+            vehicle_id=vehicle_id,
+            require_create_record=True,
+        )
 
     source_type = str(payload.source_type or "invoice").strip().lower()
     if source_type not in ALLOWED_SOURCE_TYPES:
@@ -1557,23 +1575,9 @@ def generate_service_records_pdf(
         )
     except HTTPException:
         raise
-    except UnicodeEncodeError as e:
-        print(f"[SERVICE_RECORDS] Unicode encoding error generating PDF for vehicle {vehicle_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Chyba při generování PDF: Problém s kódováním znaků. Zkuste použít název vozidla bez diakritiky."
-        )
     except Exception as e:
-        print(f"[SERVICE_RECORDS] Error generating PDF for vehicle {vehicle_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        # Zkusit získat více informací o chybě
-        error_msg = str(e)
-        if 'latin-1' in error_msg or 'codec' in error_msg.lower():
-            error_msg = "Chyba kódování: Text obsahuje znaky, které nelze zakódovat. Zkuste použít název vozidla bez diakritiky."
-        raise HTTPException(status_code=500, detail=f"Chyba při generování PDF: {error_msg}")
+        reference = report_exception(e)
+        raise HTTPException(status_code=500, detail=f"PDF se nepodařilo připravit. Kód chyby: {reference}") from None
 
 
 @router.get("/{vehicle_id}/records", response_model=List[ServiceRecordOutV1])
@@ -1602,10 +1606,8 @@ def get_service_records(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[SERVICE_RECORDS] Error getting records for vehicle {vehicle_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání servisních záznamů: {str(e)}")
+        reference = report_exception(e)
+        raise HTTPException(status_code=500, detail=f"Servisní záznam se nepodařilo zpracovat. Kód chyby: {reference}") from None
 
 
 @router.get("/{vehicle_id}/records/{record_id}", response_model=ServiceRecordOutV1)
@@ -1643,10 +1645,8 @@ def get_service_record(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[SERVICE_RECORDS] Error getting record {record_id} for vehicle {vehicle_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při načítání servisního záznamu: {str(e)}")
+        reference = report_exception(e)
+        raise HTTPException(status_code=500, detail=f"Servisní záznam se nepodařilo zpracovat. Kód chyby: {reference}") from None
 
 
 @router.put("/{vehicle_id}/records/{record_id}", response_model=ServiceRecordOutV1)
@@ -1724,10 +1724,8 @@ def update_service_record(
         raise
     except Exception as e:
         db.rollback()
-        print(f"[SERVICE_RECORDS] Error updating record {record_id} for vehicle {vehicle_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při aktualizaci servisního záznamu: {str(e)}")
+        reference = report_exception(e)
+        raise HTTPException(status_code=500, detail=f"Servisní záznam se nepodařilo zpracovat. Kód chyby: {reference}") from None
 
 
 @router.delete("/{vehicle_id}/records/{record_id}")
@@ -1794,7 +1792,5 @@ def delete_service_record(
         raise
     except Exception as e:
         db.rollback()
-        print(f"[SERVICE_RECORDS] Error deleting record {record_id} for vehicle {vehicle_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chyba při mazání servisního záznamu: {str(e)}")
+        reference = report_exception(e)
+        raise HTTPException(status_code=500, detail=f"Servisní záznam se nepodařilo zpracovat. Kód chyby: {reference}") from None

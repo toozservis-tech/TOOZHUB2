@@ -67,11 +67,12 @@ def get_active_vehicle_service_link(
 def service_can_read_vehicle(db: Session, current_user: Customer, vehicle_id: int) -> bool:
     if not is_service(normalize_role(getattr(current_user, "role", None))):
         return False
-    return get_active_vehicle_service_link(
+    link = get_active_vehicle_service_link(
         db,
         service_customer_id=int(current_user.id),
         vehicle_id=int(vehicle_id),
-    ) is not None
+    )
+    return link is not None and bool(link.scope_vehicle_history_read)
 
 
 def require_service_vehicle_link(
@@ -86,7 +87,7 @@ def require_service_vehicle_link(
         service_customer_id=int(current_user.id),
         vehicle_id=int(vehicle_id),
     )
-    if not link:
+    if not link or not bool(link.scope_vehicle_history_read):
         raise HTTPException(
             status_code=403,
             detail="Servis nemá schválený přístup k tomuto vozidlu.",

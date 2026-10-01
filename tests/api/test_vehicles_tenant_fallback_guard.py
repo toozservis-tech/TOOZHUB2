@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.modules.vehicle_hub.database import Base
-from src.modules.vehicle_hub.models import Vehicle as VehicleModel
+from src.modules.vehicle_hub.models import Vehicle as VehicleModel, Customer, Tenant
 from src.modules.vehicle_hub.routers_v1 import vehicles as vehicles_router
 
 
@@ -30,6 +30,12 @@ def db_session(tmp_path: Path):
 
 
 def _seed_vehicle(db_session, *, tenant_id: int, user_email: str, nickname: str) -> VehicleModel:
+    if not db_session.get(Tenant, tenant_id):
+        db_session.add(Tenant(id=tenant_id, name="Fixture", license_key=f"fixture-{tenant_id}"))
+        db_session.flush()
+    if not db_session.query(Customer).filter_by(email=user_email).first():
+        db_session.add(Customer(email=user_email, tenant_id=tenant_id, role="user"))
+        db_session.flush()
     vehicle = VehicleModel(
         tenant_id=tenant_id,
         user_email=user_email,
@@ -72,7 +78,7 @@ def test_get_vehicles_returns_only_same_tenant_records(db_session) -> None:
         nickname="Tenant 200 vehicle",
     )
 
-    current_user = SimpleNamespace(email="sec-high-005@example.com", tenant_id=100)
+    current_user = db_session.query(Customer).filter_by(email="sec-high-005@example.com").one()
     vehicles = vehicles_router.get_vehicles(current_user=current_user, db=db_session)
 
     returned_ids = {item.id for item in vehicles}
@@ -82,7 +88,7 @@ def test_get_vehicles_returns_only_same_tenant_records(db_session) -> None:
 def test_listing_validation_failure_is_explicit_and_private(db_session, monkeypatch, capsys, caplog):
     marker = 'PRIVATE_VEHICLE_INFORMATION'
     own = _seed_vehicle(db_session, tenant_id=100, user_email='private-list@example.invalid', nickname=marker)
-    current_user = SimpleNamespace(email=own.user_email, tenant_id=100)
+    current_user = db_session.query(Customer).filter_by(email=own.user_email).one()
     class InvalidSchema:
         @staticmethod
         def model_validate(*args, **kwargs):

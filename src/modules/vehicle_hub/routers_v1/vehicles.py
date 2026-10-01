@@ -37,7 +37,7 @@ except Exception:
     PILLOW_AVAILABLE = False
 
 from src.core.config import DATA_DIR
-from src.core.rbac import is_admin, vehicle_write_policy
+from src.core.rbac import is_admin, is_service, vehicle_write_policy
 from src.core.private_errors import report_exception
 from ..database import get_db
 from ..models import (
@@ -51,12 +51,14 @@ from ..ownership import (
     backfill_vehicle_owner_assignment,
     ensure_vehicle_owner_assignment,
     get_current_owner_since,
+    get_owned_vehicle_rows,
     get_primary_vehicle_owner,
     get_primary_vehicle_owner_assignment,
     release_vehicle_owner_assignment,
     transfer_vehicle_to_new_owner,
     user_owns_vehicle,
 )
+from ..service_access import get_active_vehicle_service_link, require_service_vehicle_link, attach_service_access_to_record
 from ..schema_management import assert_module_ready
 from .auth import get_current_user, can_access_vehicle
 from .schemas import (
@@ -730,6 +732,29 @@ def _get_accessible_vehicle_or_404(vehicle_id: int, current_user: Customer, db: 
     return vehicle
 
 
+def _vehicle_permissions(vehicle: VehicleModel, current_user: Customer, db: Session) -> dict[str, bool]:
+    admin = is_admin(current_user.role)
+    owner = user_owns_vehicle(db, current_user, vehicle)
+    service = is_service(current_user.role)
+    link = get_active_vehicle_service_link(db, service_customer_id=current_user.id, vehicle_id=vehicle.id) if service else None
+    append = bool(link and link.scope_vehicle_history_read and link.scope_create_service_record)
+    manage = admin or owner
+    return {
+        "can_edit_vehicle": manage,
+        "can_manage_photo": manage,
+        "can_record_mileage": manage or append,
+        "can_import_tachometer": manage,
+        "can_create_service_record": admin or (owner and not service) or append,
+        "can_edit_service_records": manage and not service,
+        "can_create_repair_photos": admin or (service and append),
+    }
+
+
+def _require_vehicle_management(vehicle: VehicleModel, current_user: Customer, db: Session) -> None:
+    if not vehicle_write_policy(role=current_user.role, is_owner=user_owns_vehicle(db, current_user, vehicle)).allowed:
+        raise HTTPException(status_code=403, detail="Údaje a úvodní fotografii vozidla může měnit vlastník nebo administrátor. Servis používá servisní záznamy a fotodokumentaci oprav.")
+
+
 def _build_tachometer_session() -> requests.Session:
     session = requests.Session()
     # Do not pick up unrelated .netrc credentials from the server environment.
@@ -941,6 +966,7 @@ def _store_tachometer_mileage_result(
     # Access or VIN may have changed while the external provider was responding.
     if not can_access_vehicle(vehicle.id, current_user, db):
         raise HTTPException(status_code=403, detail="Přístup k vozidlu se změnil. Údaje nebyly uloženy.")
+    _require_vehicle_management(vehicle, current_user, db)
     if _normalize_vin(vehicle.vin or "") != lookup.vin:
         raise HTTPException(status_code=409, detail="VIN vozidla se změnil. Načtěte údaje znovu pro aktuální vozidlo.")
     effective_current_mileage = max(
@@ -1657,7 +1683,6 @@ def _tachometer_history_entry_to_detail(
 
 
 def _vehicle_to_response_payload(vehicle: VehicleModel, current_user: Customer, db: Session) -> dict:
-    owner = get_primary_vehicle_owner(db, vehicle)
     current_owner_since = get_current_owner_since(db, vehicle)
     payload = {
         "id": vehicle.id,
@@ -1688,17 +1713,22 @@ def _vehicle_to_response_payload(vehicle: VehicleModel, current_user: Customer, 
         "current_owner_since": current_owner_since,
         "tenant_id": getattr(vehicle, "tenant_id", None),
         "created_at": getattr(vehicle, "created_at", None),
+        "permissions": _vehicle_permissions(vehicle, current_user, db),
     }
 
     role_key = str(getattr(current_user, "role", "") or "").strip().lower()
-    current_email = str(getattr(current_user, "email", "") or "").strip().lower()
-    owner_email = str(getattr(owner, "email", None) or getattr(vehicle, "user_email", "") or "").strip().lower()
-    is_owner = bool(current_email) and current_email == owner_email
+    is_owner = user_owns_vehicle(db, current_user, vehicle)
     is_admin_role = is_admin(role_key)
 
     if not is_owner and not is_admin_role:
         payload["user_email"] = "hidden"
         payload["tenant_id"] = None
+        # Sharing service history does not share the owner's registration
+        # document, private notes or insurance details.
+        for field in ("orv_number", "orv_scan_source", "orv_front_image_path",
+                      "orv_back_image_path", "orv_scanned_at", "orv_confidence_json",
+                      "notes", "insurance_provider", "insurance_valid_until"):
+            payload[field] = None
 
     return payload
 
@@ -2129,61 +2159,12 @@ def get_vehicles(
         if tenant_id is None:
             raise HTTPException(status_code=403, detail="Uživatel nemá přiřazený tenant")
 
-        owned_vehicle_ids = set()
-        from ..models import VehicleOwnership
-        current_user_id = getattr(current_user, "id", None)
-
-        if current_user_id is not None:
-            ownership_rows = (
-                db.query(VehicleOwnership.vehicle_id)
-                .filter(
-                    VehicleOwnership.customer_id == current_user_id,
-                    VehicleOwnership.tenant_id == tenant_id,
-                    VehicleOwnership.is_active.is_(True),
-                )
-                .all()
-            )
-            for (vehicle_id,) in ownership_rows:
-                if vehicle_id:
-                    owned_vehicle_ids.add(int(vehicle_id))
-
-        if not owned_vehicle_ids:
-            legacy_vehicles = (
-                db.query(VehicleModel)
-                .filter(
-                    VehicleModel.user_email == current_user.email,
-                    VehicleModel.tenant_id == tenant_id,
-                    # Compatibility only for vehicles with no ownership history.
-                    # Never recreate an explicitly released or transferred assignment.
-                    ~db.query(VehicleOwnership.id).filter(
-                        VehicleOwnership.vehicle_id == VehicleModel.id
-                    ).exists(),
-                )
-                .all()
-            )
-            for vehicle in legacy_vehicles:
-                backfill_vehicle_owner_assignment(db, vehicle)
-                owned_vehicle_ids.add(int(vehicle.id))
-            if legacy_vehicles:
-                db.commit()
-
-        vehicles = []
-        if owned_vehicle_ids:
-            vehicles = (
-                db.query(VehicleModel)
-                .filter(
-                    VehicleModel.id.in_(owned_vehicle_ids),
-                    VehicleModel.tenant_id == tenant_id,
-                )
-                .all()
-            )
-
-
-        # Validate the complete response. Never silently hide a broken record or
-        # print a ValidationError containing private values.
-        for vehicle in vehicles:
-            VehicleOutV1.model_validate(vehicle, from_attributes=True)
-        return vehicles
+        vehicles = get_owned_vehicle_rows(db, current_user, tenant_id=tenant_id)
+        # Commit only the safe legacy ownership backfill; never revive released
+        # assignments. Mixed migrated/legacy accounts must retain every vehicle.
+        db.commit()
+        return [VehicleOutV1.model_validate(_vehicle_to_response_payload(vehicle, current_user, db))
+                for vehicle in vehicles]
     except HTTPException:
         raise
     except Exception as exc:
@@ -2239,6 +2220,7 @@ def init_vehicle_tachometer(
     db: Session = Depends(get_db),
 ) -> VehicleTachometerInitResponse:
     vehicle = _get_accessible_vehicle_or_404(vehicle_id, current_user, db)
+    _require_vehicle_management(vehicle, current_user, db)
     vin = _normalize_vin(getattr(vehicle, "vin", "") or "")
     if len(vin) != 17:
         raise HTTPException(
@@ -2256,6 +2238,7 @@ def submit_vehicle_tachometer(
     db: Session = Depends(get_db),
 ) -> VehicleTachometerSubmitResponse:
     vehicle = _get_accessible_vehicle_or_404(vehicle_id, current_user, db)
+    _require_vehicle_management(vehicle, current_user, db)
     vin = _normalize_vin(getattr(vehicle, "vin", "") or "")
     if len(vin) != 17:
         raise HTTPException(
@@ -2363,6 +2346,14 @@ def record_vehicle_mileage(
     if not can_access_vehicle(vehicle_id, current_user, db):
         raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
 
+    access_link = None
+    owner_or_admin = is_admin(current_user.role) or user_owns_vehicle(db, current_user, vehicle)
+    if not owner_or_admin:
+        access_link = require_service_vehicle_link(db, current_user=current_user,
+            vehicle_id=vehicle_id, require_create_record=True)
+        if vehicle.current_mileage_km is not None and payload.mileage_km < vehicle.current_mileage_km:
+            raise HTTPException(status_code=403, detail="Servis nemůže snížit evidovaný stav kilometrů. Opravu musí potvrdit vlastník nebo administrátor.")
+
     current_mileage = getattr(vehicle, "current_mileage_km", None)
     if (
         current_mileage is not None
@@ -2398,6 +2389,7 @@ def record_vehicle_mileage(
         category="JINE",
         created_by_ai=False,
     )
+    attach_service_access_to_record(record=mileage_record, current_user=current_user, access_link=access_link)
     db.add(mileage_record)
     db.flush()
     db.commit()
@@ -2425,8 +2417,7 @@ def update_vehicle(
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
     
     # Kontrola přístupu
-    if not can_access_vehicle(vehicle_id, current_user, db):
-        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+    _require_vehicle_management(vehicle, current_user, db)
 
     effective_current_mileage = (
         vehicle_data.current_mileage_km
@@ -2554,14 +2545,13 @@ def upload_vehicle_photo(
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Nahraje/aktualizuje fotku vozidla (pro uživatele i servis)."""
+    """Vlastník nebo administrátor změní úvodní fotografii vozidla."""
     _ensure_vehicle_photo_column(db)
     vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
 
-    if not can_access_vehicle(vehicle_id, current_user, db):
-        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+    _require_vehicle_management(vehicle, current_user, db)
 
     content = _decode_base64_payload(payload.file_content_base64)
     if not content:
@@ -2613,8 +2603,7 @@ def delete_vehicle_photo(
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
 
-    if not can_access_vehicle(vehicle_id, current_user, db):
-        raise HTTPException(status_code=403, detail="Nemáte přístup k tomuto vozidlu")
+    _require_vehicle_management(vehicle, current_user, db)
 
     photo_file = _get_vehicle_photo_file(getattr(vehicle, "photo_path", None))
     vehicle.photo_path = None

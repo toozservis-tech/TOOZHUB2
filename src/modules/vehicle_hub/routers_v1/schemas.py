@@ -54,6 +54,16 @@ class VehicleUpdateV1(BaseModel):
     # assigned_service_id: Optional[int] = None  # ID servisu přiřazeného k vozidlu - DOČASNĚ ZAKÁZÁNO
 
 
+class VehiclePermissionsV1(BaseModel):
+    can_edit_vehicle: bool
+    can_manage_photo: bool
+    can_record_mileage: bool
+    can_import_tachometer: bool
+    can_create_service_record: bool
+    can_edit_service_records: bool
+    can_create_repair_photos: bool
+
+
 class VehicleOutV1(BaseModel):
     id: int
     user_email: str
@@ -84,6 +94,7 @@ class VehicleOutV1(BaseModel):
     # assigned_service_id: Optional[int] = None  # DOČASNĚ ZAKÁZÁNO
     tenant_id: Optional[int] = None  # Multi-tenant podpora
     created_at: datetime
+    permissions: Optional[VehiclePermissionsV1] = None
     
     class Config:
         from_attributes = True

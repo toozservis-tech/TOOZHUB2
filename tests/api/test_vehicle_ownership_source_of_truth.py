@@ -57,7 +57,7 @@ def test_vehicle_listing_uses_ownership_source_of_truth(db_session) -> None:
 
     assert user_owns_vehicle(db_session, owner, vehicle) is True
 
-    current_user = SimpleNamespace(email=owner.email, tenant_id=tenant.id, id=owner.id)
+    current_user = owner
     vehicles = vehicles_router.get_vehicles(current_user=current_user, db=db_session)
     assert [item.id for item in vehicles] == [vehicle.id]
 
