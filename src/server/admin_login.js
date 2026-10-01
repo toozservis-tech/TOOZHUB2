@@ -84,3 +84,16 @@ form.addEventListener('submit', async event => {
         if (expected === attempt) { button.disabled = false; el('password').value = ''; el('code').value = ''; }
     }
 });
+
+function renderLogoutNotice() {
+    const message = AdminBrowserSession.logoutNotice();
+    el('logoutNotice').hidden = !message;
+    el('logoutMessage').textContent = message || '';
+}
+window.addEventListener('admin-logout-updated', renderLogoutNotice);
+el('retryLogout').addEventListener('click', async () => {
+    el('retryLogout').disabled = true;
+    try { await AdminBrowserSession.retryLogouts(); }
+    finally { el('retryLogout').disabled = false; renderLogoutNotice(); }
+});
+renderLogoutNotice();

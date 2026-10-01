@@ -5,6 +5,10 @@
     const TOKEN_KEY = 'adminAccessToken';
     const ROLE_KEY = 'adminRole';
     const SIGNOUT_KEY = 'sprava_vozidel_admin_session_changed';
+    const LOGOUT_PREFIX = 'sprava_vozidel_logout_receipt:';
+    const LOGOUT_WARNING = 'adminLogoutWarning';
+    const volatileReceipts = new Map();
+    let flushingLogouts = false;
     const legacyKeys = ['accessToken', 'token', 'currentUser', 'wasLoggedIn', 'clientGeoTelemetry', 'rememberedLoginEmail', 'pendingServiceInviteToken', 'pendingReservationClaimToken', 'pendingReservationClaimReservationId'];
     const pending = new Set();
     let generation = 0, deadline = 0, expiryTimer = null, ended = false, suspended = false;
@@ -125,9 +129,63 @@
         expiryTimer = setTimeout(() => end('expired'), Math.min(900000, Math.max(0, deadline - Date.now())));
         return status;
     }
+    function jwtClaims(value) {
+        try {
+            const parts = value.split('.'); if (parts.length !== 3) return null;
+            return JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        } catch { return null; }
+    }
+    function queueLogout(accessToken) {
+        const ticket = jwtClaims(accessToken || '')?.logout_ticket;
+        if (typeof ticket !== 'string' || ticket.length > 2048) return null;
+        const claims = jwtClaims(ticket);
+        if (claims?.aud !== 'session-logout' || !/^[0-9a-f]{64}$/.test(claims?.sid || '')) return null;
+        const key = LOGOUT_PREFIX + claims.sid;
+        // This separate signed capability can ONLY revoke its session. It has
+        // no account data and cannot authenticate. Never persist the bearer.
+        volatileReceipts.set(key, ticket);
+        try { localStorage.setItem(key, ticket); } catch { /* retry in memory */ }
+        return key;
+    }
+    function receipts() {
+        const result = new Map(volatileReceipts);
+        for (const key of Object.keys(localStorage)) {
+            if (key.startsWith(LOGOUT_PREFIX)) result.set(key, localStorage.getItem(key));
+        }
+        return result;
+    }
+    function logoutNotice() {
+        return receipts().size ? 'V tomto prohlížeči jste odhlášeni. Potvrzení odhlášení serverem čeká na spojení.' : sessionStorage.getItem(LOGOUT_WARNING);
+    }
+    function notifyLogout() { global.dispatchEvent(new Event('admin-logout-updated')); }
+    async function retryLogouts() {
+        if (flushingLogouts) return;
+        flushingLogouts = true;
+        try {
+            for (const [key, ticket] of receipts()) {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 8000);
+                try {
+                    const response = await fetch('/user/logout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({logout_ticket:ticket}),
+                        credentials:'omit', cache:'no-store', redirect:'error', signal:controller.signal});
+                    if (response.status !== 204) throw new Error('Logout unconfirmed');
+                    localStorage.removeItem(key); volatileReceipts.delete(key);
+                    if (!receipts().size) sessionStorage.removeItem(LOGOUT_WARNING);
+                } catch { break; } finally { clearTimeout(timer); }
+            }
+        } finally { flushingLogouts = false; notifyLogout(); }
+    }
     async function logout() {
-        // Hide data and abort requests immediately, even if the server is offline.
-        const closing = fetch('/admin-web-session', {method:'DELETE', credentials:'same-origin', cache:'no-store', keepalive:true}).catch(() => {});
+        const oldToken = token(), receipt = queueLogout(oldToken);
+        sessionStorage.setItem(LOGOUT_WARNING, 'V prohlížeči jste odhlášeni. Server zatím odhlášení nepotvrdil.');
+        // Use the captured bearer, never a possibly newer shared browser cookie.
+        const headers = oldToken ? {Authorization:'Bearer ' + oldToken} : {};
+        const closing = fetch('/admin-web-session', {method:'DELETE', headers, credentials:oldToken ? 'omit' : 'same-origin',
+            cache:'no-store', redirect:'error', keepalive:true}).then(response => {
+                if (!response.ok) throw new Error('Logout unconfirmed');
+                if (receipt) { localStorage.removeItem(receipt); volatileReceipts.delete(receipt); }
+                sessionStorage.removeItem(LOGOUT_WARNING); notifyLogout();
+            }).catch(() => { notifyLogout(); });
         end('logout');
         await closing;
     }
@@ -139,7 +197,9 @@
     }
     global.addEventListener('storage', event => {
         if (event.key === SIGNOUT_KEY && event.newValue) end('other-tab', false);
+        if (event.key?.startsWith(LOGOUT_PREFIX)) notifyLogout();
     });
+    global.addEventListener('online', () => { void retryLogouts(); });
     global.addEventListener('pageshow', event => {
         if (protectedPage && event.persisted) { end('restore', false); }
     });
@@ -153,5 +213,6 @@
     document.addEventListener('visibilitychange', () => {
         if (protectedPage && !document.hidden && deadline && Date.now() >= deadline) end('expired');
     });
-    global.AdminBrowserSession = Object.freeze({token, snapshot, assertCurrent, set, end, request, verify, logout, protect, sameOriginURL});
+    global.AdminBrowserSession = Object.freeze({token, snapshot, assertCurrent, set, end, request, verify, logout, protect, sameOriginURL, retryLogouts, logoutNotice});
+    void retryLogouts();
 })(window);

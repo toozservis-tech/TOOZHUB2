@@ -18,6 +18,7 @@ from ..service_access import service_can_read_vehicle
 from ..ownership import user_owns_vehicle
 from ..email_verification import pending_verification
 from src.core.auth import get_current_user_email
+from src.core.session_revocation import require_active_token
 from src.core.rbac import is_admin, is_service, normalize_role, service_record_write_policy, vehicle_read_policy
 from src.server.security_tracking import log_user_activity
 
@@ -64,7 +65,15 @@ def get_current_user_optional(
     """
     if not credentials:
         return None
-    
+
+    # A revoked bearer or unavailable revocation store must not fall back to
+    # anonymous/legacy authority in an optional-auth endpoint.
+    from src.core.security import decode_access_token_payload
+    token = credentials.credentials
+    payload = decode_access_token_payload(token)
+    if payload and payload.get("sub"):
+        require_active_token(db, token)
+
     try:
         from src.core.security import decode_access_token_payload
         token = credentials.credentials

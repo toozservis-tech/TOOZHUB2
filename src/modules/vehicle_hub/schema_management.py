@@ -96,7 +96,7 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
         "tables": {"system_notifications"},
     },
     "security": {
-        "tables": {"customer_security_settings", "security_access_logs", "security_blocked_ips"},
+        "tables": {"customer_security_settings", "security_access_logs", "security_blocked_ips", "revoked_access_tokens"},
     },
     "admin_audit": {
         "tables": {"developer_action_audit_logs"},

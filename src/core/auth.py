@@ -11,6 +11,7 @@ from sqlalchemy import func
 from typing import Optional
 
 from .security import decode_access_token_payload
+from .session_revocation import require_active_token
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer
 from src.modules.vehicle_hub.account_state import (
@@ -52,6 +53,7 @@ def get_current_user_email(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    require_active_token(db, token)
     ensure_customer_account_state_schema(db)
 
     normalized_email = str(email).strip().lower()

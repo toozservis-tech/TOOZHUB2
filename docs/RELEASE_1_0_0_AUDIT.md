@@ -80,4 +80,18 @@ Po výše uvedených opravách prošlo **247 serverových regresí** (účty, op
 - Přihlášení/autentikátor po stisku „Začít znovu“ nepřijme starý rozpracovaný požadavek. Návrat z přihlášení má výslovný seznam místních cílů.
 - Pozdní geolokace nesmí uložit data do nové relace. Dodatečně odstraněno uchovávání těla odpovědi v diagnostice VIN/ARES. Úspěšné prázdné odpovědi 204 starší klient nehlásí jako chybu.
 - Ověřeno: **247 serverových kontrol** a **49 kontrol JavaScriptu / skutečného Chromu** na syntetických datech. Zahrnuje předchozí ochranu XSS/CSP a funkční návaznosti vozidel, záznamů, formulářů i administrátorských akcí. Žádná skutečná platba, e-mail, změna MFA vlastníka ani mazání skutečných záznamů.
-- Praktické meze: přerušení požadavku v prohlížeči nevrací již dokončenou změnu na serveru. Stažený dokument nelze odvolat z cizího úložiště. Samostatné odvolání serverového JWT při běžném odhlášení dosud není implementované; server nadále kontroluje expiraci, verzi relace a čerstvost MFA. Tento bod, alternativní webové stránky a dosud otevřené oblasti auditu musí být dořešeny před vydáním.
+- Praktické meze: přerušení požadavku v prohlížeči nevrací již dokončenou změnu na serveru. Stažený dokument nelze odvolat z cizího úložiště. Samostatné odvolání serverového JWT doplňuje navazující část tohoto auditu. Alternativní webové stránky a dosud otevřené oblasti auditu musí být dořešeny před vydáním.
+
+## Trvalé odhlášení a bezpečné opakování (1. 10. 2026)
+
+Předchozí otevřený bod o platnosti tokenu po odhlášení řeší tato změna:
+
+- Každé vydání přístupu má vlastní náhodný identifikátor. Server ukládá pouze jednosměrný otisk odvolaného přístupu a expiraci; původní token ani osobní údaje se do seznamu neukládají. Kontrola platí i pro volitelné přihlášení a webovou cookie. Výpadek úložiště ověření nepovolí přístup.
+- Odhlášení je opakovatelné, funguje i před ověřením e-mailu či při prošlém MFA, přežije restart serveru a neukončuje jiná zařízení. Tabulka vzniká přidáním při startu; zákaznické záznamy se nemění. Propadlé otisky se uklízejí při dalších odhlášeních.
+- Nový přístup obsahuje zvlášť podepsané potvrzení použitelné pouze k jeho zrušení. Nemá identitu účtu a nelze s ním otevřít API ani administraci. Díky němu může klient zopakovat odhlášení po výpadku bez uchování použitelného přihlašovacího klíče. Web ukládá pouze toto omezené potvrzení, iOS používá chráněný Keychain a svázání s původním serverem.
+- Pozdní webové odhlášení pracuje se zachyceným přístupem, ne s novou sdílenou cookie. Odpověď neposílá odstranění nové cookie. Lokální obsah je skrytý ihned. Dokud server nepotvrdí odhlášení, klient to uvádí jako čekající stav.
+- iOS zachová odhlášený stav i při neúspěšném odstranění staré položky Keychain. Opětovné odeslání nesmí změnit mezitím přihlášeného uživatele. Přesměrování API zachová autorizaci pouze na stejném originu; cizí host, port nebo změna protokolu jsou odmítnuté. Chybová hlášení neukazují syrové odpovědi serveru.
+
+Doloženo: 273 serverových regresí, 52 JavaScriptových/Chrome testů a 19 iOS jednotkových testů. Samostatná podepsaná aplikace ověřila skutečný Keychain, opětovné spuštění a zablokování zbylého starého tokenu. Transportní test se skutečnými místními HTTP servery ověřil přesměrování JSON, binárního i prázdného požadavku, nepředání údajů jinému cíli a požadavek na výslovné potvrzení odhlášení. Vše se smyšlenými údaji.
+
+Meze: server nelze vzdáleně informovat bez spojení; token zůstává platný do doručení odhlášení nebo expirace. Staré přístupy vydané před touto změnou nemají samostatné potvrzení pro opakování; klient je neuchovává a po neúspěšném online pokusu hlásí omezení. Změna hesla ruší všechna přihlášení. Kontrola fyzického fotoaparátu, App Store a ostatní otevřené body nejsou tímto uzavřené.

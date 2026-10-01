@@ -7,8 +7,10 @@ import hashlib
 import logging
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from src.core.session_revocation import revoke_tokens
 from sqlalchemy import func
 
 from src.core.config import ENVIRONMENT, PUBLIC_API_BASE_URL
@@ -74,6 +76,16 @@ def _validate_password(password: str):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+
+
+class LogoutRequest(BaseModel):
+    logout_ticket: str = Field(max_length=2048)
+
+
+@router.post("/user/logout", status_code=204)
+def logout(data: LogoutRequest | None = Body(default=None), credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(auto_error=False)), db=Depends(get_db)):
+    revoke_tokens(db, [credentials.credentials] if credentials else [], tickets=[data.logout_ticket] if data else [])
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/user/register", response_model=RegisterTokenResponse)

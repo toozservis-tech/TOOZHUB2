@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from src.core.security import decode_access_token_payload
+from src.core.session_revocation import require_active_token, revoke_tokens
 from src.modules.vehicle_hub.database import SessionLocal, get_db
 from src.modules.vehicle_hub.models import Customer
 from src.modules.vehicle_hub.account_state import customer_is_deleted, customer_is_disabled, customer_session_version
@@ -29,6 +30,7 @@ def require_web_admin(token, db):
     payload = decode_access_token_payload(token or '')
     if not payload:
         raise HTTPException(401, 'Přihlaste se jako administrátor.')
+    require_active_token(db, token)
     user = db.query(Customer).filter(func.lower(Customer.email) == str(payload.get('sub', '')).lower()).first()
     if not user or customer_is_deleted(user) or customer_is_disabled(user):
         raise HTTPException(401, 'Přihlášení již není platné.')
@@ -62,9 +64,16 @@ def open_session(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(
     return response
 
 @router.delete('/admin-web-session', include_in_schema=False)
-def close_session():
+def close_session(request: Request, credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(auto_error=False)), db: Session = Depends(get_db)):
+    cookie = request.cookies.get(COOKIE)
+    token = credentials.credentials if credentials else cookie
+    revoke_tokens(db, [token])
     response = JSONResponse({'ok': True}, headers={'Cache-Control':'no-store'})
-    response.delete_cookie(COOKIE, path='/', secure=True, httponly=True, samesite='strict')
+    # Never send a cookie deletion for bearer logout: even a matching request
+    # cookie may have been replaced while this response was in flight. The
+    # revoked cookie is harmless and the next login will overwrite it.
+    if not credentials:
+        response.delete_cookie(COOKIE, path='/', secure=True, httponly=True, samesite='strict')
     return response
 
 class AdminStaticFiles(StaticFiles):

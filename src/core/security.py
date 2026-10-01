@@ -5,6 +5,7 @@ Bezpečnostní modul pro Správu vozidel
 """
 import hashlib
 import hmac
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -148,6 +149,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         raise RuntimeError("JWT support is required")
 
     to_encode = data.copy()
+    # Every issuance is a distinct session, even within one clock second.
+    to_encode["jti"] = secrets.token_urlsafe(24)
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
@@ -156,6 +159,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     if "iat" not in to_encode:
         to_encode["iat"] = datetime.utcnow()
     to_encode.update({"exp": expire})
+    # This capability can only revoke the session. Its audience and missing sub
+    # prevent it from ever authenticating an API request or opening admin UI.
+    logout_key = hmac.new(JWT_SECRET_KEY.encode(), b'SpravaVozidel/logout-ticket/v1', hashlib.sha256).hexdigest()
+    to_encode["logout_ticket"] = jwt.encode({
+        "aud": "session-logout", "sid": hashlib.sha256(('session:' + to_encode["jti"]).encode()).hexdigest(),
+        "iat": datetime.utcnow(), "exp": expire,
+    }, logout_key, algorithm=JWT_ALGORITHM)
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
     return encoded_jwt
 
@@ -215,3 +225,19 @@ def get_password_hash_type(hashed_password: str) -> str:
         return "sha256"
     else:
         return "unknown"
+
+
+def decode_logout_ticket(ticket: str) -> Optional[dict]:
+    """Validate only a revocation capability, never an authentication token."""
+    if not JWT_AVAILABLE or jwt is None or not isinstance(ticket, str) or len(ticket) > 2048:
+        return None
+    logout_key = hmac.new(JWT_SECRET_KEY.encode(), b'SpravaVozidel/logout-ticket/v1', hashlib.sha256).hexdigest()
+    try:
+        claims = jwt.decode(ticket, logout_key, algorithms=[JWT_ALGORITHM], audience='session-logout',
+                            options={"require": ["exp", "iat", "sid", "aud"]})
+        sid = claims.get('sid')
+        if not isinstance(sid, str) or len(sid) != 64 or any(c not in '0123456789abcdef' for c in sid):
+            return None
+        return claims
+    except JWTError:
+        return None

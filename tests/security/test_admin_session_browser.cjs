@@ -12,8 +12,8 @@ async function fixture(){
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());requests.push({path:url.pathname,method:req.method(),headers:req.headers()});
   if(url.origin!==origin)return route.abort();
-  if(url.pathname==='/admin-session.js')return route.fulfill({contentType:'text/javascript',body:fs.readFileSync(path.join(root,'src/server/admin_session.js'))});
-  if(url.pathname==='/fixture'||url.pathname==='/admin-login')return route.fulfill({contentType:'text/html',body:'<!doctype html><body><main id="private-data">'+(url.pathname==='/fixture'?'SYNTHETIC PRIVATE DATA':'Sign in')+'</main><script src="/admin-session.js"></script></body>'});
+  if(url.pathname==='/admin-session.js')return route.fulfill({contentType:'text/javascript; charset=utf-8',body:fs.readFileSync(path.join(root,'src/server/admin_session.js'))});
+  if(url.pathname==='/fixture'||url.pathname==='/admin-login')return route.fulfill({contentType:'text/html; charset=utf-8',body:'<!doctype html><body><main id="private-data">'+(url.pathname==='/fixture'?'SYNTHETIC PRIVATE DATA':'Sign in')+'</main><script src="/admin-session.js"></script></body>'});
   return route.fulfill({json:{required:true,enrolled:true,verified:true,valid_until:Math.floor(Date.now()/1000)+900}});
  });
  await context.addInitScript(()=>{
@@ -165,5 +165,65 @@ test('a timeout interrupts body consumption while leaving a valid session usable
   return {result:await body,token:AdminBrowserSession.token()};
  });
  assert.deepEqual(result,{result:'AbortError',token:'SESSION-A'});
+ }finally{await f.context.close();}
+});
+
+function tokenWithReceipt(suffix='a') {
+ const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+ const ticket = encode({alg:'fixture'})+'.'+encode({aud:'session-logout',sid:suffix.repeat(64),exp:Math.floor(Date.now()/1000)+600})+'.signature';
+ return {ticket,token:encode({alg:'fixture'})+'.'+encode({sub:'synthetic@example.invalid',logout_ticket:ticket})+'.signature'};
+}
+
+test('offline logout persists only a restricted receipt and retries after reopening',async()=>{
+ const f=await fixture();try{
+ const receipt=tokenWithReceipt();
+ await f.page.evaluate(async ({token})=>{
+  AdminBrowserSession.set(token,'admin');window.fetch=async()=>{throw new TypeError('offline');};
+  await AdminBrowserSession.logout();
+ },receipt);
+ const saved=await f.page.evaluate(()=>({local:{...localStorage},session:{...sessionStorage}}));
+ assert.ok(!JSON.stringify(saved).includes(receipt.token));
+ assert.ok(!JSON.stringify(saved).includes('synthetic@example.invalid'));
+ assert.equal(Object.values(saved.local).filter(value=>value===receipt.ticket).length,1);
+ await f.context.route('**/user/logout',route=>route.abort());
+ await f.page.goto(origin+'/admin-login');
+ await f.page.waitForFunction(()=>AdminBrowserSession.logoutNotice()?.includes('čeká'));
+ await f.context.unroute('**/user/logout');
+ const sent=[];
+ await f.context.route('**/user/logout',route=>{sent.push(route.request());return route.fulfill({status:204});});
+ await f.page.evaluate(()=>AdminBrowserSession.retryLogouts());
+ assert.equal(await f.page.evaluate(()=>AdminBrowserSession.logoutNotice()),null);
+ assert.equal(sent.length,1);assert.equal(sent[0].headers().authorization,undefined);
+ assert.equal(sent[0].headers().cookie,undefined);
+ assert.deepEqual(sent[0].postDataJSON(),{logout_ticket:receipt.ticket});
+ }finally{await f.context.close();}
+});
+
+test('late logout uses its captured bearer and cannot erase a newer browser session',async()=>{
+ const f=await fixture();try{
+ const result=await f.page.evaluate(async()=>{
+  let deliver,captured;window.fetch=(_,options)=>{captured=options;return new Promise(resolve=>{deliver=resolve;});};
+  const close=AdminBrowserSession.logout();AdminBrowserSession.set('SESSION-B','admin');
+  deliver(new Response('{}'));await close;
+  return {token:AdminBrowserSession.token(),auth:captured.headers.Authorization,credentials:captured.credentials,redirect:captured.redirect};
+ });
+ assert.deepEqual(result,{token:'SESSION-B',auth:'Bearer SESSION-A',credentials:'omit',redirect:'error'});
+ }finally{await f.context.close();}
+});
+
+test('unconfirmed logout remains retryable and successful retry leaves a newer login alone',async()=>{
+ const f=await fixture();try{
+ const receipt=tokenWithReceipt('b');
+ const result=await f.page.evaluate(async({token,ticket})=>{
+  AdminBrowserSession.set(token,'admin');window.fetch=async()=>new Response('{}',{status:503});
+  await AdminBrowserSession.logout();await AdminBrowserSession.retryLogouts();
+  const before=AdminBrowserSession.logoutNotice();AdminBrowserSession.set('SESSION-B','admin');
+  const sent=[];window.fetch=async(url,options)=>{sent.push({url,body:JSON.parse(options.body),credentials:options.credentials,headers:options.headers});return new Response(null,{status:204});};
+  await AdminBrowserSession.retryLogouts();
+  return {before,after:AdminBrowserSession.logoutNotice(),token:AdminBrowserSession.token(),sent};
+ },receipt);
+ assert.match(result.before,/čeká/);assert.equal(result.after,null);assert.equal(result.token,'SESSION-B');
+ assert.equal(result.sent.length,1);assert.deepEqual(result.sent[0].body,{logout_ticket:receipt.ticket});
+ assert.equal(result.sent[0].headers.Authorization,undefined);assert.equal(result.sent[0].credentials,'omit');
  }finally{await f.context.close();}
 });
