@@ -201,6 +201,8 @@ VAPID_CLAIMS_SUBJECT = os.getenv("VAPID_CLAIMS_SUBJECT", "mailto:info@toozservis
 # DATAOVO_API_KEY / DATAOVO_API_BASE_URL (nové názvy)
 # DATAOVOZIDLECH_API_KEY / DATAOVOZIDLECH_API_URL (staré názvy)
 DATAOVO_API_KEY = os.getenv("DATAOVO_API_KEY") or os.getenv("DATAOVOZIDLECH_API_KEY", "")
+# Narrow STK-only integration; does not activate the legacy general VIN decoder.
+STK_REGISTRY_API_KEY = os.getenv("STK_REGISTRY_API_KEY", "")
 DATAOVO_API_BASE_URL = os.getenv("DATAOVO_API_BASE_URL") or os.getenv("DATAOVOZIDLECH_API_URL", "https://api.dataovozidlech.cz/api/vehicletechnicaldata/v2")
 
 # Aliasy pro zpětnou kompatibilitu

@@ -940,3 +940,51 @@ def test_requests_transport_checks_redirect_before_following_and_bounds_its_body
         assert len(adapter.calls) == 1
         assert adapter.calls[0].url == vehicles_router.TACHOMETER_BASE_URL + '/Home/Search'
         assert adapter.last_raw.closed or adapter.last_raw.released
+
+
+@pytest.mark.parametrize('expiry', [date(2028, 2, 29), date(2024, 4, 22)])
+def test_mileage_import_also_persists_explicit_registry_expiry(db_session, monkeypatch, expiry):
+    from src.modules.vehicle_hub.decoder.inspection_validity import InspectionValidity
+    import json
+    from src.modules.vehicle_hub.models import VehicleTachometerHistoryEntry
+    owner, vehicle = _seed_owned_vehicle(db_session)
+    monkeypatch.setattr(vehicles_router.requests, 'Session', _FakeSession)
+    monkeypatch.setattr(vehicles_router, 'fetch_inspection_validity', lambda vin: InspectionValidity('verified', expiry))
+    for _ in range(2):
+        challenge = vehicles_router.init_vehicle_tachometer(vehicle.id, owner, db_session)
+        response = vehicles_router.submit_vehicle_tachometer(vehicle.id,
+            vehicles_router.VehicleTachometerSubmitRequest(session_id=challenge.session_id, captcha_code='fixture'), owner, db_session)
+        assert response.stk_valid_until == response.vehicle.stk_valid_until == expiry
+        assert response.stk_validity_source == 'dataovozidlech.cz'
+        db_session.expire_all()
+        assert db_session.get(VehicleModel, vehicle.id).stk_valid_until == expiry
+    assert db_session.query(ServiceRecord).count() == 1
+    assert db_session.query(VehicleTachometerHistoryEntry).count() == 2
+    evidence = json.loads(db_session.query(VehicleTachometerHistoryEntry).first().raw_payload_json)
+    assert evidence['vehicle_stk_validity_at_import']['valid_until'] == expiry.isoformat()
+
+
+@pytest.mark.parametrize('status', ['not_configured', 'unavailable', 'invalid_response', 'not_available'])
+def test_registry_failure_preserves_stk_and_successful_mileage_import(db_session, monkeypatch, status):
+    from src.modules.vehicle_hub.decoder.inspection_validity import InspectionValidity
+    owner, vehicle = _seed_owned_vehicle(db_session)
+    monkeypatch.setattr(vehicles_router.requests, 'Session', _FakeSession)
+    monkeypatch.setattr(vehicles_router, 'fetch_inspection_validity', lambda vin: InspectionValidity(status))
+    challenge = vehicles_router.init_vehicle_tachometer(vehicle.id, owner, db_session)
+    response = vehicles_router.submit_vehicle_tachometer(vehicle.id,
+        vehicles_router.VehicleTachometerSubmitRequest(session_id=challenge.session_id, captcha_code='fixture'), owner, db_session)
+    assert response.vehicle.stk_valid_until == date(2030, 1, 1)
+    assert response.latest_mileage_km == 416_588
+    assert response.stk_valid_until is None
+    assert response.stk_validity_status == status
+
+
+def test_new_vehicle_lookup_returns_registry_date_before_saving(monkeypatch):
+    from src.modules.vehicle_hub.decoder.inspection_validity import InspectionValidity
+    monkeypatch.setattr(vehicles_router.requests, 'Session', _FakeSession)
+    monkeypatch.setattr(vehicles_router, 'fetch_inspection_validity', lambda vin: InspectionValidity('verified', date(2028, 2, 29)))
+    challenge = vehicles_router._create_tachometer_session(expected_vin='TMBJF73T2B9044629', vehicle_id=None, customer_id=1)
+    response = vehicles_router._lookup_tachometer_with_session(session_id=challenge.session_id,
+        vin='TMBJF73T2B9044629', captcha_code='fixture', customer_id=1, vehicle_id=None)
+    assert response.stk_valid_until == date(2028, 2, 29)
+    assert response.latest_check_date.date() == date(2025, 5, 15)  # newer identification check is NOT expiry

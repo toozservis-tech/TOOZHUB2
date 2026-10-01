@@ -5,7 +5,7 @@ from __future__ import annotations
 from src.core.file_storage import persist_file, cached_file
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import base64
 import binascii
 import html
@@ -40,6 +40,7 @@ from src.core.config import DATA_DIR
 from src.core.rbac import is_admin, is_service, vehicle_write_policy
 from src.core.private_errors import report_exception
 from ..database import get_db
+from ..decoder.inspection_validity import fetch_inspection_validity
 from ..models import (
     Vehicle as VehicleModel,
     Customer,
@@ -138,6 +139,9 @@ class TachometerLookupResponse(BaseModel):
     latest_check_date: Optional[datetime] = None
     inspections: List[TachometerInspectionOut]
     source: str = "kontrolatachometru.cz"
+    stk_valid_until: Optional[date] = None
+    stk_validity_status: str = "not_available"
+    stk_validity_source: Optional[str] = None
 
 
 class VehicleTachometerInitResponse(BaseModel):
@@ -159,6 +163,9 @@ class VehicleTachometerSubmitResponse(BaseModel):
     inspections: List[TachometerInspectionOut]
     created_record_id: int
     source: str = "kontrolatachometru.cz"
+    stk_valid_until: Optional[date] = None
+    stk_validity_status: str = "not_available"
+    stk_validity_source: Optional[str] = None
 
 
 class VehicleTachometerHistoryEntryResponse(BaseModel):
@@ -929,6 +936,7 @@ def _lookup_tachometer_with_session(
                     detail="Pro zadané VIN nebyly nalezeny žádné údaje STK/emisí.",
                 )
 
+            validity = fetch_inspection_validity(vin)
             latest = inspections[0]
             with _TACHOMETER_CHALLENGE_LOCK:
                 _TACHOMETER_CHALLENGE_STORE.pop(session_id, None)
@@ -937,6 +945,7 @@ def _lookup_tachometer_with_session(
                 latest_mileage_km=latest.mileage_km,
                 latest_check_date=latest.check_date,
                 inspections=inspections,
+                **validity.response_fields(),
             )
     except HTTPException as exc:
         if exc.status_code in {404, 410}:
@@ -985,6 +994,8 @@ def _store_tachometer_mileage_result(
     vehicle.current_mileage_km = effective_current_mileage
     vehicle.last_stk_mileage_km = lookup.latest_mileage_km
     vehicle.mileage_checked_at = datetime.utcnow()
+    if lookup.stk_validity_status == "verified" and lookup.stk_valid_until is not None:
+        vehicle.stk_valid_until = lookup.stk_valid_until
 
     latest = lookup.inspections[0]
     performed_at = latest.check_date or datetime.utcnow()
@@ -1061,6 +1072,11 @@ def _upsert_tachometer_history_entries(
             "protocol_number": protocol_number,
             "inspection_type": inspection.inspection_type,
             "source": source,
+            "vehicle_stk_validity_at_import": {
+                "valid_until": lookup.stk_valid_until.isoformat() if lookup.stk_valid_until else None,
+                "source": lookup.stk_validity_source,
+                "status": lookup.stk_validity_status,
+            },
             "findings_summary": inspection.findings_summary,
             "findings_items": list(getattr(inspection, "findings_items", []) or []),
             "detail_available": bool(getattr(inspection, "detail_available", False)),
@@ -2240,6 +2256,9 @@ def submit_vehicle_tachometer(
         latest_check_date=lookup.latest_check_date,
         inspections=lookup.inspections,
         created_record_id=created_record_id,
+        stk_valid_until=lookup.stk_valid_until,
+        stk_validity_status=lookup.stk_validity_status,
+        stk_validity_source=lookup.stk_validity_source,
     )
 
 
