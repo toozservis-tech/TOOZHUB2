@@ -4,7 +4,7 @@ Poslední ověření: 1. 10. 2026. Směr potvrzený uživatelem: iOS předplatn�
 
 ## Skutečný stav
 
-- Členství Apple Developer je od večerní kontroly 30. 9. **aktivní**, tým `5DATUX4X32`, Individual, obnova 1. 10. 2027. Neopakovat platbu. Vstup do App Store Connect nyní vyžaduje první přijetí Terms of Service; modal zůstal připravený pro vlastníka. Vlastník spí a výslovně odložil potřebná osobní potvrzení na další den, podmínky proto nebyly přijaty. Aplikace a produkty dosud nebyly založeny.
+- Členství Apple Developer je **aktivní**, tým `5DATUX4X32`, Individual, obnova 1. 10. 2027. Neopakovat platbu. Vlastník ráno 1. 10. zpřístupnil App Store Connect; vstupní podmínky již neblokují seznam aplikací. Produkční identifikátor `cz.toozservis.spravavozidel.ios` je registrovaný. Založení iOS aplikace (čeština, SKU `spravavozidel-ios`) Apple odmítl, protože název **SprávaVozidel je již obsazený**. Čeká se na vlastníkův výběr rozšířeného názvu pouze pro obchod; název pod ikonou se nemění. Apple ID a produkty proto dosud nejsou vytvořené.
 - Produkční server běží na placeném Renderu (7 USD/měsíc). Comgate test Basic 98,99 Kč byl potvrzen a nezměnil původní licenci. Ostré Comgate účtování dosud není zapnuté.
 - Nový klient používá StoreKit 2, zobrazuje ceny dodané App Storem, obsahuje obnovení nákupů a nativní správu předplatného. Původní Comgate objednávka z iOS byla odstraněna; webové propojení a data jsou zachována.
 - Server má samostatný ověřovač Apple, vazbu nákupu na náhodný `appAccountToken`, aktuální ověření přes App Store Server API a zpracování oznámení V2. Nevěří samotnému potvrzení z telefonu. Apple integrace zůstává vypnutá, dokud nejsou dokončené skutečné údaje a ověření.
@@ -12,8 +12,8 @@ Poslední ověření: 1. 10. 2026. Směr potvrzený uživatelem: iOS předplatn�
 
 ## Nastavení, které ještě vyžaduje účet Apple
 
-1. Vlastník dokončí připravené přijetí App Store Connect Terms of Service. Vývojářské členství už je aktivní a zaplacené. Registrace Individual znamená osobní jméno prodejce; nezakládat ani neplatit druhé členství.
-2. Založit aplikaci **SprávaVozidel**, iOS, bundle ID `cz.toozservis.spravavozidel.ios`. Uložit její skutečné číselné Apple ID. Zajistit podepisování pro App Store.
+1. Přístup do App Store Connect je funkční. Vývojářské členství je aktivní a zaplacené. Registrace Individual znamená osobní jméno prodejce; nezakládat ani neplatit druhé členství.
+2. Po výběru dostupného názvu dokončit připravený záznam iOS aplikace, bundle ID `cz.toozservis.spravavozidel.ios`. Apple název **SprávaVozidel** dne 1. 10. odmítl jako obsazený. Nepřejmenovávat svévolně značku a nepodávat tvrzení o ochranné známce bez podkladů vlastníka. Uložit skutečné číselné Apple ID a zajistit podepisování pro App Store.
 3. Dokončit Paid Apps Agreement, bankovní a daňové údaje a ověření obchodníka pro EU. Žádné z těchto potvrzení nebylo dosud provedeno.
 4. Založit JEDNU skupinu automaticky obnovovaných předplatných. Premium má vyšší úroveň než Basic. Měsíční a roční varianta stejného plánu má stejnou úroveň. Family Sharing není implementován; nezapínat.
 5. Založit následující produkty (identifikátory jsou smlouvou mezi klientem a serverem):
