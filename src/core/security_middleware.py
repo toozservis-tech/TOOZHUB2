@@ -9,11 +9,12 @@ from starlette.requests import Request
 from starlette.responses import Response
 from typing import Callable
 import time
+import posixpath
 from collections import defaultdict
 from datetime import datetime, timedelta
 
 from src.core.branding import APP_SERVER_PRODUCT_TOKEN
-from src.core.browser_policy import ADMIN_CONTENT_SECURITY_POLICY
+from src.core.browser_policy import ADMIN_CONTENT_SECURITY_POLICY, LEGACY_ADMIN_CONTENT_SECURITY_POLICY
 from src.core.config import ALLOWED_ORIGINS, ENVIRONMENT
 
 # Rate limiting - ukládání požadavků
@@ -71,6 +72,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         
         if request.url.path.startswith(('/web_admin/', '/admin-static/')) or request.url.path in {'/web_admin', '/admin-static', '/admin-login', '/admin-login.js'}:
             csp = ADMIN_CONTENT_SECURITY_POLICY
+            response.headers['X-Frame-Options'] = 'DENY'
+            response.headers['Cache-Control'] = 'no-store'
+
+        if posixpath.normpath(request.url.path) in {'/web', '/web/index.html'}:
+            csp = LEGACY_ADMIN_CONTENT_SECURITY_POLICY
             response.headers['X-Frame-Options'] = 'DENY'
             response.headers['Cache-Control'] = 'no-store'
 

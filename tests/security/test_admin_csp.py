@@ -30,3 +30,21 @@ def test_admin_policy_on_login_and_dashboard_aliases():
     assert "script-src-attr 'none'" in ADMIN_CONTENT_SECURITY_POLICY
     assert "script-src 'self';" in ADMIN_CONTENT_SECURITY_POLICY
     assert "form-action 'self'" in ADMIN_CONTENT_SECURITY_POLICY
+
+
+def test_compatibility_dashboard_policy_blocks_scripts_and_embedding():
+    from src.core.browser_policy import LEGACY_ADMIN_CONTENT_SECURITY_POLICY
+    app = FastAPI()
+    app.add_middleware(SecurityHeadersMiddleware)
+    @app.get('/{path:path}')
+    def page(path: str):
+        return HTMLResponse('<h1>fixture</h1>')
+    with TestClient(app) as client:
+        for path in ['/web', '/web/', '/web/index.html', '/web//index.html']:
+            response = client.get(path)
+            assert response.headers['content-security-policy'] == LEGACY_ADMIN_CONTENT_SECURITY_POLICY
+            assert response.headers['x-frame-options'] == 'DENY'
+            assert response.headers['cache-control'] == 'no-store'
+    assert "script-src 'self'; script-src-attr 'none'" in LEGACY_ADMIN_CONTENT_SECURITY_POLICY
+    assert "connect-src 'self'" in LEGACY_ADMIN_CONTENT_SECURITY_POLICY
+    assert "frame-src blob:" in LEGACY_ADMIN_CONTENT_SECURITY_POLICY

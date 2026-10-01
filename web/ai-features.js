@@ -9,11 +9,8 @@ let aiFeaturesStats = null;
 
 // Konfigurace: AI sekce zapnutá, admin akce jen pro admin uživatele
 const AI_FEATURES_DISABLED = false;
-const AI_IS_ADMIN = () => {
-    const urlAdmin = window.location.search.includes('admin=1');
-    const userRole = (window.currentUser && window.currentUser.role) ? window.currentUser.role.toLowerCase() : null;
-    return urlAdmin || userRole === 'admin';
-};
+const AI_IS_ADMIN = () => typeof currentUser !== 'undefined' &&
+    ['admin', 'developer_admin'].includes(String(currentUser?.role || '').toLowerCase());
 
 /**
  * Načíst návrhy funkcí z API
@@ -21,14 +18,14 @@ const AI_IS_ADMIN = () => {
 async function loadAIFeaturesSuggestions(status = null, category = null) {
     try {
         let url = '/api/v1/ai-features/suggestions?limit=50';
-        if (status) url += `&status=${status}`;
-        if (category) url += `&category=${category}`;
+        if (status) url += `&status=${encodeURIComponent(status)}`;
+        if (category) url += `&category=${encodeURIComponent(category)}`;
         
         const suggestions = await apiCall(url, 'GET');
         aiFeaturesSuggestions = suggestions || [];
         renderAIFeaturesSuggestions();
     } catch (error) {
-        console.error('[AI-FEATURES] Chyba při načítání návrhů:', error);
+        console.error("[AI-FEATURES] Chyba při načítání návrhů:");
         showAlert('Chyba při načítání návrhů funkcí', 'error');
     }
 }
@@ -46,7 +43,7 @@ async function loadAIFeaturesStats() {
         aiFeaturesStats = stats;
         renderAIFeaturesStats();
     } catch (error) {
-        console.error('[AI-FEATURES] Chyba při načítání statistik:', error);
+        console.error("[AI-FEATURES] Chyba při načítání statistik:");
     }
 }
 
@@ -70,7 +67,7 @@ async function analyzeAndSuggestFeatures() {
             showAlert('Analýza dokončena. Nebyly nalezeny nové návrhy.', 'info');
         }
     } catch (error) {
-        console.error('[AI-FEATURES] Chyba při analýze:', error);
+        console.error("[AI-FEATURES] Chyba při analýze:");
         showAlert('Chyba při spuštění analýzy', 'error');
     }
 }
@@ -98,11 +95,11 @@ function renderAIFeaturesSuggestions() {
         const priorityColor = getPriorityColor(suggestion.priority);
         const statusBadge = getStatusBadge(suggestion.status);
         const complexityBadge = suggestion.implementation_complexity 
-            ? `<span class="badge badge-${suggestion.implementation_complexity}">${suggestion.implementation_complexity}</span>`
+            ? `<span class="badge badge-${escapeHtml(suggestion.implementation_complexity)}">${escapeHtml(suggestion.implementation_complexity)}</span>`
             : '';
         
         html += `
-            <div class="ai-feature-card" data-id="${suggestion.id}">
+            <div class="ai-feature-card" data-id="${escapeHtml(suggestion.id)}">
                 <div class="ai-feature-header">
                     <h3>${escapeHtml(suggestion.title)}</h3>
                     <div class="ai-feature-badges">
@@ -123,20 +120,20 @@ function renderAIFeaturesSuggestions() {
                         <div class="ai-feature-meta-item">
                             <span class="label">Priorita:</span>
                             <div class="priority-bar">
-                                <div class="priority-fill" style="width: ${suggestion.priority}%; background: ${priorityColor};"></div>
+                                <div class="priority-fill" style="width: ${escapeHtml(Math.max(0, Math.min(100, Number(suggestion.priority) || 0)))}%; background: ${priorityColor};"></div>
                             </div>
-                            <span class="value">${suggestion.priority}/100</span>
+                            <span class="value">${escapeHtml(suggestion.priority)}/100</span>
                         </div>
                         
                         <div class="ai-feature-meta-item">
                             <span class="label">Jistota AI:</span>
-                            <span class="value">${Math.round(suggestion.confidence_score * 100)}%</span>
+                            <span class="value">${escapeHtml(Math.round(suggestion.confidence_score * 100))}%</span>
                         </div>
                         
                         ${suggestion.estimated_effort_hours ? `
                             <div class="ai-feature-meta-item">
                                 <span class="label">Odhadovaný čas:</span>
-                                <span class="value">${suggestion.estimated_effort_hours}h</span>
+                                <span class="value">${escapeHtml(suggestion.estimated_effort_hours)}h</span>
                             </div>
                         ` : ''}
                         
@@ -150,18 +147,18 @@ function renderAIFeaturesSuggestions() {
                 </div>
                 
                 <div class="ai-feature-actions">
-                    <button class="btn btn-sm" onclick="viewFeatureDetail(${suggestion.id})" style="background: #6366f1;">
+                    <button class="btn btn-sm" ${legacyActionAttributes("click", "viewAIFeature", suggestion.id)} style="background: #6366f1;">
                         📋 Detail
                     </button>
                     ${suggestion.status === 'suggested' ? `
-                        <button class="btn btn-sm btn-approve" onclick="approveFeature(${suggestion.id})" style="background: #10b981; display: none;">
+                        <button class="btn btn-sm btn-approve" ${legacyActionAttributes("click", "approveAIFeature", suggestion.id)} style="background: #10b981; display: none;">
                             ✅ Schválit
                         </button>
-                        <button class="btn btn-sm btn-reject" onclick="rejectFeature(${suggestion.id})" style="background: #ef4444; display: none;">
+                        <button class="btn btn-sm btn-reject" ${legacyActionAttributes("click", "rejectAIFeature", suggestion.id)} style="background: #ef4444; display: none;">
                             ❌ Odmítnout
                         </button>
                     ` : ''}
-                    <button class="btn btn-sm" onclick="voteOnFeature(${suggestion.id}, 1)" style="background: #3b82f6;">
+                    <button class="btn btn-sm" ${legacyActionAttributes("click", "voteAIFeature", suggestion.id, 1)} style="background: #3b82f6;">
                         👍 Hlasovat
                     </button>
                 </div>
@@ -171,6 +168,7 @@ function renderAIFeaturesSuggestions() {
     
     html += '</div>';
     container.innerHTML = html;
+    updateUIForUserRole();
 }
 
 /**
@@ -183,19 +181,19 @@ function renderAIFeaturesStats() {
     container.innerHTML = `
         <div class="stats-grid">
             <div class="stat-card">
-                <div class="stat-value">${aiFeaturesStats.total_requests || 0}</div>
+                <div class="stat-value">${escapeHtml(aiFeaturesStats.total_requests || 0)}</div>
                 <div class="stat-label">Celkem požadavků</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">${aiFeaturesStats.active_users || 0}</div>
+                <div class="stat-value">${escapeHtml(aiFeaturesStats.active_users || 0)}</div>
                 <div class="stat-label">Aktivní uživatelé</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">${Math.round(aiFeaturesStats.avg_response_time_ms || 0)}ms</div>
+                <div class="stat-value">${escapeHtml(Math.round(aiFeaturesStats.avg_response_time_ms || 0))}ms</div>
                 <div class="stat-label">Průměrná doba odezvy</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">${aiFeaturesStats.error_rate_percent?.toFixed(1) || 0}%</div>
+                <div class="stat-value">${escapeHtml(aiFeaturesStats.error_rate_percent?.toFixed(1) || 0)}%</div>
                 <div class="stat-label">Chybovost</div>
             </div>
         </div>
@@ -205,7 +203,7 @@ function renderAIFeaturesStats() {
                 <h4>Nejčastěji používané endpointy:</h4>
                 <ul>
                     ${aiFeaturesStats.top_endpoints.map(e => `
-                        <li>${escapeHtml(e.endpoint)} - ${e.count}x</li>
+                        <li>${escapeHtml(e.endpoint)} - ${escapeHtml(e.count)}x</li>
                     `).join('')}
                 </ul>
             </div>
@@ -230,7 +228,7 @@ async function viewFeatureDetail(suggestionId) {
         // Zobrazit modal s detailem
         showFeatureDetailModal(suggestion, integrationPlan, dependencies);
     } catch (error) {
-        console.error('[AI-FEATURES] Chyba při načítání detailu:', error);
+        console.error("[AI-FEATURES] Chyba při načítání detailu:");
         showAlert('Chyba při načítání detailu návrhu', 'error');
     }
 }
@@ -258,7 +256,7 @@ async function approveFeature(suggestionId) {
         showAlert('Návrh byl schválen', 'success');
         await loadAIFeaturesSuggestions();
     } catch (error) {
-        console.error('[AI-FEATURES] Chyba při schvalování:', error);
+        console.error("[AI-FEATURES] Chyba při schvalování:");
         showAlert('Chyba při schvalování návrhu', 'error');
     }
 }
@@ -278,7 +276,7 @@ async function rejectFeature(suggestionId) {
         showAlert('Návrh byl odmítnut', 'info');
         await loadAIFeaturesSuggestions();
     } catch (error) {
-        console.error('[AI-FEATURES] Chyba při odmítání:', error);
+        console.error("[AI-FEATURES] Chyba při odmítání:");
         showAlert('Chyba při odmítání návrhu', 'error');
     }
 }
@@ -297,7 +295,7 @@ async function voteOnFeature(suggestionId, vote) {
         });
         showAlert('Váš hlas byl zaznamenán', 'success');
     } catch (error) {
-        console.error('[AI-FEATURES] Chyba při hlasování:', error);
+        console.error("[AI-FEATURES] Chyba při hlasování:");
         showAlert('Chyba při hlasování', 'error');
     }
 }
@@ -319,14 +317,10 @@ function getStatusBadge(status) {
         'implemented': '<span class="badge badge-success">Implementováno</span>',
         'testing': '<span class="badge badge-warning">Testování</span>'
     };
-    return badges[status] || `<span class="badge">${status}</span>`;
+    return (Object.hasOwn(badges, status) ? badges[status] : null) || `<span class="badge">${escapeHtml(status)}</span>`;
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+
 
 /**
  * Inicializace při načtení záložky
@@ -370,8 +364,7 @@ async function initAIFeaturesTab() {
  * Zkontrolovat, zda je uživatel admin
  */
 async function checkIfAdmin() {
-    // Použijeme jen klientský přepínač (query param)
-    return AI_IS_ADMIN;
+    return AI_IS_ADMIN();
 }
 
 /**
@@ -381,7 +374,7 @@ async function updateUIForUserRole() {
     const isAdmin = await checkIfAdmin();
     
     // Skrýt tlačítko "Analyzovat" pro ne-adminy
-    const analyzeButton = document.querySelector('button[onclick="analyzeAndSuggestFeatures()"]');
+    const analyzeButton = document.querySelector('button[data-legacy-click^="analyzeAndSuggestFeatures_"]');
     if (analyzeButton) {
         analyzeButton.style.display = isAdmin ? 'inline-block' : 'none';
     }
