@@ -252,7 +252,9 @@ def test_document_parser_extracts_supplier_company_contact_and_technician():
     assert str(parsed.get("technician_initials") or "").upper() == "TZ"
 
 
-def test_record_detail_refreshes_stale_parsed_summary():
+def test_record_detail_refreshes_stale_parsed_summary(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_records_router, "SERVICE_RECORD_ATTACHMENTS_DIR", tmp_path)
+    monkeypatch.setattr(service_records_router, "cached_file", lambda path: path)
     invoice_text = (
         "DAŇOVÝ DOKLAD FAKTURA 20260008\n"
         "Gorkého 2351/19a\n"
@@ -292,6 +294,7 @@ def test_record_detail_refreshes_stale_parsed_summary():
         }
     ]
     record = type("RecordStub", (), {})()
+    record.vehicle_id = 9999
     record.attachments = json.dumps(stale_attachments, ensure_ascii=False)
     record.description = "Import faktury 20260008: Gorkého 2351/19a, 20.2.2026 20.2.2026 25.2.2026"
 

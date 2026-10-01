@@ -151,18 +151,50 @@ def _sanitize_file_stem(filename: str) -> str:
     return cleaned[:64] or "doklad"
 
 
-def _resolve_attachment_file(relative_key: str) -> Path | None:
-    raw_key = str(relative_key or "").strip().replace("\\", "/")
-    if not raw_key:
+def _attachment_path_for_vehicle(relative_key: str, *, vehicle_id: int) -> Path | None:
+    """Validate a canonical storage key before touching local/cloud file contents.
+
+    A vehicle's historical files may remain in its former tenant directory after
+    transfer. The stable vehicle ID, not a substring or the current tenant, binds
+    the key to the already-authorized resource.
+    """
+    if not isinstance(vehicle_id, int) or isinstance(vehicle_id, bool) or vehicle_id <= 0:
         return None
-    candidate = (SERVICE_RECORD_ATTACHMENTS_DIR / raw_key).resolve()
+    raw_key = str(relative_key or "")
+    if not raw_key or len(raw_key) > 500 or "\\" in raw_key or any(ord(c) < 32 or ord(c) == 127 for c in raw_key):
+        return None
+    parts = raw_key.split("/")
+    if (len(parts) != 3 or not re.fullmatch(r"tenant_(?:0|[1-9][0-9]*)", parts[0])
+            or parts[1] != f"vehicle_{vehicle_id}" or parts[2] in ("", ".", "..")
+            or not re.fullmatch(r"[A-Za-z0-9._-]+", parts[2])):
+        return None
     base = SERVICE_RECORD_ATTACHMENTS_DIR.resolve()
-    if base not in candidate.parents:
+    candidate = base.joinpath(*parts)
+    try:
+        # Do not permit symlinks to a different vehicle, even within storage.
+        if candidate.resolve() != candidate:
+            return None
+    except (OSError, ValueError, RuntimeError):
         return None
-    return cached_file(candidate)
+    return candidate
 
 
-def _extract_attachment_file_paths(attachments_raw: str | None) -> list[Path]:
+def _resolve_attachment_file(relative_key: str, *, vehicle_id: int) -> Path | None:
+    candidate = _attachment_path_for_vehicle(relative_key, vehicle_id=vehicle_id)
+    return cached_file(candidate) if candidate is not None else None
+
+
+def _validate_record_attachment_references(attachments_raw: str | None, *, vehicle_id: int) -> None:
+    # Legacy plain-text annotations contain no managed file references. For JSON
+    # attachments, validate both keys so a later fallback cannot change authority.
+    for item in _parse_attachments_payload(attachments_raw):
+        for field in ("storage_key", "path"):
+            key = item.get(field)
+            if key is not None and _attachment_path_for_vehicle(str(key), vehicle_id=vehicle_id) is None:
+                raise HTTPException(status_code=422, detail="Příloha nepatří k tomuto vozidlu nebo má neplatnou cestu.")
+
+
+def _extract_attachment_file_paths(attachments_raw: str | None, *, vehicle_id: int) -> list[Path]:
     if not attachments_raw:
         return []
     try:
@@ -179,7 +211,7 @@ def _extract_attachment_file_paths(attachments_raw: str | None) -> list[Path]:
         key = item.get("storage_key") or item.get("path")
         if not key:
             continue
-        resolved = _resolve_attachment_file(str(key))
+        resolved = _resolve_attachment_file(str(key), vehicle_id=vehicle_id)
         if resolved:
             files.append(resolved)
     return files
@@ -232,11 +264,11 @@ def _description_needs_refresh(description: Any) -> bool:
     return False
 
 
-def _rebuild_attachment_parsed_summary(attachment: dict[str, Any]) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+def _rebuild_attachment_parsed_summary(attachment: dict[str, Any], *, vehicle_id: int) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     storage_key = attachment.get("storage_key") or attachment.get("path")
     if not storage_key:
         return None, None
-    attachment_file = _resolve_attachment_file(str(storage_key))
+    attachment_file = _resolve_attachment_file(str(storage_key), vehicle_id=vehicle_id)
     if not attachment_file or not attachment_file.is_file():
         return None, None
 
@@ -277,7 +309,7 @@ def _refresh_record_attachments_summary(record: ServiceRecordModel) -> bool:
         current_summary = attachment.get("parsed_summary")
         if not _parsed_summary_needs_refresh(current_summary):
             continue
-        rebuilt_summary, parsed_data = _rebuild_attachment_parsed_summary(attachment)
+        rebuilt_summary, parsed_data = _rebuild_attachment_parsed_summary(attachment, vehicle_id=record.vehicle_id)
         if not rebuilt_summary:
             continue
         attachment["parsed_summary"] = rebuilt_summary
@@ -757,6 +789,7 @@ def create_service_record(
                 require_create_record=True,
             )
 
+        _validate_record_attachment_references(record_data.attachments, vehicle_id=vehicle_id)
         # Vytvořit záznam
         user_id = current_user.id
         record = ServiceRecordModel(
@@ -1045,12 +1078,10 @@ def download_service_record_attachment(
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
 
-    expected_segment = f"/vehicle_{vehicle_id}/"
-    normalized_key = str(key or "").replace("\\", "/")
-    if expected_segment not in f"/{normalized_key}":
+    if _attachment_path_for_vehicle(key, vehicle_id=vehicle_id) is None:
         raise HTTPException(status_code=403, detail="Příloha nepatří k tomuto vozidlu.")
 
-    attachment_file = _resolve_attachment_file(normalized_key)
+    attachment_file = _resolve_attachment_file(key, vehicle_id=vehicle_id)
     if not attachment_file or not attachment_file.is_file():
         raise HTTPException(status_code=404, detail="Příloha nebyla nalezena.")
 
@@ -1061,7 +1092,8 @@ def download_service_record_attachment(
     return FileResponse(
         path=str(attachment_file),
         media_type=media_type,
-        headers={"Content-Disposition": content_disposition},
+        headers={"Content-Disposition": content_disposition, "Cache-Control": "private, no-store",
+                 "X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -1678,6 +1710,7 @@ def update_service_record(
         if bool(getattr(record, "is_deleted", False)):
             raise HTTPException(status_code=409, detail="Archivovaný servisní záznam nelze upravovat")
 
+        _validate_record_attachment_references(record_data.attachments, vehicle_id=vehicle_id)
         previous_snapshot = _service_record_snapshot(record)
         
         # Aktualizace polí
