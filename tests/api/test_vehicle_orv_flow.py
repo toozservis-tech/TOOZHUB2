@@ -385,3 +385,40 @@ def test_create_orv_scan_normalizes_large_images_before_ocr(db_session, monkeypa
     assert all(length < len(original_bytes) for length in observed_lengths)
     assert scan.front_image_path.endswith(".jpg")
     assert scan.back_image_path.endswith(".jpg")
+
+
+def test_device_ocr_preserves_private_images_and_unverified_review(db_session, monkeypatch, tmp_path):
+    owner=_seed_owner(db_session)
+    monkeypatch.setattr(orv_scans,'ORV_SCANS_DIR',tmp_path/'device-orv')
+    monkeypatch.setattr(orv_scans,'_extract_ocr_text',lambda *a: pytest.fail('Device OCR should avoid expensive duplicate server OCR'))
+    result=vehicles_router.parse_orv(payload=vehicles_router.ORVParseRequestV1(
+        front_image_base64=_png_base64((220,220,220)),back_image_base64=_png_base64((210,210,210)),
+        front_recognized_text='Registrační značka: 1AB2345\nČíslo ORV: UAB648001',
+        back_recognized_text='E TMBJF73T2B9044629\nD.1 ŠKODA\nD.3 SUPERB\nP.1 1968\nP.2 125'),current_user=owner,db=db_session)
+    assert result['trust_state']=='scanned_unverified'
+    assert result['vehicle_fields']['vin']=='TMBJF73T2B9044629'
+    assert result['vehicle_fields']['brand']=='ŠKODA'
+    assert result['vehicle_fields']['model']=='SUPERB'
+    row=db_session.query(VehicleORVScan).one()
+    assert row.status=='review' and row.front_image_hash and row.back_image_hash
+    assert row.vehicle_id is None
+
+
+def test_european_field_codes_on_front_and_standalone_vin():
+    parsed=orv_scans.parse_orv_payload('D.1 ŠKODA\nD.3 FABIA\nP.1 1198\nP.2 51\nE\nTMBJF73T2B9044629','A 1AB2345')
+    assert parsed.vehicle_fields['vin']=='TMBJF73T2B9044629'
+    assert parsed.vehicle_fields['brand']=='ŠKODA' and parsed.vehicle_fields['model']=='FABIA'
+    assert parsed.vehicle_fields['engine_power_kw']=='51'
+
+
+def test_later_ocr_timeout_keeps_successful_text(monkeypatch):
+    monkeypatch.setattr(orv_scans.shutil,'which',lambda _: '/synthetic/tesseract')
+    monkeypatch.setattr(orv_scans.pytesseract,'get_languages',lambda **kw:['ces','eng'])
+    values=iter(['VIN: TMBJF73T2B9044629',RuntimeError('timeout'),'',RuntimeError('timeout')])
+    def recognize(*a,**kw):
+        value=next(values)
+        if isinstance(value,Exception):raise value
+        return value
+    monkeypatch.setattr(orv_scans.pytesseract,'image_to_string',recognize)
+    text=orv_scans._extract_ocr_text(base64.b64decode(_png_base64((200,200,200))),'test.jpg','image/jpeg')
+    assert text=='VIN: TMBJF73T2B9044629'

@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 MAX_ORV_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_ORV_IMAGE_LONG_EDGE = 1800
 MAX_ORV_IMAGE_TARGET_BYTES = 1_600_000
-OCR_PASS_TIMEOUT_SECONDS = 8
+OCR_PASS_TIMEOUT_SECONDS = 5
 VIN_RE = re.compile(r"\b([A-HJ-NPR-Z0-9]{17})\b", re.IGNORECASE)
 PLATE_RE = re.compile(r"\b(\d[A-Z0-9]{1,2}[A-Z]?\s?\d{4}|[A-Z]{2,3}\s?\d{4})\b", re.IGNORECASE)
 DATE_RE = re.compile(r"\b(\d{1,2}[./]\d{1,2}[./]\d{4})\b")
@@ -147,6 +147,14 @@ def _normalize_orv_image_bytes(image_bytes: bytes, *, side: str) -> bytes:
         raise HTTPException(status_code=422, detail=f"ORV obrázek pro {side} stranu se nepodařilo připravit pro OCR.") from exc
 
 
+def _device_text(value: str | None) -> str:
+    # Never upgrade trust based on a client-provided string. Stored under the
+    # same private scan/erasure boundary as server OCR and reviewed by the user.
+    text = str(value or "")[:16000]
+    text = "".join(c for c in text if c in "\n\t" or ord(c) >= 32).strip()
+    return text if len(text) >= 10 else ""
+
+
 def _extract_ocr_text(image_bytes: bytes, file_name: str, mime_type: str | None) -> str:
     del file_name, mime_type
     if Image is None or pytesseract is None:
@@ -169,23 +177,24 @@ def _extract_ocr_text(image_bytes: bytes, file_name: str, mime_type: str | None)
                 grayscale = ImageOps.grayscale(normalized)
                 variants.append(ImageOps.autocontrast(grayscale))
             texts: list[str] = []
-            for variant in variants:
-                for config in ("--psm 6", "--psm 11"):
-                    try:
-                        text = pytesseract.image_to_string(
-                            variant,
-                            lang="ces+eng",
-                            config=config,
-                            timeout=OCR_PASS_TIMEOUT_SECONDS,
-                        )
-                    except RuntimeError as exc:
-                        raise HTTPException(
-                            status_code=504,
-                            detail="OCR zpracování ORV trvalo příliš dlouho. Zkuste pořídit ostřejší a menší scan.",
-                        ) from exc
-                    cleaned = str(text or "").strip()
-                    if cleaned and cleaned not in texts:
-                        texts.append(cleaned)
+            timed_out = False
+            # Two complementary passes; at most 10s per side instead of 32s.
+            for variant, config in zip(variants, ("--psm 11", "--psm 6")):
+                try:
+                    text = pytesseract.image_to_string(
+                        variant,
+                        lang="ces+eng",
+                        config=config,
+                        timeout=OCR_PASS_TIMEOUT_SECONDS,
+                    )
+                except RuntimeError:
+                    timed_out = True
+                    continue
+                cleaned = str(text or "").strip()
+                if cleaned and cleaned not in texts:
+                    texts.append(cleaned)
+            if not texts and timed_out:
+                raise HTTPException(504, "Čtení dokladu trvalo příliš dlouho. Pořiďte ostřejší snímek bez odlesků.")
             return "\n".join(texts).strip()
     except HTTPException:
         raise
@@ -395,6 +404,13 @@ def _extract_vin(front_records: list[dict[str, str]], back_records: list[dict[st
             return ORVFieldMatch(value=value, confidence=confidence, state=state, source=f"{source_prefix}_{origin}")
 
     combined_text = "\n".join(record["text"] for record in back_records + front_records)
+    exact = list(dict.fromkeys(VIN_RE.findall(combined_text.upper())))
+    if len(exact) > 1:
+        return ORVFieldMatch(value=None, confidence=0.0, state="missing", source="ambiguous_vin")
+    if len(exact) == 1:
+        value = exact[0]
+        confidence, state = _score_match(value, validated=_vin_checksum_is_valid(value))
+        return ORVFieldMatch(value=value, confidence=confidence, state=state, source="exact_vin")
     for candidate in re.findall(r"[A-Z0-9\-/ ]{11,22}", combined_text.upper()):
         value, corrected, checksum_valid = _normalize_vin_candidate(candidate)
         if value:
@@ -410,7 +426,7 @@ def _extract_plate(front_records: list[dict[str, str]], back_records: list[dict[
         confidence, state = _score_match(value, labeled=True, validated=True)
         return ORVFieldMatch(value=value, confidence=confidence, state=state, source=f"front_{origin}")
 
-    search_space = "\n".join(record["text"] for record in front_records or back_records)
+    search_space = "\n".join(record["text"] for record in front_records + back_records)
     match = PLATE_RE.search(search_space.upper())
     value = _normalize_plate_value(match.group(1) if match else None)
     if value:
@@ -454,6 +470,8 @@ def _extract_date_field(records: list[dict[str, str]], keywords: tuple[str, ...]
 
 
 def _extract_generic_label_field(records: list[dict[str, str]], keywords: tuple[str, ...], *, value_normalizer=None) -> ORVFieldMatch:
+    if keywords == BACK_LABELS["brand"]:
+        records = [record for record in records if "registracni znacka" not in record["search"]]
     raw_value, origin = _match_from_labeled_line(records, keywords)
     value = value_normalizer(raw_value) if value_normalizer else (raw_value.strip() if raw_value else None)
     if value:
@@ -495,6 +513,16 @@ def _confidence_payload(field_name: str, match: ORVFieldMatch) -> dict[str, Any]
 def parse_orv_payload(front_text: str, back_text: str) -> ParsedORVResult:
     front_records = _line_records(front_text)
     back_records = _line_records(back_text)
+    coded = {"A": "Registrační značka", "B": "Datum první registrace", "D.1": "Značka", "D.2": "Typ", "D.3": "Obchodní označení", "E": "VIN", "J": "Kategorie", "P.1": "Objem", "P.2": "Výkon", "P.3": "Palivo"}
+    def expand(records):
+        lines = []
+        for record in records:
+            match = re.match(r"^\(?([ABDEJP](?:\.[123])?)\)?(?:\s+|:\s*)(.*)$", record["text"])
+            lines.append(f"{coded[match[1]]}: {match[2]}" if match and match[1] in coded else record["text"])
+        return _line_records("\n".join(lines))
+    # Some versions place technical fields on the front; users may swap sides.
+    front_records, back_records = expand(front_records), expand(back_records)
+    technical_records = back_records + front_records
     front_blob = "\n".join(record["text"] for record in front_records)
     back_blob = "\n".join(record["text"] for record in back_records)
     if not front_blob and not back_blob:
@@ -503,31 +531,31 @@ def parse_orv_payload(front_text: str, back_text: str) -> ParsedORVResult:
     vin_match = _extract_vin(front_records, back_records)
     plate_match = _extract_plate(front_records, back_records)
     orv_number_match = _extract_orv_number(front_records, back_records)
-    brand_match = _extract_generic_label_field(back_records, BACK_LABELS["brand"])
-    model_match = _extract_generic_label_field(back_records, BACK_LABELS["model"])
-    type_label_match = _extract_generic_label_field(back_records, BACK_LABELS["type_label"])
-    variant_match = _extract_generic_label_field(back_records, BACK_LABELS["variant"])
-    version_match = _extract_generic_label_field(back_records, BACK_LABELS["version"])
-    category_match = _extract_generic_label_field(back_records, BACK_LABELS["category"])
-    vehicle_kind_match = _extract_generic_label_field(back_records, BACK_LABELS["vehicle_kind"])
-    fuel_match = _extract_generic_label_field(back_records, BACK_LABELS["fuel"])
+    brand_match = _extract_generic_label_field(technical_records, BACK_LABELS["brand"])
+    model_match = _extract_generic_label_field(technical_records, BACK_LABELS["model"])
+    type_label_match = _extract_generic_label_field(technical_records, BACK_LABELS["type_label"])
+    variant_match = _extract_generic_label_field(technical_records, BACK_LABELS["variant"])
+    version_match = _extract_generic_label_field(technical_records, BACK_LABELS["version"])
+    category_match = _extract_generic_label_field(technical_records, BACK_LABELS["category"])
+    vehicle_kind_match = _extract_generic_label_field(technical_records, BACK_LABELS["vehicle_kind"])
+    fuel_match = _extract_generic_label_field(technical_records, BACK_LABELS["fuel"])
     power_match = _extract_generic_label_field(
-        back_records,
+        technical_records,
         BACK_LABELS["engine_power_kw"],
         value_normalizer=lambda value: _normalize_numeric_field(value, POWER_RE, "kW") or (value.strip() if value else None),
     )
     displacement_match = _extract_generic_label_field(
-        back_records,
+        technical_records,
         BACK_LABELS["engine_displacement_cc"],
         value_normalizer=lambda value: _normalize_numeric_field(value, ENGINE_VOLUME_RE, "cm3") or (value.strip() if value else None),
     )
     first_registration_match = _extract_date_field(front_records, FRONT_LABELS["first_registration_date"], fallback_first_date=True)
     first_registration_cz_match = _extract_date_field(front_records, FRONT_LABELS["first_registration_cz_date"])
-    seats_match = _extract_generic_label_field(back_records, ("počet míst", "pocet mist"))
-    max_speed_match = _extract_generic_label_field(back_records, ("nejvyšší rychlost", "nejvyssi rychlost"))
-    emissions_match = _extract_generic_label_field(back_records, ("emise",))
-    consumption_match = _extract_generic_label_field(back_records, ("spotřeba", "spotreba"))
-    weights_match = _extract_generic_label_field(back_records, ("hmotnost", "hmotnosti"))
+    seats_match = _extract_generic_label_field(technical_records, ("počet míst", "pocet mist"))
+    max_speed_match = _extract_generic_label_field(technical_records, ("nejvyšší rychlost", "nejvyssi rychlost"))
+    emissions_match = _extract_generic_label_field(technical_records, ("emise",))
+    consumption_match = _extract_generic_label_field(technical_records, ("spotřeba", "spotreba"))
+    weights_match = _extract_generic_label_field(technical_records, ("hmotnost", "hmotnosti"))
 
     owner_block, owner_block_source = _extract_multiline_block(front_records, FRONT_LABELS["owner"])
     operator_block, operator_block_source = _extract_multiline_block(front_records, FRONT_LABELS["operator"])
@@ -672,6 +700,8 @@ def create_orv_scan_record(
     front_image_mime_type: str | None,
     back_image_mime_type: str | None,
     source: str | None,
+    front_recognized_text: str | None = None,
+    back_recognized_text: str | None = None,
 ) -> VehicleORVScan:
     tenant_id = getattr(current_user, "tenant_id", None)
     if tenant_id is None:
@@ -734,11 +764,11 @@ def create_orv_scan_record(
         )
 
         front_ocr_started = time.perf_counter()
-        front_text = _extract_ocr_text(front_bytes, f"{_safe_file_stem(scan.source)}_front.jpg", front_image_mime_type or "image/jpeg")
+        front_text = _device_text(front_recognized_text) or _extract_ocr_text(front_bytes, f"{_safe_file_stem(scan.source)}_front.jpg", front_image_mime_type or "image/jpeg")
         front_ocr_duration_ms = round((time.perf_counter() - front_ocr_started) * 1000, 1)
 
         back_ocr_started = time.perf_counter()
-        back_text = _extract_ocr_text(back_bytes, f"{_safe_file_stem(scan.source)}_back.jpg", back_image_mime_type or "image/jpeg")
+        back_text = _device_text(back_recognized_text) or _extract_ocr_text(back_bytes, f"{_safe_file_stem(scan.source)}_back.jpg", back_image_mime_type or "image/jpeg")
         back_ocr_duration_ms = round((time.perf_counter() - back_ocr_started) * 1000, 1)
 
         parse_started = time.perf_counter()

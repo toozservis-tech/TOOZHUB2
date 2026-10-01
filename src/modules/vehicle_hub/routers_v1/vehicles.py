@@ -41,6 +41,7 @@ from src.core.rbac import is_admin, is_service, vehicle_write_policy
 from src.core.private_errors import report_exception
 from ..database import get_db
 from ..decoder.inspection_validity import fetch_inspection_validity
+from ..decoder.document_registry import RegistryLookupRequest, RegistryVehicle, lookup_document
 from ..models import (
     Vehicle as VehicleModel,
     Customer,
@@ -1849,6 +1850,16 @@ def _apply_vehicle_claim_payload(vehicle: VehicleModel, vehicle_data: VehicleCre
         vehicle.insurance_valid_until = vehicle_data.insurance_valid_until
 
 
+@router.post("/registry-lookup", response_model=RegistryVehicle)
+def registry_lookup(payload: RegistryLookupRequest, current_user: Customer = Depends(get_current_user)):
+    from src.core.rate_limiter import rate_limiter
+    if not rate_limiter.check_rate_limit(f"registry-user:{current_user.id}", 8, 60):
+        raise HTTPException(429, "Příliš mnoho načítání. Zkuste to za minutu.")
+    if not rate_limiter.check_rate_limit("registry-documents-global", 22, 60):
+        raise HTTPException(429, "Registr je vytížený. Zkuste to za minutu.")
+    return lookup_document(payload)
+
+
 @router.post("/parse-orv", response_model=ORVParseResponseV1)
 def parse_orv(
     payload: ORVParseRequestV1,
@@ -1864,6 +1875,8 @@ def parse_orv(
         front_image_mime_type=payload.front_image_mime_type,
         back_image_mime_type=payload.back_image_mime_type,
         source=payload.source,
+        front_recognized_text=payload.front_recognized_text,
+        back_recognized_text=payload.back_recognized_text,
     )
     return serialize_orv_scan(scan)
 

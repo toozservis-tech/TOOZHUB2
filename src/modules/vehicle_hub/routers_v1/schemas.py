@@ -151,8 +151,11 @@ class ORVParseFieldConfidenceV1(BaseModel):
 
 
 class ORVParseRequestV1(BaseModel):
-    front_image_base64: str = Field(..., min_length=100)
-    back_image_base64: str = Field(..., min_length=100)
+    # Device OCR is an untrusted draft, never proof of vehicle ownership.
+    front_recognized_text: Optional[str] = Field(default=None, max_length=16000)
+    back_recognized_text: Optional[str] = Field(default=None, max_length=16000)
+    front_image_base64: str = Field(..., min_length=100, max_length=17_000_000)
+    back_image_base64: str = Field(..., min_length=100, max_length=17_000_000)
     front_image_mime_type: Optional[str] = Field(default="image/jpeg", max_length=255)
     back_image_mime_type: Optional[str] = Field(default="image/jpeg", max_length=255)
     source: Optional[str] = Field(default="ios_orv_scan", max_length=64)
