@@ -1,5 +1,13 @@
 # SprávaVozidel 1.0.0 — kontrola před prvním vydáním
 
+## Ranní oprava přístupu administrátora (1. 10. 2026)
+
+Hlášení majitele odhalilo chybu, kterou dřívější SQLite testy MFA nepokryly. Produkční ovladač PostgreSQL může po úspěšném `INSERT … ON CONFLICT` vrátit `rowcount = -1`; kód to považoval za vyčerpaný limit. Výsledkem bylo odmítnutí i prvního platného pokusu o nastavení autentikátoru, ověření kódu nebo obnovení administrátorské relace.
+
+Počet pokusů se nadále omezuje atomicky v databázi. Úspěch nyní potvrzuje explicitní `RETURNING`, nikoli nepřenosná hodnota `rowcount`. Ochrana nebyla vypnuta, produkční limity ani faktory majitele nebyly smazány.
+
+Reprodukce před opravou: oba nové testy na skutečném izolovaném PostgreSQL selhaly; souběžně uspělo 0 z 8 místo očekávaných 5. Po opravě prošlo 18 kontrol: původní sada MFA a tři PostgreSQL scénáře. Ověřují prvních pět pokusů, odmítnutí šestého, další časové okno, osm souběžných spojení a celé HTTP přihlášení administrátora → nastavení → aktivaci → zneplatnění starého tokenu → nové přihlášení s kódem → odmítnutí opakovaného kódu → další přísné ověření. Účty i klíče těchto testů jsou výhradně syntetické.
+
 Stav 1. 10. 2026: příprava vydání, nikoliv souhlas s veřejným spuštěním. Historické interní verze a Git historie zůstávají zachované; první veřejná verze aplikace má číslo **1.0.0**, sestavení 1.
 
 ## Opravy z aktuální kontroly

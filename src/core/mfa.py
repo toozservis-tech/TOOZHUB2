@@ -64,9 +64,12 @@ def limit_attempt(db, customer_id, action, *, limit=5):
         set_={'window': window, 'attempts': case((table.window != window, 1), else_=table.attempts + 1)},
         where=or_(table.window != window, table.attempts < limit),
     )
-    changed = db.execute(statement).rowcount
+    # psycopg/SQLAlchemy may report -1 for a successful INSERT/UPSERT.
+    # RETURNING distinguishes a consumed attempt from ON CONFLICT WHERE false
+    # without a second query or relaxing the atomic concurrent limit.
+    changed = db.execute(statement.returning(table.customer_id)).scalar_one_or_none()
     db.commit()
-    if changed != 1:
+    if changed is None:
         raise HTTPException(429, 'Příliš mnoho pokusů. Vyčkejte a zkuste to později.',
                             headers={'Retry-After': str(900 - int(time.time()) % 900)})
 
