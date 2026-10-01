@@ -56,6 +56,7 @@ from ..ownership import (
     get_primary_vehicle_owner_assignment,
     release_vehicle_owner_assignment,
     lock_vehicle_access,
+    may_restore_vehicle_profile,
     transfer_vehicle_to_new_owner,
     user_owns_vehicle,
 )
@@ -237,8 +238,8 @@ def _cleanup_tachometer_challenge_store() -> None:
 
 
 def _normalize_vin(raw: str) -> str:
-    value = re.sub(r"[^A-Za-z0-9]", "", str(raw or "").upper())
-    return value.strip()
+    from ..vehicle_identity import normalize_vin
+    return normalize_vin(raw)
 
 
 def _strip_html(raw: str | None) -> str:
@@ -1791,10 +1792,10 @@ def _find_existing_vehicle_by_vin_globally(
     if exclude_vehicle_id is not None:
         query = query.filter(VehicleModel.id != exclude_vehicle_id)
     candidates = query.order_by(VehicleModel.created_at.asc(), VehicleModel.id.asc()).all()
-    for candidate in candidates:
-        if _normalize_vin(getattr(candidate, "vin", "") or "") == normalized_vin:
-            return candidate
-    return None
+    matching = [row for row in candidates if _normalize_vin(row.vin or "") == normalized_vin]
+    if len(matching) > 1:
+        raise HTTPException(409, "VIN má více starších záznamů. Jejich přiřazení musí ověřit administrátor.")
+    return matching[0] if matching else None
 
 
 def _apply_vehicle_claim_payload(vehicle: VehicleModel, vehicle_data: VehicleCreateV1) -> None:
@@ -1891,23 +1892,8 @@ def create_vehicle(
             last_stk_mileage_km=vehicle_data.last_stk_mileage_km,
         )
         
-        # KROK 1: Zkontrolovat quota
-        from ...licensing.service import assert_vehicle_quota, LicenseError
-        try:
-            assert_vehicle_quota(db, tenant_id)
-        except LicenseError as e:
-            logger.warning("[VEHICLE_CREATE] Quota check denied")
-            return JSONResponse(
-                status_code=e.status_code,
-                content={
-                    "error": {
-                        "code": e.code,
-                        "message": e.detail,
-                        "details": e.details
-                    }
-                }
-            )
-        
+        from ...licensing.service import assert_vehicle_quota
+
         normalized_vin = _normalize_vin(vehicle_data.vin or "")
         if vehicle_data.orv_scan_id and not normalized_vin:
             raise HTTPException(status_code=422, detail="ORV scan vyžaduje potvrzený VIN. Doplňte jej ručně před uložením.")
@@ -1937,9 +1923,15 @@ def create_vehicle(
             if active_owner and active_owner.id != current_user.id and active_owner_assignment and active_owner_assignment.is_active:
                 raise HTTPException(
                     status_code=409,
-                    detail="Vozidlo s tímto VIN už má aktivního vlastníka. Pro převod jej nejdřív odeberte z původního profilu.",
+                    detail="Vozidlo s tímto VIN již existuje. Převod z jiného účtu musí ověřit administrátor.",
                 )
 
+            if not may_restore_vehicle_profile(db, vehicle=existing_global_vehicle, customer=current_user):
+                raise HTTPException(409, "Vozidlo s tímto VIN již existuje. Převod z jiného účtu musí ověřit administrátor.")
+
+            # A restored profile already belongs to this tenant and already
+            # counts towards its quota; do not count the same car twice.
+            assert_vehicle_quota(db, tenant_id, restoring_vehicle_id=existing_global_vehicle.id)
             _apply_vehicle_claim_payload(existing_global_vehicle, vehicle_data)
             apply_orv_scan_to_vehicle(
                 db=db,
@@ -1956,7 +1948,7 @@ def create_vehicle(
                 vehicle=existing_global_vehicle,
                 new_owner=current_user,
                 assigned_by_customer_id=current_user.id,
-                ownership_origin="vin_claim",
+                ownership_origin="verified_profile_restore",
             )
             db.commit()
             db.refresh(existing_global_vehicle)
@@ -1980,6 +1972,8 @@ def create_vehicle(
                     }
                 },
             )
+
+        assert_vehicle_quota(db, tenant_id)
 
         # KROK 2: Vytvořit vozidlo
         vehicle = VehicleModel(
@@ -2080,6 +2074,7 @@ def create_vehicle(
             )
     
     except HTTPException as e:
+        db.rollback()
         # LicenseError dědí z HTTPException
         if hasattr(e, 'code'):
             # LicenseError
@@ -2627,7 +2622,8 @@ def delete_vehicle(
         return {
             "message": (
                 "Vozidlo bylo odebráno z vašeho profilu. Historie a servisní záznamy zůstaly "
-                "bezpečně uložené pro případný budoucí převod na nového vlastníka."
+                "uložené. Samotné VIN neumožní jinému účtu převzít váš profil. "
+                "Převod na jiného vlastníka musí ověřit administrátor."
             )
         }
     except Exception as e:

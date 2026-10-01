@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from .models import Customer, Vehicle, VehicleOwnership, VehicleServiceLink, ServiceVehicleAccess, ServiceAccessRequest
@@ -232,6 +232,46 @@ def release_vehicle_owner_assignment(
             actor_id=revoked_by_customer_id or owner.id, reason="Vozidlo bylo odebráno z profilu vlastníka.")
     db.flush()
     return bool(updated)
+
+
+def may_restore_vehicle_profile(db: Session, *, vehicle: Vehicle, customer: Customer) -> bool:
+    """VIN identifies a car, never authority to take someone else's profile.
+
+    Self-recovery is limited to the last recorded owner. A service pre-registration
+    with no ownership history can be claimed only by its verified invited account.
+    The caller holds the vehicle lock and authenticates email verification first.
+    """
+    history = (db.query(VehicleOwnership).filter_by(vehicle_id=vehicle.id, ownership_type="owner")
+               .order_by(VehicleOwnership.owned_from.desc(), VehicleOwnership.id.desc())
+               .populate_existing().all())
+    if history:
+        if any(row.is_active for row in history):
+            return False
+        latest = history[0]
+        # Ambiguous legacy periods must be resolved by an administrator.
+        newest = latest.owned_from or latest.assigned_at
+        contenders = {row.customer_id for row in history if (row.owned_from or row.assigned_at) == newest}
+        return latest.customer_id == customer.id and contenders == {customer.id}
+
+    if _normalize_email(vehicle.user_email) != _normalize_email(customer.email):
+        return False
+    from .models import ServiceCustomerInvite
+    from .email_verification import pending_verification
+    if pending_verification(db, customer.id):
+        return False
+    pending_link = db.query(VehicleServiceLink).filter_by(
+        vehicle_id=vehicle.id, source_type="pending_owner_registration", status="approved",
+    ).first()
+    if pending_link is None:
+        return False
+    return db.query(ServiceCustomerInvite.id).filter(
+        ServiceCustomerInvite.service_customer_id == pending_link.service_customer_id,
+        func.lower(ServiceCustomerInvite.invite_email) == _normalize_email(customer.email),
+        or_(
+            and_(ServiceCustomerInvite.status == "pending", ServiceCustomerInvite.expires_at > datetime.utcnow()),
+            and_(ServiceCustomerInvite.status == "accepted", ServiceCustomerInvite.linked_customer_id == customer.id),
+        ),
+    ).first() is not None
 
 
 def transfer_vehicle_to_new_owner(

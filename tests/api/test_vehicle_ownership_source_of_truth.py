@@ -96,7 +96,7 @@ def test_vehicle_create_creates_primary_ownership_assignment(db_session) -> None
     assert ownership.owned_from is not None
 
 
-def test_vehicle_claims_existing_vin_after_previous_owner_releases_profile(db_session) -> None:
+def test_only_last_owner_can_restore_released_vehicle_profile(db_session) -> None:
     tenant_one = Tenant(name="Tenant One", license_key="tenant-one-key")
     tenant_two = Tenant(name="Tenant Two", license_key="tenant-two-key")
     db_session.add_all([tenant_one, tenant_two])
@@ -140,26 +140,17 @@ def test_vehicle_claims_existing_vin_after_previous_owner_releases_profile(db_se
         plate="9XY1234",
         stk_valid_until=date(2031, 1, 1),
     )
-    claimed = vehicles_router.create_vehicle(vehicle_data=payload, current_user=new_owner, db=db_session)
-
-    assert claimed["id"] == vehicle.id
+    denied = vehicles_router.create_vehicle(vehicle_data=payload, current_user=new_owner, db=db_session)
+    assert denied.status_code == 409
     db_session.refresh(vehicle)
-    assert vehicle.tenant_id == tenant_two.id
-    assert vehicle.user_email == new_owner.email
+    assert vehicle.tenant_id == tenant_one.id and vehicle.user_email == previous_owner.email
+    assert db_session.query(VehicleOwnership).filter_by(is_active=True).count() == 0
 
-    previous_assignment = (
-        db_session.query(VehicleOwnership)
-        .filter(VehicleOwnership.vehicle_id == vehicle.id, VehicleOwnership.customer_id == previous_owner.id)
-        .first()
-    )
-    new_assignment = (
-        db_session.query(VehicleOwnership)
-        .filter(VehicleOwnership.vehicle_id == vehicle.id, VehicleOwnership.customer_id == new_owner.id)
-        .first()
-    )
-    assert previous_assignment is not None
-    assert previous_assignment.is_active is False
-    assert previous_assignment.owned_until is not None
-    assert new_assignment is not None
-    assert new_assignment.is_active is True
-    assert new_assignment.ownership_origin == "vin_claim"
+    restored = vehicles_router.create_vehicle(vehicle_data=payload, current_user=previous_owner, db=db_session)
+    assert restored["id"] == vehicle.id
+    db_session.refresh(vehicle)
+    assert vehicle.tenant_id == tenant_one.id and vehicle.user_email == previous_owner.email
+    assignment = db_session.query(VehicleOwnership).filter_by(vehicle_id=vehicle.id, customer_id=previous_owner.id).one()
+    assert assignment.is_active and assignment.is_primary
+    assert assignment.ownership_origin == "verified_profile_restore"
+    assert db_session.query(VehicleOwnership).count() == 1

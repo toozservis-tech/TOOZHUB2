@@ -45,6 +45,9 @@ if schema:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+# Register the shared VIN write guard once, regardless of which router writes.
+from . import vehicle_identity  # noqa: E402,F401
+
 def get_db():
     db = SessionLocal()
     try:

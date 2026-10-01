@@ -71,7 +71,7 @@ def test_parallel_tachometer_import_is_single_history_and_record(pg_db, fleet, k
         assert db.query(ServiceRecord).count() == db.query(VehicleTachometerHistoryEntry).count() == 1
 
 
-def test_simultaneous_vin_claim_has_one_winner(pg_db, fleet):
+def test_simultaneous_unauthorized_vin_claims_are_both_denied(pg_db, fleet):
     with pg_db.sessions() as db:
         release_vehicle_owner_assignment(db, vehicle=db.get(Vehicle, fleet['car']), owner=db.get(Customer, fleet['owner'])); db.commit()
     payload = vehicles.VehicleCreateV1(nickname='Claimed fixture', vin='TMBJF73T2B9044629', stk_valid_until=date(2030,1,1))
@@ -81,13 +81,109 @@ def test_simultaneous_vin_claim_has_one_winner(pg_db, fleet):
             barrier.wait(timeout=5)
             result = vehicles.create_vehicle(payload, current_user=user, db=db)
             return result.status_code if hasattr(result, 'status_code') else 200
-    assert sorted(parallel(2, worker)) == [200,409]
+    assert sorted(parallel(2, worker)) == [409,409]
     with pg_db.sessions() as db:
         assert db.query(Vehicle).count() == 1
         assignments = db.query(VehicleOwnership).filter_by(is_active=True).all()
-        assert len(assignments) == 1
-        assert assignments[0].customer_id in [fleet['buyer'],fleet['buyer2']]
+        assert assignments == []
         assert not service_can_read_vehicle(db, db.get(Customer,fleet['service']), fleet['car'])
+
+
+def test_simultaneous_last_owner_restore_has_one_assignment(pg_db, fleet):
+    with pg_db.sessions() as db:
+        release_vehicle_owner_assignment(db,vehicle=db.get(Vehicle,fleet['car']),owner=db.get(Customer,fleet['owner'])); db.commit()
+    payload=vehicles.VehicleCreateV1(nickname='Restored fixture',vin='TMBJF73T2B9044629',stk_valid_until=date(2030,1,1))
+    def worker(index,barrier):
+        with pg_db.sessions() as db:
+            actor=db.get(Customer,fleet['owner']); barrier.wait(timeout=5)
+            result=vehicles.create_vehicle(payload,current_user=actor,db=db)
+            return result.status_code if hasattr(result,'status_code') else 200
+    assert sorted(parallel(4,worker))==[200,409,409,409]
+    with pg_db.sessions() as db:
+        assert db.query(Vehicle).count()==1
+        assert db.query(VehicleOwnership).filter_by(is_active=True).count()==1
+
+
+def test_new_vin_race_across_user_service_and_admin_creates_one_vehicle(pg_db,fleet,monkeypatch):
+    from src.server import admin_api
+    from src.modules.vehicle_hub.models import ServiceCustomerLink
+    from fastapi import Request
+    monkeypatch.setattr(admin_api,'log_developer_action',lambda *args,**kwargs:None)
+    with pg_db.sessions() as db:
+        service=db.get(Customer,fleet['service']); buyer=db.get(Customer,fleet['buyer'])
+        db.add(ServiceCustomerLink(service_customer_id=service.id,service_tenant_id=service.tenant_id,
+            customer_id=buyer.id,customer_tenant_id=buyer.tenant_id,status='active')); db.commit()
+    vin='WVWZZZ1JZXW000001'
+    def worker(index,barrier):
+        with pg_db.sessions() as db:
+            buyer=db.get(Customer,fleet['buyer']); service=db.get(Customer,fleet['service'])
+            barrier.wait(timeout=5)
+            try:
+                if index==0:
+                    result=vehicles.create_vehicle(vehicles.VehicleCreateV1(nickname='User car',vin=vin,
+                        stk_valid_until=date(2030,1,1)),current_user=buyer,db=db)
+                elif index==1:
+                    result=service_workspace.create_customer_vehicle(buyer.id,
+                        service_workspace.ServiceWorkspaceVehicleCreateRequest(nickname='Service car',vin=vin.lower(),
+                            stk_valid_until=date(2030,1,1)),current_user=service,db=db)
+                else:
+                    # Direct business function; admin authentication is covered
+                    # by HTTP MFA tests. No external API, audit sink or real user.
+                    result=admin_api.create_vehicle(admin_api.VehicleCreate.model_construct(user_email=buyer.email,
+                        nickname='Admin car',vin='WVW-ZZZ1JZXW000001'),
+                        request=Request({'type':'http','method':'POST','path':'/fixture'}),email=buyer.email,db=db)
+                return result.status_code if hasattr(result,'status_code') else 200
+            except HTTPException as error:
+                db.rollback(); return error.status_code
+    results=parallel(3,worker)
+    # If another path wins before the user quota check, that check can deny
+    # the second addition with 403; neither conflict may become a 500.
+    assert results.count(200)==1 and all(status in [200,403,409] for status in results)
+    with pg_db.sessions() as db:
+        assert db.query(Vehicle).filter_by(vin=vin).count()==1
+        assert db.query(Vehicle).count()==2
+
+
+def test_concurrent_vin_updates_cannot_create_global_duplicates(pg_db,fleet):
+    with pg_db.sessions() as db:
+        buyer=db.get(Customer,fleet['buyer']); ids=[]
+        for i in range(2):
+            car=Vehicle(tenant_id=buyer.tenant_id,user_email=buyer.email,nickname=f'New {i}')
+            db.add(car); db.flush(); ids.append(car.id)
+        db.commit()
+    def worker(index,barrier):
+        with pg_db.sessions() as db:
+            car=db.get(Vehicle,ids[index]); barrier.wait(timeout=5)
+            car.vin='WVWZZZ1JZXW000002'
+            try: db.commit(); return 200
+            except HTTPException as error: db.rollback(); return error.status_code
+    assert sorted(parallel(2,worker))==[200,409]
+
+
+def test_different_vins_cannot_race_past_same_user_quota(pg_db,fleet):
+    def worker(index,barrier):
+        with pg_db.sessions() as db:
+            buyer=db.get(Customer,fleet['buyer']); barrier.wait(timeout=5)
+            result=vehicles.create_vehicle(vehicles.VehicleCreateV1(nickname=f'Quota {index}',
+                vin=f'WVWZZZ1JZXW00000{index}',stk_valid_until=date(2030,1,1)),current_user=buyer,db=db)
+            return result.status_code if hasattr(result,'status_code') else 200
+    assert sorted(parallel(2,worker))==[200,403]
+    with pg_db.sessions() as db:
+        buyer=db.get(Customer,fleet['buyer'])
+        assert db.query(Vehicle).filter_by(tenant_id=buyer.tenant_id).count()==1
+
+
+def test_quota_check_never_commits_earlier_changes_or_releases_vehicle_lock(pg_db,fleet):
+    from src.modules.licensing.service import assert_vehicle_quota
+    from src.modules.vehicle_hub.models import License
+    with pg_db.sessions() as db:
+        car=db.get(Vehicle,fleet['car']); buyer=db.get(Customer,fleet['buyer'])
+        car.nickname='Must be rolled back'; db.flush()
+        assert_vehicle_quota(db,buyer.tenant_id)
+        db.rollback()
+    with pg_db.sessions() as db:
+        assert db.get(Vehicle,fleet['car']).nickname=='Synthetic car'
+        assert db.query(License).count()==0
 
 
 def test_repeated_assignment_does_not_duplicate_owner(pg_db, fleet):

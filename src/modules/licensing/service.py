@@ -96,7 +96,7 @@ PLAN_FEATURES = {
 }
 
 
-def get_or_create_license(db: Session, tenant_id: int) -> License:
+def get_or_create_license(db: Session, tenant_id: int, *, commit_changes: bool = True) -> License:
     """
     Získá nebo vytvoří licenci pro tenant_id.
     Pokud licence neexistuje, vytvoří default free licenci.
@@ -159,7 +159,7 @@ def get_or_create_license(db: Session, tenant_id: int) -> License:
 
         if needs_update:
             license_obj.updated_at = datetime.utcnow()
-            db.commit()
+            db.commit() if commit_changes else db.flush()
             db.refresh(license_obj)
             logger.info(f"[LICENSE] Updated license features for tenant_id={tenant_id}, plan={license_obj.plan}")
     
@@ -182,10 +182,14 @@ def get_or_create_license(db: Session, tenant_id: int) -> License:
         )
         db.add(license_obj)
         try:
-            db.commit()
+            db.commit() if commit_changes else db.flush()
             db.refresh(license_obj)
             logger.info(f"[LICENSE] Created default free license for tenant_id={tenant_id}")
         except IntegrityError:
+            if not commit_changes:
+                # The caller's transaction/locks must never be committed or
+                # silently rolled back while checking a sensitive write.
+                raise
             db.rollback()
             # Možná byla mezitím vytvořena jiným procesem
             license_obj = db.query(License).filter(License.tenant_id == tenant_id).first()
@@ -244,7 +248,7 @@ def is_unlimited(license_obj: License) -> bool:
     return license_obj.vehicles_limit == 0
 
 
-def assert_vehicle_quota(db: Session, tenant_id: int) -> None:
+def assert_vehicle_quota(db: Session, tenant_id: int, *, restoring_vehicle_id: int | None = None) -> None:
     """
     Zkontroluje, zda tenant může přidat další vozidlo.
     Pokud ne, vyhodí LicenseError.
@@ -256,7 +260,12 @@ def assert_vehicle_quota(db: Session, tenant_id: int) -> None:
     Raises:
         LicenseError: Pokud je quota překročena
     """
-    license_obj = get_or_create_license(db, tenant_id)
+    from src.modules.vehicle_hub.models import Tenant
+    # Serialize competing additions to the same tenant, including different VINs.
+    # NO KEY UPDATE allows foreign-key checks by other writers while still
+    # serializing quota checks. FOR UPDATE would deadlock with the VIN lock.
+    db.query(Tenant.id).filter_by(id=tenant_id).with_for_update(key_share=True).one()
+    license_obj = get_or_create_license(db, tenant_id, commit_changes=False)
     
     # Legacy admin bypass - aktivní jen při explicitním zapnutí.
     if ADMIN_FORCE_PREMIUM and is_admin_tenant(tenant_id):
@@ -284,6 +293,10 @@ def assert_vehicle_quota(db: Session, tenant_id: int) -> None:
         return  # Unlimited - OK
     
     current = get_vehicle_count(db, tenant_id)
+    if restoring_vehicle_id is not None:
+        already_counted = db.query(Vehicle.id).filter_by(id=restoring_vehicle_id, tenant_id=tenant_id).first()
+        if already_counted:
+            current -= 1
     if current >= license_obj.vehicles_limit:
         raise LicenseError(
             code="LICENSE_QUOTA_EXCEEDED",
