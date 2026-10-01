@@ -391,22 +391,28 @@ def _score_match(value: str | None, *, labeled: bool = False, validated: bool = 
 
 
 def _extract_vin(front_records: list[dict[str, str]], back_records: list[dict[str, str]]) -> ORVFieldMatch:
+    combined_text = "\n".join(record["text"] for record in back_records + front_records)
+    exact = list(dict.fromkeys(VIN_RE.findall(combined_text.upper())))
+    labeled_matches = []
     for records, source_prefix in ((back_records, "back"), (front_records, "front")):
         raw_value, origin = _match_from_labeled_line(records, BACK_LABELS["vin"])
         value, corrected, checksum_valid = _normalize_vin_candidate(raw_value)
         if value:
-            confidence, state = _score_match(
-                value,
-                labeled=origin != "missing",
-                validated=checksum_valid,
-                corrected=corrected,
-            )
-            return ORVFieldMatch(value=value, confidence=confidence, state=state, source=f"{source_prefix}_{origin}")
-
-    combined_text = "\n".join(record["text"] for record in back_records + front_records)
-    exact = list(dict.fromkeys(VIN_RE.findall(combined_text.upper())))
-    if len(exact) > 1:
+            labeled_matches.append((value, corrected, checksum_valid, origin, source_prefix))
+    candidates = set(exact) | {match[0] for match in labeled_matches}
+    # Front/back may have been captured from different documents. A labelled VIN
+    # must not silently override a second valid identifier on the other image.
+    if len(candidates) > 1:
         return ORVFieldMatch(value=None, confidence=0.0, state="missing", source="ambiguous_vin")
+    for value, corrected, checksum_valid, origin, source_prefix in labeled_matches:
+        confidence, state = _score_match(
+            value,
+            labeled=origin != "missing",
+            validated=checksum_valid,
+            corrected=corrected,
+        )
+        return ORVFieldMatch(value=value, confidence=confidence, state=state, source=f"{source_prefix}_{origin}")
+
     if len(exact) == 1:
         value = exact[0]
         confidence, state = _score_match(value, validated=_vin_checksum_is_valid(value))
@@ -649,7 +655,9 @@ def parse_orv_payload(front_text: str, back_text: str) -> ParsedORVResult:
     ]
     missing_fields = [field for field in ("vin", "plate") if not vehicle_fields.get(field)]
     warnings: list[str] = []
-    if not vin_match.value:
+    if vin_match.source == "ambiguous_vin":
+        warnings.append("Na snímcích byly nalezeny rozdílné VIN. Ověřte, že obě strany patří stejnému dokladu, a pořiďte je znovu.")
+    elif not vin_match.value:
         warnings.append("VIN se nepodařilo spolehlivě rozpoznat. Vozidlo nelze uložit bez ručního doplnění.")
     if not plate_match.value:
         warnings.append("RZ / SPZ se nepodařilo spolehlivě rozpoznat.")
@@ -856,7 +864,8 @@ def apply_orv_scan_to_vehicle(
             vehicle.data_trust_state = data_trust_state
         return
 
-    scan = db.query(VehicleORVScan).filter(VehicleORVScan.id == scan_id).first()
+    scan = (db.query(VehicleORVScan).filter(VehicleORVScan.id == scan_id)
+            .with_for_update().populate_existing().first())
     if scan is None:
         raise HTTPException(status_code=404, detail="ORV scan nebyl nalezen.")
     if getattr(scan, "tenant_id", None) != getattr(vehicle, "tenant_id", None):
@@ -866,6 +875,8 @@ def apply_orv_scan_to_vehicle(
 
     if scan.status not in {"review", "confirmed"}:
         raise HTTPException(409, detail="Doklad ještě není zpracovaný. Pořiďte jej znovu.")
+    if scan.vehicle_id is not None and scan.vehicle_id != vehicle.id:
+        raise HTTPException(409, detail="Tento doklad už je připojený k jinému vozidlu. Pořiďte nový sken.")
 
     parsed_vehicle = json.loads(scan.parsed_vehicle_json or "{}")
     monitored_fields = ["nickname", "brand", "model", "year", "engine", "vin", "plate", "orv_number"]
@@ -897,4 +908,3 @@ def apply_orv_scan_to_vehicle(
     scan.status = "confirmed"
     scan.trust_state = data_trust_state or "verified_by_user"
     scan.confirmed_at = datetime.utcnow()
-

@@ -9,3 +9,12 @@ Po kontrole a potvrzení VIN se doplní údaje z registru a zobrazí finální k
 Ověření: test_document_registry.py (validace, chybné vozidlo, minimalizace, autentizace, limity, pevný cíl), test_vehicle_orv_flow.py (místní OCR a evropská označení polí, částečný timeout), test_orv_durable_storage.py (soukromé ukládání a mazání). Nativní ORVScanningTests zahrnuje skutečné Vision OCR syntetického dokladu, pixelový resize a orientaci, serverový kontrakt, QR validaci a čitelnost úvodní obrazovky. Reálné ORV a automatické ostření na iPhonu se ověřují samostatně; test v simulátoru je neprokazuje.
 
 Zdroje: https://dataovozidlech.cz/wwwroot/data/RSV_Verejna_API_DK_v1_0.pdf a https://md.gov.cz/getattachment/Dokumenty/Silnicni-doprava/Schvalovani-vozidel/Metodiky/Souhrnne_informace_z_Ministerstva_dopravy_kveten_2023.pdf.aspx?lang=cs-CZ
+
+## Scan lifecycle and document identity
+
+- Both camera entry points request access only after a user action and before checking QR availability. Denied access offers the application Settings button; restricted/unsupported/temporarily unavailable cameras have distinct messages and manual VIN entry remains available. Closing the sheet or signing out invalidates delayed permission responses.
+- Replacing the front photo also discards the previous back photo and previous review data. Both sides must be captured again for a new document. Successful QR lookup discards earlier photograph drafts.
+- Conflicting exact or labelled VIN candidates on either image leave VIN blank and display a specific warning. Identical repeated VINs and equivalent OCR corrections remain supported. The user still reviews the VIN before registry enrichment; this is not proof of ownership.
+- Editing VIN after applying the reviewed document to either vehicle form blocks saving that document until it is reviewed again. Reappearing after a scanner sheet does not reinitialize the user form.
+- On the server, a scan's vehicle association is locked and may be saved again for the same vehicle, but cannot be moved/copied to a second vehicle. A real isolated PostgreSQL two-transaction test exercises preloaded stale ORM instances and verifies exactly one association.
+- Physical autofocus, real document OCR and live registry lookup on the connected iPhone remain a separate acceptance check; simulator/synthetic fixtures do not prove those hardware results.

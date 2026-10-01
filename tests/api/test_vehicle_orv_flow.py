@@ -422,3 +422,23 @@ def test_later_ocr_timeout_keeps_successful_text(monkeypatch):
     monkeypatch.setattr(orv_scans.pytesseract,'image_to_string',recognize)
     text=orv_scans._extract_ocr_text(base64.b64decode(_png_base64((200,200,200))),'test.jpg','image/jpeg')
     assert text=='VIN: TMBJF73T2B9044629'
+
+
+@pytest.mark.parametrize('front,back', [
+    ('VIN: TMBJF73T2B9044629', 'VIN: TMBEFF654V7529422'),
+    ('TMBJF73T2B9044629', 'E TMBEFF654V7529422'),
+    ('VIN: TMBJF73T2B9O44629', 'VIN: TMBEFF654V7529422'),
+    ('VIN: TMBJF73T2B9044629\nTMBEFF654V7529422', ''),
+])
+def test_different_vins_on_document_images_require_new_review(front, back):
+    result = orv_scans.parse_orv_payload(front, back)
+    assert result.vehicle_fields['vin'] is None
+    assert 'vin' in result.missing_fields
+    assert any('rozdílné VIN' in warning for warning in result.warnings)
+    assert next(item for item in result.confidence_items if item['field_name'] == 'vin')['confidence'] == 0
+
+
+def test_repeated_same_vin_is_not_ambiguous():
+    result = orv_scans.parse_orv_payload('VIN: TMBJF73T2B9O44629', 'E TMBJF73T2B9044629')
+    assert result.vehicle_fields['vin'] == 'TMBJF73T2B9044629'
+    assert not any('rozdílné VIN' in warning for warning in result.warnings)

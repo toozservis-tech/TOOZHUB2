@@ -157,3 +157,24 @@ def test_only_abandoned_unfinished_scans_are_recovered(fixture):
     assert all(row.front_image_path is not None for row in rows[1:])
     assert db.query(FileErasure).count() == 2
     assert recover_abandoned_document_uploads(session_factory=factory, now=now) == 0
+
+
+def test_confirmed_scan_cannot_be_moved_or_copied_to_another_vehicle(fixture):
+    db, _, user, _, _, _ = fixture
+    row = scan(db, user)
+    original = Vehicle(tenant_id=user.tenant_id,user_email=user.email,vin='TMBJF73T2B9044629')
+    other = Vehicle(tenant_id=user.tenant_id,user_email=user.email,vin='TMBEFF654V7529422')
+    db.add_all([original, other]); db.commit()
+    def attach(vehicle):
+        orv_scans.apply_orv_scan_to_vehicle(db=db,vehicle=vehicle,current_user=user,scan_id=row.id,
+            orv_number=None,use_owner_data=False,data_trust_state='verified_by_user',create_payload={'vin':vehicle.vin})
+    attach(original); db.commit()
+    original_path = original.orv_front_image_path
+    attach(original); db.commit() # explicit save/retry on the same vehicle remains supported
+    with pytest.raises(HTTPException) as rejected:
+        attach(other)
+    assert rejected.value.status_code == 409
+    db.rollback()
+    assert row.vehicle_id == original.id
+    assert original.orv_front_image_path == original_path
+    assert other.orv_front_image_path is None
