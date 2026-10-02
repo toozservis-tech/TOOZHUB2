@@ -64,6 +64,11 @@ def erase_account(db, customer) -> dict[str, int]:
         customer_id=account_id, ownership_type="owner", is_active=True,
     ).with_for_update().all()
     owned_ids = {row.vehicle_id for row in assignments}
+    # Merged originals are hidden from normal browsing, but their original
+    # owner's erasure must still cover the private profile and its documents.
+    alias_ids = {identity for (identity,) in db.query(m.Vehicle.id).execution_options(include_merged_vehicles=True).filter(
+        m.Vehicle.merged_into_id.isnot(None), func.lower(m.Vehicle.user_email) == email)}
+    owned_ids |= alias_ids
     other_owners = db.query(m.VehicleOwnership).filter(
         m.VehicleOwnership.vehicle_id.in_(owned_ids), m.VehicleOwnership.customer_id != account_id,
         m.VehicleOwnership.ownership_type == "owner", m.VehicleOwnership.is_active.is_(True),
@@ -73,16 +78,26 @@ def erase_account(db, customer) -> dict[str, int]:
         m.VehicleOwnershipArchive.vehicle_id.in_(owned_ids - shared_ids),
         m.VehicleOwnershipArchive.owner_customer_id.isnot(None),
         m.VehicleOwnershipArchive.owner_customer_id != account_id)}
+    surviving_alias_targets = {identity for (identity,) in db.query(m.Vehicle.merged_into_id)
+        .execution_options(include_merged_vehicles=True).filter(
+            m.Vehicle.merged_into_id.in_(owned_ids - shared_ids), ~m.Vehicle.id.in_(alias_ids))}
+    historical_ids |= surviving_alias_targets
     # The current account cannot erase another person's original documents.
     # Close its own period first so the normal erasure graph removes only its data.
     from .vehicle_privacy import prepare_owner_change
-    for vehicle in db.query(m.Vehicle).filter(m.Vehicle.id.in_(historical_ids)).with_for_update().populate_existing():
+    for vehicle in db.query(m.Vehicle).execution_options(include_merged_vehicles=True).filter(m.Vehicle.id.in_(historical_ids)).with_for_update().populate_existing():
         prepare_owner_change(db, vehicle, None)
+        # A merge may already have archived this ownership period. Never leave
+        # its current private fields behind merely because the archive exists.
+        if vehicle.id in alias_ids:
+            from .vehicle_privacy import PRIVATE_PROFILE_FIELDS
+            for field in PRIVATE_PROFILE_FIELDS: setattr(vehicle, field, None)
+            vehicle.nickname = 'Vozidlo'
         db.add(m.VehicleOwnershipArchive(vehicle_id=vehicle.id, owner_customer_id=None,
             period_key=f"owner-erased:{vehicle.id}:{account_id}", profile_json="{}"))
     db.flush()
     vehicle_ids = owned_ids - shared_ids - historical_ids
-    vehicles = db.query(m.Vehicle).filter(m.Vehicle.id.in_(vehicle_ids)).with_for_update().all()
+    vehicles = db.query(m.Vehicle).execution_options(include_merged_vehicles=True).filter(m.Vehicle.id.in_(vehicle_ids)).with_for_update().all()
     for vehicle in vehicles:
         file("vehicle_photos", vehicle.photo_path)
         file("vehicle_orv_scans", vehicle.orv_front_image_path)
@@ -223,6 +238,14 @@ def erase_account(db, customer) -> dict[str, int]:
         detach(m.ServiceRegistrationRequest, column)
     remove(m.DeveloperActionAuditLog, or_(m.DeveloperActionAuditLog.developer_id == account_id,
         m.DeveloperActionAuditLog.target_resource == f"user:{account_id}"))
+    # Keep proof that an administrator acted, while erasing the subject's copied
+    # private payload from the new edit/merge audit records too.
+    for audit in db.query(m.DeveloperActionAuditLog).filter(m.DeveloperActionAuditLog.action_type.in_(
+        ['vehicle.merge', 'vehicle.update', 'reminder.admin_update', 'reservation.admin_update',
+         'service_intake.update', 'service.workshop.update'])):
+        payload = json.loads(audit.parameters_json or '{}')
+        if account_id in payload.get('affected_customer_ids', []):
+            audit.parameters_json = json.dumps({'private_payload_erased': True})
     for column, email_field in [(m.SecurityBlockedIp.blocked_by_customer_id, "blocked_by_email"),
                                 (m.SecurityBlockedIp.unblocked_by_customer_id, "unblocked_by_email")]:
         detach(m.SecurityBlockedIp, column, **{email_field: None})

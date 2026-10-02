@@ -174,15 +174,16 @@ def can_access_vehicle(
     """
     from ..models import Vehicle
     
-    # Admin má přístup ke všemu
-    if is_admin(current_user.role):
-        return True
-    
     # Najít vozidlo
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:
         return False
     
+    if vehicle.merged_into_id is not None:
+        return False
+    if is_admin(current_user.role):
+        return True
+
     # Vlastník vozidla má vždy přístup
     if user_owns_vehicle(db, current_user, vehicle):
         return True

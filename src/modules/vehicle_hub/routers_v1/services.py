@@ -19,16 +19,47 @@ from src.core.branding import APP_SERVER_PRODUCT_TOKEN
 from src.core.private_errors import report_exception
 from src.core.rbac import is_admin
 from ..database import get_db
-from ..models import Customer, ServiceAccessRequest, ServiceCustomerLink, ServiceCustomerInvite, ServiceVehicleAccess, Vehicle, VehicleServiceLink
+from ..models import Customer, DeveloperActionAuditLog, ServiceAccessRequest, ServiceCustomerLink, ServiceCustomerInvite, ServiceVehicleAccess, Vehicle, VehicleServiceLink
 from ..service_contact_consent import lock_service_contacts
 from ..ownership import get_owned_vehicle, get_owned_vehicle_ids, get_primary_vehicle_owner, lock_vehicle_access
 from ..schema_management import assert_module_ready
 from ..service_accounts import active_service_filters
+from ..workshop_address import workshop_fields, WorkshopAddressInput, apply_workshop_address
 from ..service_access import create_or_update_vehicle_service_link, revoke_vehicle_service_link, vehicle_label
 from .auth import get_current_user
 from .schemas import ServiceAccessRequestDecisionV1, ServiceAccessRequestListOutV1, VehicleServiceLinkListOutV1
 
 router = APIRouter(prefix="/services", tags=["services-v1"])
+
+
+@router.get('/{service_id}/workshop')
+def get_workshop(service_id: int, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.id != service_id and not _is_admin_role(current_user.role):
+        raise HTTPException(403, 'Provozovnu může spravovat pouze daný servis nebo administrátor.')
+    service = db.get(Customer, service_id)
+    if service is None or str(service.role or '').strip().lower() != 'service':
+        raise HTTPException(404, 'Servis nenalezen.')
+    return {'registered': {k: getattr(service, k) for k in ('street', 'street_number', 'city', 'zip')},
+            'workshop': {k: getattr(service, k) for k in WorkshopAddressInput.model_fields}}
+
+
+@router.put('/{service_id}/workshop')
+def update_workshop(service_id: int, payload: WorkshopAddressInput, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.id != service_id and not _is_admin_role(current_user.role):
+        raise HTTPException(403, 'Provozovnu může spravovat pouze daný servis nebo administrátor.')
+    service = db.get(Customer, service_id)
+    if service is None or str(service.role or '').strip().lower() != 'service':
+        raise HTTPException(404, 'Servis nenalezen.')
+    if payload.workshop_same_as_registered is None:
+        raise HTTPException(422, 'Potvrďte, zda je provozovna shodná se sídlem firmy.')
+    previous = {k: getattr(service, k) for k in WorkshopAddressInput.model_fields}
+    apply_workshop_address(service, payload)
+    db.add(DeveloperActionAuditLog(
+        developer_id=current_user.id, developer_email=current_user.email, action_type='service.workshop.update',
+        target_resource=f'service:{service.id}', parameters_json=json.dumps({'before': previous, 'after': payload.model_dump(), 'affected_customer_ids': [service.id]}, ensure_ascii=False),
+        result='success', status_code=200))
+    db.commit()
+    return {'message': 'Provozovna byla uložena. Vyhledávání používá tuto adresu.'}
 
 _SERVICE_GEO_CACHE: Dict[str, Dict[str, Any]] = {}
 _SERVICE_GEO_CACHE_TTL_SEC = 7 * 24 * 60 * 60  # 7 dní
@@ -157,17 +188,20 @@ def _cache_set(key: str, payload: Dict[str, Any]) -> None:
 
 
 def _build_service_address(service: Customer) -> str:
+    fields = workshop_fields(service) if str(service.role or "").strip().lower() == "service" else {k: getattr(service, k, None) for k in ("street", "street_number", "city", "zip")}
+    if not fields.get("city"):
+        return ""
     parts = []
-    street = (service.street or "").strip()
-    street_number = (service.street_number or "").strip()
+    street = (fields["street"] or "").strip()
+    street_number = (fields["street_number"] or "").strip()
     if street and street_number:
         parts.append(f"{street} {street_number}")
     elif street:
         parts.append(street)
-    city = (service.city or "").strip()
+    city = (fields["city"] or "").strip()
     if city:
         parts.append(city)
-    zip_code = (service.zip or "").strip()
+    zip_code = (fields["zip"] or "").strip()
     if zip_code:
         parts.append(zip_code)
     parts.append("Česká republika")
@@ -175,10 +209,11 @@ def _build_service_address(service: Customer) -> str:
 
 
 def _compose_service_address(service: Customer) -> str:
-    street = (service.street or "").strip()
-    street_number = (service.street_number or "").strip()
+    fields = workshop_fields(service)
+    street = (fields["street"] or "").strip()
+    street_number = (fields["street_number"] or "").strip()
     line_one = f"{street} {street_number}".strip() if (street or street_number) else ""
-    line_two = " ".join(part for part in [(service.zip or "").strip(), (service.city or "").strip()] if part).strip()
+    line_two = " ".join(part for part in [(fields["zip"] or "").strip(), (fields["city"] or "").strip()] if part).strip()
     return ", ".join(part for part in [line_one, line_two] if part)
 
 
@@ -261,7 +296,7 @@ def get_services(
             ServiceCustomerLink.customer_id == current_user.id,
             ServiceCustomerLink.status == "active",
         )
-        query = query.filter(or_(Customer.tenant_id == tenant_id, Customer.id.in_(linked_ids)))
+        query = query.filter(or_(Customer.tenant_id == tenant_id, Customer.id.in_(linked_ids), Customer.workshop_same_as_registered.isnot(None)))
 
     services = query.order_by(Customer.name.asc(), Customer.email.asc()).all()
     
@@ -271,9 +306,9 @@ def get_services(
             "email": s.email,
             "name": s.name,
             "role": s.role,
-            "city": s.city,
+            "city": workshop_fields(s)["city"],
             "phone": s.phone,
-            "tenant_id": getattr(s, "tenant_id", None),
+            "location_confirmed": s.workshop_same_as_registered is not None,
             "created_at": s.created_at.isoformat() if s.created_at else None,
             "vehicles_count": 0
         }
@@ -319,7 +354,7 @@ def get_my_service_contacts(
                 "email": service.email,
                 "phone": service.phone,
                 "ico": service.ico,
-                "city": service.city,
+                "city": workshop_fields(service)["city"],
                 "address": _compose_service_address(service),
             }
         )
@@ -843,9 +878,9 @@ def get_services_discovery(
         if not tenant_id:
             raise HTTPException(status_code=403, detail="Uživatel nemá přiřazený tenant")
         if linked_service_ids:
-            query = query.filter(or_(Customer.tenant_id == tenant_id, Customer.id.in_(list(linked_service_ids))))
+            query = query.filter(or_(Customer.tenant_id == tenant_id, Customer.id.in_(list(linked_service_ids)), Customer.workshop_same_as_registered.isnot(None)))
         else:
-            query = query.filter(Customer.tenant_id == tenant_id)
+            query = query.filter(or_(Customer.tenant_id == tenant_id, Customer.workshop_same_as_registered.isnot(None)))
 
     if linked_service_ids:
         query = query.filter(or_(Customer.password_hash.isnot(None), Customer.id.in_(list(linked_service_ids))))
@@ -915,10 +950,11 @@ def get_services_discovery(
                 "name": service.name or "Neznámý servis",
                 "email": service.email,
                 "phone": service.phone,
-                "city": service.city,
-                "street": service.street,
-                "street_number": service.street_number,
-                "zip": service.zip,
+                "city": workshop_fields(service)["city"],
+                "street": workshop_fields(service)["street"],
+                "street_number": workshop_fields(service)["street_number"],
+                "zip": workshop_fields(service)["zip"],
+                "location_confirmed": service.workshop_same_as_registered is not None,
                 "ico": service.ico,
                 "distance_km": distance_km,
                 "has_precise_distance": distance_km is not None,
@@ -970,11 +1006,11 @@ def get_area_directory(city: str, current_user: Customer = Depends(get_current_u
                 raise HTTPException(status_code=403, detail="Účet nemá přiřazenou organizaci.")
             linked = db.query(ServiceCustomerLink.service_customer_id).filter(
                 ServiceCustomerLink.customer_id == current_user.id, ServiceCustomerLink.status == "active")
-            query = query.filter(or_(Customer.tenant_id == current_user.tenant_id, Customer.id.in_(linked)))
+            query = query.filter(or_(Customer.tenant_id == current_user.tenant_id, Customer.id.in_(linked), Customer.workshop_same_as_registered.isnot(None)))
     candidates = query.all()
     entries = [{"id": item.id, "name": item.name or ("Zákazník" if service_mode else "Servis"),
-                "city": item.city, "phone": item.phone}
-               for item in candidates if _area_key(item.city) == _area_key(city)]
+                "city": item.city if service_mode else workshop_fields(item)["city"], "phone": item.phone}
+               for item in candidates if _area_key(item.city if service_mode else workshop_fields(item)["city"]) == _area_key(city)]
     entries.sort(key=lambda row: (_area_key(row["name"]), row["id"]))
     return {"city": city, "kind": "customers" if service_mode else "services", "count": len(entries),
-            "missing_city_count": sum(not (item.city or "").strip() for item in candidates), "entries": entries}
+            "missing_city_count": sum(not ((item.city if service_mode else workshop_fields(item)["city"]) or "").strip() for item in candidates), "entries": entries}

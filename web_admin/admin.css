@@ -2962,3 +2962,15 @@ pre.tool-result {
     align-items: flex-start;
   }
 }
+
+/* Complete vehicle management: labeled forms and readable evidence on small screens. */
+#management-modal .modal-body { padding: 24px; }
+#management-modal article { margin: 12px 0; padding: 16px; border: 1px solid #d5e3e7; border-radius: 12px; }
+#management-modal summary { cursor: pointer; font-weight: 600; padding: 10px 0; }
+#management-modal dl { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(0, 3fr); gap: 8px 16px; }
+#management-modal dt { font-weight: 600; }
+#management-modal dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+#management-modal form { padding: 16px 0; }
+#management-modal label { display: block; margin: 8px 0; }
+#management-modal textarea { width: 100%; min-height: 80px; }
+@media (max-width: 600px) { #management-modal .modal-body { padding: 16px; } #management-modal dl { grid-template-columns: 1fr; gap: 4px; } #management-modal dd { margin-bottom: 12px; } }

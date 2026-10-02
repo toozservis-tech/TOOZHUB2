@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect, func
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timezone, timedelta
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from pathlib import Path
 from copy import deepcopy
 import os
@@ -43,6 +43,8 @@ from src.modules.vehicle_hub.models import (
     Vehicle,
     VehicleOwnership,
     ServiceRecord,
+    ServiceRecordAuditLog,
+    ServiceIntake,
     Reservation,
     Reminder,
     ServiceRegistrationRequest,
@@ -1405,7 +1407,10 @@ class UserCreate(BaseModel):
     zip: Optional[str] = None
     license_plan: Optional[str] = None
 
-class UserUpdate(BaseModel):
+from src.modules.vehicle_hub.workshop_address import WorkshopAddressInput, apply_workshop_address
+
+
+class UserUpdate(WorkshopAddressInput):
     email: Optional[EmailStr] = None
     name: Optional[str] = None
     password: Optional[str] = None
@@ -1430,6 +1435,13 @@ class VehicleCreate(BaseModel):
     tenant_id: Optional[int] = None
 
 class VehicleUpdate(BaseModel):
+    engine: Optional[str] = None
+    notes: Optional[str] = None
+    current_mileage_km: Optional[int] = Field(default=None, ge=0)
+    stk_valid_until: Optional[date] = None
+    insurance_provider: Optional[str] = None
+    insurance_valid_until: Optional[date] = None
+    tyres_info: Optional[str] = None
     user_email: Optional[EmailStr] = None
     nickname: Optional[str] = None
     brand: Optional[str] = None
@@ -1447,7 +1459,7 @@ class ServiceCreate(BaseModel):
     password: str
     tenant_id: Optional[int] = None
 
-class ServiceUpdate(BaseModel):
+class ServiceUpdate(WorkshopAddressInput):
     email: Optional[EmailStr] = None
     name: Optional[str] = None
     city: Optional[str] = None
@@ -1473,6 +1485,11 @@ class ServiceRegistrationRequestItem(BaseModel):
     street_number: Optional[str] = None
     city: str
     zip: str
+    workshop_same_as_registered: Optional[bool] = None
+    workshop_street: Optional[str] = None
+    workshop_street_number: Optional[str] = None
+    workshop_city: Optional[str] = None
+    workshop_zip: Optional[str] = None
     registration_purpose: str
     created_at: datetime
     reviewed_at: Optional[datetime] = None
@@ -1495,9 +1512,9 @@ class RecordUpdate(BaseModel):
     vehicle_id: Optional[int] = None
     user_id: Optional[int] = None
     performed_at: Optional[datetime] = None
-    mileage: Optional[int] = None
+    mileage: Optional[int] = Field(default=None, ge=0)
     description: Optional[str] = None
-    price: Optional[float] = None
+    price: Optional[float] = Field(default=None, ge=0)
     category: Optional[str] = None
     note: Optional[str] = None
 
@@ -1519,6 +1536,11 @@ class ReservationUpdate(BaseModel):
     start_datetime: Optional[datetime] = None
     end_datetime: Optional[datetime] = None
     status: Optional[str] = None
+
+    @field_validator('start_datetime', 'end_datetime')
+    @classmethod
+    def utc_without_timezone(cls, value):
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value and value.tzinfo else value
 
 
 class SettingUpdateItem(BaseModel):
@@ -2082,6 +2104,7 @@ def update_user(
         if user_data.zip is not None:
             user.zip = user_data.zip
         
+        apply_workshop_address(user, user_data)
         if user_data.password is not None:
             user.password_hash = hash_password(user_data.password)
             increment_customer_session_version(user)
@@ -2149,6 +2172,7 @@ def get_user_vehicles(
             {_primary_owner_join_sql(vehicle_alias="v", selector_alias="uvo_primary", ownership_alias="uvo", owner_alias="owner_customer")}
             WHERE uvo.customer_id = :user_id
               AND uvo.is_active = TRUE
+            WHERE v.merged_into_id IS NULL
             GROUP BY v.id, owner_customer.email, v.user_email, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.created_at
             ORDER BY v.created_at DESC
         """), {"user_id": user_id})
@@ -2212,7 +2236,7 @@ def get_user_detail(
             FROM vehicles v
             LEFT JOIN service_records sr ON sr.vehicle_id = v.id
             {_primary_owner_join_sql(vehicle_alias="v", selector_alias="udv_primary", ownership_alias="udv_ownership", owner_alias="udv_owner")}
-            WHERE udv_ownership.customer_id = :customer_id
+            WHERE v.merged_into_id IS NULL AND udv_ownership.customer_id = :customer_id
               AND udv_ownership.is_active = TRUE
             GROUP BY
                 v.id, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.engine, v.notes,
@@ -2905,6 +2929,7 @@ def update_service(
         if service_data.ico is not None:
             service.ico = service_data.ico
         
+        apply_workshop_address(service, service_data)
         if service_data.password is not None:
             service.password_hash = hash_password(service_data.password)
         
@@ -2970,6 +2995,7 @@ def list_service_registration_requests(
                 street_number=row.street_number,
                 city=row.city,
                 zip=row.zip,
+                **{k: getattr(row, k) for k in WorkshopAddressInput.model_fields},
                 registration_purpose=row.registration_purpose,
                 created_at=row.created_at,
                 reviewed_at=row.reviewed_at,
@@ -3050,6 +3076,7 @@ def approve_service_registration_request(
             role="service",
             created_at=datetime.utcnow(),
         )
+        apply_workshop_address(new_service, req)
         db.add(new_service)
         db.flush()
         from src.modules.vehicle_hub.email_verification import prepare_verification, issue_verification
@@ -3159,6 +3186,7 @@ def get_all_vehicles(
             FROM vehicles v
             LEFT JOIN service_records sr ON sr.vehicle_id = v.id
             {_primary_owner_join_sql(vehicle_alias="v", selector_alias="gav_primary", ownership_alias="gav_ownership", owner_alias="owner_customer")}
+            WHERE v.merged_into_id IS NULL
             GROUP BY v.id, owner_customer.email, v.user_email, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.created_at, owner_customer.name, owner_customer.id, v.tenant_id
             ORDER BY v.created_at DESC
             LIMIT :limit OFFSET :offset
@@ -3187,6 +3215,53 @@ def get_all_vehicles(
     except Exception as e:
         report_exception(e)
         raise HTTPException(status_code=500, detail="Chyba při načítání vozidel.")
+
+
+class VehicleMergeRequest(BaseModel):
+    source_id: int = Field(gt=0)
+    target_id: int = Field(gt=0)
+    preview_token: str = Field(min_length=64, max_length=64)
+    confirmed_identity: bool = False
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+@router.get("/vehicles/duplicates")
+def get_vehicle_duplicates(email: str = Depends(require_developer_admin), db: Session = Depends(get_db)):
+    from src.modules.vehicle_hub.vehicle_duplicates import duplicate_report
+    return duplicate_report(db)
+
+
+@router.get("/vehicles/merge-preview")
+def preview_vehicle_merge(source_id: int, target_id: int, email: str = Depends(require_developer_admin), db: Session = Depends(get_db)):
+    from src.modules.vehicle_hub.vehicle_duplicates import merge_preview
+    return merge_preview(db, source_id, target_id)
+
+
+@router.post("/vehicles/merge")
+def consolidate_vehicles(payload: VehicleMergeRequest, email: str = Depends(require_developer_admin), db: Session = Depends(get_db)):
+    from src.modules.vehicle_hub.vehicle_duplicates import merge_vehicles
+    try:
+        actor = get_customer_by_email(db, email)
+        result = merge_vehicles(db, actor_id=actor.id, **payload.model_dump())
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.get("/vehicles/{vehicle_id}/detail")
+def get_vehicle_detail_admin(vehicle_id: int, email: str = Depends(require_developer_admin), db: Session = Depends(get_db)):
+    from src.modules.vehicle_hub.vehicle_duplicates import snapshot, references
+    vehicle = db.query(Vehicle).execution_options(include_merged_vehicles=True).filter_by(id=vehicle_id).first()
+    if vehicle is None: raise HTTPException(404, "Vozidlo nenalezeno.")
+    result = {"vehicle": snapshot(vehicle)}
+    for model, key in references():
+        if model.__tablename__ == "vehicle_vin_claims": continue
+        rows = db.query(model).filter(getattr(model, key) == vehicle_id).order_by(*inspect(model).primary_key).all()
+        result[model.__tablename__] = [snapshot(row) for row in rows]
+    result["merged_profiles"] = [snapshot(row) for row in db.query(Vehicle).execution_options(include_merged_vehicles=True).filter_by(merged_into_id=vehicle_id)]
+    return result
 
 
 @router.post("/vehicles")
@@ -3274,6 +3349,13 @@ def update_vehicle(
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
         
+        from src.modules.vehicle_hub.ownership import lock_vehicle_access
+        from src.modules.vehicle_hub.vehicle_duplicates import snapshot
+        lock_vehicle_access(db, vehicle.id); db.refresh(vehicle)
+        before = snapshot(vehicle)
+        owner_before = get_primary_vehicle_owner(db, vehicle)
+        for key in ("engine", "notes", "current_mileage_km", "stk_valid_until", "insurance_provider", "insurance_valid_until", "tyres_info"):
+            if key in vehicle_data.model_fields_set: setattr(vehicle, key, getattr(vehicle_data, key))
         # Aktualizovat pole
         if vehicle_data.user_email is not None:
             target_email = str(vehicle_data.user_email).strip().lower()
@@ -3305,26 +3387,15 @@ def update_vehicle(
         if vehicle_data.vin is not None:
             vehicle.vin = vehicle_data.vin
         
+        db.add(DeveloperActionAuditLog(developer_id=actor.id, developer_email=email,
+            action_type='vehicle.update', target_resource=f'vehicle:{vehicle.id}',
+            parameters_json=json.dumps({'before': before, 'after': snapshot(vehicle), 'affected_customer_ids': [owner_before.id if owner_before else None, get_primary_vehicle_owner(db, vehicle).id if get_primary_vehicle_owner(db, vehicle) else None]}, ensure_ascii=False),
+            result='success', status_code=200))
         db.commit()
-        primary_owner = get_primary_vehicle_owner(db, vehicle)
-        log_developer_action(
-            db,
-            developer_email=email,
-            request=request,
-            action_type="vehicle.update",
-            target_resource=f"vehicle:{vehicle.id}",
-            parameters={
-                "vehicle_id": vehicle.id,
-                "tenant_id": vehicle.tenant_id,
-                "owner_customer_id": primary_owner.id if primary_owner else None,
-                "owner_email": primary_owner.email if primary_owner else None,
-            },
-            result="success",
-            status_code=200,
-        )
         return {"message": "Vozidlo bylo upraveno"}
         
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
         db.rollback()
@@ -3590,6 +3661,16 @@ def update_record(
         if not record:
             raise HTTPException(status_code=404, detail="Záznam nenalezen")
         
+        from src.modules.vehicle_hub.ownership import lock_vehicle_access
+        from src.modules.vehicle_hub.routers_v1.service_records import _service_record_snapshot, _snapshot_json_and_hash
+        lock_vehicle_access(db, record.vehicle_id); db.refresh(record)
+        previous = _service_record_snapshot(record)
+        # Preserve authorship and attachment provenance; cross-vehicle migration
+        # requires the reviewed consolidation workflow, not a blind ID rewrite.
+        if record_data.vehicle_id is not None and record_data.vehicle_id != record.vehicle_id:
+            raise HTTPException(409, 'Přesun záznamů mezi vozidly proveďte přes kontrolované sjednocení vozidel.')
+        if record_data.user_id is not None and record_data.user_id != record.user_id:
+            raise HTTPException(409, 'Původní autor záznamu je součástí historie a nelze jej přepsat.')
         # Aktualizovat pole
         if record_data.vehicle_id is not None:
             vehicle = db.query(Vehicle).filter(Vehicle.id == record_data.vehicle_id).first()
@@ -3627,10 +3708,19 @@ def update_record(
         if record_data.note is not None:
             record.note = record_data.note
         
+        actor = get_customer_by_email(db, email)
+        after = _service_record_snapshot(record)
+        previous_json, _ = _snapshot_json_and_hash(previous)
+        after_json, digest = _snapshot_json_and_hash(after)
+        record.snapshot_hash = digest
+        db.add(ServiceRecordAuditLog(tenant_id=record.tenant_id, service_record_id=record.id, vehicle_id=record.vehicle_id,
+            changed_by_user_id=actor.id, action="admin_update", previous_snapshot_json=previous_json,
+            new_snapshot_json=after_json, snapshot_hash=digest, change_reason="Úprava administrátorem"))
         db.commit()
         return {"message": "Záznam byl upraven"}
         
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
         db.rollback()
@@ -3663,6 +3753,12 @@ def update_reminder_admin(
         if not reminder:
             raise HTTPException(status_code=404, detail="Připomínka nenalezena")
 
+        from src.modules.vehicle_hub.ownership import lock_vehicle_access
+        from src.modules.vehicle_hub.vehicle_duplicates import snapshot
+        lock_vehicle_access(db, reminder.vehicle_id); db.refresh(reminder)
+        before = snapshot(reminder)
+        if reminder_data.vehicle_id is not None and reminder_data.vehicle_id != reminder.vehicle_id:
+            raise HTTPException(409, 'Přesun událostí mezi vozidly proveďte přes kontrolované sjednocení vozidel.')
         if reminder_data.vehicle_id is not None:
             if reminder_data.vehicle_id <= 0:
                 raise HTTPException(status_code=400, detail="vehicle_id musí být kladné číslo")
@@ -3682,9 +3778,15 @@ def update_reminder_admin(
         if reminder_data.is_completed is not None:
             apply_reminder_completion_update(reminder, reminder_data.is_completed)
 
+        actor = get_customer_by_email(db, email)
+        db.add(DeveloperActionAuditLog(developer_id=actor.id, developer_email=email,
+            action_type='reminder.admin_update', target_resource=f'reminder:{reminder.id}',
+            parameters_json=json.dumps({'before': before, 'after': snapshot(reminder), 'affected_customer_ids': [reminder.customer_id]}, ensure_ascii=False),
+            result='success', status_code=200))
         db.commit()
         return {"message": "Připomínka byla upravena adminem"}
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
         db.rollback()
@@ -3717,8 +3819,15 @@ def update_reservation_admin(
         if not reservation:
             raise HTTPException(status_code=404, detail="Rezervace nenalezena")
 
+        from src.modules.vehicle_hub.ownership import lock_vehicle_access
+        from src.modules.vehicle_hub.vehicle_duplicates import snapshot
+        from src.modules.vehicle_hub.service_accounts import active_service_filters
+        lock_vehicle_access(db, reservation.vehicle_id); db.refresh(reservation)
+        before = snapshot(reservation)
+        if reservation_data.vehicle_id is not None and reservation_data.vehicle_id != reservation.vehicle_id:
+            raise HTTPException(409, 'Přesun událostí mezi vozidly proveďte přes kontrolované sjednocení vozidel.')
         if reservation_data.service_id is not None:
-            service = db.query(Customer).filter(Customer.id == reservation_data.service_id).first()
+            service = db.query(Customer).filter(Customer.id == reservation_data.service_id, *active_service_filters()).first()
             if not service:
                 raise HTTPException(status_code=404, detail="Servis nenalezen")
             reservation.service_id = reservation_data.service_id
@@ -3747,9 +3856,17 @@ def update_reservation_admin(
                 )
             reservation.status = normalized_status
 
+        if reservation.end_datetime and reservation.end_datetime < reservation.start_datetime:
+            raise HTTPException(422, 'Konec rezervace nesmí být před začátkem.')
+        actor = get_customer_by_email(db, email)
+        db.add(DeveloperActionAuditLog(developer_id=actor.id, developer_email=email,
+            action_type='reservation.admin_update', target_resource=f'reservation:{reservation.id}',
+            parameters_json=json.dumps({'before': before, 'after': snapshot(reservation), 'affected_customer_ids': [reservation.customer_id, before['service_id'], reservation.service_id]}, ensure_ascii=False),
+            result='success', status_code=200))
         db.commit()
         return {"message": "Rezervace byla upravena adminem"}
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
         db.rollback()
@@ -6063,3 +6180,37 @@ def list_instances(
     except Exception as e:
         report_exception(e)
         raise HTTPException(status_code=500, detail="Chyba při načítání instancí.")
+
+
+class IntakeAdminUpdate(BaseModel):
+    odometer_km: Optional[int] = Field(default=None, ge=0)
+    fluids_ok: Optional[bool] = None
+    damage_description: Optional[str] = None
+    work_description: Optional[str] = None
+
+
+@router.patch("/service-intakes/{intake_id}")
+def update_intake_admin(intake_id: int, payload: IntakeAdminUpdate,
+                        email: str = Depends(require_developer_admin), db: Session = Depends(get_db)):
+    from src.modules.vehicle_hub.vehicle_duplicates import snapshot
+    row = db.get(ServiceIntake, intake_id)
+    if row is None: raise HTTPException(404, "Příjem zakázky nenalezen.")
+    from src.modules.vehicle_hub.ownership import lock_vehicle_access
+    lock_vehicle_access(db, row.vehicle_id); db.refresh(row)
+    before = snapshot(row)
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        if key == 'fluids_ok':
+            try:
+                previous = json.loads(row.fluids_ok or '{}')
+            except (ValueError, TypeError):
+                previous = row.fluids_ok
+            if not isinstance(previous, dict): previous = {'original_assessment': previous}
+            previous['overall_ok'] = value
+            row.fluids_ok = json.dumps(previous, ensure_ascii=False)
+        else:
+            setattr(row, key, value)
+    actor = get_customer_by_email(db, email)
+    db.add(DeveloperActionAuditLog(developer_id=actor.id, developer_email=email, action_type='service_intake.update',
+        target_resource=f'intake:{row.id}', parameters_json=json.dumps({'before':before, 'after':snapshot(row), 'affected_customer_ids': [row.customer_id, row.service_id]}, default=str, ensure_ascii=False), result='success', status_code=200))
+    db.commit()
+    return {'message':'Příjem zakázky byl upraven. Původní údaje zůstávají v historii změn.'}

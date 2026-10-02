@@ -8,7 +8,16 @@ import re
 
 from fastapi import HTTPException
 from sqlalchemy import event, inspect, select, text, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, with_loader_criteria
+
+
+@event.listens_for(Session, "do_orm_execute")
+def hide_merged_profiles(state):
+    """Archived aliases never reappear in owner/service search or grant queries."""
+    if state.is_select and not state.execution_options.get('include_merged_vehicles'):
+        from .models import Vehicle
+        state.statement = state.statement.options(with_loader_criteria(
+            Vehicle, lambda row: row.merged_into_id.is_(None), include_aliases=True))
 
 
 def normalize_vin(value):
@@ -21,7 +30,7 @@ def guard_vehicle_identity(session, flush_context, instances):
 
     changed = [row for row in session.new.union(session.dirty)
                if isinstance(row, Vehicle) and row not in session.deleted
-               and (row in session.new or inspect(row).attrs.vin.history.has_changes())]
+               and (row in session.new or inspect(row).attrs.vin.history.has_changes() or inspect(row).attrs.plate.history.has_changes())]
     candidates = {}
     for row in changed:
         vin = normalize_vin(row.vin)
@@ -31,14 +40,20 @@ def guard_vehicle_identity(session, flush_context, instances):
         if vin in candidates:
             raise HTTPException(409, "Vozidlo s tímto VIN již existuje. Nevytvářejte druhý profil.")
         candidates[vin] = row
-    if not candidates:
+    plates = {}
+    for row in changed:
+        plate = re.sub(r"[^A-Z0-9]", "", str(row.plate or "").upper())
+        if plate and row.merged_into_id is None:
+            if plate in plates and (not normalize_vin(row.vin) or not normalize_vin(plates[plate].vin)): raise HTTPException(409, "Vozidlo s touto SPZ již existuje. Doplňte a ověřte VIN.")
+            plates[plate] = row
+    if not candidates and not plates:
         return
 
     connection = session.connection()
     dialect = connection.dialect.name
     if dialect == "postgresql":
         # Stable namespaced 64-bit keys, acquired in a common order for batches.
-        for vin in sorted(candidates):
+        for vin in sorted(set(candidates) | {"plate:" + key for key in plates}):
             lock_id = int.from_bytes(hashlib.sha256(("sv:vin:" + vin).encode()).digest()[:8], "big", signed=True)
             connection.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_id})
     elif dialect == "sqlite":
@@ -61,3 +76,10 @@ def guard_vehicle_identity(session, flush_context, instances):
         if row is not None and row.id != identity:
             # Never return the existing owner's identity or vehicle metadata.
             raise HTTPException(409, "Vozidlo s tímto VIN již existuje. Nevytvářejte druhý profil.")
+
+    if plates:
+        for identity, stored_plate, stored_vin in connection.execute(select(Vehicle.id, Vehicle.plate, Vehicle.vin).where(Vehicle.merged_into_id.is_(None))):
+            key = re.sub(r"[^A-Z0-9]", "", str(stored_plate or "").upper())
+            row = plates.get(key)
+            if row is not None and row.id != identity and (not normalize_vin(row.vin) or not normalize_vin(stored_vin)):
+                raise HTTPException(409, "Vozidlo s touto SPZ již existuje. Doplňte a ověřte VIN.")

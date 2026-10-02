@@ -74,11 +74,16 @@ def update_current_user(
         details={"source": "user_update_profile"},
     )
 
+    from src.modules.vehicle_hub.workshop_address import apply_workshop_address
+    from src.core.rbac import is_service_or_admin
+    if user_update.workshop_same_as_registered is not None and not is_service_or_admin(customer.role):
+        raise HTTPException(403, "Provozovnu může nastavit servis nebo administrátor.")
     update_data = user_update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        if hasattr(customer, field):
+        if not field.startswith("workshop_") and hasattr(customer, field):
             setattr(customer, field, value)
 
+    apply_workshop_address(customer, user_update)
     db.commit()
     db.refresh(customer)
     return customer

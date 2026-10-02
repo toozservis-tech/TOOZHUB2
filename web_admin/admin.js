@@ -1780,6 +1780,7 @@ async function loadVehicles() {
             </div>
           </div>
           <div class="card-actions">
+            <button class="btn-secondary" data-management-action="vehicle-detail" data-id="${escapeHtml(vehicle.id)}">Kompletní vozidlo a události</button>
             <button class="btn-edit" ${adminActionAttributes('editVehicle', vehicle.id)}>✏️ Upravit</button>
             <button class="btn-danger" ${adminActionAttributes('deleteVehicle', vehicle.id, vehicleName)}>🗑️ Smazat</button>
           </div>
@@ -1949,6 +1950,7 @@ async function loadServices() {
             </div>
           </div>
           <div class="card-actions">
+            <button class="btn-secondary" data-management-action="workshop" data-id="${escapeHtml(service.id)}">Sídlo a provozovna</button>
             <button class="btn-edit" ${adminActionAttributes('editService', service.id)}>✏️ Upravit</button>
             <button class="btn-danger" ${adminActionAttributes('deleteService', service.id, service.name || service.email || '')}>🗑️ Smazat</button>
           </div>
@@ -1993,6 +1995,7 @@ async function loadServiceRegistrationRequests() {
       const address = [item.street, item.street_number, item.city, item.zip]
         .filter(Boolean)
         .join(', ');
+      const workshopAddress = item.workshop_same_as_registered === true ? address : item.workshop_same_as_registered === false ? [item.workshop_street, item.workshop_street_number, item.workshop_city, item.workshop_zip].filter(Boolean).join(', ') : 'Provozovna zatím nepotvrzena';
       return `
         <article class="service-request-item">
           <div class="service-request-main">
@@ -2003,7 +2006,8 @@ async function loadServiceRegistrationRequests() {
                 IČO: <strong>${escapeHtml(item.ico || '-')}</strong> ${item.dic ? `• DIČ: <strong>${escapeHtml(item.dic)}</strong>` : ''}<br>
                 Zodpovědná osoba: <strong>${escapeHtml(item.responsible_person || '-')}</strong><br>
                 Telefon: <strong>${escapeHtml(item.phone || '-')}</strong><br>
-                Adresa: <strong>${escapeHtml(address || '-')}</strong><br>
+                Sídlo firmy: <strong>${escapeHtml(address || '-')}</strong><br>
+                Provozovna: <strong>${escapeHtml(workshopAddress)}</strong><br>
                 Podáno: <strong>${escapeHtml(createdAt)}</strong>
               </p>
             </div>

@@ -10,7 +10,9 @@ COPY web_admin ./web_admin
 COPY VERSION ./VERSION
 COPY VERSION.py ./VERSION.py
 COPY scripts/migrate_apple_billing.py ./scripts/migrate_apple_billing.py
+COPY scripts/migrate_workshops_vehicle_identity.py ./scripts/migrate_workshops_vehicle_identity.py
+COPY alembic/versions/20261002_0013_workshops_vehicle_identity.py ./alembic/versions/20261002_0013_workshops_vehicle_identity.py
 RUN useradd --create-home appuser \
     && install -d -o appuser -g appuser /app/public_share /app/backups /app/logs
 USER appuser
-CMD ["sh", "-c", "exec uvicorn src.server.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["sh", "-c", "python -m scripts.migrate_workshops_vehicle_identity && exec uvicorn src.server.main:app --host 0.0.0.0 --port ${PORT:-10000}"]

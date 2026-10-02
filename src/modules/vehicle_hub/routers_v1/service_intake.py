@@ -95,9 +95,10 @@ def list_service_intakes(
     if not is_admin(current_user.role) and service_id_to_query != current_user.id:
         raise HTTPException(status_code=403, detail="Nemáte přístup k příjmům zakázek jiného servisu")
     
-    intakes = db.query(ServiceIntakeModel).filter(
-        ServiceIntakeModel.service_id == service_id_to_query
-    ).order_by(ServiceIntakeModel.created_at.desc()).all()
+    query = db.query(ServiceIntakeModel)
+    if service_id is not None or not is_admin(current_user.role):
+        query = query.filter(ServiceIntakeModel.service_id == service_id_to_query)
+    intakes = query.order_by(ServiceIntakeModel.created_at.desc()).all()
     
     return intakes
 

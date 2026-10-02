@@ -24,7 +24,7 @@ async function fixture({policy=true,login=false}={}) {
   if(url.origin!==origin) throw Error('Unexpected external request: '+url.origin);
   const files={'/web_admin/':'web_admin/index.html','/admin-login':'src/server/admin_login.html','/admin-login.js':'src/server/admin_login.js','/admin-session.js':'src/server/admin_session.js'};
   let file=files[url.pathname];
-  if(['/admin.js','/workspace.js','/operator-panel.js','/admin.css','/workspace.css'].some(x=>url.pathname==='/web_admin'+x))file=url.pathname.slice(1);
+  if(['/admin.js','/entity-management.js','/workspace.js','/operator-panel.js','/admin.css','/workspace.css'].some(x=>url.pathname==='/web_admin'+x))file=url.pathname.slice(1);
   if(file) return route.fulfill({status:200,body:fs.readFileSync(path.join(root,file)),contentType:file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html',headers:policy?{'Content-Security-Policy':csp}:{}});
   const defaults={
    '/user/security/admin-status':{required:true,enrolled:true,verified:true,valid_until:Math.floor(Date.now()/1000)+900},
@@ -224,4 +224,53 @@ test('restarting MFA sign-in rejects a late challenge response',async()=>{
  assert.equal(f.requests.filter(r=>r.path==='/admin-web-session').length,0);
  assert.deepEqual(f.errors,[]);
  }finally{await f.context.close();}
+});
+
+test('complete vehicle editor and duplicate review use authenticated actions under CSP', async()=>{
+ const f=await fixture(); const {page}=f;
+ try {
+  await page.route(origin+'/admin-api/vehicles?*',route=>route.fulfill({json:[{id:21,nickname:'Synthetic',plate:'1AB2345',vin:'TMBJF73T2B9044629'}]}));
+  await page.route(origin+'/admin-api/vehicles/21/detail',route=>route.fulfill({json:{vehicle:{id:21,nickname:'Synthetic',plate:'1AB2345',vin:'TMBJF73T2B9044629'},service_records:[{id:41,description:poison,performed_at:'2026-10-02T06:00:00',attachments:'[]'}],reservations:[],reminders:[]}}));
+  await page.route(origin+'/admin-api/records/41',route=>route.fulfill({json:{message:'Saved'}}));
+  await page.locator('.nav-item[data-section="vehicles"]').click();
+  await page.locator('[data-management-action="vehicle-detail"]').click();
+  await page.locator('#management-modal').getByText('Servisní záznamy (1)',{exact:true}).click();
+  await page.locator('#management-modal').getByText('Upravit údaje',{exact:true}).last().click();
+  await page.locator('#management-modal').getByLabel('Popis práce',{exact:true}).fill('Reviewed work');
+  page.once('dialog',d=>d.accept());
+  const [mutation] = await Promise.all([page.waitForRequest(req=>req.url().endsWith('/admin-api/records/41') && req.method()==='PATCH'), page.locator('#management-modal').getByRole('button',{name:'Uložit změny',exact:true}).last().click()]);
+  assert.equal(mutation.postDataJSON().description,'Reviewed work');
+  assert.equal(mutation.headers().authorization,'Bearer synthetic-test-session');
+  await assertInert(page);
+  await page.locator('#management-modal').getByRole('button',{name:'Zavřít',exact:true}).click();
+  await page.route(origin+'/admin-api/vehicles/duplicates',route=>route.fulfill({json:{checked_vehicles:2,total:1,groups:[{kind:'vin',key:'TMBJF73T2B9044629',merge_allowed:true,explanation:'Same identity',vehicles:[{id:21,plate:'1AB2345',owner_email:'owner@example.invalid',record_count:1},{id:22,plate:'1AB2345',owner_email:'owner@example.invalid',record_count:0}]}]}}));
+  await page.route(origin+'/admin-api/vehicles/merge-preview?*',route=>route.fulfill({json:{target:{owner_email:'owner@example.invalid'},counts:{service_records:1},warnings:['Původní archiv zůstává zachovaný.'],preview_token:'fixture'}}));
+  await page.locator('[data-management-action="duplicates"]').click();
+  await page.locator('#management-modal').getByRole('button',{name:'Připravit sjednocení #22 do #21',exact:true}).click();
+  const merge=page.locator('#management-modal').getByRole('button',{name:'Sjednotit vozidla',exact:true});
+  assert.equal(await merge.isEnabled(),false);
+  await page.locator('#management-modal textarea').fill('Reviewed duplicate');
+  assert.equal(await merge.isEnabled(),false);
+  await page.locator('#management-modal input[type=checkbox]').check();
+  assert.equal(await merge.isEnabled(),true);
+  await page.locator('#management-modal').getByRole('button',{name:'Zavřít',exact:true}).click();
+  assert.equal(f.requests.filter(r=>r.path==='/admin-api/vehicles/merge'&&r.method==='POST').length,0);
+  assert.deepEqual(f.errors,[]);
+ } finally {await f.context.close();}
+});
+
+test('workshop form keeps registered office separate from operational address',async()=>{
+ const f=await fixture();const {page}=f;
+ try {
+  await page.route(origin+'/admin-api/services?*',route=>route.fulfill({json:[{id:31,name:'Synthetic service',email:'service@example.invalid',role:'service'}]}));
+  await page.route(origin+'/api/v1/services/31/workshop',route=>route.fulfill({json:{registered:{street:'Office',city:'Praha',zip:'11000'},workshop:{workshop_same_as_registered:false,workshop_street:'Repair street',workshop_city:'Olomouc',workshop_zip:'77900'}}}));
+  await page.locator('.nav-item[data-section="services"]').click();
+  await page.locator('[data-management-action="workshop"]').click();
+  assert.equal(await page.locator('#management-modal').getByLabel('Město',{exact:true}).inputValue(),'Olomouc');
+  assert.ok((await page.locator('#management-modal').textContent()).includes('Praha'));
+  await page.locator('#management-modal input[type=checkbox]').check();
+  assert.equal(await page.locator('#management-modal').getByLabel('Město',{exact:true}).isVisible(),false);
+  assert.equal(f.requests.filter(r=>r.method==='PUT').length,0);
+  assert.deepEqual(f.errors,[]);
+ } finally {await f.context.close();}
 });

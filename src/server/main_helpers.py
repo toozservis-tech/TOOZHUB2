@@ -72,7 +72,10 @@ class UserRegister(BaseModel):
     phone: Optional[str] = None
 
 
-class ServiceRegisterRequest(BaseModel):
+from src.modules.vehicle_hub.workshop_address import WorkshopAddressInput
+
+
+class ServiceRegisterRequest(WorkshopAddressInput):
     email: EmailStr
     password: str = Field(min_length=1, max_length=256)
     ico: str = Field(min_length=8, max_length=16)
@@ -119,7 +122,7 @@ class RegisterTokenResponse(TokenResponse):
     registration_email_status: Optional[str] = None
 
 
-class UserResponse(BaseModel):
+class UserResponse(WorkshopAddressInput):
     id: int
     email: str
     name: Optional[str] = None
@@ -142,7 +145,7 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(WorkshopAddressInput):
     name: Optional[str] = None
     ico: Optional[str] = None
     dic: Optional[str] = None

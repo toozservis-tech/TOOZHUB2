@@ -52,6 +52,13 @@ class Customer(Base):
     zip = Column(String, nullable=True)
     phone = Column(String, nullable=True)
 
+    # Not public web data. None means an existing service has not confirmed its workshop.
+    workshop_same_as_registered = Column(Boolean, nullable=True)
+    workshop_street = Column(String, nullable=True)
+    workshop_street_number = Column(String, nullable=True)
+    workshop_city = Column(String, nullable=True)
+    workshop_zip = Column(String, nullable=True)
+
     # kde ho kontaktovat
     notify_email = Column(Boolean, default=True)
     notify_sms = Column(Boolean, default=False)
@@ -124,6 +131,13 @@ class ServiceRegistrationRequest(Base):
     street_number = Column(String, nullable=True)
     city = Column(String, nullable=False)
     zip = Column(String, nullable=False)
+
+    # Not public web data. None means an existing service has not confirmed its workshop.
+    workshop_same_as_registered = Column(Boolean, nullable=True)
+    workshop_street = Column(String, nullable=True)
+    workshop_street_number = Column(String, nullable=True)
+    workshop_city = Column(String, nullable=True)
+    workshop_zip = Column(String, nullable=True)
 
     registration_purpose = Column(Text, nullable=False)
 
@@ -354,6 +368,8 @@ class Vehicle(Base):
     year = Column(Integer, nullable=True)
     engine = Column(String, nullable=True)
     vin = Column(String, nullable=True)
+    merged_into_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)
+    merged_vin = Column(String, nullable=True)
     plate = Column(String, nullable=True)
     orv_number = Column(String, nullable=True, index=True)
     orv_scan_source = Column(String, nullable=True)
@@ -1046,3 +1062,10 @@ class VehicleAttachmentPrivacy(Base):
     owner_customer_id = Column(Integer, ForeignKey('customers.id', ondelete='SET NULL'), nullable=True, index=True)
     author_customer_id = Column(Integer, ForeignKey('customers.id', ondelete='SET NULL'), nullable=True, index=True)
     archive_id = Column(Integer, ForeignKey('vehicle_ownership_archives.id', ondelete='SET NULL'), nullable=True, index=True)
+
+
+class VehicleVINClaim(Base):
+    """Unique identity reservation also protects direct SQL imports on PostgreSQL."""
+    __tablename__ = 'vehicle_vin_claims'
+    vin = Column(String, primary_key=True)
+    vehicle_id = Column(Integer, ForeignKey('vehicles.id', ondelete='CASCADE'), nullable=False, index=True)

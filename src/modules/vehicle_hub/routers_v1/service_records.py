@@ -154,7 +154,7 @@ def _sanitize_file_stem(filename: str) -> str:
     return cleaned[:64] or "doklad"
 
 
-def _attachment_path_for_vehicle(relative_key: str, *, vehicle_id: int) -> Path | None:
+def _attachment_path_for_vehicle(relative_key: str, *, vehicle_id: int, db=None) -> Path | None:
     """Validate a canonical storage key before touching local/cloud file contents.
 
     A vehicle's historical files may remain in its former tenant directory after
@@ -167,8 +167,16 @@ def _attachment_path_for_vehicle(relative_key: str, *, vehicle_id: int) -> Path 
     if not raw_key or len(raw_key) > 500 or "\\" in raw_key or any(ord(c) < 32 or ord(c) == 127 for c in raw_key):
         return None
     parts = raw_key.split("/")
+    bound_vehicle = f"vehicle_{vehicle_id}"
+    if len(parts) == 3 and parts[1] != bound_vehicle and db is not None:
+        from ..models import VehicleAttachmentPrivacy
+        privacy = db.get(VehicleAttachmentPrivacy, raw_key)
+        if privacy is not None and privacy.vehicle_id == vehicle_id and re.fullmatch(r"vehicle_[1-9][0-9]*", parts[1]):
+            old = db.query(VehicleModel).execution_options(include_merged_vehicles=True).filter(
+                VehicleModel.id == int(parts[1].split("_")[1]), VehicleModel.merged_into_id == vehicle_id).first()
+            if old is not None: bound_vehicle = parts[1]
     if (len(parts) != 3 or not re.fullmatch(r"tenant_(?:0|[1-9][0-9]*)", parts[0])
-            or parts[1] != f"vehicle_{vehicle_id}" or parts[2] in ("", ".", "..")
+            or parts[1] != bound_vehicle or parts[2] in ("", ".", "..")
             or not re.fullmatch(r"[A-Za-z0-9._-]+", parts[2])):
         return None
     base = SERVICE_RECORD_ATTACHMENTS_DIR.resolve()
@@ -182,8 +190,8 @@ def _attachment_path_for_vehicle(relative_key: str, *, vehicle_id: int) -> Path 
     return candidate
 
 
-def _resolve_attachment_file(relative_key: str, *, vehicle_id: int) -> Path | None:
-    candidate = _attachment_path_for_vehicle(relative_key, vehicle_id=vehicle_id)
+def _resolve_attachment_file(relative_key: str, *, vehicle_id: int, db=None) -> Path | None:
+    candidate = _attachment_path_for_vehicle(relative_key, vehicle_id=vehicle_id, db=db)
     return cached_file(candidate) if candidate is not None else None
 
 
@@ -211,7 +219,7 @@ def _validate_record_attachment_references(attachments_raw: str | None, *, vehic
     for item in items:
         for field in ("storage_key", "path"):
             key = item.get(field)
-            path = _attachment_path_for_vehicle(str(key), vehicle_id=vehicle_id) if key is not None else None
+            path = _attachment_path_for_vehicle(str(key), vehicle_id=vehicle_id, db=db) if key is not None else None
             if key is not None and path is None:
                 raise HTTPException(status_code=422, detail="Příloha nepatří k tomuto vozidlu nebo má neplatnou cestu.")
             if key is not None and db is not None:
@@ -1120,11 +1128,11 @@ def download_service_record_attachment(
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
 
-    if _attachment_path_for_vehicle(key, vehicle_id=vehicle_id) is None:
+    if _attachment_path_for_vehicle(key, vehicle_id=vehicle_id, db=db) is None:
         raise HTTPException(status_code=403, detail="Příloha nepatří k tomuto vozidlu.")
 
     require_attachment_private(db, vehicle_id=vehicle_id, key=key, actor=current_user)
-    attachment_file = _resolve_attachment_file(key, vehicle_id=vehicle_id)
+    attachment_file = _resolve_attachment_file(key, vehicle_id=vehicle_id, db=db)
     if not attachment_file or not attachment_file.is_file():
         raise HTTPException(status_code=404, detail="Příloha nebyla nalezena.")
 

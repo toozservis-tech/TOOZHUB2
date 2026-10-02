@@ -216,6 +216,7 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
         .first()
     )
 
+    from src.modules.vehicle_hub.workshop_address import apply_workshop_address
     hashed_password = hash_password(payload.password)
     now = datetime.utcnow()
 
@@ -249,6 +250,7 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
         existing_request.approved_customer_id = None
         existing_request.approved_tenant_id = None
         existing_request.updated_at = now
+        apply_workshop_address(existing_request, payload)
         db.commit()
         db.refresh(existing_request)
 
@@ -295,6 +297,7 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
         updated_at=now,
     )
 
+    apply_workshop_address(new_request, payload)
     db.add(new_request)
     db.commit()
     db.refresh(new_request)
