@@ -3,18 +3,14 @@ Reservations API v1.0 router (Objednávky do servisu)
 """
 from __future__ import annotations
 
-from urllib.parse import urlencode
-
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
-import secrets
+from datetime import datetime
 
-from src.core.config import FRONTEND_BASE_URL
-from src.core.rbac import is_admin, is_service_or_admin
+from src.core.rbac import is_admin, is_service_or_admin, normalize_role
 from ..database import get_db
 from ..models import (
     Reservation as ReservationModel,
@@ -22,11 +18,11 @@ from ..models import (
     Customer,
     ServiceCustomerLink,
     ServiceCustomerInvite,
-    ServiceVehicleAccess,
     VehicleServiceLink,
     VehicleOwnership,
 )
 from ..schema_management import assert_module_ready
+from ..service_accounts import active_service_filters, is_active_service_account
 from .auth import get_current_user
 from .schemas import (
     ReservationCreateV1,
@@ -70,56 +66,6 @@ def _normalize_email(value: Optional[str]) -> str:
     return str(value or "").strip().lower()
 
 
-def _has_active_service_customer_link(db: Session, *, service_id: int, customer_id: int) -> bool:
-    link = (
-        db.query(ServiceCustomerLink.id)
-        .filter(
-            ServiceCustomerLink.service_customer_id == service_id,
-            ServiceCustomerLink.customer_id == customer_id,
-            ServiceCustomerLink.status == "active",
-        )
-        .first()
-    )
-    return link is not None
-
-
-def _upsert_service_vehicle_access(
-    db: Session,
-    *,
-    service_id: int,
-    customer_id: int,
-    vehicle_id: int,
-) -> None:
-    existing = (
-        db.query(ServiceVehicleAccess)
-        .filter(
-            ServiceVehicleAccess.service_customer_id == service_id,
-            ServiceVehicleAccess.customer_id == customer_id,
-            ServiceVehicleAccess.vehicle_id == vehicle_id,
-        )
-        .first()
-    )
-    if existing:
-        existing.status = "active"
-        existing.granted_by_customer_id = customer_id
-        existing.revoked_at = None
-        existing.updated_at = datetime.utcnow()
-        db.flush()
-        return
-
-    db.add(
-        ServiceVehicleAccess(
-            service_customer_id=service_id,
-            customer_id=customer_id,
-            vehicle_id=vehicle_id,
-            status="active",
-            granted_by_customer_id=customer_id,
-            revoked_at=None,
-        )
-    )
-    db.flush()
-
-
 def _resolve_vehicle_name(vehicle: VehicleModel) -> Optional[str]:
     if not vehicle:
         return None
@@ -144,10 +90,6 @@ def _reservation_vehicle_label(vehicle: VehicleModel) -> str:
     return f"Vozidlo #{int(getattr(vehicle, 'id', 0) or 0)}"
 
 
-def _build_reservation_auto_link_message(reservation_id: int) -> str:
-    return f"{RESERVATION_AUTO_LINK_PREFIX}{int(reservation_id)}"
-
-
 def _parse_reservation_id_from_auto_link_message(raw_message: Optional[str]) -> Optional[int]:
     message = str(raw_message or "").strip()
     if not message.startswith(RESERVATION_AUTO_LINK_PREFIX):
@@ -156,25 +98,6 @@ def _parse_reservation_id_from_auto_link_message(raw_message: Optional[str]) -> 
     if not raw_id.isdigit():
         return None
     return int(raw_id)
-
-
-def _build_reservation_claim_url(token: str, reservation_id: int) -> str:
-    base = str(FRONTEND_BASE_URL or "").strip().rstrip("/")
-    if not base:
-        base = "http://127.0.0.1:8000"
-
-    params = urlencode({
-        "reservation_claim_token": token,
-        "reservation_id": str(int(reservation_id)),
-    })
-
-    if base.endswith("/web/index.html"):
-        return f"{base}?{params}"
-    if base.endswith("/index.html"):
-        return f"{base}?{params}"
-    if base.endswith("/web"):
-        return f"{base}/index.html?{params}"
-    return f"{base}/web/index.html?{params}"
 
 
 def _upsert_service_customer_link(
@@ -214,49 +137,6 @@ def _upsert_service_customer_link(
     db.add(link)
     db.flush()
     return link, True
-
-
-def _create_reservation_auto_link_invite(
-    db: Session,
-    *,
-    reservation: ReservationModel,
-    service: Customer,
-    customer: Customer,
-) -> ServiceCustomerInvite:
-    now = datetime.utcnow()
-    email_key = _normalize_email(customer.email)
-    marker = f"{RESERVATION_AUTO_LINK_PREFIX}%"
-    (
-        db.query(ServiceCustomerInvite)
-        .filter(
-            ServiceCustomerInvite.service_customer_id == service.id,
-            func.lower(ServiceCustomerInvite.invite_email) == email_key,
-            ServiceCustomerInvite.status == "pending",
-            ServiceCustomerInvite.invite_message.like(marker),
-        )
-        .update(
-            {
-                ServiceCustomerInvite.status: "cancelled",
-                ServiceCustomerInvite.updated_at: now,
-            },
-            synchronize_session=False,
-        )
-    )
-
-    invite = ServiceCustomerInvite(
-        service_tenant_id=service.tenant_id,
-        service_customer_id=service.id,
-        invite_email=customer.email,
-        invite_name=customer.name,
-        invite_message=_build_reservation_auto_link_message(reservation.id),
-        token=secrets.token_urlsafe(32),
-        status="pending",
-        sent_at=now,
-        expires_at=now + timedelta(days=30),
-    )
-    db.add(invite)
-    db.flush()
-    return invite
 
 
 def _enrich_reservations(db: Session, reservations: List[ReservationModel]) -> List[ReservationModel]:
@@ -404,31 +284,32 @@ def create_reservation(
     # Ověřit, že servis existuje
     service = db.query(Customer).filter(
         Customer.id == reservation_data.service_id,
-        Customer.role.in_(["service", "developer_admin"])
+        *active_service_filters(),
     ).first()
     if not service:
         raise HTTPException(status_code=404, detail="Servis nebyl nalezen")
     
     # Pro uživatele (role user) - rezervace musí být pro jeho vozidlo
-    if current_user.role == "user":
+    role_key = normalize_role(current_user.role)
+    if role_key == "user":
         if get_owned_vehicle(db, current_user, int(vehicle.id), tenant_id=getattr(current_user, "tenant_id", None)) is None:
             raise HTTPException(status_code=403, detail="Nemůžete vytvořit rezervaci pro cizí vozidlo")
         customer = current_user
         customer_id = current_user.id
     else:
-        if str(current_user.role or "").strip().lower() == "service" and reservation_data.service_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Servis může vytvářet rezervace pouze pro sebe")
+        if role_key == "service":
+            if reservation_data.service_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Servis může vytvářet rezervace pouze pro sebe")
+            if not get_active_vehicle_service_link(db, service_customer_id=current_user.id, vehicle_id=vehicle.id):
+                raise HTTPException(status_code=403, detail="Pro rezervaci tohoto vozidla potřebujete schválený přístup vlastníka")
         # Pro service/admin - použít customer_id z vlastníka vozidla
         customer = get_primary_vehicle_owner(db, vehicle)
         if not customer:
             raise HTTPException(status_code=404, detail="Zákazník nenalezen")
         customer_id = customer.id
 
-    # Pokud link není aktivní, vytvoříme rezervaci i tak a pošleme servisu 1-klik potvrzení propojení.
-    requires_service_link_confirmation = (
-        (not _is_admin_role(current_user.role))
-        and (not _has_active_service_customer_link(db, service_id=service.id, customer_id=customer_id))
-    )
+    # A booking shares its own details, not vehicle history or contact consent.
+    # Those permissions continue through the explicit customer approval flow.
     
     # Kontrola kolize časů (základní)
     existing = db.query(ReservationModel).filter(
@@ -468,37 +349,12 @@ def create_reservation(
             "vehicle_id": int(reservation.vehicle_id),
         },
     )
-    _upsert_service_vehicle_access(
-        db,
-        service_id=reservation.service_id,
-        customer_id=customer_id,
-        vehicle_id=reservation.vehicle_id,
-    )
-
-    service_link_claim_url: Optional[str] = None
-    if requires_service_link_confirmation:
-        try:
-            invite = _create_reservation_auto_link_invite(
-                db,
-                reservation=reservation,
-                service=service,
-                customer=customer,
-            )
-            service_link_claim_url = _build_reservation_claim_url(invite.token, reservation.id)
-        except Exception as invite_exc:
-            print(f"[RESERVATION] Nepodařilo se připravit auto-link pozvánku: {invite_exc}")
-
     db.commit()
     db.refresh(reservation)
     
     # Odeslat e-mail notifikace (na pozadí, neblokovat odpověď)
     try:
-        send_reservation_created_email(
-            db,
-            reservation,
-            service_link_claim_url=service_link_claim_url,
-            requires_service_link_confirmation=requires_service_link_confirmation,
-        )
+        send_reservation_created_email(db, reservation)
     except Exception as e:
         print(f"[RESERVATION] Chyba při odesílání e-mailu: {e}")
         # Nevyvolat chybu - rezervace byla úspěšně vytvořena
@@ -536,6 +392,9 @@ def claim_reservation_service_link(
 
     if reservation.service_id != invite.service_customer_id:
         raise HTTPException(status_code=409, detail="Token neodpovídá cílovému servisu rezervace.")
+    service = db.query(Customer).filter(Customer.id == reservation.service_id).first()
+    if not is_active_service_account(service):
+        raise HTTPException(status_code=409, detail="Cílový účet již není aktivním servisem.")
 
     now = datetime.utcnow()
     if invite.status == "accepted":
@@ -617,7 +476,7 @@ def get_service_reservations(
 
     query = db.query(ReservationModel)
     role_key = str(current_user.role or "").strip().lower()
-    if role_key in {"service", "developer_admin"}:
+    if role_key == "service":
         query = query.filter(ReservationModel.service_id == current_user.id)
     elif not _is_admin_role(current_user.role):
         raise HTTPException(status_code=403, detail="Nemáte oprávnění pro servisní přehled rezervací")
@@ -643,7 +502,7 @@ def get_reservation(
         raise HTTPException(status_code=404, detail="Rezervace nenalezena")
 
     # Kontrola přístupu
-    if current_user.role == "user":
+    if normalize_role(current_user.role) == "user":
         if reservation.customer_id != current_user.id:
             raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
     elif str(current_user.role or "").strip().lower() == "service":
@@ -674,7 +533,7 @@ def update_reservation(
         raise HTTPException(status_code=404, detail="Rezervace nenalezena")
 
     # Kontrola přístupu a oprávnění
-    if current_user.role == "user":
+    if normalize_role(current_user.role) == "user":
         if reservation.customer_id != current_user.id:
             raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
     elif str(current_user.role or "").strip().lower() == "service":
@@ -684,7 +543,7 @@ def update_reservation(
         if reservation.customer_id != current_user.id and reservation.service_id != current_user.id:
             raise HTTPException(status_code=403, detail="Nemáte přístup k této rezervaci")
     
-    role_key = str(current_user.role or "").strip().lower()
+    role_key = normalize_role(current_user.role)
     fields_set = set(getattr(reservation_data, "model_fields_set", set()) or set())
     old_start_datetime = reservation.start_datetime
     old_end_datetime = reservation.end_datetime
@@ -823,7 +682,7 @@ def delete_reservation(
         raise HTTPException(status_code=404, detail="Rezervace nenalezena")
 
     # Kontrola přístupu
-    if current_user.role == "user":
+    if normalize_role(current_user.role) == "user":
         if reservation.customer_id != current_user.id:
             raise HTTPException(status_code=403, detail="Nemáte oprávnění smazat tuto rezervaci")
     elif str(current_user.role or "").strip().lower() == "service":

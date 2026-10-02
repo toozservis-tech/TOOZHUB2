@@ -56,6 +56,7 @@ from ..models import (
 from ..orv_scans import apply_orv_scan_to_vehicle
 from ..ownership import ensure_vehicle_owner_assignment, get_owned_vehicle, get_owned_vehicle_rows, get_primary_vehicle_owner, lock_vehicle_access
 from ..schema_management import assert_module_ready
+from ..service_accounts import active_service_filters, is_active_service_account
 from ..service_access import (
     create_or_update_vehicle_service_link,
     get_active_vehicle_service_link,
@@ -2476,14 +2477,12 @@ def list_incoming_service_invitations(current_user: Customer = Depends(get_curre
         .filter(func.lower(ServiceCustomerInvite.invite_email) == _normalize_email(current_user.email),
             ServiceCustomerInvite.status == 'pending', ServiceCustomerInvite.expires_at > datetime.utcnow(),
             or_(ServiceCustomerInvite.invite_message.is_(None), ~ServiceCustomerInvite.invite_message.startswith('__RESERVATION_AUTO_LINK__:')),
-            Customer.role.in_(['service','admin','developer_admin']),
-            Customer.is_disabled.is_not(True), Customer.is_deleted.is_not(True))
+            *active_service_filters())
         .order_by(ServiceCustomerInvite.sent_at.desc()).limit(100).all())
     return {'items': [{'id': row.id, 'service_name': service.name or 'Servis',
         'service_email': service.email, 'message': row.invite_message,
         'expires_at': row.expires_at.isoformat()} for row, service in rows
-        if service.role in {'service', 'admin', 'developer_admin'}
-        and not customer_is_disabled(service) and not customer_is_deleted(service)
+        if is_active_service_account(service)
         and not str(row.invite_message or '').startswith('__RESERVATION_AUTO_LINK__:')]}
 
 
@@ -2503,7 +2502,7 @@ def accept_service_invitation(payload: AcceptServiceInviteRequest,
     if not invite:
         raise HTTPException(404, 'Pozvánka nebyla nalezena.')
     service = db.get(Customer, invite.service_customer_id, populate_existing=True)
-    if not service or service.role not in {'service', 'admin', 'developer_admin'} or customer_is_disabled(service) or customer_is_deleted(service):
+    if not is_active_service_account(service):
         raise HTTPException(409, 'Servis už není dostupný.')
     link = _get_active_link(db, service_customer_id=service.id, customer_id=current_user.id)
     if invite.status == 'accepted':

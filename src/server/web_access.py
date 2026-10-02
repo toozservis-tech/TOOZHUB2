@@ -17,6 +17,7 @@ from src.modules.vehicle_hub.email_verification import pending_verification
 
 PUBLIC_WEB_PAGES = {
     "service-invitation.html",
+    "reservations.html",
     "open-app.html", "payment-return.html", "assets/mastercard-mark.svg", "chatbot/widget.js", "chatbot/robot-logo.png",
     "reset-password.html", "verify-email.html", "cookies.html", "obchodni-podminky.html",
     "ochrana-osobnich-udaju.html", "platebni-podminky.html", "reklamacni-rad.html",

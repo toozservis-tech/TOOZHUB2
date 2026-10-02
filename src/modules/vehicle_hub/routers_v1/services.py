@@ -23,6 +23,7 @@ from ..models import Customer, ServiceAccessRequest, ServiceCustomerLink, Servic
 from ..service_contact_consent import lock_service_contacts
 from ..ownership import get_owned_vehicle, get_owned_vehicle_ids, get_primary_vehicle_owner, lock_vehicle_access
 from ..schema_management import assert_module_ready
+from ..service_accounts import active_service_filters
 from ..service_access import create_or_update_vehicle_service_link, revoke_vehicle_service_link, vehicle_label
 from .auth import get_current_user
 from .schemas import ServiceAccessRequestDecisionV1, ServiceAccessRequestListOutV1, VehicleServiceLinkListOutV1
@@ -250,13 +251,17 @@ def get_services(
     - user/service: pouze servisy ve stejném tenantovi
     """
     _ensure_services_schema(db)
-    query = db.query(Customer).filter(Customer.role.in_(["service", "developer_admin"]))
+    query = db.query(Customer).filter(*active_service_filters())
 
     if current_user.role not in ["admin", "developer_admin"]:
         tenant_id = getattr(current_user, "tenant_id", None)
         if not tenant_id:
             raise HTTPException(status_code=403, detail="Uživatel nemá přiřazený tenant")
-        query = query.filter(Customer.tenant_id == tenant_id)
+        linked_ids = db.query(ServiceCustomerLink.service_customer_id).filter(
+            ServiceCustomerLink.customer_id == current_user.id,
+            ServiceCustomerLink.status == "active",
+        )
+        query = query.filter(or_(Customer.tenant_id == tenant_id, Customer.id.in_(linked_ids)))
 
     services = query.order_by(Customer.name.asc(), Customer.email.asc()).all()
     
@@ -295,7 +300,7 @@ def get_my_service_contacts(
         .filter(
             ServiceCustomerLink.customer_id == current_user.id,
             ServiceCustomerLink.status == "active",
-            Customer.role.in_(["service", "developer_admin"]),
+            *active_service_filters(),
         )
         .order_by(Customer.name.asc(), Customer.email.asc())
         .all()
@@ -352,6 +357,7 @@ def get_service_access_requests(
             ServiceAccessRequest.owner_customer_id == current_user.id,
             ServiceAccessRequest.vehicle_id.in_(owned_vehicle_ids),
             ServiceAccessRequest.status == "pending",
+            *active_service_filters(),
         )
         .order_by(ServiceAccessRequest.requested_at.desc(), ServiceAccessRequest.id.desc())
         .all()
@@ -397,7 +403,7 @@ def resolve_service_access_request(
         db.query(Customer)
         .filter(
             Customer.id == request_row.service_customer_id,
-            Customer.role.in_(["service", "developer_admin"]),
+            *active_service_filters(),
         )
         .first()
     )
@@ -478,7 +484,7 @@ def get_vehicle_access_grants(
             VehicleServiceLink.owner_customer_id == current_user.id,
             VehicleServiceLink.vehicle_id.in_(owned_vehicle_ids),
             VehicleServiceLink.status == "approved",
-            Customer.role.in_(["service", "developer_admin"]),
+            Customer.role == "service",
         )
         .order_by(VehicleServiceLink.updated_at.desc())
         .all()
@@ -531,7 +537,7 @@ def grant_vehicle_access_to_service(
         db.query(Customer)
         .filter(
             Customer.id == payload.service_id,
-            Customer.role.in_(["service", "developer_admin"]),
+            *active_service_filters(),
         )
         .first()
     )
@@ -546,7 +552,7 @@ def grant_vehicle_access_to_service(
             VehicleServiceLink.vehicle_id == vehicle.id,
             VehicleServiceLink.status == "approved",
             VehicleServiceLink.service_customer_id != service.id,
-            Customer.role.in_(["service", "developer_admin"]),
+            Customer.role == "service",
         )
         .order_by(VehicleServiceLink.updated_at.desc())
         .all()
@@ -711,7 +717,6 @@ def disconnect_my_service_contact(
         db.query(Customer)
         .filter(
             Customer.id == service_id,
-            Customer.role.in_(["service", "developer_admin"]),
         )
         .first()
     )
@@ -811,7 +816,7 @@ def get_services_discovery(
     """
     Katalog aktivních servisů pro uživatele.
 
-    - Vrací servisní účty (role=service/developer_admin).
+    - Vrací pouze aktivní servisní účty (role=service).
     - Pokud má uživatel aktivní propojení se servisem, je tento servis zahrnut i mimo standardní filtr.
     - Pokud je dostupná poloha uživatele (X-Geo-Lat/Lon), seřadí podle vzdálenosti.
     - Fallback: pokud uživatel nemá GPS hlavičky, zkusí se geokódovat jeho profilová adresa.
@@ -831,7 +836,7 @@ def get_services_discovery(
         )
         linked_service_ids = {int(service_id) for (service_id,) in linked_rows if service_id is not None}
 
-    query = db.query(Customer).filter(Customer.role.in_(["service", "developer_admin"]))
+    query = db.query(Customer).filter(*active_service_filters())
 
     if not _is_admin_role(current_user.role):
         tenant_id = getattr(current_user, "tenant_id", None)

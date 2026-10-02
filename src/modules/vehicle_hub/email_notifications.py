@@ -22,6 +22,7 @@ from src.modules.vehicle_hub.models import (
     Vehicle,
     EmailNotificationLog
 )
+from src.modules.vehicle_hub.service_accounts import is_active_service_account
 
 
 def _resolve_tenant_id(*candidates: Optional[int]) -> int:
@@ -60,6 +61,10 @@ def _add_email_log(
 
 def _app_index_url() -> str:
     return build_app_url("/web/index.html")
+
+
+def _reservation_url() -> str:
+    return build_app_url("/web/reservations.html")
 
 
 def send_reminder_email(
@@ -399,7 +404,7 @@ def send_reservation_created_email(
     service = db.query(Customer).filter(Customer.id == reservation.service_id).first()
     vehicle = db.query(Vehicle).filter(Vehicle.id == reservation.vehicle_id).first()
     
-    if not customer or not service or not vehicle:
+    if not customer or not is_active_service_account(service) or not vehicle:
         return False, False
     
     vehicle_name = vehicle.nickname or f"{vehicle.brand} {vehicle.model}" or vehicle.plate or "Neznámé vozidlo"
@@ -440,7 +445,7 @@ def send_reservation_created_email(
                 )
             ],
             cta_label="Zobrazit rezervaci",
-            cta_url=_app_index_url(),
+            cta_url=_reservation_url(),
             accent="#f59e0b",
         )
         
@@ -460,7 +465,7 @@ Status: Čeká na potvrzení
 S pozdravem,
 {APP_DISPLAY_NAME}
 
-Zobrazit rezervaci: {_app_index_url()}
+Zobrazit rezervaci: {_reservation_url()}
 """
         
         try:
@@ -524,7 +529,7 @@ Zobrazit rezervaci: {_app_index_url()}
         service_action_text = (
             f"Potvrzení propojení: {service_link_claim_url}"
             if requires_service_link_confirmation and service_link_claim_url
-            else "Prosím potvrďte nebo zrušte rezervaci v administračním panelu."
+            else "Prosím potvrďte nebo zrušte rezervaci v mobilní aplikaci v části Kalendář → Rezervace."
         )
         
         html_body = render_email_layout(
@@ -536,7 +541,7 @@ Zobrazit rezervaci: {_app_index_url()}
                 (
                     "Po potvrzení propojení bude rezervace viditelná v servisním přehledu."
                     if requires_service_link_confirmation and service_link_claim_url
-                    else "Prosím potvrďte nebo zrušte rezervaci v administračním panelu."
+                    else "Prosím potvrďte nebo zrušte rezervaci v mobilní aplikaci v části Kalendář → Rezervace."
                 ),
             ],
             panels=[
@@ -565,8 +570,8 @@ Zobrazit rezervaci: {_app_index_url()}
                     else []
                 ),
             ],
-            cta_label="Otevřít admin panel",
-            cta_url=build_app_url("/web_admin/"),
+            cta_label="Otevřít rezervace v aplikaci",
+            cta_url=_reservation_url(),
             accent="#f59e0b",
         )
         
@@ -706,7 +711,7 @@ def send_reservation_status_email(
             )
         ],
         cta_label="Zobrazit rezervaci",
-        cta_url=_app_index_url(),
+        cta_url=_reservation_url(),
         accent="#f59e0b",
     )
     
@@ -726,7 +731,7 @@ Status: {status_text.upper()}
 S pozdravem,
 {APP_DISPLAY_NAME}
 
-Zobrazit rezervaci: {_app_index_url()}
+Zobrazit rezervaci: {_reservation_url()}
 """
     
     try:
@@ -864,7 +869,7 @@ def send_reservation_rescheduled_email(
             )
         ],
         cta_label="Otevřít rezervace",
-        cta_url=_app_index_url(),
+        cta_url=_reservation_url(),
         accent="#f59e0b",
     )
 
@@ -885,7 +890,7 @@ Pokud Vám nový termín nevyhovuje, můžete rezervaci v aplikaci zrušit a vyt
 S pozdravem,
 {APP_DISPLAY_NAME}
 
-Otevřít rezervace: {_app_index_url()}
+Otevřít rezervace: {_reservation_url()}
 """
 
     try:
