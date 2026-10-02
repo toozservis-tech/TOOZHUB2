@@ -5,6 +5,10 @@
 !VERSION.py
 !scripts/
 !scripts/migrate_apple_billing.py
+!scripts/migrate_workshops_vehicle_identity.py
+!alembic/
+!alembic/versions/
+!alembic/versions/20261002_0013_workshops_vehicle_identity.py
 !src/
 !src/**
 !web/
