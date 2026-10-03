@@ -1,6 +1,6 @@
 # SprávaVozidel — inventura údajů pro vydání iOS
 
-Pracovní inventura podle zdrojového kódu, 30. 9. 2026. Není to potvrzení právního souladu ani zveřejněné prohlášení v App Store Connect. Před odesláním musí odpovídat finálnímu sestavení, serverové konfiguraci a skutečným smlouvám se zpracovateli.
+Pracovní inventura podle zdrojového kódu a přímé kontroly App Store Connect/Render, **3. 10. 2026**. V App Store Connect je uložený vyplněný návrh všech 14 kategorií; dosud není zveřejněný. Není to potvrzení právního souladu. Před publikací musí odpovídat finálnímu sestavení, serverové konfiguraci a skutečným smlouvám se zpracovateli.
 
 ## Připravené kategorie pro Apple
 
@@ -23,18 +23,19 @@ Všechny níže uvedené údaje mohou být propojené s přihlášeným účtem.
 | Product Interaction | Přístupy na funkce, poslední přihlášení a administrátorské akce v bezpečnostním auditu | `SecurityAccessLog`, `DeveloperActionAuditLog`, `last_seen_at` |
 | Other Data Types | IP adresa a údaj o klientovi pro zabezpečení; IČO/DIČ podnikatele | `SecurityAccessLog`, `Customer` |
 
-Výběr „Data Not Collected“ by byl nesprávný. Kategorie jsou vložené do `Sources/TooZHub/Resources/PrivacyInfo.xcprivacy` v autoritativním iOS projektu. Hodnoty kategorií a účelu byly porovnány s oficiálními klíči Apple. Zveřejnění odpovědí v App Store Connect ještě neproběhlo.
+Výběr „Data Not Collected“ by byl nesprávný. Kategorie jsou vložené do `Sources/TooZHub/Resources/PrivacyInfo.xcprivacy` v autoritativním iOS projektu. Hodnoty kategorií a účelu byly porovnány s oficiálními klíči Apple. V App Store Connect jsou u všech 14 kategorií uložené odpovědi App Functionality, linked to user a no tracking; zveřejnění ještě neproběhlo. Build 1.0.0 (3) obsahuje tento manifest. Odkaz na veřejné zásady je uložený v App Store Connect a je dostupný v přihlášení, registracích i účtu aplikace.
 
 ## Poloha a oprávnění
 
 - Nativní lokátor žádá polohu jen po volbě uživatele, používá Core Location s kilometrovou požadovanou přesností a Apple geocoder. Na vlastní adresářové API posílá název města, ne GPS souřadnice. Město jde zadat ručně. Poslední města se ukládají do UserDefaults v telefonu.
 - Bezpečnostní modul od této změny ve výchozím nastavení neposílá návštěvnickou IP na ipwho.is, neposílá GPS na Nominatim a neukládá GPS z hlaviček prohlížeče. IP, čas, účet a výsledek přihlášení zůstávají v bezpečnostním záznamu.
-- Volby `ENABLE_IP_GEOLOOKUP`, `ENABLE_BROWSER_GEOLOCATION_OVERRIDE`, `ENABLE_REVERSE_GEOCODE` mají výchozí hodnotu 0. Existující explicitní hodnota 1 má přednost; před zveřejněním je nutné zkontrolovat prostředí. Opětovné zapnutí vyžaduje aktualizaci inventury, transparentního informování a posouzení zpracovatele. Při ukládání přesné polohy doplnit také Precise Location.
+- Volby `ENABLE_IP_GEOLOOKUP`, `ENABLE_BROWSER_GEOLOCATION_OVERRIDE`, `ENABLE_REVERSE_GEOCODE` mají výchozí hodnotu 0. Existující explicitní hodnota 1 má přednost. Přímá kontrola 22 názvů proměnných a nepřítomnosti připojených skupin/secret files na Renderu dne 3. 10. 2026 neukázala žádnou z těchto tří přepisujících voleb; platí výchozí vypnutí. Opětovné zapnutí vyžaduje aktualizaci inventury, transparentního informování a posouzení zpracovatele. Při ukládání přesné polohy doplnit také Precise Location.
 - Samostatné starší API `/services/discovery` může geokódovat adresu servisu přes Nominatim. Nativní záhlaví používá `/services/area-directory`; jde o různé toky. Odstranění IP geolokace proto samo neodstraňuje všechny kontakty s Nominatim.
 - Face ID ověřuje odemknutí lokálně. Aplikace nepřebírá biometrickou šablonu. Samotné použití Face ID není důvod vykazovat sběr biometrických dat.
 - Fotoaparát a fotoknihovna slouží k uživatelem vybraným snímkům. iOS připravuje JPEG pro odeslání; obecné souborové přílohy ale mohou obsahovat vlastní metadata a osobní údaje. Slib „žádné další údaje v dokumentech“ by nebyl správný.
 - V aktivním iOS zdrojovém kódu nebyl nalezen sběr kontaktů, reklamního ID, systémové historie prohlížení, zvuku ani dat HealthKit. Identifikátory pro staré PC instalace a web push nejsou důkazem jejich sběru nativní iOS aplikací.
-- `NSPrivacyAccessedAPICategoryUserDefaults` má důvod CA92.1: vlastní předvolby aplikace. Při přidání dalších knihoven nebo rozhraní s povinným důvodem je nutná nová kontrola.
+- `NSPrivacyAccessedAPICategoryUserDefaults` má důvod CA92.1: vlastní předvolby aplikace.
+- `NSPrivacyAccessedAPICategoryFileTimestamp` má důvod C617.1: ověření soukromých konceptů fotografií uvnitř aplikačního kontejneru. Manifest je součástí přijatého distribučního sestavení. Při přidání dalších knihoven nebo rozhraní s povinným důvodem je nutná nová kontrola.
 
 ## Příjemci a infrastruktura k doložení
 
@@ -46,7 +47,7 @@ Výběr „Data Not Collected“ by byl nesprávný. Kategorie jsou vložené do
 | Resend / nakonfigurovaný SMTP | Doručování provozních e-mailů | Aktivní poskytovatel, retenční doba obsahu a adresátů, DPA |
 | Apple | App Store předplatné, geokódování a uživatelem otevřené Mapy | Dokončit IAP konfiguraci a sandbox ověření. Vlastní server ukládá stav nákupu, nikoli údaje k Apple platební kartě. |
 | Servis vybraný zákazníkem | Záznamy a dokumentace vozidla v povoleném rozsahu | Pravdivé vysvětlení vazeb a testy odvolání přístupu |
-| OSM Nominatim / ipwho.is | Volitelné výše popsané geolokační toky | Nezaměňovat nový výchozí stav s ověřením explicitních produkčních proměnných |
+| OSM Nominatim / ipwho.is | Volitelné výše popsané geolokační toky | Výše uvedené přepisující produkční proměnné byly zkontrolované jako nenastavené; geokódování servisní adresy je samostatný tok |
 | Comgate | Webové předplatné a jeho historie | Nativní iOS nákup přes Apple; stávající webové platby vyžadují samostatné informace |
 
 Manifest nemění žádné smlouvy se zpracovateli ani retenční lhůty. Před publikací doplnit konkrétní platné údaje do veřejných zásad, včetně účelů, právních základů, příjemců, dob uchování a práv uživatele. Nepoužívat nepodložené obecné sliby „všechna data jen v EU“ nebo „vše se ihned vymaže“.

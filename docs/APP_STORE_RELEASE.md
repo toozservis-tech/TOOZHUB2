@@ -1,42 +1,72 @@
 # SprávaVozidel — vydání v App Storu
 
-Poslední ověření: 1. 10. 2026. Směr potvrzený uživatelem: iOS předplatné přes Apple In-App Purchase; Comgate pro web. Režim externích EU plateb v iOS není vybraný.
+Poslední přímé ověření: **3. 10. 2026**. iOS předplatné používá Apple In-App Purchase; Comgate zůstává pro web. Níže je současný stav. Datovaná doplnění za touto částí jsou historické záznamy jednotlivých etap, nikoli potvrzení dnešní připravenosti.
 
-## Skutečný stav
+## Současný ověřený stav
 
-- Členství Apple Developer je **aktivní**, tým `5DATUX4X32`, Individual, obnova 1. 10. 2027. Neopakovat platbu. Vlastník ráno 1. 10. zpřístupnil App Store Connect; vstupní podmínky již neblokují seznam aplikací. Produkční identifikátor `cz.toozservis.spravavozidel.ios` je registrovaný. Založení iOS aplikace (čeština, SKU `spravavozidel-ios`) Apple odmítl, protože název **SprávaVozidel je již obsazený**. Čeká se na vlastníkův výběr rozšířeného názvu pouze pro obchod; název pod ikonou se nemění. Apple ID a produkty proto dosud nejsou vytvořené.
-- Produkční server běží na placeném Renderu (7 USD/měsíc). Comgate test Basic 98,99 Kč byl potvrzen a nezměnil původní licenci. Ostré Comgate účtování dosud není zapnuté.
-- Nový klient používá StoreKit 2, zobrazuje ceny dodané App Storem, obsahuje obnovení nákupů a nativní správu předplatného. Původní Comgate objednávka z iOS byla odstraněna; webové propojení a data jsou zachována.
-- Server má samostatný ověřovač Apple, vazbu nákupu na náhodný `appAccountToken`, aktuální ověření přes App Store Server API a zpracování oznámení V2. Nevěří samotnému potvrzení z telefonu. Apple integrace zůstává vypnutá, dokud nejsou dokončené skutečné údaje a ověření.
-- Testy s izolovanou databází ověřují bezpečnost a stavové přechody. Nejsou důkazem skutečného sandbox nákupu přes Apple. Ten a TestFlight/App Review zůstávají nutné.
+- Placené členství Apple Developer je aktivní, tým `5DATUX4X32`, Individual. Existuje aplikace **SpravaVozidel**, Apple ID **6818048361**, bundle ID `cz.toozservis.spravavozidel.ios`, SKU `spravavozidel-ios`, primární jazyk čeština. Nativní název je SprávaVozidel; spor o původní název obchodu není tímto vyřešen.
+- **Verze 1.0.0, build 3 je skutečně nahraná a zpracovaná Applem.** App Store Connect → TestFlight ukazuje upload **Complete** a build **Ready to Submit** (3. 10. 2026, 20:44 místního času). Build UUID `6dd4532c-0c5f-4d61-be93-7d259e810937`. Toto není schválení App Review, veřejné vydání ani rozeslané pozvánky: build má 0 skupin a 0 jednotlivých testerů.
+- Záznam App Store verze je stále **Prepare for Submission**, s ručním zveřejněním. České popisy, klíčová slova, odkazy podpory a privacy jsou uložené. Věkový dotazník je uložený s výsledkem **4+**; aplikace není označená jako aplikace pro děti. Snímky pro obchod a omezený účet pro recenzenta zůstávají nedokončené.
+- App Privacy má uložený, plně vyplněný **návrh 14 kategorií**: App Functionality, linked to user, tracking=false. Návrh není zveřejněný. Veřejné zásady a podmínky vracejí HTTP 200, ale konkrétní retence, zálohy a smlouvy se zpracovateli ještě vyžadují ověření; neprohlašovat hotový právní soulad.
+- Po výslovném souhlasu vlastníka byl vytvořen místní **Apple Distribution** certifikát `7VH3H4SCRT`, tým `5DATUX4X32`, platnost do 3. 10. 2027. Klíč zůstává na Macu mimo Git a aplikaci. Stávající certifikáty nebyly odstraněné. Exportovaný build 3 prošel `codesign --verify --deep --strict`, včetně vlastní podpisové podmínky, a má App Store profil bez vývojových zařízení a s `get-task-allow=false`.
+- Build 2 Apple odmítl kvůli průhledné ikoně a chybě cloudového podpisu. Build 3 používá všech 15 ikon v neprůhledném RGB a schválený místní podpis; nový upload oba problémy uzavřel. Produkční Release neobsahuje místní HTTP výjimky. Vývojové sestavy je zachovávají. Deklarace šifrování používá standardní platformní HTTPS/Keychain/CryptoKit.
+- Přesný archiv je `/tmp/sv-appstore-1.0.0-build3.xcarchive`, export `/tmp/sv-appstore-1.0.0-build3-export/TooZHubiOS.ipa`. SHA-256 IPA: `b902e8a7cb69ecd5530585a883f6f79dc486df5ec2138a9452079959d0fcea38`. Protokoly a obrázek přijetí: pracovní kořen `work/v1-appstore-*`, `outputs/appstore-1.0.0/testflight-accepted.jpg`.
+- Produkční server je ověřený jako Render **Live**, commit `144fbdb4b6172a763adbd25b8f8d7b4f6f1f72f1`, health HTTP 200 / status ok / verze 1.0.0. Opravené dvojité WHERE v administrátorském přehledu vozidel nyní vylučuje sloučené profily bez chyby SQL. Audit zůstává povinný; opravena byla chybějící skutečná admin identita pouze v testovací fixture.
+- Automatické ověření: první serverová sada měla 467 úspěšných a 2 neúspěšné případy; po opravě obou příčin prošlo všech **47 cílených regresí**. Dále prošlo **70 testů skutečného izolovaného PostgreSQL**. Nativní sada má **168 úspěšných, 3 výslovně přeskočené, 0 neúspěšných** případů; po přesunu beze změny finančních datových struktur prošlo dalších **24 cílených** testů. Síťová izolace, přesměrování, soukromé koncepty fotografií a skutečná Keychain po restartu rovněž prošly. To nenahrazuje aktuální ruční test telefonu ani skutečný nákup Apple.
 
-## Nastavení, které ještě vyžaduje účet Apple
+## Předplatné — vytvořené produkty a zbývající nastavení
 
-1. Přístup do App Store Connect je funkční. Vývojářské členství je aktivní a zaplacené. Registrace Individual znamená osobní jméno prodejce; nezakládat ani neplatit druhé členství.
-2. Po výběru dostupného názvu dokončit připravený záznam iOS aplikace, bundle ID `cz.toozservis.spravavozidel.ios`. Apple název **SprávaVozidel** dne 1. 10. odmítl jako obsazený. Nepřejmenovávat svévolně značku a nepodávat tvrzení o ochranné známce bez podkladů vlastníka. Uložit skutečné číselné Apple ID a zajistit podepisování pro App Store.
-3. Dokončit Paid Apps Agreement, bankovní a daňové údaje a ověření obchodníka pro EU. Žádné z těchto potvrzení nebylo dosud provedeno.
-4. Založit JEDNU skupinu automaticky obnovovaných předplatných. Premium má vyšší úroveň než Basic. Měsíční a roční varianta stejného plánu má stejnou úroveň. Family Sharing není implementován; nezapínat.
-5. Založit následující produkty (identifikátory jsou smlouvou mezi klientem a serverem):
+Existuje **jedna skupina 22431514** SprávaVozidel. Premium je úroveň 1, Basic úroveň 2; měsíční a roční varianta stejného plánu mají shodnou úroveň. Family Sharing je vypnuté a není implementované.
 
-| Produkt | Úroveň | Období |
-| --- | --- | --- |
-| `cz.toozservis.spravavozidel.basic.monthly` | Basic | 1 měsíc |
-| `cz.toozservis.spravavozidel.basic.yearly` | Basic | 1 rok |
-| `cz.toozservis.spravavozidel.premium.monthly` | Premium | 1 měsíc |
-| `cz.toozservis.spravavozidel.premium.yearly` | Premium | 1 rok |
+| Produkt | Apple ID | Období | Úroveň |
+| --- | --- | --- | --- |
+| `cz.toozservis.spravavozidel.basic.monthly` | 6818211306 | 1 měsíc | 2 |
+| `cz.toozservis.spravavozidel.basic.yearly` | 6818211688 | 1 rok | 2 |
+| `cz.toozservis.spravavozidel.premium.monthly` | 6818209814 | 1 měsíc | 1 |
+| `cz.toozservis.spravavozidel.premium.yearly` | 6818210963 | 1 rok | 1 |
 
-Ceny musí vlastník schválit a nastavit v App Store Connect. Klient nepřebírá cenu webového Comgate ceníku. Neaktivovat neimplementované nabídky ani sdílení v rodině. Popisy plánů musí odpovídat skutečně vynuceným funkcím a limitům.
+**Vlastník schválil a App Store Connect má uložené všechny čtyři české ceny.** Basic 149 Kč měsíčně / 1 490 Kč ročně; Premium 449 Kč měsíčně / 4 490 Kč ročně. Každá skutečná Starting Price byla po uložení otevřená a ověřená, nikoli pouze vypočtená v cenové kalkulačce. Všechny produkty mají uloženou českou lokalizaci. Basic uvádí až 5 vozidel, servisní historii a dokumenty; Premium neomezený počet vozidel, náklady, statistiky a sdílení. Popisy odpovídají `PLAN_LIMITS` a `PLAN_FEATURES` produkčního serveru. Country availability a snímky pro schválení nejsou dokončené. Přepočtený ceník pro 175 zemí sám nezpřístupňuje nákup ani aplikaci. Klient zobrazuje cenu z App Storu; webové ceny se touto změnou nemění.
 
-6. V App Store Connect → Users and Access → Integrations → In-App Purchase vytvořit serverový klíč. Privátní klíč patří pouze do tajných proměnných serveru, nikdy do aplikace, Git historie, chatu nebo webového formuláře mimo schválený server.
-7. Konfigurace serveru: `APPLE_IAP_ENABLED=1`, `APPLE_IAP_BUNDLE_ID`, `APPLE_IAP_APP_ID`, `APPLE_IAP_SUBSCRIPTION_GROUP_ID`, `APPLE_IAP_KEY_ID`, `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_PRIVATE_KEY`, `APPLE_IAP_ENVIRONMENT` (`Production` nebo `Sandbox`). Každé nasazení používá jediný ověřovaný režim; žádný automatický přechod z produkce na sandbox. Sandbox testovat na oddělené databázi/testovacích účtech a samostatném backendu, ne na původních účtech. Připravit samostatné sestavení/schéma pro sandbox se správným bundle ID.
-8. Před zapnutím provést aditivní migraci `python -m scripts.migrate_apple_billing`. Nemění staré licence, uživatele ani platby. Konfiguraci zapnout až po kontrole migration a testovacího prostředí.
-9. Nastavit App Store Server Notifications **V2** na `/api/v1/license/apple/notifications` příslušného HTTPS serveru. Ověřit Apple test notification, skutečný sandbox nákup, obnovení po nové instalaci, renewal, downgrade/upgrade, grace, refund, refund reversal, výpadek sítě, jiný účet aplikace a zrušení obnovování. Pravidelná kontrola vedle oznámení je implementovaná níže; skutečné Apple testy zůstávají nutné. Zajistit variantu backendu pro App Review sandbox; do té doby nelze poslat aplikaci ke schválení.
-10. iOS transakci dokončuje až po potvrzeném uložení na serveru. Při chybě zůstane obnovitelná. Staré webhooky vždy znovu načtou aktuální stav od Applu. Potvrzené období vyprší i při opožděném webhooku; uživatelská data se při vypršení nemažou.
+1. **Business:** Free Apps Agreement je Active; Paid Apps Agreement vlastník 3. 10. 2026 osobně potvrdil a Apple nyní uvádí Pending User Info. Apple vyžaduje nejdříve aktualizovat právní údaje v Edit Legal Entity. Vlastník osobně zkontroloval a uložil právní údaje; zmizela blokující výzva a Apple zpřístupnil Paid Apps Agreement. Smlouva je potvrzená přímo vlastníkem; údaj o typu subjektu, jméně a adrese se nevymýšlí. Agent za vlastníka smlouvu nepřijímal. Vlastník osobně uložil bankovní účet; Apple nyní uvádí Processing a očekává zpracování do 24 hodin. Úvodní U.S. Tax Questionnaire je dokončený. U.S. Certificate of Foreign Status of Beneficial Owner vlastník osobně odeslal a jeho stav je ověřený jako Active. Následně Apple zpřístupnil U.S. Form W-8BEN, který má stále Missing Tax Info a zůstává předaný vlastníkovi. Agent nezadává daňová čísla, neurčuje neověřený smluvní nárok a nepotvrzuje daňové prohlášení. DSA dokončení čeká. Bankovní a daňové identifikátory se neukládají do tohoto přehledu.
+2. **Serverový klíč:** Distribuční certifikát nenahrazuje In-App Purchase API klíč. Ten ještě není vytvořený/nastavený. Produkční Render prostředí má 22 viditelných názvů proměnných, žádné `APPLE_IAP_*` a žádnou připojenou skupinu tajných proměnných. Integraci zatím nezapínat. Po konkrétním oprávnění vytvořit klíč přes Users and Access → Integrations → In-App Purchase a uložit pouze na schválený server, nikdy do aplikace, Git nebo chatu.
+3. Nastavit `APPLE_IAP_ENABLED`, `APPLE_IAP_BUNDLE_ID=cz.toozservis.spravavozidel.ios`, `APPLE_IAP_APP_ID=6818048361`, `APPLE_IAP_SUBSCRIPTION_GROUP_ID=22431514`, `APPLE_IAP_KEY_ID`, `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_PRIVATE_KEY`, `APPLE_IAP_ENVIRONMENT` (`Production` nebo `Sandbox`). Každé nasazení ověřuje jediný režim; žádný automatický přechod z produkce na sandbox. TestFlight a App Review musí dostat funkční podporu sandbox nákupů bez oslabení produkčního verifieru. Oddělený backend, databáze, účty a odpovídající klientské směrování dosud nejsou ověřené.
+4. Před zapnutím provést aditivní migraci `python -m scripts.migrate_apple_billing`. Přidává potřebné Apple tabulky včetně `apple_reconciliation_state`; nemění staré licence, účty ani Comgate. Konfiguraci aktivovat až po ověření migrace a izolovaného testovacího prostředí.
+5. Nastavit App Store Server Notifications **V2** na `/api/v1/license/apple/notifications` příslušného HTTPS serveru. Produkční a sandbox adresy zatím v App Store Connect nastavené nejsou. Ověřit Apple test notification, skutečný sandbox nákup, obnovu po instalaci, renewal, downgrade/upgrade, grace, refund, refund reversal, výpadek sítě, změnu účtu aplikace a zrušení obnovování.
+6. iOS transakci dokončuje až po potvrzeném uložení na serveru. Náhodný `appAccountToken` svazuje nákup s účtem; server ověřuje současný stav přes App Store Server API a oznámení V2. Opožděný webhook neobnoví zaniklý účet. Vypršení období nemaže uživatelská data. Pozitivní izolované platební testy jsou simulované a nejsou skutečným nákupem Apple.
+7. Po zapnutí Apple běží samostatná průběžná kontrola ověřených nákupů, ve výchozím stavu po dávkách každých 300 s. `APPLE_RECONCILIATION_INTERVAL_SEC` má rozsah 60–3600 s, `ENABLE_APPLE_RECONCILIATION_WORKER=0` ji vypne. Jednotlivé položky mají trvalý stav, obnovitelný zámek a odstup opakování. Dokud integrace není nastavená, administrace správně hlásí čekání.
+
+
+### Schválené uložené ceny a výnos z App Store Connect
+
+Vlastník výslovně schválil Basic **149 Kč měsíčně / 1 490 Kč ročně** a Premium **449 Kč měsíčně / 4 490 Kč ročně**. Všechny čtyři úrovně Apple skutečně nabízí; byly uložené a následně ověřené v jednotlivých Starting Subscription Price tabulkách.
+
+| Tarif | Cena v ČR | Year 1 Proceeds | Year 2 Proceeds |
+| --- | --- | --- | --- |
+| Basic měsíční | 149,00 Kč | 104,67 Kč | 104,67 Kč |
+| Basic roční | 1 490,00 Kč | 1 046,69 Kč | 1 046,69 Kč |
+| Premium měsíční | 449,00 Kč | 315,41 Kč | 315,41 Kč |
+| Premium roční | 4 490,00 Kč | 3 154,13 Kč | 3 154,13 Kč |
+
+Tyto výnosy jsou přesně údaje z aktuálního ceníku Applu, nikoli slíbená čistá částka po všech povinnostech vlastníka. Samotná tabulka nedokládá schválení Small Business Program ani nerozhoduje o jeho daňovém statusu. Důkazy jsou `outputs/appstore-1.0.0/{basic,premium}-{monthly,yearly}-price.jpg`.
+
+Přímá kontrola oficiálních zdrojů 3. 10. 2026 zjistila změnu: jednotné EU podmínky jsou účinné od **1. 10. 2026** a Apple pro Apple In-App Purchase uvádí **26 %**, případně **15 %** pro Small Business Program a předplatné po prvním roce. Mimo EU standardní předplatné začíná 30 % a po roce 15 %. Výnos ovlivňují příslušné transakční daně. Small Business Program není automatický: je nutná registrace, schválení a splnění společného limitu příjmů včetně propojených vývojářských účtů. Účast tohoto konkrétního účtu nebyla ověřená; slevu neslibovat jako již aktivní.
+
+- [Apple: jednotné EU podmínky a sazby](https://developer.apple.com/support/apps-in-the-eu/)
+- [Apple: Small Business Program](https://developer.apple.com/app-store/small-business-program/)
+- [Apple: výnosy a daně předplatného](https://developer.apple.com/app-store/subscriptions/)
+
+## Co ještě brání veřejnému vydání
+
+- Dokončení W-8BEN, zpracování bankovního účtu, aktivace Paid Apps Agreement a DSA. Ceny a české lokalizace jsou uložené; dostupnost produktů, konfigurace a skutečné ověření Apple nákupů čekají.
+- Pravdivé veřejné zásady a podmínky pro současné zpracování a Apple nákupy; doložení dob uchování, zpracovatelů a obnovy záloh včetně záznamů o výmazu. Starších 47 nedostupných cloudových objektů a nezávislá obnova zálohy nejsou touto etapou vyřešené.
+- Reprezentativní snímky iPhone/iPad bez skutečných zákaznických údajů, kontakty a bezpečný omezený účet pro App Review, potvrzení práv k obsahu a závěrečný ruční test současného sestavení. Recenzent nedostává skutečný admin účet ani heslo vlastníka.
+- Nehotová pokladna/EET zůstává skrytá podle skutečných schopností serveru; nelze ji nabízet jako hotovou funkci v popisu vydané verze. Vývojový backend s rozpracovanými POS změnami se nenasazuje místo ověřené produkční větve.
+- **Add for Review ani veřejné zveřejnění nebylo provedeno.** Po uzavření těchto bodů vyžádat závěrečné konkrétní potvrzení vydání.
 
 ## Zbývající závěrečné kontroly celého produktu
 
 - Odstranění účtu je implementované v `ACCOUNT_ERASURE.md`: dobrovolný export, povinné heslo a ruční potvrzení, vlastnictví místo plošného smazání organizace, trvalé odstranění souborů s potvrzením stavu. Izolované testy a nativní formulář prošly bez mazání skutečných účtů. Zbývá právní/produkční ověření uchování účetních podkladů, kopií a záloh.
-- Inventura zdrojového kódu je v `docs/APP_PRIVACY_INVENTORY.md`. Nativní manifest nyní zahrnuje 14 používaných kategorií údajů, důvod UserDefaults CA92.1 a deklaraci bez reklamního sledování. Před zveřejněním ještě ověřit konkrétní serverové proměnné, smlouvy, retence a vyplnit odpovědi v App Store Connect. Neslibovat nulový sběr osobních údajů. Ověření nových účtů je popsáno v doplnění níže; rozpracované úpravy fotografií do této etapy nepatří.
+- Inventura zdrojového kódu a zkontrolované konfigurace je v `docs/APP_PRIVACY_INVENTORY.md`. Nativní manifest zahrnuje 14 používaných kategorií údajů, UserDefaults CA92.1, FileTimestamp C617.1 a deklaraci bez reklamního sledování. Odpovědi v App Store Connect jsou vyplněné jako návrh; smlouvy, retence a konkrétní zálohy před zveřejněním ještě ověřit. Neslibovat nulový sběr osobních údajů. Ověření nových účtů je popsáno v doplnění níže; rozpracované úpravy fotografií do této etapy nepatří.
 - Ověřit aktuální obchodní/platební podmínky, odstoupení u průběžné digitální služby, reklamace, vrácení peněz, DPA a uchování dokladů. Přechod na Apple musí být zohledněn; staré Comgate souhlasy nelze používat pro Apple nákup.
 - EET2: dle ověřeného webu MF dne 30. 9. 2026 je účinnost uvedena od 1. 1. 2027. Prověřit přesné znění účinného zákona, kontaktní tržby servisů a technickou specifikaci. Samotné online SaaS předplatné není důkazem povinnosti/absence povinnosti pro všechny platby servisů. Integrace EET dosud neexistuje; nevydávat fiktivní potvrzení o evidenci.
 - Fyzický iPhone: fotoaparát a skutečně uložený snímek, přílohy, export, obnova hesla/deep links. Simulátor nenahrazuje ověření fotoaparátu.
