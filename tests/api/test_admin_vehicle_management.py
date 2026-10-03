@@ -13,6 +13,8 @@ from src.modules.vehicle_hub.routers_v1 import vehicles, service_records, servic
 from src.modules.vehicle_hub.routers_v1.auth import get_current_user
 from src.core.auth import get_current_user_email
 from src.server import admin_api
+from src.modules.vehicle_hub.vehicle_deletion import deletion_preview
+from src.core.file_erasure import FileErasure
 
 
 @pytest.fixture
@@ -183,3 +185,138 @@ def test_admin_intake_edit_preserves_signature_and_detailed_fluids(scenario, ori
     assert json.loads(row.fluids_ok)==expected
     assert row.signature=='original signature'
     assert s.db.query(m.DeveloperActionAuditLog).filter_by(action_type='service_intake.update').count()==1
+
+
+def delete_payload(preview, **changes):
+    return {'reason': 'Reviewed synthetic vehicle deletion', 'confirmation': 'ODSTRANIT',
+            'delete_related': True, 'preview_token': preview['preview_token'], **changes}
+
+
+def test_vehicle_deletion_requires_explicit_related_consent_and_current_preview(scenario):
+    s=scenario; url=f'/admin-api/vehicles/{s.source.id}'
+    preview=s.client.get(url+'/delete-preview').json()
+    assert preview['requires_related_confirmation'] and preview['related_count']==1
+    assert s.db.query(m.DeveloperActionAuditLog).count()==0
+    assert s.client.request('DELETE',url,json=delete_payload(preview,delete_related=False)).status_code==409
+    assert s.client.request('DELETE',url,json={'reason':'Test deletion','confirmation':'ODSTRANIT','delete_related':True}).status_code==422
+    s.record.description='Changed since review';s.db.commit()
+    assert s.client.request('DELETE',url,json=delete_payload(preview)).status_code==409
+    assert s.db.get(m.Vehicle,s.source.id) and s.db.get(m.ServiceRecord,s.record.id)
+    assert s.db.query(FileErasure).count()==0 and s.db.query(m.DeveloperActionAuditLog).filter_by(action_type='vehicle.delete').count()==0
+    for name in ['owner','service']:
+        s.actor=s.actors[name]
+        assert s.client.get(url+'/delete-preview').status_code==403
+        assert s.client.request('DELETE',url,json=delete_payload(preview)).status_code==403
+
+
+def test_vehicle_deletion_removes_nested_records_queues_only_owned_files_and_keeps_other_vehicle(scenario):
+    s=scenario; source=s.source.id;other=s.target.id;owner=s.actors['owner'];service=s.actors['service']
+    s.source.photo_path='tenant_2/shared-cover.jpg';s.target.photo_path=s.source.photo_path
+    repair=m.RepairPhotoSession(vehicle_id=source,service_id=service.id,title='Repair',client_id='session-fixture')
+    s.db.add(repair);s.db.flush()
+    s.db.add_all([
+        m.RepairEvidencePhoto(session_id=repair.id,author_id=service.id,author_name='Synthetic',phase='before',source='camera',
+            sha256='a'*64,file_path='tenant_2/repair/fixture.jpg',mime_type='image/jpeg',size_bytes=12,client_id='photo-fixture'),
+        m.ServiceRecordAuditLog(tenant_id=owner.tenant_id,service_record_id=s.record.id,vehicle_id=source,
+            action='update',previous_snapshot_json='{}',new_snapshot_json='{}'),
+        m.ServiceIntake(tenant_id=owner.tenant_id,vehicle_id=source,customer_id=owner.id,service_id=service.id),
+        m.Reservation(tenant_id=owner.tenant_id,vehicle_id=source,customer_id=owner.id,service_id=service.id,start_datetime=datetime(2026,10,3)),
+        m.Reminder(tenant_id=owner.tenant_id,vehicle_id=source,customer_id=owner.id,type='SERVIS',text='Synthetic'),
+    ]);s.db.commit()
+    preview=s.client.get(f'/admin-api/vehicles/{source}/delete-preview').json()
+    assert preview['preserved_shared_files']==1 and preview['files_count']==2
+    result=s.client.request('DELETE',f'/admin-api/vehicles/{source}',json=delete_payload(preview))
+    assert result.status_code==200,result.text
+    s.db.expire_all()
+    assert s.db.get(m.Vehicle,source) is None and s.db.get(m.Vehicle,other)
+    for model in [m.ServiceRecord,m.ServiceRecordAuditLog,m.RepairPhotoSession,m.RepairEvidencePhoto,m.ServiceIntake,m.Reservation,m.Reminder]:
+        assert s.db.query(model).count()==0
+    assert s.db.query(m.Customer).count()==4 and s.db.query(m.Tenant).count()==4
+    paths={r.path for r in s.db.query(FileErasure)}
+    assert len(paths)==2 and 'vehicle_photos/tenant_2/shared-cover.jpg' not in paths
+    audit=s.db.query(m.DeveloperActionAuditLog).filter_by(action_type='vehicle.delete').one()
+    import json
+    payload=json.loads(audit.parameters_json)
+    assert payload['delete_related'] and payload['deleted_rows']['service_records'][0]['description']=='Private original work'
+    assert owner.id in payload['affected_customer_ids']
+
+
+def test_vehicle_deletion_rolls_back_everything_when_audit_cannot_commit(scenario,monkeypatch):
+    s=scenario;preview=deletion_preview(s.db,s.source.id);source=s.source.id;record=s.record.id
+    def reject_commit(): raise RuntimeError('Synthetic failed audit commit')
+    monkeypatch.setattr(s.db,'commit',reject_commit)
+    result=s.client.request('DELETE',f'/admin-api/vehicles/{source}',json=delete_payload(preview))
+    assert result.status_code==409
+    s.db.expire_all()
+    assert s.db.get(m.Vehicle,source) and s.db.get(m.ServiceRecord,record)
+    assert s.db.query(FileErasure).count()==0 and s.db.query(m.DeveloperActionAuditLog).count()==0
+
+
+def test_vehicle_deletion_never_cascades_into_unknown_or_other_vehicle_relationships(scenario):
+    from sqlalchemy import text
+    s=scenario
+    s.db.execute(text('CREATE TABLE unsupported_vehicle_extension (id INTEGER PRIMARY KEY, vehicle_id INTEGER REFERENCES vehicles(id))'))
+    s.db.execute(text('INSERT INTO unsupported_vehicle_extension VALUES (1,:id)'),{'id':s.source.id});s.db.commit()
+    assert s.client.get(f'/admin-api/vehicles/{s.source.id}/delete-preview').status_code==409
+    assert s.db.get(m.Vehicle,s.source.id) and s.db.get(m.ServiceRecord,s.record.id)
+
+
+def test_vehicle_deletion_audit_private_payload_participates_in_account_erasure(scenario):
+    from src.modules.vehicle_hub.account_erasure import erase_account
+    s=scenario;source=s.source.id;preview=deletion_preview(s.db,source)
+    assert s.client.request('DELETE',f'/admin-api/vehicles/{source}',json=delete_payload(preview)).status_code==200
+    erase_account(s.db,s.actors['owner']);s.db.commit()
+    audit=s.db.query(m.DeveloperActionAuditLog).filter_by(action_type='vehicle.delete').one()
+    assert audit.parameters_json=='{"private_payload_erased": true}'
+
+
+def test_empty_vehicle_can_be_deleted_without_related_consent(scenario):
+    s=scenario;vehicle_id=s.target.id
+    preview=deletion_preview(s.db,vehicle_id)
+    assert not preview['requires_related_confirmation'] and preview['related_count']==0
+    response=s.client.request('DELETE',f'/admin-api/vehicles/{vehicle_id}',json=delete_payload(preview,delete_related=False))
+    assert response.status_code==200,response.text
+    s.db.expire_all()
+    assert s.db.get(m.Vehicle,vehicle_id) is None
+    assert s.db.get(m.Vehicle,s.source.id) and s.db.get(m.ServiceRecord,s.record.id)
+
+
+@pytest.mark.parametrize('delete_record_vehicle', [True, False])
+def test_legacy_history_follows_its_actual_record_not_inconsistent_vehicle_link(scenario, delete_record_vehicle):
+    s=scenario; source,target,record=s.source.id,s.target.id,s.record.id
+    snapshot='{"description":"Original history remains intact"}'
+    history=m.ServiceRecordAuditLog(tenant_id=s.actors['owner'].tenant_id,service_record_id=record,
+        vehicle_id=target,action='update',previous_snapshot_json=snapshot,new_snapshot_json='{}')
+    s.db.add(history);s.db.commit();history_id=history.id
+    vehicle_id=source if delete_record_vehicle else target
+    preview=s.client.get(f'/admin-api/vehicles/{vehicle_id}/delete-preview').json()
+    assert preview['preserved_history_count']==(0 if delete_record_vehicle else 1)
+    response=s.client.request('DELETE',f'/admin-api/vehicles/{vehicle_id}',
+        json=delete_payload(preview,delete_related=delete_record_vehicle))
+    assert response.status_code==200,response.text
+    s.db.expire_all()
+    assert s.db.get(m.Vehicle,vehicle_id) is None
+    assert s.db.get(m.Vehicle,target if delete_record_vehicle else source)
+    if delete_record_vehicle:
+        assert s.db.get(m.ServiceRecord,record) is None
+        assert s.db.get(m.ServiceRecordAuditLog,history_id) is None
+    else:
+        assert s.db.get(m.ServiceRecord,record).vehicle_id==source
+        retained=s.db.get(m.ServiceRecordAuditLog,history_id)
+        assert retained.vehicle_id==source and retained.previous_snapshot_json==snapshot
+        assert s.db.query(FileErasure).count()==0
+
+
+def test_legacy_orphaned_history_is_included_in_confirmed_vehicle_removal(scenario):
+    s=scenario;vehicle_id=s.target.id
+    history=m.ServiceRecordAuditLog(tenant_id=s.actors['buyer'].tenant_id,service_record_id=999999,
+        vehicle_id=vehicle_id,action='update',previous_snapshot_json='{"description":"Imported history"}')
+    s.db.add(history);s.db.commit();history_id=history.id
+    preview=deletion_preview(s.db,vehicle_id)
+    assert preview['requires_related_confirmation']
+    assert any(item['key']=='service_record_audit_logs' and item['count']==1 for item in preview['items'])
+    response=s.client.request('DELETE',f'/admin-api/vehicles/{vehicle_id}',json=delete_payload(preview))
+    assert response.status_code==200,response.text
+    s.db.expire_all()
+    assert s.db.get(m.ServiceRecordAuditLog,history_id) is None
+    assert s.db.get(m.Vehicle,s.source.id) and s.db.get(m.ServiceRecord,s.record.id)

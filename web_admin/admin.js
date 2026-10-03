@@ -113,7 +113,9 @@ function showSuccess(message) {
 async function apiRequest(method, path, body = null) {
   const session = AdminBrowserSession.snapshot();
   if (method === "DELETE" && /\/(users|services|vehicles|records|reminders|reservations)\/\d+$/.test(path)) {
-    const confirmed = await requestDeletionConfirmation(path);
+    const preview = /\/vehicles\/\d+$/.test(path) ? await apiRequest('GET', path + '/delete-preview') : null;
+    AdminBrowserSession.assertCurrent(session);
+    const confirmed = await requestDeletionConfirmation(path, preview);
     if (!confirmed) throw new Error("Odstranění zrušeno.");
     body = confirmed;
   }
@@ -1487,8 +1489,6 @@ function editRecordFromUserDetail(recordId) {
 }
 
 async function deleteVehicleFromUserDetail(vehicleId, encodedVehicleLabel) {
-  const vehicleLabel = decodeURIComponent(encodedVehicleLabel || '');
-  if (!confirm(`Opravdu chcete smazat vozidlo ${vehicleLabel || '#'+vehicleId}?`)) return;
   try {
     await apiRequest('DELETE', `/admin-api/vehicles/${vehicleId}`);
     showSuccess('Údaj byl upraven adminem: vozidlo smazáno');
@@ -1883,10 +1883,6 @@ async function editVehicle(vehicleId) {
 }
 
 async function deleteVehicle(vehicleId, vehicleName) {
-  if (!confirm(`Opravdu chcete smazat vozidlo ${vehicleName}?`)) {
-    return;
-  }
-  
   try {
     await apiRequest('DELETE', `/admin-api/vehicles/${vehicleId}`);
     showSuccess('Vozidlo bylo smazáno');

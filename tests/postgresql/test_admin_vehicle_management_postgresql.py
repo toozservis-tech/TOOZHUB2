@@ -13,6 +13,8 @@ from sqlalchemy.exc import IntegrityError
 from src.modules.vehicle_hub import models as m
 from src.modules.vehicle_hub.ownership import ensure_vehicle_owner_assignment
 from src.modules.vehicle_hub.vehicle_duplicates import merge_preview, merge_vehicles, duplicate_report
+from src.modules.vehicle_hub.vehicle_deletion import deletion_preview, delete_reviewed_vehicle
+from src.core.file_erasure import FileErasure
 
 
 def upgrade(engine):
@@ -59,6 +61,57 @@ def test_migration_idempotence_legacy_duplicates_and_chained_merge(pg_db):
     # Every SQL writer remains guarded after consolidation, not just the ORM.
     with pytest.raises(IntegrityError), pg_db.engine.begin() as connection:
         connection.execute(insert(m.Vehicle.__table__).values(tenant_id=1,user_email='owner@example.invalid',nickname='Duplicate',vin='TMB JF73T2B9044629'))
+
+
+def test_reviewed_vehicle_delete_with_real_foreign_keys_and_merged_archives(pg_db):
+    ids,admin_id,record_id=fleet(pg_db,copies=3)
+    upgrade(pg_db.engine)
+    with pg_db.sessions() as db:
+        merge=merge_preview(db,ids[0],ids[1])
+        merge_vehicles(db,source_id=ids[0],target_id=ids[1],preview_token=merge['preview_token'],
+            confirmed_identity=True,actor_id=admin_id,reason='Synthetic reviewed merge')
+        db.commit()
+        db.add(m.ServiceRecordAuditLog(tenant_id=1,service_record_id=record_id,vehicle_id=ids[0],
+            action='update',previous_snapshot_json='{}'))
+        db.add(m.VehicleORVScan(tenant_id=1,vehicle_id=ids[0],front_image_path='tenant_1/scan/front.jpg'))
+        db.commit()
+        preview=deletion_preview(db,ids[1])
+        assert any(x['key']=='merged_profiles' and x['count']==1 for x in preview['items'])
+        result=delete_reviewed_vehicle(db,ids[1],preview_token=preview['preview_token'],delete_related=True,
+            actor=db.get(m.Customer,admin_id),reason='Synthetic reviewed removal')
+        db.commit()
+        assert result['files_pending']==1 and db.query(FileErasure).count()==1
+        remaining=db.query(m.Vehicle).execution_options(include_merged_vehicles=True).all()
+        assert [row.id for row in remaining]==[ids[2]]
+        assert db.query(m.ServiceRecord).count()==0 and db.query(m.ServiceRecordAuditLog).count()==0
+        assert db.query(m.VehicleORVScan).count()==0 and db.query(m.VehicleOwnership).count()==1
+        assert db.query(m.Customer).count()==2
+        assert db.query(m.DeveloperActionAuditLog).filter_by(action_type='vehicle.delete').count()==1
+
+
+@pytest.mark.parametrize('delete_record_vehicle', [True, False])
+def test_delete_with_legacy_history_preserves_the_other_vehicle_under_real_foreign_keys(pg_db, delete_record_vehicle):
+    ids,admin_id,record_id=fleet(pg_db,copies=2)
+    upgrade(pg_db.engine)
+    with pg_db.sessions() as db:
+        history=m.ServiceRecordAuditLog(tenant_id=1,service_record_id=record_id,vehicle_id=ids[1],
+            action='update',previous_snapshot_json='{"description":"Preserved original"}')
+        db.add(history);db.commit();history_id=history.id
+        vehicle_id=ids[0] if delete_record_vehicle else ids[1]
+        preview=deletion_preview(db,vehicle_id)
+        assert preview['preserved_history_count']==(0 if delete_record_vehicle else 1)
+        delete_reviewed_vehicle(db,vehicle_id,preview_token=preview['preview_token'],delete_related=delete_record_vehicle,
+            actor=db.get(m.Customer,admin_id),reason='Reviewed synthetic legacy history')
+        db.commit();db.expire_all()
+        assert db.get(m.Vehicle,vehicle_id) is None
+        assert db.get(m.Vehicle,ids[1] if delete_record_vehicle else ids[0])
+        if delete_record_vehicle:
+            assert db.get(m.ServiceRecord,record_id) is None
+            assert db.get(m.ServiceRecordAuditLog,history_id) is None
+        else:
+            assert db.get(m.ServiceRecord,record_id).vehicle_id==ids[0]
+            assert db.get(m.ServiceRecordAuditLog,history_id).vehicle_id==ids[0]
+            assert db.get(m.ServiceRecordAuditLog,history_id).previous_snapshot_json=='{"description":"Preserved original"}'
 
 
 def test_sql_unique_claim_parallel_writers_and_identity_update(pg_db):

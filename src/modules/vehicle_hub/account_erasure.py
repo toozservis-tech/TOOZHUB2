@@ -241,7 +241,7 @@ def erase_account(db, customer) -> dict[str, int]:
     # Keep proof that an administrator acted, while erasing the subject's copied
     # private payload from the new edit/merge audit records too.
     for audit in db.query(m.DeveloperActionAuditLog).filter(m.DeveloperActionAuditLog.action_type.in_(
-        ['vehicle.merge', 'vehicle.update', 'reminder.admin_update', 'reservation.admin_update',
+        ['vehicle.merge', 'vehicle.update', 'vehicle.delete', 'reminder.admin_update', 'reservation.admin_update',
          'service_intake.update', 'service.workshop.update'])):
         payload = json.loads(audit.parameters_json or '{}')
         if account_id in payload.get('affected_customer_ids', []):

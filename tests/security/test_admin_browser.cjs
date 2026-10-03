@@ -31,6 +31,7 @@ async function fixture({policy=true,login=false}={}) {
    '/user/login':{access_token:'synthetic-test-session'},
    '/user/me':{id:1,email:'synthetic-admin@example.invalid',role:'admin'},
    '/admin-api/users':[], '/admin-api/overview':{}, '/admin-api/audit':{logs:[]},
+   '/admin-api/vehicles/21/delete-preview':{vehicle_id:21,title:'Synthetic vehicle',plate:'DEMO',items:[{key:'service_records',label:'Servisní záznamy',count:2}],related_count:2,files_count:0,requires_related_confirmation:true,preview_token:'a'.repeat(64)},
   };
   return route.fulfill({status:200,json:defaults[url.pathname] || {}});
  });
@@ -194,6 +195,36 @@ test('deletion confirmed after session change is cancelled before any mutation',
   return await operation;
  });
  assert.equal(result,'AbortError');assert.equal(f.requests.filter(r=>r.method==='DELETE').length,0);
+ }finally{await f.context.close();}
+});
+
+test('vehicle deletion displays related records and requires explicit scope confirmation',async()=>{
+ const f=await fixture();try{
+ let submitted;
+ await f.page.route('**/admin-api/vehicles/21',route=>{submitted=route.request().postDataJSON();return route.fulfill({json:{message:'Synthetic deletion completed'}});});
+ await f.page.evaluate(()=>{window.deletionOperation=apiRequest('DELETE','/admin-api/vehicles/21');});
+ await f.page.locator('#delete-related').waitFor({state:'visible'});
+ assert.match(await f.page.locator('.admin-delete-dialog').textContent(),/Servisní záznamy: 2/);
+ await f.page.locator('#delete-reason').fill('Synthetic reviewed removal');
+ await f.page.locator('#delete-confirm').fill('ODSTRANIT');
+ await f.page.getByRole('button',{name:'Odstranit vozidlo i záznamy',exact:true}).click();
+ assert.equal(submitted,undefined);
+ await f.page.locator('#delete-related').check();
+ await f.page.getByRole('button',{name:'Odstranit vozidlo i záznamy',exact:true}).click();
+ await f.page.evaluate(()=>window.deletionOperation);
+ assert.equal(submitted.delete_related,true);assert.equal(submitted.preview_token,'a'.repeat(64));
+ assert.equal(submitted.confirmation,'ODSTRANIT');assert.deepEqual(f.errors,[]);
+ }finally{await f.context.close();}
+});
+
+test('cancelled vehicle dependency review sends no deletion',async()=>{
+ const f=await fixture();try{
+ await f.page.evaluate(()=>{window.deletionOperation=apiRequest('DELETE','/admin-api/vehicles/21').catch(()=>null);});
+ await f.page.locator('#delete-related').waitFor({state:'visible'});
+ await f.page.locator('#delete-related').check();
+ await f.page.locator('#delete-cancel').click();
+ await f.page.evaluate(()=>window.deletionOperation);
+ assert.equal(f.requests.filter(r=>r.method==='DELETE').length,0);assert.deepEqual(f.errors,[]);
  }finally{await f.context.close();}
 });
 

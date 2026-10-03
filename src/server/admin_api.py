@@ -1650,6 +1650,8 @@ class StorageCleanupRequest(BaseModel):
 class AdminDeleteRequest(BaseModel):
     reason: str
     confirmation: str
+    delete_related: bool = False
+    preview_token: Optional[str] = Field(default=None, min_length=64, max_length=64)
 
 
 def delete_admin_resource(resource: str, resource_id: int, payload: AdminDeleteRequest,
@@ -1678,18 +1680,20 @@ def delete_admin_resource(resource: str, resource_id: int, payload: AdminDeleteR
             raise HTTPException(status_code=403, detail="Hlavního správce smí spravovat pouze hlavní správce.")
         if customer_is_deleted(row):
             raise HTTPException(status_code=409, detail="Účet je již archivovaný.")
-    # Do not cascade into unreviewed child data. Ownership links can be removed with an empty vehicle.
     if model is Vehicle:
-        inspector = inspect(db.bind)
-        for table in inspector.get_table_names():
-            if table == "vehicle_ownerships":
-                continue
-            for fk in inspector.get_foreign_keys(table):
-                if fk.get("referred_table") == "vehicles" and fk.get("referred_columns") == ["id"]:
-                    column = fk["constrained_columns"][0]
-                    count = db.execute(text(f'SELECT COUNT(*) FROM "{table}" WHERE "{column}" = :id'), {"id": row.id}).scalar()
-                    if count:
-                        raise HTTPException(status_code=409, detail="Vozidlo má navázané záznamy. Nejprve odstraňte jeho záznamy, rezervace a připomínky; historické vazby mohou vyžadovat archivaci vozidla.")
+        from src.modules.vehicle_hub.vehicle_deletion import delete_reviewed_vehicle
+        try:
+            result = delete_reviewed_vehicle(db, row.id, preview_token=payload.preview_token,
+                delete_related=payload.delete_related, actor=actor, reason=reason, request_ip=get_client_ip(request))
+            db.commit()
+            return result
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as error:
+            db.rollback()
+            report_exception(error)
+            raise HTTPException(409, "Odstranění se neprovedlo. Data zůstala zachována; obnovte přehled a zkuste to znovu.") from None
     # Move record-specific history into the immutable deletion audit before removing its FK target.
     record_history = []
     if model is ServiceRecord and inspect(db.bind).has_table("service_record_audit_logs"):
@@ -3262,6 +3266,12 @@ def get_vehicle_detail_admin(vehicle_id: int, email: str = Depends(require_devel
         result[model.__tablename__] = [snapshot(row) for row in rows]
     result["merged_profiles"] = [snapshot(row) for row in db.query(Vehicle).execution_options(include_merged_vehicles=True).filter_by(merged_into_id=vehicle_id)]
     return result
+
+
+@router.get("/vehicles/{vehicle_id}/delete-preview")
+def get_vehicle_deletion_preview(vehicle_id: int, email: str = Depends(require_developer_admin), db: Session = Depends(get_db)):
+    from src.modules.vehicle_hub.vehicle_deletion import deletion_preview
+    return deletion_preview(db, vehicle_id)
 
 
 @router.post("/vehicles")
