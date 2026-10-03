@@ -2176,7 +2176,7 @@ def get_user_vehicles(
             {_primary_owner_join_sql(vehicle_alias="v", selector_alias="uvo_primary", ownership_alias="uvo", owner_alias="owner_customer")}
             WHERE uvo.customer_id = :user_id
               AND uvo.is_active = TRUE
-            WHERE v.merged_into_id IS NULL
+              AND v.merged_into_id IS NULL
             GROUP BY v.id, owner_customer.email, v.user_email, v.nickname, v.brand, v.model, v.year, v.plate, v.vin, v.created_at
             ORDER BY v.created_at DESC
         """), {"user_id": user_id})

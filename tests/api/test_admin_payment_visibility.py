@@ -321,8 +321,15 @@ def test_admin_vehicle_views_use_vehicle_ownership_source_of_truth(db_session):
         owner=owner,
         vehicle_id=3000,
         legacy_user_email="stale-legacy@example.com",
-        nickname="Ownership Admin Vehicle",
+    nickname="Ownership Admin Vehicle",
     )
+
+    merged = _seed_owned_vehicle(
+        db_session, tenant_id=owner.tenant_id, owner=owner, vehicle_id=3001,
+        legacy_user_email=owner.email, nickname="Merged duplicate",
+    )
+    merged.merged_into_id = vehicle.id
+    db_session.flush()
 
     user_vehicles = admin_api.get_user_vehicles(
         user_id=owner.id,
@@ -347,6 +354,11 @@ def test_admin_vehicle_views_use_vehicle_ownership_source_of_truth(db_session):
 
 def test_admin_update_vehicle_reassigns_primary_owner_via_ownership(db_session):
     old_owner = _seed_user_with_license(db_session, tenant_id=31, user_id=310, email="old-owner@example.com")
+    # The HTTP dependency always supplies an existing, verified administrator.
+    # Direct function tests must provide that same actor for the immutable audit.
+    admin = Customer(id=312, tenant_id=31, email="developer@example.com",
+                     password_hash="hash", role="developer_admin", name="Administrator")
+    db_session.add(admin)
     new_owner = Customer(
         id=311,
         tenant_id=31,
