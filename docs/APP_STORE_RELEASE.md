@@ -16,7 +16,7 @@ Poslední přímé ověření: **3. 10. 2026**. iOS předplatné používá Appl
 
 ## Předplatné — vytvořené produkty a zbývající nastavení
 
-Existuje **jedna skupina 22431514** SprávaVozidel. Premium je úroveň 1, Basic úroveň 2; měsíční a roční varianta stejného plánu mají shodnou úroveň. Family Sharing je vypnuté a není implementované.
+Existuje **jedna skupina 22431514** SprávaVozidel. Premium je úroveň 1, Basic úroveň 2; měsíční a roční varianta stejného plánu mají shodnou úroveň. Family Sharing je vypnuté a není implementované. Vícemístné nákupy jsou vypnuté. Roční produkt znamená zaplacení celého roku předem; měsíční splátky s ročním závazkem nejsou nastavené. **Streamlined Purchasing je stále Turned On.** Přímý Edit v současném stavu změnu nezpřístupnil. Apple pro vypnutí požaduje poslední schválenou sestavu s příslušnými StoreKit API (`PurchaseIntent`); zatím není schválená žádná sestava a současný zdroj tento příjem nákupního záměru nemá. Před aktivací vyřešit bezpečný vstup přes přihlášený účet a dostupné vypnutí nákupů mimo aplikaci. Propagace a externí nabídky se zatím nenastavují. [Pravidla Applu](https://developer.apple.com/help/app-store-connect/manage-subscriptions/manage-streamlined-purchasing).
 
 | Produkt | Apple ID | Období | Úroveň |
 | --- | --- | --- | --- |
