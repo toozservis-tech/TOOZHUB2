@@ -174,6 +174,26 @@ def test_disabled_config_never_contacts_apple(monkeypatch):
     assert exc.value.status_code == 503
 
 
+def test_real_apple_sdk_accepts_private_key_from_environment_text(monkeypatch):
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+    import requests
+
+    # Generated test-only key; never use credentials or contact Apple's API here.
+    private_key = ec.generate_private_key(ec.SECP256R1()).private_bytes(
+        Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode("utf-8")
+    cfg = store.AppleConfig("fixture.bundle", 123456, "fixture-group", Environment.PRODUCTION,
+                            "fixture-key", str(uuid4()), private_key)
+    monkeypatch.setattr(requests.Session, "request", lambda *_a, **_k: pytest.fail("Must remain offline"))
+    store.apple_services.cache_clear()
+    try:
+        verifier, client = store.apple_services(cfg)
+        assert isinstance(verifier, SignedDataVerifier)
+        assert isinstance(client, store.AppStoreServerAPIClient)
+    finally:
+        store.apple_services.cache_clear()
+
+
 def test_pending_web_checkout_prevents_a_second_apple_charge(setup):
     db, user, *_ = setup
     db.add(LicensePaymentTransaction(tenant_id=user.tenant_id, provider="comgate", provider_status="PENDING"))

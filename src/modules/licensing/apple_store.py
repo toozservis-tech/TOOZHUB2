@@ -63,7 +63,8 @@ def apple_services(cfg):
     if not roots:
         raise HTTPException(503, "Ověření App Storu není dostupné.")
     verifier = SignedDataVerifier(roots, True, cfg.environment, cfg.bundle_id, cfg.app_id)
-    client = AppStoreServerAPIClient(cfg.private_key, cfg.key_id, cfg.issuer_id, cfg.bundle_id, cfg.environment)
+    # The official Python SDK parses PEM bytes, while environment variables are text.
+    client = AppStoreServerAPIClient(cfg.private_key.encode("utf-8"), cfg.key_id, cfg.issuer_id, cfg.bundle_id, cfg.environment)
     return verifier, client
 
 
