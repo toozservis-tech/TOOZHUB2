@@ -3457,7 +3457,8 @@ def get_all_records(
                 v.model as vehicle_model,
                 v.plate as vehicle_plate,
                 c.email as user_email,
-                c.name as user_name
+                c.name as user_name,
+                COALESCE(sr.is_deleted, FALSE) as is_deleted
             FROM service_records sr
             LEFT JOIN vehicles v ON v.id = sr.vehicle_id
             LEFT JOIN customers c ON c.id = sr.user_id
@@ -3499,7 +3500,8 @@ def get_all_records(
                 "vehicle_model": row[12],
                 "vehicle_plate": row[13],
                 "user_email": row[14],
-                "user_name": row[15]
+                "user_name": row[15],
+                "is_deleted": bool(row[16])
             })
         
         # Celkový počet

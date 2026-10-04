@@ -77,6 +77,11 @@ def test_reviewed_merge_preserves_owner_privacy_and_archives_source(scenario):
     assert s.client.get('/admin-api/vehicles/duplicates').json()['total']==0
     assert s.db.query(m.DeveloperActionAuditLog).filter_by(action_type='vehicle.merge').count()==1
     s.actor=s.actors['buyer']
+    # Exercise prior-owner privacy with a plan that can actually read history.
+    from src.modules.licensing.service import get_or_create_license
+    license = get_or_create_license(s.db, s.actor.tenant_id)
+    license.plan = 'basic'; license.status = 'active'; license.valid_to = None
+    s.db.commit()
     visible=s.client.get(f'/api/v1/vehicles/{s.target.id}/records').json()
     assert visible[0]['description']!='Private original work' and visible[0].get('attachments') is None
     assert s.client.get(f'/api/v1/vehicles/{s.target.id}/records/attachments/download?key=tenant_2/vehicle_{s.source.id}/private.pdf').status_code==403
@@ -320,3 +325,18 @@ def test_legacy_orphaned_history_is_included_in_confirmed_vehicle_removal(scenar
     s.db.expire_all()
     assert s.db.get(m.ServiceRecordAuditLog,history_id) is None
     assert s.db.get(m.Vehicle,s.source.id) and s.db.get(m.ServiceRecord,s.record.id)
+
+
+def test_admin_history_identifies_archived_records_without_restoring_them(scenario):
+    s = scenario
+    s.record.is_deleted = True
+    s.db.commit()
+    page = s.client.get('/admin-api/records')
+    assert page.status_code == 200
+    archived = next(row for row in page.json()['records'] if row['id'] == s.record.id)
+    assert archived['is_deleted'] is True
+    active = s.client.get(f'/api/v1/vehicles/{s.source.id}/records')
+    assert active.status_code == 200 and active.json() == []
+    assert s.db.get(m.ServiceRecord, s.record.id).is_deleted is True
+    detail = s.client.get(f'/admin-api/vehicles/{s.source.id}/detail')
+    assert detail.status_code == 200 and len(detail.json()['service_records']) == 1
