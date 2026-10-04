@@ -969,7 +969,7 @@ def get_services_discovery(
             }
         )
 
-    rows.sort(key=lambda item: (item["distance_km"] is None, item["distance_km"] or 10**9, (item.get("name") or "").lower()))
+    rows.sort(key=lambda item: (item["distance_km"] is None, item["distance_km"] if item["distance_km"] is not None else 10**9, (item.get("name") or "").lower()))
 
     return {
         "meta": {

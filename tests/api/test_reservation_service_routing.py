@@ -217,3 +217,53 @@ def test_legacy_admin_invitation_cannot_restore_wrong_service_contact(state, mon
             invitation_id=invitation.id, decision='accept'), current_user=s.owner, db=s.db)
     assert error.value.status_code == 409
     assert invitation.status == 'pending'
+
+
+def test_separate_workshop_is_discoverable_without_publishing_registered_office(state, monkeypatch):
+    s = state
+    s.service.street = 'Virtualni'; s.service.city = 'Praha'; s.service.zip = '11000'
+    payload = services.WorkshopAddressInput(workshop_same_as_registered=False,
+        workshop_street='Skutecna', workshop_street_number='12', workshop_city='Olomouc', workshop_zip='77900')
+    services.update_workshop(s.service.id, payload, current_user=s.service, db=s.db)
+    seen = []
+    def geocode(address):
+        seen.append(address)
+        return {'lat':49.75, 'lon':16.47}
+    monkeypatch.setattr(services, '_geocode_address', geocode)
+    monkeypatch.setattr(services, '_SERVICE_GEO_CACHE', {})
+    row = next(row for row in services.get_services_discovery(request(), current_user=s.owner, db=s.db)['services'] if row['id'] == s.service.id)
+    assert row['city'] == 'Olomouc' and row['street'] == 'Skutecna'
+    assert seen and all('Praha' not in value and 'Virtualni' not in value for value in seen)
+    assert s.db.get(Customer, s.service.id).city == 'Praha'
+    for actor in [s.owner, s.other_service]:
+        with pytest.raises(HTTPException) as error:
+            services.get_workshop(s.service.id, current_user=actor, db=s.db)
+        assert error.value.status_code == 403
+        with pytest.raises(HTTPException) as error:
+            services.update_workshop(s.service.id, payload, current_user=actor, db=s.db)
+        assert error.value.status_code == 403
+    assert services.get_workshop(s.service.id, current_user=s.admin, db=s.db)['registered']['city'] == 'Praha'
+
+
+def test_confirmed_identical_workshop_uses_registered_address_and_nearest_zero_distance_sorts_first(state, monkeypatch):
+    s = state
+    for service, street, city in [(s.service, 'Blizka', 'Svitavy'), (s.other_service, 'Daleka', 'Olomouc')]:
+        service.street = street; service.city = city; service.zip = '56802'
+        services.update_workshop(service.id, services.WorkshopAddressInput(workshop_same_as_registered=True), current_user=service, db=s.db)
+    monkeypatch.setattr(services, '_SERVICE_GEO_CACHE', {})
+    monkeypatch.setattr(services, '_geocode_address', lambda address: {'lat':49.75 if 'Blizka' in address else 50.0, 'lon':16.47})
+    rows = services.get_services_discovery(request(), current_user=s.owner, db=s.db)['services']
+    assert [row['id'] for row in rows] == [s.service.id, s.other_service.id]
+    assert rows[0]['distance_km'] == 0
+    assert rows[0]['street'] == 'Blizka' and rows[1]['distance_km'] > 0
+
+
+def test_unconfirmed_workshop_does_not_use_virtual_office_for_distance(state, monkeypatch):
+    s = state
+    s.service.street = 'Virtualni'; s.service.city = 'Praha'; s.service.zip = '11000'
+    s.db.commit()
+    seen = []
+    monkeypatch.setattr(services, '_geocode_address', lambda address: seen.append(address))
+    row = services.get_services_discovery(request(), current_user=s.owner, db=s.db)['services'][0]
+    assert row['distance_km'] is None and row['city'] is None and row['street'] is None
+    assert row['location_confirmed'] is False and seen == []
