@@ -37,8 +37,9 @@ api_router.include_router(analytics.router)  # Náklady, kategorie, měsíční 
 api_router.include_router(service_intake.router)
 api_router.include_router(repair_photos.router)
 api_router.include_router(reservations.router)
-api_router.include_router(reminders.router)
+# Static settings must precede /reminders/{reminder_id}, particularly for PUT.
 api_router.include_router(reminder_settings.router)  # Nastavení připomínek
+api_router.include_router(reminders.router)
 api_router.include_router(services.router)
 api_router.include_router(service_workspace.router)  # Servisní centrum (klienti + doklady)
 api_router.include_router(ai.router)
