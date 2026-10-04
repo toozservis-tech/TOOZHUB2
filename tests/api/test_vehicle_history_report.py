@@ -34,7 +34,7 @@ def text_of(pdf):return '\n'.join(page.extract_text() for page in PdfReader(Byte
 def test_unicode_fonts_and_document_brand_are_preserved():
     pdf=build([record()],points())
     text=text_of(pdf)
-    for value in ['SprávaVozidel','Historie vozidla','ŠKODA SUPERB','Příliš žluťoučký kůň úpěl ďábelské ódy.','Řízení, čepy','0,00 Kč','0 km','22. 04. 2028']:
+    for value in ['Evidence Vozidel','Historie vozidla','ŠKODA SUPERB','Příliš žluťoučký kůň úpěl ďábelské ódy.','Řízení, čepy','0,00 Kč','0 km','22. 04. 2028']:
         assert value in text
     assert '\u25a0' not in text and '\ufffd' not in text
     fonts=[font.get_object() for page in PdfReader(BytesIO(pdf)).pages for font in page['/Resources']['/Font'].values()]

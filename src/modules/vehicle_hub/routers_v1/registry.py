@@ -1,5 +1,5 @@
 """
-API router registration for SprávaVozidel (API v1).
+API router registration for Evidence Vozidel (API v1).
 Všechny endpointy pod prefixem /api/v1/
 """
 from fastapi import APIRouter

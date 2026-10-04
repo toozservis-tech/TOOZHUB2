@@ -1,6 +1,6 @@
 @echo off
 if not "%1"=="min" start /min cmd /c "%~0" min & exit
-title Správa vozidel - Tray Manager
+title Evidence Vozidel - Tray Manager
 color 0A
 cls
 echo ========================================

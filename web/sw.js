@@ -21,12 +21,12 @@ self.addEventListener('push', (event) => {
     payload = event.data ? event.data.json() : {};
   } catch (error) {
     payload = {
-      title: 'SprávaVozidel',
+      title: 'Evidence Vozidel',
       body: event.data ? event.data.text() : 'Nová notifikace',
     };
   }
 
-  const title = payload.title || 'SprávaVozidel';
+  const title = payload.title || 'Evidence Vozidel';
   const options = {
     body: payload.body || 'Máte nové upozornění.',
     icon: sameOriginURL(payload.icon, '/web/assets/toozservis-logo-icon.png'),

@@ -1,4 +1,4 @@
-/* SprávaVozidel administration: shared workspace, responsive lists and dialogs. */
+/* Evidence Vozidel administration: shared workspace, responsive lists and dialogs. */
 :root{--ink:#172e35;--muted:#62777e;--line:#dbe5e5;--paper:#f2f6f5;--accent:#126b61;--nav:#102c32;--radius:16px}
 body{background:var(--paper);color:var(--ink);font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px}
 button,input,select,textarea{font:inherit}button{min-height:38px}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #36ad9b;outline-offset:3px}

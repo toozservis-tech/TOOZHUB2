@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Správa vozidel – System Tray Manager
+Evidence Vozidel – System Tray Manager
 Zobrazuje stav serveru v systémové liště a umožňuje rychlý restart serveru nebo tunelu.
 """
 
@@ -31,7 +31,7 @@ except ImportError as e:
 # =============================================================================
 
 PROJECT_NAME = "sprava-vozidel"
-TRAY_APP_NAME = "Správa vozidel – tray"
+TRAY_APP_NAME = "Evidence Vozidel – tray"
 TRAY_SHORTCUT_NAME = "SpravaVozidel_tray.lnk"
 
 # URL konfigurace

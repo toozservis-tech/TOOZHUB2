@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Správa vozidel – izolovaná tray aplikace
+Evidence Vozidel – izolovaná tray aplikace
 Samostatná tray ikonka pro monitorování a správu serveru.
 """
 
@@ -30,7 +30,7 @@ except ImportError as e:
 # KONFIGURACE
 # =============================================================================
 
-APP_NAME = "Správa vozidel"
+APP_NAME = "Evidence Vozidel"
 HEALTH_URL = "http://127.0.0.1:8000/health"
 OPEN_URL = "https://hub.toozservis.cz/web/index.html"
 CHECK_INTERVAL = 3  # sekundy

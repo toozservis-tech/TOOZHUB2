@@ -111,8 +111,8 @@ def check_purchase_account(payload: SignedTransaction,
     owner_token = previous.account_token if previous else signed_token
     allowed = owner_token == identity.token
     return dict(can_purchase=allowed, message=None if allowed else (
-        "Tento účet Apple již používá předplatné jiného účtu SprávaVozidel. "
-        "Přihlaste se k původnímu účtu SprávaVozidel, nebo použijte jiný účet Apple. "
+        "Tento účet Apple již používá předplatné jiného účtu Evidence Vozidel. "
+        "Přihlaste se k původnímu účtu Evidence Vozidel, nebo použijte jiný účet Apple. "
         "Žádný nový nákup nebyl zahájen."
     ))
 

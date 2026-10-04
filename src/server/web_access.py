@@ -39,7 +39,7 @@ def require_web_admin(token, db):
     if str(payload.get('sv', 0)) != str(customer_session_version(user)):
         raise HTTPException(401, 'Přihlášení již není platné.')
     if user.role not in {'admin', 'developer_admin'}:
-        raise HTTPException(403, 'Webové rozhraní je dostupné pouze administrátorům. Použijte aplikaci SprávaVozidel.')
+        raise HTTPException(403, 'Webové rozhraní je dostupné pouze administrátorům. Použijte aplikaci Evidence Vozidel.')
     if pending_verification(db, user.id):
         raise HTTPException(403, 'Nejprve ověřte svou e-mailovou adresu v aplikaci.')
     from src.core.mfa import require_admin_assurance

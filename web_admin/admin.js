@@ -499,7 +499,7 @@ function initNavigation() {
   const title = document.querySelector(`.nav-item[data-section="${section}"] .nav-text`)?.textContent || section;
   const breadcrumb = document.getElementById('workspace-section-name');
   if (breadcrumb) breadcrumb.textContent = title;
-  document.title = `${title} · SprávaVozidel`;
+  document.title = `${title} · Evidence Vozidel`;
   history.replaceState(null, '', '#' + section);
       loadSectionData(section);
     }
@@ -585,7 +585,7 @@ function switchSection(section) {
   const title = document.querySelector(`.nav-item[data-section="${section}"] .nav-text`)?.textContent || section;
   const breadcrumb = document.getElementById('workspace-section-name');
   if (breadcrumb) breadcrumb.textContent = title;
-  document.title = `${title} · SprávaVozidel`;
+  document.title = `${title} · Evidence Vozidel`;
   history.replaceState(null, '', '#' + section);
   if (section !== 'control-center') {
     closeAllControlCenterDetails();
