@@ -13,11 +13,12 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
 from email import encoders
+from email.utils import formataddr, parseaddr
 from typing import Optional, List
 from pathlib import Path
 from dataclasses import dataclass
 
-from src.core.branding import APP_DISPLAY_NAME
+from src.core.branding import APP_DISPLAY_NAME, canonical_display_name
 from src.core.private_errors import report_exception
 from src.core.config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
 from src.modules.email_client.templates import build_app_url, render_email_layout, render_panel
@@ -57,6 +58,12 @@ class EmailService:
         else:
             self.password = None
         self.from_email = os.getenv("EMAIL_FROM", from_email)
+        # Keep the verified sender address; update a legacy app display label only.
+        if self.from_email:
+            display_name, sender_address = parseaddr(self.from_email)
+            updated_name = canonical_display_name(display_name)
+            if updated_name != display_name and sender_address:
+                self.from_email = formataddr((updated_name, sender_address))
         self.resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
     
     def is_configured(self) -> bool:

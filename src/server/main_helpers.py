@@ -54,7 +54,7 @@ try:
     UPDATE_INFO = __update_info__
 except ImportError:
     APP_VERSION = "1.0.0"
-    APP_VERSION_NAME = "Správa vozidel 1.0.0"
+    APP_VERSION_NAME = "Evidence Vozidel 1.0.0"
     BUILD_DATE = "2025-01-27"
     UPDATE_INFO = "Aktualizace s vizuálními úpravami a vylepšeními"
 
@@ -631,7 +631,7 @@ Detaily:
                 ),
             ],
             accent="#f59e0b",
-            footer_note="Interní oznámení pro tým Správa vozidel.",
+            footer_note="Interní oznámení pro tým Evidence Vozidel.",
         )
 
         message = EmailMessage(

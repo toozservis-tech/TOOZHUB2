@@ -8,7 +8,20 @@ vars, GitHub repo slug) may still use legacy tokens until a compatibility
 refactor — see TECHNICAL_RENAME_BACKLOG.md.
 """
 
-APP_DISPLAY_NAME = "SprávaVozidel"
+APP_DISPLAY_NAME = "Evidence Vozidel"
+
+# Recognize persisted display labels without changing identifiers or addresses.
+LEGACY_APP_DISPLAY_NAMES = frozenset({
+    "SprávaVozidel", "SpravaVozidel", "Správa Vozidel", "Správa vozidel",
+})
+
+
+def canonical_display_name(value):
+    """Upgrade the former default name while preserving custom admin labels."""
+    if isinstance(value, str) and value.strip() in LEGACY_APP_DISPLAY_NAMES:
+        return APP_DISPLAY_NAME
+    return value
+
 APP_DISPLAY_NAME_GENITIVE = APP_DISPLAY_NAME
 APP_API_DISPLAY_NAME = f"{APP_DISPLAY_NAME} API"
 APP_SUPPORT_DISPLAY_NAME = f"{APP_DISPLAY_NAME} Podpora"

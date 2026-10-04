@@ -31,7 +31,7 @@ def scenario(pg_db, monkeypatch):
     db.add(car); db.flush(); ensure_vehicle_owner_assignment(db, vehicle=car, owner=owner); db.commit()
     sent = []
     class FakeMail:
-        from_email = 'SprávaVozidel <support@example.com>'
+        from_email = 'Evidence Vozidel <support@example.com>'
         def is_configured(self): return True
         def send_simple_email(self, **kwargs): sent.append(kwargs); return True
     monkeypatch.setattr(mail, 'EmailService', FakeMail)

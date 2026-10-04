@@ -18,6 +18,7 @@ def test_resend_support_message_has_authenticated_reply_address(monkeypatch):
     monkeypatch.setenv('EMAIL_FROM', 'SprávaVozidel <support@example.com>')
     monkeypatch.setenv('RESEND_API_KEY', 'synthetic-not-a-real-key')
     sender = mail.EmailService(host='', username='', password='', from_email='')
+    assert sender.from_email == 'Evidence Vozidel <support@example.com>'
     assert sender.is_configured()
     assert sender.send_simple_email(to='support@example.com', subject='Synthetic support',
         body='Synthetic request', html_body='<p>Synthetic request</p>', reply_to='user@example.com')

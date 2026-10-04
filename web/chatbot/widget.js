@@ -17,7 +17,7 @@
     'Otevírací doba':'Na webu je uvedeno Po–Pá 8:00–17:00 a So 9:00–15:00. Před návštěvou doporučujeme domluvit termín telefonicky.',
     'Ceny':'Aktuální ceník najdete na www.toozservis.cz/cenik/. Přesnou cenu opravy servis potvrdí podle vozidla, rozsahu práce a dílů.',
     'Služby':'Servis nabízí diagnostiku, pneuservis, výměnu oleje, servis brzd a podvozku, přípravu na STK a další opravy. Podrobnosti najdete na www.toozservis.cz/sluzby/.',
-    'SprávaVozidel':'Vozidla a servisní historii spravujete v mobilní aplikaci SprávaVozidel. Potřebujete-li pomoc s účtem nebo přístupem, kontaktujte info@toozservis.cz. Heslo ani jiné přihlašovací údaje sem nevkládejte.'
+    'Evidence Vozidel':'Vozidla a servisní historii spravujete v mobilní aplikaci Evidence Vozidel. Potřebujete-li pomoc s účtem nebo přístupem, kontaktujte info@toozservis.cz. Heslo ani jiné přihlašovací údaje sem nevkládejte.'
   };
   function add(text,user=false){const el=document.createElement('div');el.className='message'+(user?' user':'');el.textContent=text;messages.append(el);while(messages.children.length>60)messages.firstChild.remove();messages.scrollTop=messages.scrollHeight;}
   function normalize(t){return t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}
@@ -25,7 +25,7 @@
     if(/objedn|termin|rezerv/.test(n))key='Objednání';
     else if(/otevir|otevren|pracovni doba|sobot|kdy mate/.test(n))key='Otevírací doba';
     else if(/cena|ceny|cenik|kolik|stoji/.test(n))key='Ceny';
-    else if(/aplik|heslo|ucet|prihlas|spravavozidel/.test(n))key='SprávaVozidel';
+    else if(/aplik|heslo|ucet|prihlas|spravavozidel|evidence vozidel|evidencevozidel/.test(n))key='Evidence Vozidel';
     else if(/kde|adres|kontakt|telefon|mail|najdu/.test(n))key='Kontakt a adresa';
     else if(/sluzb|olej|brzd|pneu|stk|diagnost|oprav/.test(n))key='Služby';
     add(key?answers[key]:'Na tento dotaz nemám spolehlivou automatickou odpověď. Zavolejte nám na +420 731 552 299 nebo napište na info@toozservis.cz. Technickou závadu musí posoudit servis.');

@@ -1873,7 +1873,7 @@ def create_comgate_checkout(
         "price": str(price),
         "curr": str(cfg["currency"]),
         "label": f"SV {plan.upper()}",
-        "name": f"SprávaVozidel {plan.upper()} {effective_billing_period}",
+        "name": f"{APP_DISPLAY_NAME} {plan.upper()} {effective_billing_period}",
         "delivery": "ELECTRONIC_DELIVERY",
         "category": "OTHER",
         "refId": ref_id,

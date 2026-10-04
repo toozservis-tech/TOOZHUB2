@@ -1,6 +1,6 @@
 /**
  * Security Protection - Anti-debugging a ochrana proti odcizení kódu
- * SprávaVozidel - Proprietary Software
+ * Evidence Vozidel - Proprietary Software
  * Copyright (c) 2025 TooZ Servis - All Rights Reserved
  */
 
@@ -153,7 +153,7 @@
             z-index: 9999;
             font-family: monospace;
         `;
-        watermark.textContent = 'SprávaVozidel - Proprietary Software © 2025 TooZ Servis';
+        watermark.textContent = 'Evidence Vozidel - Proprietary Software © 2025 TooZ Servis';
         document.body.appendChild(watermark);
     }
     
@@ -183,7 +183,7 @@
 
 
 
- * SprávaVozidel - Proprietary Software
+ * Evidence Vozidel - Proprietary Software
  * Copyright (c) 2025 TooZ Servis - All Rights Reserved
  */
 
@@ -336,7 +336,7 @@
             z-index: 9999;
             font-family: monospace;
         `;
-        watermark.textContent = 'SprávaVozidel - Proprietary Software © 2025 TooZ Servis';
+        watermark.textContent = 'Evidence Vozidel - Proprietary Software © 2025 TooZ Servis';
         document.body.appendChild(watermark);
     }
     

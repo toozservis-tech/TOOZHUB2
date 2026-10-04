@@ -115,7 +115,7 @@ def assert_account_owner(db, identity):
         AppleSubscription.access_until > datetime.utcnow(),
     ).first()
     if other:
-        raise HTTPException(409, "Organizace již má předplatné propojené s jiným účtem SprávaVozidel.")
+        raise HTTPException(409, "Organizace již má předplatné propojené s jiným účtem Evidence Vozidel.")
 
 
 def timestamp(value):
@@ -132,13 +132,13 @@ def check_transaction(tx, cfg, account_token=None):
         or tx.productId not in PRODUCTS or tx.subscriptionGroupIdentifier != cfg.group_id
         or tx.type != "Auto-Renewable Subscription" or tx.inAppOwnershipType != "PURCHASED"
         or not tx.originalTransactionId or not tx.transactionId):
-        raise HTTPException(400, "Nákup nepatří k tomuto předplatnému SprávaVozidel.")
+        raise HTTPException(400, "Nákup nepatří k tomuto předplatnému Evidence Vozidel.")
     try:
         token = str(UUID(tx.appAccountToken or ""))
     except ValueError:
-        raise HTTPException(403, "Nákup není propojený s účtem SprávaVozidel.") from None
+        raise HTTPException(403, "Nákup není propojený s účtem Evidence Vozidel.") from None
     if account_token and token != account_token:
-        raise HTTPException(403, "Nákup patří jinému účtu SprávaVozidel.")
+        raise HTTPException(403, "Nákup patří jinému účtu Evidence Vozidel.")
     return token
 
 

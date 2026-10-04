@@ -22,7 +22,7 @@ import string
 
 from src.core.private_errors import report_exception
 from src.core.auth import get_current_user_email, security
-from src.core.branding import APP_DISPLAY_NAME
+from src.core.branding import APP_DISPLAY_NAME, canonical_display_name
 from src.core.rbac import is_admin, is_developer_admin
 from src.core.security import hash_password
 from src.core.config import (
@@ -1326,6 +1326,8 @@ def load_admin_settings() -> Dict[str, Dict[str, Dict[str, Any]]]:
             if not isinstance(payload, dict):
                 continue
             value = payload.get("value")
+            if category == "general" and key == "app_name":
+                value = canonical_display_name(value)
             default_payload = merged.get(category, {}).get(key, {})
             value_type = payload.get("value_type") or default_payload.get("value_type") or infer_setting_value_type(value)
             description = payload.get("description", default_payload.get("description"))

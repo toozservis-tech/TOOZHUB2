@@ -1742,7 +1742,7 @@
         async function sendPushTestNotification() {
             try {
                 const response = await apiCall('/api/v1/push/test', 'POST', {
-                    title: 'SprávaVozidel',
+                    title: 'Evidence Vozidel',
                     body: 'Test push notifikace je doručena.'
                 });
                 const sent = Number(response?.result?.sent || 0);
@@ -10276,7 +10276,7 @@
                                 class="btn btn-secondary"
                                 ${legacyActionAttributes("click", "openManagedServiceVehicleAccess_d8cf6829", Number(service?.id || 0))}
                             >
-                                SprávaVozidel
+                                Evidence Vozidel
                             </button>
                             <button
                                 type="button"

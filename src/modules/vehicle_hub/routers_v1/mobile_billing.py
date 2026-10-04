@@ -4,6 +4,8 @@ import hashlib
 from typing import Literal
 from uuid import UUID
 
+from src.core.branding import APP_DISPLAY_NAME
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -87,7 +89,7 @@ def _quote(payload, user, db):
 def catalog(request: Request, current_user: Customer = Depends(get_current_user)):
     cfg = billing._load_comgate_config()
     base = billing._request_backend_public_url(request)
-    return dict(app_name="SprávaVozidel", enabled=cfg["configured"], test_mode=cfg["test_mode"],
+    return dict(app_name=APP_DISPLAY_NAME, enabled=cfg["configured"], test_mode=cfg["test_mode"],
         currency=cfg["currency"], contract_version=CONTRACT_VERSION, seller=SELLER,
         delivery="Digitální služba bez dopravy. Tarif se aktivuje po potvrzení úhrady.",
         documents=[dict(title=title, url=f"{base}/web/{filename}") for title, filename in DOCUMENTS],
