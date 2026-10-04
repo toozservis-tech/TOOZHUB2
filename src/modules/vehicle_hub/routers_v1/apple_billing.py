@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from appstoreserverlibrary.signed_data_verifier import VerificationException
 
 from src.modules.licensing import apple_store as store
-from src.modules.licensing.apple_models import AppleBillingIdentity
+from src.modules.licensing.apple_models import AppleBillingIdentity, AppleSubscription
 from ..database import get_db
 from ..models import Customer, License, LicenseSubscription
 from .auth import get_current_user
@@ -80,6 +80,41 @@ def sync_purchase(payload: SignedTransaction, request: Request,
         db.rollback()
         raise
     return dict(verified=True, **_status(db, current_user))
+
+
+@router.post("/check-account")
+def check_purchase_account(payload: SignedTransaction,
+                           current_user: Customer = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    """Check signed history before showing Apple's purchase/upgrade sheet.
+
+    Apple's mutable appAccountToken cannot overwrite our original account
+    binding. This read-only check neither grants a licence nor transfers it.
+    """
+    cfg = store.config()
+    store.require_schema(db)
+    verifier, _ = store.apple_services(cfg)
+    try:
+        tx = verifier.verify_and_decode_signed_transaction(payload.signed_transaction)
+    except VerificationException:
+        raise HTTPException(400, "Historii nákupu se nepodařilo ověřit.") from None
+    signed_token = store.check_transaction(tx, cfg)
+    identity = db.query(AppleBillingIdentity).filter_by(customer_id=current_user.id).first()
+    if identity is None:
+        raise HTTPException(409, "Načtěte tarify znovu a zopakujte nákup.")
+    if identity.tenant_id != current_user.tenant_id:
+        raise HTTPException(409, "Předplatné patří k původnímu účtu. Kontaktujte podporu.")
+    store.assert_account_owner(db, identity)
+    previous = db.get(AppleSubscription, f"{cfg.environment.value}:{tx.originalTransactionId}")
+    # A known original transaction remains with its first verified owner, even
+    # if a later upgrade supplied a different appAccountToken to Apple.
+    owner_token = previous.account_token if previous else signed_token
+    allowed = owner_token == identity.token
+    return dict(can_purchase=allowed, message=None if allowed else (
+        "Tento účet Apple již používá předplatné jiného účtu SprávaVozidel. "
+        "Přihlaste se k původnímu účtu SprávaVozidel, nebo použijte jiný účet Apple. "
+        "Žádný nový nákup nebyl zahájen."
+    ))
 
 
 @router.post("/notifications")
