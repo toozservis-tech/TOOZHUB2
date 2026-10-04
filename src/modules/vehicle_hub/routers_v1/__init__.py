@@ -1,62 +1,17 @@
+"""Load the complete API only when bootstrap requests it.
+
+Importing an auth dependency must not register every vehicle endpoint: vehicle
+endpoints also import licensing dependencies, which otherwise creates a cycle.
+The existing ``from routers_v1 import api_router`` entry point is preserved.
 """
-API Routery pro Správu vozidel (API v1)
-Všechny endpointy pod prefixem /api/v1/
-"""
-from fastapi import APIRouter
-
-from . import (
-    vehicles,
-    vehicle_archives,
-    service_records,
-    analytics,
-    service_intake,
-    repair_photos,
-    reservations,
-    reminders,
-    reminder_settings,
-    ai,
-    services,
-    service_workspace,
-    bot,
-    vin_lookup,
-    ares_lookup,
-    license_status,
-    push,
-    system_notifications,
-    capabilities,
-)
-
-# Hlavní router pro v1 API
-api_router = APIRouter(prefix="/api/v1", tags=["api-v1"])
-
-# Zahrnout všechny sub-routery
-api_router.include_router(vehicles.router)
-api_router.include_router(vehicle_archives.router)
-api_router.include_router(service_records.router)
-api_router.include_router(analytics.router)  # Náklady, kategorie, měsíční trendy
-api_router.include_router(service_intake.router)
-api_router.include_router(repair_photos.router)
-api_router.include_router(reservations.router)
-# Static settings must precede /reminders/{reminder_id}, particularly for PUT.
-api_router.include_router(reminder_settings.router)  # Nastavení připomínek
-api_router.include_router(reminders.router)
-api_router.include_router(services.router)
-api_router.include_router(service_workspace.router)  # Servisní centrum (klienti + doklady)
-api_router.include_router(ai.router)
-api_router.include_router(bot.router)  # AI Asistent Bot
-api_router.include_router(vin_lookup.router)  # VIN lookup
-api_router.include_router(ares_lookup.router)  # ARES lookup
-api_router.include_router(push.router)  # Web Push notifications
-api_router.include_router(system_notifications.router)  # System notifications
-api_router.include_router(capabilities.router)  # Runtime capabilities
-
-# License status router - explicitní kontrola
-try:
-    api_router.include_router(license_status.router)  # License status
-    print(f"[ROUTERS_V1] ✓ License status router zaregistrován (prefix: {license_status.router.prefix})")
-except Exception as e:
-    print(f"[ROUTERS_V1] ❌ ERROR při registraci license_status routeru: {e}")
-    import traceback
-    traceback.print_exc()
 
 __all__ = ["api_router"]
+
+
+def __getattr__(name):
+    if name != "api_router":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from .registry import api_router
+
+    globals()[name] = api_router
+    return api_router
