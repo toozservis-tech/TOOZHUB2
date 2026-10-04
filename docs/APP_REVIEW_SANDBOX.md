@@ -1,6 +1,6 @@
 # Oddělené prostředí pro TestFlight a App Review
 
-Stav 4. 10. 2026: připravené a ověřené lokálními integračními testy; cloudová služba ještě není vytvořená. Nový opakovaný náklad vyžaduje souhlas vlastníka.
+Stav 4. 10. 2026: Evidence Vozidel používá samostatnou službu Render **Live** (`srv-db141qu0tbcc739dlh7g`, deployment `dep-db1508lckfvc73dbk3cg`, zdroj `7aa7982`). Vlastník schválil 7.25 USD měsíčně plus případné daně i uložení existujícího Apple klíče. Databáze, soubory a přihlašovací klíč jsou oddělené od produkce. Build **1.0.0 (8)** je zpracovaný Applem a dostupný stávající interní skupině Ověření vydání. Omezené testovací přístupy jsou po výslovném souhlasu vlastníka uložené v neveřejných polích App Review a TestFlight Review.
 
 ## Připravené nasazení
 
@@ -8,7 +8,7 @@ Stav 4. 10. 2026: připravené a ověřené lokálními integračními testy; cl
 - Render: nový samostatný web service `spravavozidel-sandbox`, Frankfurt, 0.5 CPU / 512 MB, 7 USD měsíčně.
 - Samostatný disk 1 GB na `/var/data`, 0.25 USD měsíčně; celkem 7.25 USD měsíčně před případnými daněmi. Žádný produkční environment group ani databázové přihlašovací údaje.
 - Start: `uvicorn src.server.sandbox_review:app`; health `/health` vrací Sandbox a synthetic_data_only.
-- Skutečný přidělený HTTPS origin se musí ověřit po vytvoření služby. Návrh předpokládá `https://spravavozidel-sandbox.onrender.com`; tento origin zatím není potvrzený.
+- Skutečný přidělený a ověřený HTTPS origin je `https://spravavozidel-sandbox.onrender.com`.
 
 ## Veřejné nastavení
 
@@ -33,7 +33,7 @@ ENVIRONMENT=production
 
 `SANDBOX_CUSTOMER_1_PASSWORD_HASH` a `SANDBOX_CUSTOMER_2_PASSWORD_HASH`: bcrypt s cost 12–16. Přihlašovací hesla pro dva smyšlené zákazníky mají vlastní bezpečné uložení; nevkládat do zdrojů, protokolů ani veřejných podkladů. Účty `sandbox-1@example.com` / `sandbox-2@example.com` nejsou skutečné e-mailové schránky.
 
-`APPLE_IAP_KEY_ID`, `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_PRIVATE_KEY`: již existující In-App Purchase klíč. Přenos do nové služby a vytvoření nového přístupu předat ke konkrétnímu souhlasu vlastníka. Klíč se neukládá do iOS aplikace.
+`APPLE_IAP_KEY_ID`, `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_PRIVATE_KEY`: již existující In-App Purchase klíč. Přenos do této konkrétní služby vlastník výslovně schválil a byl dokončen. Klíč se neukládá do iOS aplikace.
 
 ## Ochrany a ověření
 
@@ -43,11 +43,15 @@ Používají se skutečné přihlašovací, zákaznické a Apple ověřovací co
 
 Veřejná registrace, obnova hesla přes e-mail, admin rozhraní a push registrace nejsou vystavené. Průběžně běží ověření Apple a dokončování fronty odstranění souborů. Chyby mají pouze anonymní diagnostický identifikátor; nikoli text s SQL parametry, JWS nebo klíči.
 
-110 cílených testů prošlo, včetně 17 nových kontrol bezpečné konfigurace, skutečného přihlášení obou účtů, odmítnutí cizího podpisu/JWT a skutečného odstranění účtu s restartem. Tato kontrola nepoužila skutečný Apple klíč ani produkční zákaznická data. Pozitivní nákup v cloudové službě, běh kontejneru na Renderu a distribuční klientské směrování zatím nejsou ověřené. Lokální Docker daemon nebyl dostupný.
+110 cílených testů prošlo, včetně 17 nových kontrol bezpečné konfigurace, skutečného přihlášení obou účtů, odmítnutí cizího podpisu/JWT a skutečného odstranění účtu s restartem. Tato kontrola nepoužila skutečný Apple klíč ani produkční zákaznická data. Dalších 17 regresí odstranění účtů a 150 cílených regresí přejmenování, fakturace a zabezpečení prošlo. Render skutečně sestavil kontejner a spustil jej; health a přihlášení obou účtů přes HTTPS fungují. Ověřeno 20 chráněných odpovědí, nákupní relace, odmítnutí neplatného podpisu a odmítnutí Sandbox tokenu produkčním serverem.
 
-## Zbývá po souhlasu
+Build 7 již umožnil ověřit instalaci, ale kontrola účtu posílala Sandbox JWT na produkční origin. Build 8 (`88dfff3`) uzamkne ověřený `AppTransaction.environment` před vytvořením relace a předá stejný origin všem klientům funkcí aplikace; Release bez ověření nesmí zahájit síťový požadavek. Kontrola e-mailu navíc přímo používá klienta prostředí. Prošlo 25 nativních testů, Release archiv, App Store export a přísné ověření podpisu. Vlastník potvrdil úspěšné přihlášení build 8.
 
-1. Vytvořit službu a uložit pouze její vlastní tajné nastavení; ověřit health, oprávnění disku, přihlášení a přetrvání po restartu.
-2. Směrovat distribuční aplikaci podle ověřeného `AppTransaction.environment`, před vytvořením přihlášení a APIClientu. Produkční a sandboxové tokeny musí zůstat oddělené. Žádný přechod do Sandbox při chybě Production.
-3. Připravit build 5 a ověřit skutečný TestFlight nákup, obnovu, obnovování a zákaz přenosu mezi účty. Nastavit a ověřit Server Notifications V2 pro jednotlivá prostředí.
-4. Dokončit účet recenzenta, snímky aplikace a předplatného. Účty zákazníků nepoužívat pro snímky ani pro App Review.
+Vlastník provedl skutečný TestFlight nákup Basic měsíčně na smyšleném účtu 2. Přímé HTTPS ověření v 14:01:25 UTC potvrdilo Apple Sandbox `active`, Basic, limit 5 a dostupnou historii, dokumenty a VIN/ORV. Náklady a statistiky jsou zamčené. Účet 1 zůstává Free s limitem 1 vozidla a 2 ručních úkonů; nákup se na něj nepřenesl. Vlastník následně potvrdil obnovu nákupů a restart aplikace: účet 2 zůstává Basic, detail vozidla funguje a účet 1 po obnově zůstává Free. Premium upgrade a další životní cyklus dosud nejsou ověřené. Důkazy v pracovním kořeni: `outputs/appstore-1.0.0/cloud-sandbox-auth-preflight.json`, `cloud-sandbox-entitlements.json`, `build8-signature-check.json` a `build8-testflight-ready.jpg`. Nákupy v TestFlight standardně používají zrychlené obnovování po 24 hodinách; datum 5. 10. v tomto testu není měsíční produkční perioda.
+
+## Zbývající ověření
+
+1. Ověřit přetrvání skutečné cloudové databáze po nasazení/restartu; integrační test restartu a odstranění již prošel lokálně.
+2. Dokončit širší ruční kontrolu všech sekcí build 8 přes TestFlight; přihlášení, detail a restart již vlastník potvrdil. Směrování a oddělení tokenů je již implementované. Žádný přechod do Sandbox při chybě Production.
+3. Ověřit další cloudové obnovování, Premium upgrade a ostatní životní cyklus. Skutečný cloudový nákup, obnova, restart i zákaz přenosu na druhý účet jsou potvrzené. Obě serverové URL jsou uložené a ověřené v App Store Connect. Bezprostřední Sandbox žádost o test oznámení vracela Apple 4040007 (URL ještě nenalezena); úspěšné doručení není potvrzené. Produkční předplatné je stále vypnuté.
+4. Dokončit snímky aplikace a předplatného. Účet recenzenta je již uložený. Účty zákazníků nepoužívat pro snímky ani pro App Review.
