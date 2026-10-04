@@ -11,7 +11,7 @@ import asyncio
 import os
 import secrets
 
-from .sandbox_config import validate_sandbox_config
+from .sandbox_config import validate_sandbox_config, ROLE_ACCOUNT_SPECS, role_accounts_enabled, synthetic_email
 
 _root = Path(__file__).resolve().parents[2]
 _data_root = validate_sandbox_config(os.environ, _root)
@@ -58,6 +58,37 @@ def _configure_sandbox_database(connection, record):
         cursor.close()
 
 
+def _validate_fixture_identities(db):
+    allowed_roles = {"user", "service", "admin", "developer_admin"} if role_accounts_enabled(os.environ) else {"user"}
+    for customer in db.query(Customer).all():
+        if (not synthetic_email(customer.email) or customer.role not in allowed_roles
+                or (not role_accounts_enabled(os.environ) and customer.email not in {"sandbox-1@example.com", "sandbox-2@example.com"})):
+            raise RuntimeError("Unexpected identity in the synthetic Sandbox database.")
+
+
+def _initialize_role_fixture(db):
+    if not role_accounts_enabled(os.environ) or db.execute(text("SELECT version FROM sandbox_fixture_marker WHERE version=2")).first():
+        return
+    # One atomic additive migration. Never update existing passwords, customer
+    # purchases or licenses; marker 2 also prevents resurrection after erasure.
+    for number, email, role, name, setting in ROLE_ACCOUNT_SPECS:
+        if db.get(Customer, number) or db.get(Tenant, number) or db.query(Customer).filter_by(email=email).first():
+            raise RuntimeError("Sandbox role fixture collides with existing data.")
+        db.add(Tenant(id=number, name=name, license_key=secrets.token_hex(24)))
+        db.flush()
+        db.add(Customer(id=number, tenant_id=number, name=name, email=email, role=role,
+                        password_hash=os.environ[setting], notify_email=False, notify_sms=False,
+                        workshop_same_as_registered=True if role == "service" else None,
+                        street="Ukázková" if role == "service" else None,
+                        street_number=str(number) if role == "service" else None,
+                        city="Svitavy" if role == "service" else None,
+                        zip="56802" if role == "service" else None))
+        db.add(License(tenant_id=number, plan="free", status="active", vehicles_limit=1))
+        db.flush()
+    db.execute(text("INSERT INTO sandbox_fixture_marker (version) VALUES (2)"))
+    db.commit()
+
+
 def initialize_fixture():
     """Create once; restarts must never reset purchases or revive erased accounts."""
     tables = set(inspect(engine).get_table_names())
@@ -68,11 +99,8 @@ def initialize_fixture():
         connection.execute(text("CREATE TABLE IF NOT EXISTS sandbox_fixture_marker (version INTEGER PRIMARY KEY)"))
     with SessionLocal() as db:
         if db.execute(text("SELECT version FROM sandbox_fixture_marker")).first():
-            # Only the two fixture identities may ever exist in this database.
-            if any(c.email not in {"sandbox-1@example.com", "sandbox-2@example.com"}
-                   or c.role != "user" or c.id != c.tenant_id
-                   for c in db.query(Customer).all()):
-                raise RuntimeError("Unexpected identity in the synthetic Sandbox database.")
+            _validate_fixture_identities(db)
+            _initialize_role_fixture(db)
             return
         if db.query(Customer).count() or db.query(Tenant).count():
             raise RuntimeError("Refusing to seed a non-empty Sandbox database.")
@@ -96,6 +124,7 @@ def initialize_fixture():
                                  performed_at=datetime(2026, 1, 1)))
         db.execute(text("INSERT INTO sandbox_fixture_marker (version) VALUES (1)"))
         db.commit()
+        _initialize_role_fixture(db)
 
 
 async def _reconcile():
@@ -144,6 +173,9 @@ for feature_router in (vehicles.router, vehicle_archives.router, service_records
 app.include_router(user_auth.router)
 app.include_router(user_account.router)
 app.include_router(user_security.router)
+if role_accounts_enabled(os.environ):
+    from src.server.admin_api import router as admin_router
+    app.include_router(admin_router)
 
 
 @app.middleware("http")
@@ -154,8 +186,16 @@ async def isolate_public_surface(request, call_next):
                "/user/request-password-reset", "/user/reset-password",
                "/user/email-verification/resend"}
     path = request.url.path
-    if path in blocked or path.startswith(("/admin", "/web_admin", "/api/v1/push")):
+    admin_api_allowed = role_accounts_enabled(os.environ) and path.startswith("/admin-api/")
+    if path in blocked or (path.startswith(("/admin", "/web_admin", "/api/v1/push")) and not admin_api_allowed):
         return JSONResponse(status_code=404, content={"detail": "V testovacím prostředí není tato akce dostupná."})
+    if admin_api_allowed and request.method in {"POST", "PUT", "PATCH"} and path.startswith(("/admin-api/users", "/admin-api/services")):
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if isinstance(payload, dict) and "email" in payload and not synthetic_email(payload["email"]):
+            return JSONResponse(status_code=422, content={"detail": "V testovacím prostředí použijte pouze smyšlený e-mail @example.com nebo @example.invalid."})
     try:
         response = await call_next(request)
     except Exception as exc:
@@ -171,7 +211,7 @@ async def isolate_public_surface(request, call_next):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "environment": "Sandbox", "synthetic_data_only": True}
+    return {"status": "ok", "environment": "Sandbox", "synthetic_data_only": True, "role_accounts_enabled": role_accounts_enabled(os.environ)}
 
 
 @app.get("/api/v1/license/status")

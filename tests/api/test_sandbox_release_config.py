@@ -124,3 +124,120 @@ print('SANDBOX_SURFACE_OK')
                             text=True, capture_output=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "SANDBOX_SURFACE_OK" in result.stdout
+
+
+def role_settings(settings):
+    from src.server.sandbox_config import ROLE_ACCOUNT_SPECS
+    settings['SANDBOX_ROLE_ACCOUNTS_ENABLED'] = '1'
+    for number, _, _, _, key in ROLE_ACCOUNT_SPECS:
+        settings[key] = bcrypt.hashpw(f'Synthetic-Role-{number}-42'.encode(), bcrypt.gensalt(rounds=12)).decode()
+    return settings
+
+
+def test_role_credentials_are_explicit_and_distinct(settings):
+    settings['SANDBOX_ROLE_ACCOUNTS_ENABLED'] = '1'
+    with pytest.raises(RuntimeError):
+        validate_sandbox_config(settings, ROOT)
+    role_settings(settings)
+    assert validate_sandbox_config(settings, ROOT)
+    settings['SANDBOX_ADMIN_PASSWORD_HASH'] = settings['SANDBOX_CUSTOMER_1_PASSWORD_HASH']
+    with pytest.raises(RuntimeError):
+        validate_sandbox_config(settings, ROOT)
+
+
+def test_additive_role_migration_real_auth_mfa_and_service_isolation(settings):
+    env = {name: os.environ[name] for name in ('PATH', 'HOME') if name in os.environ}
+    env.update(settings)
+    # Start the previous two-account configuration and retain a changed license.
+    first = subprocess.run([sys.executable, '-c', '''
+from src.server.sandbox_review import initialize_fixture
+from src.modules.vehicle_hub.database import SessionLocal
+from src.modules.vehicle_hub.models import License
+with SessionLocal() as db:
+    license = db.query(License).filter_by(tenant_id=2).one()
+    license.plan='premium'; license.vehicles_limit=0
+    db.commit()
+'''], cwd=ROOT, env=env, text=True, capture_output=True, timeout=60)
+    assert first.returncode == 0, first.stdout + first.stderr
+    env.update(role_settings(settings))
+    code = '''
+from fastapi.testclient import TestClient
+from src.server.sandbox_review import app, initialize_fixture
+from src.modules.vehicle_hub.database import SessionLocal
+from src.modules.vehicle_hub.models import Customer, License, Vehicle, VehicleServiceLink
+from src.modules.vehicle_hub.service_access import create_or_update_vehicle_service_link
+from src.server.security_helpers import calculate_totp
+import time
+with SessionLocal() as db:
+    assert db.query(Customer).count()==5
+    assert db.query(License).filter_by(tenant_id=2).one().plan=='premium'
+    passwords={c.id:c.password_hash for c in db.query(Customer).all()}
+    vehicles=db.query(Vehicle).count()
+    for service, owner in [(4,1),(5,2)]:
+        vehicle=db.query(Vehicle).filter_by(tenant_id=owner).one()
+        create_or_update_vehicle_service_link(db, tenant_id=owner, service_customer_id=service,
+            owner_customer_id=owner, vehicle_id=vehicle.id, approved_by_customer_id=owner,
+            source_type='owner_grant')
+    db.commit()
+initialize_fixture()
+with SessionLocal() as db:
+    assert {c.id:c.password_hash for c in db.query(Customer).all()}==passwords
+    assert db.query(Vehicle).count()==vehicles
+with TestClient(app) as client:
+    tokens={}
+    identities=[(1,'sandbox-1@example.com','user','Synthetic-Password-42'),
+                (2,'sandbox-2@example.com','user','Synthetic-Password-42'),
+                (3,'sandbox-admin@example.com','admin','Synthetic-Role-3-42'),
+                (4,'sandbox-service-1@example.com','service','Synthetic-Role-4-42'),
+                (5,'sandbox-service-2@example.com','service','Synthetic-Role-5-42')]
+    for number,email,role,password in identities:
+        r=client.post('/user/login',json={'email':email,'password':password})
+        assert r.status_code==200,(number,r.status_code,r.text)
+        tokens[number]={'Authorization':'Bearer '+r.json()['access_token']}
+        me=client.get('/user/me',headers=tokens[number])
+        assert me.status_code==200,me.text
+        assert me.json()['role']==role,me.text
+    assert client.get('/admin-api/users',headers=tokens[3]).status_code==403
+    for number in (1,2,4,5):
+        assert client.get('/admin-api/users',headers=tokens[number]).status_code==403
+    for service,owner in [(4,1),(5,2)]:
+        r=client.get('/api/v1/services/workspace/approved-vehicles',headers=tokens[service])
+        assert r.status_code==200,r.text
+        assert [v['customer_id'] for v in r.json()['items']]==[owner],r.text
+        assert client.get('/api/v1/vehicles/'+str(3-owner),headers=tokens[service]).status_code in (403,404)
+    for number in (1,2):
+        assert client.get('/api/v1/services/workspace/approved-vehicles',headers=tokens[number]).status_code==403
+    discovery=client.get('/api/v1/services/discovery',headers=tokens[1])
+    assert discovery.status_code==200,discovery.text
+    assert 'Testovací servis 1' in discovery.text and 'Testovací servis 2' in discovery.text
+    assert 'sandbox-admin@' not in discovery.text
+    setup=client.post('/user/security/totp/setup',headers=tokens[3],json={'current_password':'Synthetic-Role-3-42'})
+    assert setup.status_code==200,setup.text
+    enable=client.post('/user/security/totp/enable',headers=tokens[3],json={'code':calculate_totp(setup.json()['secret'], int(time.time()))})
+    assert enable.status_code==200,enable.text
+    admin={'Authorization':'Bearer '+enable.json()['access_token']}
+    users=client.get('/admin-api/users',headers=admin)
+    assert users.status_code==200,users.text
+    assert len(users.json())==5
+    for path in ['/admin-api/overview','/admin-api/vehicles','/admin-api/services','/admin-api/records']:
+        response=client.get(path,headers=admin)
+        assert response.status_code==200,(path,response.status_code,response.text)
+    assert client.post('/admin-api/users',headers=admin,json={'email':'not-synthetic@real.example.org'}).status_code==422
+    # A newly provisioned test identity is valid on restart; real addresses are not.
+    with SessionLocal() as db:
+        db.get(Customer,4).email='changed-service@example.invalid'
+        db.commit()
+    initialize_fixture()
+    # Erased role fixtures must not be recreated by a restart.
+    erased=client.request('DELETE','/user/me',headers=tokens[5],json={'current_password':'Synthetic-Role-5-42','confirmation_text':'SMAZAT UCET'})
+    assert erased.status_code==200,erased.text
+    initialize_fixture()
+    with SessionLocal() as db:
+        assert db.get(Customer,5) is None
+        assert db.query(License).filter_by(tenant_id=2).one().plan=='premium'
+print('SANDBOX_ROLES_OK')
+'''
+    result = subprocess.run([sys.executable, '-c', code], cwd=ROOT, env=env,
+                            text=True, capture_output=True, timeout=90)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'SANDBOX_ROLES_OK' in result.stdout

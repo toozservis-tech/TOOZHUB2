@@ -8,6 +8,21 @@ from urllib.parse import urlsplit
 import re
 
 
+ROLE_ACCOUNT_SPECS = (
+    (3, "sandbox-admin@example.com", "admin", "Testovací administrátor", "SANDBOX_ADMIN_PASSWORD_HASH"),
+    (4, "sandbox-service-1@example.com", "service", "Testovací servis 1", "SANDBOX_SERVICE_1_PASSWORD_HASH"),
+    (5, "sandbox-service-2@example.com", "service", "Testovací servis 2", "SANDBOX_SERVICE_2_PASSWORD_HASH"),
+)
+
+
+def role_accounts_enabled(environment):
+    return environment.get("SANDBOX_ROLE_ACCOUNTS_ENABLED") == "1"
+
+
+def synthetic_email(value):
+    return str(value or "").strip().lower().rsplit("@", 1)[-1] in {"example.com", "example.invalid"} and "@" in str(value or "")
+
+
 def validate_sandbox_config(environment, root: Path) -> Path:
     if environment.get("SV_ISOLATED_APPLE_SANDBOX") != "1":
         raise RuntimeError("The isolated Sandbox service requires explicit activation.")
@@ -44,6 +59,15 @@ def validate_sandbox_config(environment, root: Path) -> Path:
         password_hash = environment.get(f"SANDBOX_CUSTOMER_{number}_PASSWORD_HASH", "")
         if not re.fullmatch(r"\$2[aby]\$1[2-6]\$[./A-Za-z0-9]{53}", password_hash):
             raise RuntimeError("Configure bcrypt password hashes for the two synthetic accounts.")
+    if environment.get("SANDBOX_ROLE_ACCOUNTS_ENABLED", "0") not in {"0", "1"}:
+        raise RuntimeError("Invalid Sandbox role account activation.")
+    if role_accounts_enabled(environment):
+        for _, _, _, _, setting in ROLE_ACCOUNT_SPECS:
+            if not re.fullmatch(r"\$2[aby]\$1[2-6]\$[./A-Za-z0-9]{53}", environment.get(setting, "")):
+                raise RuntimeError("Configure separate bcrypt hashes for all three synthetic role accounts.")
+        role_hashes = [environment[spec[4]] for spec in ROLE_ACCOUNT_SPECS]
+        if len(set(role_hashes)) != 3 or any(h == environment[f"SANDBOX_CUSTOMER_{n}_PASSWORD_HASH"] for h in role_hashes for n in (1, 2)):
+            raise RuntimeError("Synthetic role accounts require distinct credentials.")
     public_url = urlsplit(environment.get("PUBLIC_API_BASE_URL", ""))
     if (public_url.scheme != "https" or not public_url.hostname
             or public_url.hostname == "app.toozservis.cz"

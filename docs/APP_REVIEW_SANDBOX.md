@@ -41,7 +41,7 @@ Konfigurace odmítá Production Apple prostředí, produkční origin, zděděn�
 
 Používají se skutečné přihlašovací, zákaznické a Apple ověřovací controllery. Počáteční tarif je pouze Free, jedno smyšlené vozidlo a jeden ruční záznam na účet. Placený tarif se nepřiděluje bez podpisu a současného stavu ověřeného u Applu. Restart neopravuje ani nepřepisuje nákupy a neobnovuje odstraněný účet. Obnova předplatného z místního starého harnessu do nových identit není automatická.
 
-Veřejná registrace, obnova hesla přes e-mail, admin rozhraní a push registrace nejsou vystavené. Průběžně běží ověření Apple a dokončování fronty odstranění souborů. Chyby mají pouze anonymní diagnostický identifikátor; nikoli text s SQL parametry, JWS nebo klíči.
+Veřejná registrace, obnova hesla přes e-mail, webová administrace a push registrace nejsou vystavené. Nativní admin API lze výslovně zapnout pouze pro smyšlené účty, s běžným ověřením role a povinným MFA. Průběžně běží ověření Apple a dokončování fronty odstranění souborů. Chyby mají pouze anonymní diagnostický identifikátor; nikoli text s SQL parametry, JWS nebo klíči.
 
 110 cílených testů prošlo, včetně 17 nových kontrol bezpečné konfigurace, skutečného přihlášení obou účtů, odmítnutí cizího podpisu/JWT a skutečného odstranění účtu s restartem. Tato kontrola nepoužila skutečný Apple klíč ani produkční zákaznická data. Dalších 17 regresí odstranění účtů a 150 cílených regresí přejmenování, fakturace a zabezpečení prošlo. Render skutečně sestavil kontejner a spustil jej; health a přihlášení obou účtů přes HTTPS fungují. Ověřeno 20 chráněných odpovědí, nákupní relace, odmítnutí neplatného podpisu a odmítnutí Sandbox tokenu produkčním serverem.
 
@@ -53,5 +53,21 @@ Vlastník provedl skutečný TestFlight nákup Basic měsíčně na smyšleném 
 
 1. Ověřit přetrvání skutečné cloudové databáze po nasazení/restartu; integrační test restartu a odstranění již prošel lokálně.
 2. Dokončit širší ruční kontrolu všech sekcí build 8 přes TestFlight; přihlášení, detail a restart již vlastník potvrdil. Směrování a oddělení tokenů je již implementované. Žádný přechod do Sandbox při chybě Production.
-3. Ověřit další cloudové obnovování a ostatní životní cyklus; skutečný Premium upgrade, obnova i restart jsou potvrzené. Skutečný cloudový nákup, obnova, restart i zákaz přenosu na druhý účet jsou potvrzené. Obě serverové URL jsou uložené a ověřené v App Store Connect. Bezprostřední Sandbox žádost o test oznámení vracela Apple 4040007 (URL ještě nenalezena); úspěšné doručení není potvrzené. Produkční předplatné je stále vypnuté.
-4. Dokončit snímky aplikace a předplatného. Účet recenzenta je již uložený. Účty zákazníků nepoužívat pro snímky ani pro App Review.
+3. Ověřit další cloudové obnovování a ostatní životní cyklus; skutečný Premium upgrade, obnova i restart jsou potvrzené. Skutečný cloudový nákup, obnova, restart i zákaz přenosu na druhý účet jsou potvrzené. Obě serverové URL jsou uložené a ověřené v App Store Connect. Test oznámení byl následně úspěšně doručen 4. 10. 2026 v 14:57:53 UTC (SUCCESS, cloud-apple-notification-check.json). Produkční předplatné je stále vypnuté.
+4. Veřejné snímky (5 pro iPhone a 5 pro iPad) i čtyři neveřejné snímky předplatného jsou uložené v App Store Connect. Účet recenzenta je již uložený. Účty zákazníků nepoužívat pro snímky ani pro App Review.
+
+## Rozšíření testovacích rolí — připravené 4. 10. 2026
+
+Připraveno pro aktivaci nastavením `SANDBOX_ROLE_ACCOUNTS_ENABLED=1` a třemi samostatnými bcrypt otisky v `SANDBOX_ADMIN_PASSWORD_HASH`, `SANDBOX_SERVICE_1_PASSWORD_HASH`, `SANDBOX_SERVICE_2_PASSWORD_HASH`. Bez příznaku se chování stávajících dvou účtů nemění.
+
+| Účet | Role |
+|---|---|
+| sandbox-1@example.com | Zákazník, stávající |
+| sandbox-2@example.com | Zákazník, stávající |
+| sandbox-admin@example.com | Administrátor s povinným MFA |
+| sandbox-service-1@example.com | Testovací servis 1 |
+| sandbox-service-2@example.com | Testovací servis 2 |
+
+Přidání je jednorázová atomická migrace markeru 2: nepřepisuje stará hesla, vozidla, licence ani Apple nákupy a neobnovuje odstraněné účty. Každý nový účet má vlastní tenant; servis má přístup jen k vozidlům zpřístupněným standardním mechanismem. Správce může vytvářet další smyšlené identity pouze s adresami example.com/example.invalid. Účet administrátora se nepředává Applu. Hesla jsou v soukromém místním úložišti mimo repozitář.
+
+19 cílených testů prošlo: migrace dvou účtů na pět, zachování licence a hesel při restartu, skutečné přihlášení pěti rolí, zákaz administrace pro zákazníky/servisy, administrace po skutečném nastavení TOTP, oddělení dvou servisů, zákaz reálných e-mailů a neobnovení odstraněného účtu. Živé nasazení a aktivace tohoto rozšíření zatím čekají na dokončení.
