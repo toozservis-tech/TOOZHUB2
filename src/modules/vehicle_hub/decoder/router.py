@@ -1,6 +1,7 @@
 """
 FastAPI router pro Vehicle Decoder Engine endpointy
 """
+from src.modules.licensing.dependencies import require_feature
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/vehicles", tags=["vehicles", "decoder"])
 
 
-@router.post("/decode-vin", response_model=VehicleDecodeResponse)
+@router.post("/decode-vin", response_model=VehicleDecodeResponse, dependencies=[Depends(require_feature("vin_decode"))])
 async def decode_vin(
     req: VinDecodeRequest,
     db: Session = Depends(get_db),
@@ -38,7 +39,7 @@ async def decode_vin(
         VehicleDecodeResponse s dekódovanými daty
     """
     import time
-    from ...licensing.service import assert_feature
+    from ...licensing.service import assert_customer_feature
     
     request_start = time.time()
     
@@ -73,7 +74,7 @@ async def decode_vin(
     # Uživatel tak dostane konzistentní chybu vstupu i bez aktivní licence VIN decode.
     if tenant_id:
         try:
-            assert_feature(db, tenant_id, "vin_decode")
+            assert_customer_feature(db, current_user, "vin_decode")
         except HTTPException as e:
             logger.warning(f"[DECODER] VIN decode disabled for tenant_id={tenant_id}")
             return VehicleDecodeResponse(
@@ -257,7 +258,7 @@ async def decode_vin(
     )
 
 
-@router.post("/decode-plate", response_model=VehicleDecodeResponse)
+@router.post("/decode-plate", response_model=VehicleDecodeResponse, dependencies=[Depends(require_feature("vin_decode"))])
 async def decode_plate(req: PlateDecodeRequest) -> VehicleDecodeResponse:
     """
     Dekóduje vozidlo podle SPZ (MDČR, EU Open Data).

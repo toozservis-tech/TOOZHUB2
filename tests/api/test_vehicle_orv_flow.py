@@ -54,6 +54,7 @@ def _seed_owner(db_session):
     db_session.add(owner)
     db_session.commit()
     db_session.refresh(owner)
+    licensing_service.upgrade_license_plan(db_session, tenant.id, "basic")
     return owner
 
 

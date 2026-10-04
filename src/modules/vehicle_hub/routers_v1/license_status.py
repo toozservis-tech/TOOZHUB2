@@ -83,6 +83,9 @@ class LicenseStatusResponse(BaseModel):
     vehicles_current_user: Optional[int] = None
     vehicles_remaining: Optional[int] = None
     is_unlimited: bool
+    valid_to: Optional[datetime] = None
+    manual_service_records_enabled: bool = False
+    manual_service_records_limit: Optional[int] = None
     vin_decode_enabled: bool = True
     ares_enabled: bool = True
     reminders_enabled: bool = True
@@ -1578,10 +1581,9 @@ def upgrade_license_endpoint(
     if not target_tenant_id:
         raise HTTPException(status_code=400, detail="Tenant není k dispozici.")
     
-    # Povolit pouze administrátory (role admin nebo admin tenant z ENV)
-    is_admin_role = getattr(current_user, "role", "") == "admin"
-    is_admin_tenant = ADMIN_TENANT_ID is not None and target_tenant_id == ADMIN_TENANT_ID
-    if not (is_admin_role or is_admin_tenant):
+    # Tenant membership is never administrative authority or proof of payment.
+    from src.core.rbac import is_admin
+    if not is_admin(current_user.role):
         raise HTTPException(
             status_code=403,
             detail="Pouze administrátor může měnit licenční plán."

@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
 from pathlib import Path
+from src.modules.licensing.dependencies import require_feature
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -22,7 +23,7 @@ from ..vehicle_privacy import may_read_repair_private
 from ..service_access import require_service_vehicle_link
 from .auth import get_current_user
 
-router = APIRouter(prefix="/repair-documentation", tags=["repair-documentation"])
+router = APIRouter(prefix="/repair-documentation", tags=["repair-documentation"], dependencies=[Depends(require_feature("documents"))])
 PHOTO_ROOT = DATA_DIR / "private_repair_photos"
 MAX_BYTES = 12 * 1024 * 1024
 

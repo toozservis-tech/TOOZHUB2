@@ -4,6 +4,7 @@ Souhrny nákladů a základní statistiky nad service_records.
 """
 from __future__ import annotations
 
+from src.modules.licensing.dependencies import require_feature
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 
@@ -103,7 +104,7 @@ def _build_scoped_query(
     return query.filter(ServiceRecordModel.user_id == current_user.id)
 
 
-@router.get("/summary", response_model=AnalyticsSummaryOutV1)
+@router.get("/summary", response_model=AnalyticsSummaryOutV1, dependencies=[Depends(require_feature("statistics"))])
 def get_analytics_summary(
     vehicle_id: Optional[int] = Query(default=None, ge=1),
     date_from: Optional[date] = Query(default=None),
@@ -143,7 +144,7 @@ def get_analytics_summary(
     )
 
 
-@router.get("/categories", response_model=AnalyticsCategoryBreakdownOutV1)
+@router.get("/categories", response_model=AnalyticsCategoryBreakdownOutV1, dependencies=[Depends(require_feature("statistics"))])
 def get_analytics_categories(
     vehicle_id: Optional[int] = Query(default=None, ge=1),
     date_from: Optional[date] = Query(default=None),
@@ -209,7 +210,7 @@ def get_analytics_categories(
     )
 
 
-@router.get("/monthly-costs", response_model=AnalyticsMonthlyCostsOutV1)
+@router.get("/monthly-costs", response_model=AnalyticsMonthlyCostsOutV1, dependencies=[Depends(require_feature("costs_tracking"))])
 def get_analytics_monthly_costs(
     months: int = Query(default=12, ge=1, le=36),
     vehicle_id: Optional[int] = Query(default=None, ge=1),

@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest, urlopen
 
+from src.modules.licensing.service import assert_customer_feature
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
@@ -451,6 +452,7 @@ def resolve_service_access_request(
 
     try:
         if decision == "approved":
+            assert_customer_feature(db, current_user, "sharing_with_service")
             link = create_or_update_vehicle_service_link(
                 db,
                 tenant_id=vehicle.tenant_id or current_user.tenant_id or service.tenant_id,
@@ -578,6 +580,8 @@ def grant_vehicle_access_to_service(
     )
     if not service:
         raise HTTPException(status_code=404, detail="Servis nebyl nalezen.")
+
+    assert_customer_feature(db, current_user, "sharing_with_service")
 
     conflict_rows = (
         db.query(VehicleServiceLink, Customer)

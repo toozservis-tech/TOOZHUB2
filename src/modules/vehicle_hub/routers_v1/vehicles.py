@@ -2,6 +2,7 @@
 Vehicles API v1.0 router
 """
 from __future__ import annotations
+from src.modules.licensing.dependencies import require_feature
 from src.core.file_storage import persist_file, cached_file
 
 from dataclasses import dataclass
@@ -1850,7 +1851,7 @@ def _apply_vehicle_claim_payload(vehicle: VehicleModel, vehicle_data: VehicleCre
         vehicle.insurance_valid_until = vehicle_data.insurance_valid_until
 
 
-@router.post("/registry-lookup", response_model=RegistryVehicle)
+@router.post("/registry-lookup", response_model=RegistryVehicle, dependencies=[Depends(require_feature("vin_decode"))])
 def registry_lookup(payload: RegistryLookupRequest, current_user: Customer = Depends(get_current_user)):
     from src.core.rate_limiter import rate_limiter
     if not rate_limiter.check_rate_limit(f"registry-user:{current_user.id}", 8, 60):
@@ -1860,7 +1861,7 @@ def registry_lookup(payload: RegistryLookupRequest, current_user: Customer = Dep
     return lookup_document(payload)
 
 
-@router.post("/parse-orv", response_model=ORVParseResponseV1)
+@router.post("/parse-orv", response_model=ORVParseResponseV1, dependencies=[Depends(require_feature("vin_decode"))])
 def parse_orv(
     payload: ORVParseRequestV1,
     current_user: Customer = Depends(get_current_user),
@@ -1924,6 +1925,9 @@ def create_vehicle(
         from ...licensing.service import assert_vehicle_quota
 
         normalized_vin = _normalize_vin(vehicle_data.vin or "")
+        if vehicle_data.orv_scan_id:
+            from ...licensing.service import assert_customer_feature
+            assert_customer_feature(db, current_user, "vin_decode")
         if vehicle_data.orv_scan_id and not normalized_vin:
             raise HTTPException(status_code=422, detail="ORV scan vyžaduje potvrzený VIN. Doplňte jej ručně před uložením.")
 
@@ -2110,6 +2114,7 @@ def create_vehicle(
             logger.warning("[VEHICLE_CREATE] License check denied")
             return JSONResponse(
                 status_code=e.status_code,
+                headers=e.headers,
                 content={
                     "error": {
                         "code": e.code,
@@ -2174,7 +2179,7 @@ def get_vehicles(
         raise HTTPException(status_code=500, detail="Vozidla se nepodařilo načíst. Kód pro podporu: " + reference) from exc
 
 
-@router.post("/tachometer/challenge", response_model=TachometerChallengeResponse)
+@router.post("/tachometer/challenge", response_model=TachometerChallengeResponse, dependencies=[Depends(require_feature("vin_decode"))])
 def create_tachometer_challenge(
     payload: Optional[TachometerChallengeRequest] = Body(default=None),
     current_user: Customer = Depends(get_current_user),
@@ -2196,7 +2201,7 @@ def create_tachometer_challenge(
     )
 
 
-@router.post("/tachometer/lookup", response_model=TachometerLookupResponse)
+@router.post("/tachometer/lookup", response_model=TachometerLookupResponse, dependencies=[Depends(require_feature("vin_decode"))])
 def lookup_tachometer(
     payload: TachometerLookupRequest,
     current_user: Customer = Depends(get_current_user),
@@ -2215,7 +2220,7 @@ def lookup_tachometer(
     )
 
 
-@router.post("/{vehicle_id}/tachometer/init", response_model=VehicleTachometerInitResponse)
+@router.post("/{vehicle_id}/tachometer/init", response_model=VehicleTachometerInitResponse, dependencies=[Depends(require_feature("vin_decode"))])
 def init_vehicle_tachometer(
     vehicle_id: int,
     current_user: Customer = Depends(get_current_user),
@@ -2232,7 +2237,7 @@ def init_vehicle_tachometer(
     return _create_tachometer_session(expected_vin=vin, vehicle_id=vehicle.id, customer_id=current_user.id)
 
 
-@router.post("/{vehicle_id}/tachometer/submit", response_model=VehicleTachometerSubmitResponse)
+@router.post("/{vehicle_id}/tachometer/submit", response_model=VehicleTachometerSubmitResponse, dependencies=[Depends(require_feature("vin_decode"))])
 def submit_vehicle_tachometer(
     vehicle_id: int,
     payload: VehicleTachometerSubmitRequest,
@@ -2273,7 +2278,7 @@ def submit_vehicle_tachometer(
     )
 
 
-@router.get("/{vehicle_id}/tachometer/history", response_model=List[VehicleTachometerHistoryEntryResponse])
+@router.get("/{vehicle_id}/tachometer/history", response_model=List[VehicleTachometerHistoryEntryResponse], dependencies=[Depends(require_feature("vehicle_history"))])
 def get_vehicle_tachometer_history(
     vehicle_id: int,
     current_user: Customer = Depends(get_current_user),
@@ -2286,6 +2291,7 @@ def get_vehicle_tachometer_history(
 @router.get(
     "/{vehicle_id}/tachometer/history/{entry_id}",
     response_model=VehicleTachometerHistoryEntryDetailResponse,
+    dependencies=[Depends(require_feature("vehicle_history"))]
 )
 def get_vehicle_tachometer_history_entry_detail(
     vehicle_id: int,
@@ -2301,6 +2307,7 @@ def get_vehicle_tachometer_history_entry_detail(
 @router.get(
     "/{vehicle_id}/tachometer/history/{entry_id}/documents",
     response_model=List[VehicleTachometerDocumentResponse],
+    dependencies=[Depends(require_feature("documents"))]
 )
 def get_vehicle_tachometer_history_entry_documents(
     vehicle_id: int,
@@ -2424,6 +2431,9 @@ def update_vehicle(
     
     # Kontrola přístupu
     _require_vehicle_management(vehicle, current_user, db)
+    if vehicle_data.orv_scan_id:
+        from ...licensing.service import assert_customer_feature
+        assert_customer_feature(db, current_user, "vin_decode")
 
     effective_current_mileage = (
         vehicle_data.current_mileage_km

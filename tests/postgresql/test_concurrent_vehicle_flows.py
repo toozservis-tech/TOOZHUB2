@@ -30,7 +30,10 @@ def fleet(pg_db, monkeypatch):
             tenant = Tenant(name=name, license_key='fixture-'+name); db.add(tenant); db.flush()
             actor = Customer(tenant_id=tenant.id, email=f'{name}@example.invalid', role=role)
             db.add(actor); db.flush(); ids[name]=actor.id
+        # This fixture tests consent with a paid owner; buyers stay Free for quota races.
+        from src.modules.licensing.service import upgrade_license_plan
         owner = db.get(Customer, ids['owner'])
+        upgrade_license_plan(db, owner.tenant_id, 'premium', commit=False)
         car = Vehicle(tenant_id=owner.tenant_id, user_email=owner.email, nickname='Synthetic car',
             vin='TMBJF73T2B9044629', stk_valid_until=date(2030,1,1), current_mileage_km=200)
         db.add(car); db.flush(); ensure_vehicle_owner_assignment(db, vehicle=car, owner=owner)
@@ -173,17 +176,42 @@ def test_different_vins_cannot_race_past_same_user_quota(pg_db,fleet):
         assert db.query(Vehicle).filter_by(tenant_id=buyer.tenant_id).count()==1
 
 
+def test_free_manual_service_writes_cannot_race_past_two_records(pg_db, fleet, monkeypatch):
+    from src.modules.licensing.service import upgrade_license_plan
+    from src.modules.vehicle_hub.routers_v1 import service_records
+    from src.modules.vehicle_hub.routers_v1.schemas import ServiceRecordCreateV1
+    monkeypatch.setattr(service_records, 'assert_module_ready', lambda *a, **k: None)
+    with pg_db.sessions() as db:
+        owner=db.get(Customer,fleet['owner'])
+        upgrade_license_plan(db,owner.tenant_id,'free')
+    def worker(index, barrier):
+        with pg_db.sessions() as db:
+            owner=db.get(Customer,fleet['owner']);barrier.wait(timeout=5)
+            try:
+                service_records.create_service_record(fleet['car'],
+                    ServiceRecordCreateV1(performed_at=datetime(2026,1,1),category='OLEJ',
+                        description=f'Manual fixture {index}'),current_user=owner,db=db)
+                return 200
+            except HTTPException as error:
+                db.rollback();return error.status_code
+    assert sorted(parallel(3,worker))==[200,200,403]
+    with pg_db.sessions() as db:
+        assert db.query(ServiceRecord).filter_by(vehicle_id=fleet['car']).count()==2
+
+
 def test_quota_check_never_commits_earlier_changes_or_releases_vehicle_lock(pg_db,fleet):
     from src.modules.licensing.service import assert_vehicle_quota
     from src.modules.vehicle_hub.models import License
     with pg_db.sessions() as db:
         car=db.get(Vehicle,fleet['car']); buyer=db.get(Customer,fleet['buyer'])
+        buyer_tenant_id=buyer.tenant_id
         car.nickname='Must be rolled back'; db.flush()
         assert_vehicle_quota(db,buyer.tenant_id)
         db.rollback()
     with pg_db.sessions() as db:
         assert db.get(Vehicle,fleet['car']).nickname=='Synthetic car'
-        assert db.query(License).count()==0
+        assert db.query(License).filter_by(tenant_id=buyer_tenant_id).count()==0
+        assert db.query(License).count()==1  # Only the fixture owner's paid license.
 
 
 def test_repeated_assignment_does_not_duplicate_owner(pg_db, fleet):

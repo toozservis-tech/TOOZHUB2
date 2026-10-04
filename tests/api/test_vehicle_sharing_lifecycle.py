@@ -33,6 +33,10 @@ def sharing(tmp_path, monkeypatch):
         db.add(tenant); db.flush()
         actor = Customer(tenant_id=tenant.id, email=f'{name}@example.invalid', role=role)
         db.add(actor); db.flush(); actors[name] = actor
+    # Consent/privacy tests require a paid customer; billing is tested separately.
+    from src.modules.licensing.service import upgrade_license_plan
+    for name in ['owner', 'buyer']:
+        upgrade_license_plan(db, actors[name].tenant_id, 'premium')
     owner = actors['owner']
     car = Vehicle(tenant_id=owner.tenant_id, user_email=owner.email, nickname='Fixture car', stk_valid_until=date(2030,1,1))
     db.add(car); db.flush(); ensure_vehicle_owner_assignment(db, vehicle=car, owner=owner)

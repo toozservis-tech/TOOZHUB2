@@ -34,6 +34,9 @@ def scenario(tmp_path, monkeypatch):
         actor = Customer(email=f"{name}@example.invalid", role=role, tenant_id=tenants[tenant].id)
         db.add(actor); actors[name] = actor
     db.flush()
+    # These tests isolate role/ownership boundaries with an entitled owner.
+    from src.modules.licensing.service import upgrade_license_plan
+    upgrade_license_plan(db, tenants[0].id, 'premium')
     owner = actors['owner']
     car = Vehicle(tenant_id=owner.tenant_id, user_email=owner.email, nickname="Fixture vehicle",
         vin="TMBJF73T2B9044629", plate="TEST001", stk_valid_until=date(2030, 1, 1), current_mileage_km=100,

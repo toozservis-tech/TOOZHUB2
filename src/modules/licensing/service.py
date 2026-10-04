@@ -50,7 +50,7 @@ class LicenseError(HTTPException):
     def __init__(self, code: str, message: str, details: dict = None, status_code: int = 403):
         self.code = code
         self.details = details or {}
-        super().__init__(status_code=status_code, detail=message)
+        super().__init__(status_code=status_code, detail=message, headers={"X-License-Error": code})
 
 
 # Mapování plánů na limity
@@ -63,6 +63,7 @@ PLAN_LIMITS = {
 # Mapování plánů na dostupné funkce (ARES necháváme povolený pro všechny)
 PLAN_FEATURES = {
     "free": {
+        "manual_service_records_enabled": True,
         "vin_decode_enabled": False,
         "ares_enabled": True,
         # Připomínky jsou základní hodnota produktu, dostupná i ve FREE plánu.
@@ -74,7 +75,8 @@ PLAN_FEATURES = {
         "sharing_with_service_enabled": False,
     },
     "basic": {
-        "vin_decode_enabled": False,
+        "manual_service_records_enabled": True,
+        "vin_decode_enabled": True,
         "ares_enabled": True,
         "reminders_enabled": True,
         "vehicle_history_enabled": True,
@@ -84,6 +86,7 @@ PLAN_FEATURES = {
         "sharing_with_service_enabled": False,
     },
     "premium": {
+        "manual_service_records_enabled": True,
         "vin_decode_enabled": True,
         "ares_enabled": True,
         "reminders_enabled": True,
@@ -310,53 +313,62 @@ def assert_vehicle_quota(db: Session, tenant_id: int, *, restoring_vehicle_id: i
         )
 
 
+FEATURE_COLUMNS = {
+    "manual_service_records": "manual_service_records_enabled",
+    "vin_decode": "vin_decode_enabled",
+    "ares": "ares_enabled",
+    "reminders": "reminders_enabled",
+    "vehicle_history": "vehicle_history_enabled",
+    "documents": "documents_enabled",
+    "costs_tracking": "costs_tracking_enabled",
+    "statistics": "statistics_enabled",
+    "sharing_with_service": "sharing_with_service_enabled",
+}
+
+
+def _license_active(license_obj: License) -> bool:
+    return license_obj.status == "active" and (
+        license_obj.valid_to is None or license_obj.valid_to > datetime.utcnow())
+
+
+def has_customer_feature(db: Session, customer, feature_name: str) -> bool:
+    """Customer subscriptions never grant or remove administrative/service authority.
+
+    Role access and service link scopes must still be checked by the endpoint.
+    Only the authenticated actor's tenant can supply customer entitlements.
+    """
+    from src.core.rbac import is_admin, is_service
+    if feature_name not in FEATURE_COLUMNS:
+        return False
+    if is_admin(customer.role) or is_service(customer.role):
+        return True
+    if not customer.tenant_id:
+        return False
+    license_obj = get_or_create_license(db, customer.tenant_id, commit_changes=False)
+    return _license_active(license_obj) and bool(
+        PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"]).get(FEATURE_COLUMNS[feature_name]))
+
+
+def assert_customer_feature(db: Session, customer, feature_name: str) -> None:
+    if not has_customer_feature(db, customer, feature_name):
+        if feature_name == "manual_service_records":
+            raise LicenseError(code="LICENSE_INACTIVE", message="Ruční servisní záznamy vyžadují aktivní účet.")
+        title = "Basic nebo Premium" if feature_name in {"vin_decode", "vehicle_history", "documents"} else "Premium"
+        raise LicenseError(code="FEATURE_DISABLED",
+            message=f"Tato funkce vyžaduje aktivní tarif {title}.",
+            details={"feature_name": feature_name})
+
+
 def assert_feature(db: Session, tenant_id: int, feature_name: str) -> None:
-    """
-    Zkontroluje, zda je feature povoleno pro tenant_id.
-    Pokud ne, vyhodí LicenseError.
-    
-    Args:
-        db: Databázová session
-        tenant_id: ID tenanta
-        feature_name: Název feature ("vin_decode", "ares", "reminders")
-        
-    Raises:
-        LicenseError: Pokud je feature zakázáno
-    """
-    license_obj = get_or_create_license(db, tenant_id)
-    
-    # Legacy admin bypass - aktivní jen při explicitním zapnutí.
-    if ADMIN_FORCE_PREMIUM and is_admin_tenant(tenant_id):
-        return
-    
-    # Mapování feature name na sloupec
-    feature_map = {
-        "vin_decode": "vin_decode_enabled",
-        "ares": "ares_enabled",
-        "reminders": "reminders_enabled"
-    }
-    
-    if feature_name not in feature_map:
-        raise LicenseError(
-            code="INVALID_FEATURE",
-            message=f"Neplatný feature: {feature_name}",
-            details={"feature_name": feature_name}
-        )
-    
-    column_name = feature_map[feature_name]
-    is_enabled = getattr(license_obj, column_name, False)
-    
-    if not is_enabled:
-        raise LicenseError(
-            code="FEATURE_DISABLED",
-            message=f"Feature '{feature_name}' není povoleno pro váš plán ({license_obj.plan})",
-            details={
-                "feature_name": feature_name,
-                "plan": license_obj.plan,
-                "tenant_id": tenant_id
-            },
-            status_code=403
-        )
+    """Canonical plan checks, including flags which are not persisted columns."""
+    if feature_name not in FEATURE_COLUMNS:
+        raise LicenseError(code="INVALID_FEATURE", message="Neplatná funkce.")
+    license_obj = get_or_create_license(db, tenant_id, commit_changes=False)
+    if not _license_active(license_obj):
+        raise LicenseError(code="LICENSE_INACTIVE", message="Licence není aktivní nebo vypršela.")
+    if not PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"]).get(FEATURE_COLUMNS[feature_name]):
+        raise LicenseError(code="FEATURE_DISABLED", message="Tato funkce není dostupná v aktuálním tarifu.",
+                           details={"feature_name": feature_name, "plan": license_obj.plan})
 
 
 def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = None) -> dict:
@@ -404,6 +416,14 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
         "sharing_with_service_enabled": bool(features.get("sharing_with_service_enabled", False)),
     })
 
+    # Never advertise expired/inactive entitlements to any client.
+    status["valid_to"] = license_obj.valid_to
+    status["manual_service_records_enabled"] = _license_active(license_obj)
+    status["manual_service_records_limit"] = 2 if license_obj.plan == "free" else None
+    if not _license_active(license_obj):
+        status.update({column: False for column in FEATURE_COLUMNS.values()})
+        status["vehicles_remaining"] = 0
+        status["is_unlimited"] = False
     return status
 
 

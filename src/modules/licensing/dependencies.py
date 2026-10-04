@@ -34,17 +34,17 @@ def require_plan_active_dependency(
 def require_feature(feature_name: str):
     """
     Dependency factory pro kontrolu feature flagu.
-    Zatím optional - pro budoucí použití.
+    Uses the same canonical policy as licensing status and billing.
     
     Usage:
         @router.get("/advanced-report")
         def get_advanced_report(
-            _: None = Depends(require_feature("feature_advanced_reports"))
+            _: None = Depends(require_feature("statistics"))
         ):
             ...
     
     Args:
-        feature_name: Název feature flagu (např. "feature_advanced_reports")
+        feature_name: Název feature flagu (např. "statistics")
         
     Returns:
         Dependency funkce
@@ -59,24 +59,8 @@ def require_feature(feature_name: str):
         Raises:
             HTTPException 403: Pokud funkce není dostupná nebo licence není aktivní
         """
-        entitlement = get_effective_entitlement(db, current_user)
-        
-        # Kontrola, zda je licence aktivní
-        if not entitlement.is_active:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"Funkce '{feature_name}' není dostupná - licence není aktivní "
-                    f"(status: {entitlement.status.value})."
-                )
-            )
-        
-        # TODO: Implementovat feature flagy podle plánu
-        # Prozatím vracíme chybu
-        raise HTTPException(
-            status_code=501,
-            detail=f"Feature flags are not yet implemented"
-        )
+        from .service import assert_customer_feature
+        assert_customer_feature(db, current_user, feature_name)
     
     return _check_feature
 

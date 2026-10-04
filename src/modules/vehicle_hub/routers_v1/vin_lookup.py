@@ -8,6 +8,9 @@ from pydantic import BaseModel
 from typing import Optional
 
 from ..database import get_db
+from ..models import Customer
+from .auth import get_current_user
+from src.modules.licensing.dependencies import require_feature
 from ..decoder.models import VinDecodeRequest, VehicleDecodeResponse
 
 router = APIRouter(prefix="/vin", tags=["vin-lookup-v1"])
@@ -24,8 +27,8 @@ class VinLookupResponse(BaseModel):
     detail: Optional[str] = None
 
 
-@router.get("/{vin}", response_model=VinLookupResponse)
-async def lookup_vin(vin: str, db: Session = Depends(get_db)):
+@router.get("/{vin}", response_model=VinLookupResponse, dependencies=[Depends(require_feature("vin_decode"))])
+async def lookup_vin(vin: str, db: Session = Depends(get_db), current_user: Customer = Depends(get_current_user)):
     """
     Jednoduchý VIN lookup endpoint pro auto-fill formulářů
     
@@ -55,7 +58,7 @@ async def lookup_vin(vin: str, db: Session = Depends(get_db)):
         # Použít existující decoder (lazy import pro vyhnutí se cyklu)
         from ..decoder.router import decode_vin  # import uvnitř funkce
         decode_request = VinDecodeRequest(vin=vin_clean)
-        decode_response: VehicleDecodeResponse = await decode_vin(decode_request, db)
+        decode_response: VehicleDecodeResponse = await decode_vin(decode_request, db, current_user)
         
         if not decode_response.success or not decode_response.data:
             # Pokud decoder nevrátil data, vrať prázdnou odpověď

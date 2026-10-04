@@ -2,6 +2,8 @@
 Service Records API v1.0 router
 """
 from __future__ import annotations
+from src.modules.licensing.dependencies import require_feature
+from src.modules.licensing.service import has_customer_feature, assert_customer_feature, LicenseError
 from src.core.file_storage import persist_file, cached_file, require_persisted_file
 
 from datetime import datetime
@@ -800,7 +802,40 @@ def _build_document_prefill_data(
     }
 
 
-@router.post("/{vehicle_id}/records", response_model=ServiceRecordOutV1)
+def _free_manual_records(db, vehicle_id, actor):
+    # A server-written creation audit proves manual entry. Imported records and
+    # another owner's history can never become Free records by guessing an ID.
+    manual = db.query(ServiceRecordAuditLog.id).filter(
+        ServiceRecordAuditLog.service_record_id == ServiceRecordModel.id,
+        ServiceRecordAuditLog.action == "free_manual_create",
+        ServiceRecordAuditLog.changed_by_user_id == actor.id,
+    ).exists()
+    return db.query(ServiceRecordModel).filter(
+        ServiceRecordModel.vehicle_id == vehicle_id,
+        ServiceRecordModel.user_id == actor.id,
+        ServiceRecordModel.is_deleted.is_(False),
+        manual,
+    )
+
+
+def _require_record_plan_access(db, record, actor):
+    if has_customer_feature(db, actor, "vehicle_history"):
+        return
+    allowed = _free_manual_records(db, record.vehicle_id, actor).order_by(ServiceRecordModel.id).limit(2).all()
+    if record.id not in {item.id for item in allowed}:
+        assert_customer_feature(db, actor, "vehicle_history")
+
+
+def _record_for_plan(db, record, actor):
+    result = record_for_actor(db, record, actor)
+    if has_customer_feature(db, actor, "documents"):
+        return result
+    # Suppress paid attachment metadata without mutating the stored evidence.
+    view = ServiceRecordOutV1.model_validate(result)
+    return view.model_copy(update={"attachments": None})
+
+
+@router.post("/{vehicle_id}/records", response_model=ServiceRecordOutV1, dependencies=[Depends(require_feature("manual_service_records"))])
 def create_service_record(
     vehicle_id: int,
     record_data: ServiceRecordCreateV1,
@@ -819,6 +854,15 @@ def create_service_record(
         vehicle = db.query(VehicleModel).filter(VehicleModel.id == vehicle_id).populate_existing().first()
         if not vehicle:
             raise HTTPException(status_code=404, detail="Vozidlo nenalezeno")
+
+        limited_manual = not has_customer_feature(db, current_user, "vehicle_history")
+        # The common vehicle lock is still held here. Concurrent third writes
+        # cannot both pass this quota, and no licensing read commits the lock.
+        if limited_manual and _free_manual_records(db, vehicle_id, current_user).count() >= 2:
+            raise LicenseError(code="SERVICE_RECORD_QUOTA_EXCEEDED",
+                message="Limit 2 ručně zadaných servisních úkonů u tohoto vozidla v tarifu Zdarma je vyčerpán. Další úkony umožňuje Basic nebo Premium.")
+        if record_data.attachments and record_data.attachments.strip() not in ("", "[]"):
+            assert_customer_feature(db, current_user, "documents")
 
         # Tenant kontext je povinný - primárně z vozidla, fallback z uživatele (legacy) a nakonec tenant 1
         tenant_id = vehicle.tenant_id or getattr(current_user, "tenant_id", None) or 1
@@ -855,6 +899,11 @@ def create_service_record(
         snapshot = _service_record_snapshot(record)
         _, snapshot_hash = _snapshot_json_and_hash(snapshot)
         record.snapshot_hash = snapshot_hash
+        if limited_manual:
+            snapshot_json, _ = _snapshot_json_and_hash(snapshot)
+            db.add(ServiceRecordAuditLog(tenant_id=tenant_id, service_record_id=record.id,
+                vehicle_id=vehicle_id, changed_by_user_id=user_id, action="free_manual_create",
+                previous_snapshot_json="{}", new_snapshot_json=snapshot_json, snapshot_hash=snapshot_hash))
         db.commit()
         db.refresh(record)
         
@@ -867,7 +916,7 @@ def create_service_record(
         raise HTTPException(status_code=500, detail=f"Servisní záznam se nepodařilo zpracovat. Kód chyby: {reference}") from None
 
 
-@router.post("/{vehicle_id}/records/attachments/upload")
+@router.post("/{vehicle_id}/records/attachments/upload", dependencies=[Depends(require_feature("documents"))])
 def upload_service_record_attachment(
     vehicle_id: int,
     payload: ServiceRecordAttachmentUploadRequest,
@@ -912,7 +961,7 @@ def upload_service_record_attachment(
     }
 
 
-@router.post("/{vehicle_id}/records/auto-from-document")
+@router.post("/{vehicle_id}/records/auto-from-document", dependencies=[Depends(require_feature("documents"))])
 def create_service_record_from_document(
     vehicle_id: int,
     payload: ServiceRecordAutoFromDocumentRequest,
@@ -1035,7 +1084,7 @@ def create_service_record_from_document(
     }
 
 
-@router.post("/{vehicle_id}/records/document-prefill")
+@router.post("/{vehicle_id}/records/document-prefill", dependencies=[Depends(require_feature("documents"))])
 def preview_service_record_from_document(
     vehicle_id: int,
     payload: ServiceRecordDocumentPrefillRequest,
@@ -1112,7 +1161,7 @@ def preview_service_record_from_document(
     }
 
 
-@router.get("/{vehicle_id}/records/attachments/download")
+@router.get("/{vehicle_id}/records/attachments/download", dependencies=[Depends(require_feature("documents"))])
 def download_service_record_attachment(
     vehicle_id: int,
     key: str = Query(..., min_length=3, max_length=500),
@@ -1148,7 +1197,7 @@ def download_service_record_attachment(
     )
 
 
-@router.get("/{vehicle_id}/pdf", name="generate_pdf")
+@router.get("/{vehicle_id}/pdf", name="generate_pdf", dependencies=[Depends(require_feature("documents"))])
 def generate_service_records_pdf(
     vehicle_id: int,
     current_user: Customer = Depends(get_current_user),
@@ -1222,7 +1271,7 @@ def generate_service_records_pdf(
         raise HTTPException(status_code=500, detail=f"PDF se nepodařilo připravit. Kód chyby: {reference}") from None
 
 
-@router.get("/{vehicle_id}/records", response_model=List[ServiceRecordOutV1])
+@router.get("/{vehicle_id}/records", response_model=List[ServiceRecordOutV1], dependencies=[Depends(require_feature("manual_service_records"))])
 def get_service_records(
     vehicle_id: int,
     include_deleted: bool = Query(default=False),
@@ -1243,9 +1292,14 @@ def get_service_records(
         )
         if not include_deleted:
             query = query.filter(ServiceRecordModel.is_deleted.is_(False))
-        records = query.order_by(nullslast(desc(ServiceRecordModel.performed_at))).all()
+        if not has_customer_feature(db, current_user, "vehicle_history"):
+            if include_deleted:
+                assert_customer_feature(db, current_user, "vehicle_history")
+            records = _free_manual_records(db, vehicle_id, current_user).order_by(ServiceRecordModel.id).limit(2).all()
+        else:
+            records = query.order_by(nullslast(desc(ServiceRecordModel.performed_at))).all()
         
-        return [record_for_actor(db, row, current_user) for row in records
+        return [_record_for_plan(db, row, current_user) for row in records
                 if not row.is_deleted or can_read_record_private(db, row, current_user)]
     except HTTPException:
         raise
@@ -1254,7 +1308,7 @@ def get_service_records(
         raise HTTPException(status_code=500, detail=f"Servisní záznam se nepodařilo zpracovat. Kód chyby: {reference}") from None
 
 
-@router.get("/{vehicle_id}/records/{record_id}", response_model=ServiceRecordOutV1)
+@router.get("/{vehicle_id}/records/{record_id}", response_model=ServiceRecordOutV1, dependencies=[Depends(require_feature("manual_service_records"))])
 def get_service_record(
     vehicle_id: int,
     record_id: int,
@@ -1277,19 +1331,20 @@ def get_service_record(
         
         if not record:
             raise HTTPException(status_code=404, detail="Servisní záznam nenalezen")
+        _require_record_plan_access(db, record, current_user)
         if bool(getattr(record, "is_deleted", False)) and not include_deleted:
             raise HTTPException(status_code=404, detail="Servisní záznam byl archivován")
 
         if not can_read_record_private(db, record, current_user):
-            return record_for_actor(db, record, current_user)
+            return _record_for_plan(db, record, current_user)
 
-        refreshed = _refresh_record_attachments_summary(record)
+        refreshed = has_customer_feature(db, current_user, "documents") and _refresh_record_attachments_summary(record)
         if refreshed:
             db.add(record)
             db.commit()
             db.refresh(record)
 
-        return record
+        return _record_for_plan(db, record, current_user)
     except HTTPException:
         raise
     except Exception as e:
@@ -1297,7 +1352,7 @@ def get_service_record(
         raise HTTPException(status_code=500, detail=f"Servisní záznam se nepodařilo zpracovat. Kód chyby: {reference}") from None
 
 
-@router.put("/{vehicle_id}/records/{record_id}", response_model=ServiceRecordOutV1)
+@router.put("/{vehicle_id}/records/{record_id}", response_model=ServiceRecordOutV1, dependencies=[Depends(require_feature("manual_service_records"))])
 def update_service_record(
     vehicle_id: int,
     record_id: int,
@@ -1325,6 +1380,9 @@ def update_service_record(
         if not record:
             raise HTTPException(status_code=404, detail="Servisní záznam nenalezen")
         require_private_record(db, record, current_user)
+        _require_record_plan_access(db, record, current_user)
+        if record_data.attachments and record_data.attachments.strip() not in ("", "[]"):
+            assert_customer_feature(db, current_user, "documents")
         if bool(getattr(record, "is_deleted", False)):
             raise HTTPException(status_code=409, detail="Archivovaný servisní záznam nelze upravovat")
 
@@ -1370,7 +1428,7 @@ def update_service_record(
         db.commit()
         db.refresh(record)
         
-        return record
+        return _record_for_plan(db, record, current_user)
     except HTTPException:
         raise
     except Exception as e:
