@@ -154,6 +154,8 @@ def delete_current_user_account(
         raise
     except Exception as exc:
         db.rollback()
+        from src.core.private_errors import report_exception
+        report_exception(exc)
         raise HTTPException(
             status_code=500,
             detail="Účet se nepodařilo odstranit. Žádná změna nebyla potvrzena. Zkuste to později.",

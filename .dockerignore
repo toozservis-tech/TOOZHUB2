@@ -1,6 +1,7 @@
 **
 !requirements-server.txt
 !Dockerfile.cloud
+!Dockerfile.sandbox
 !VERSION
 !VERSION.py
 !scripts/

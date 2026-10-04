@@ -4,6 +4,12 @@ Poslední přímé ověření: **4. 10. 2026**. iOS předplatné používá Appl
 
 ## Současný ověřený stav
 
+Aktualizace 4. 10. 2026 po potvrzení vlastníka: **build 4 je nahraný a v TestFlight Ready to Submit** (UUID `3c9a3461-30bc-44ce-8a83-44013d79692b`, upload 13:37 UTC). Obsahuje nativní opravy do commitu `6d746d5`; nejde o veřejné schválení. Archiv `/tmp/sv-appstore-1.0.0-build4.xcarchive`, App Store export `/tmp/sv-appstore-1.0.0-build4-export/TooZHubiOS.ipa`, SHA-256 `0552d7a72ed6716b09b7dee624c99929f707260fee1e8fa7250136418c47e46a`; přísné ověření distribučního podpisu prošlo.
+
+Produkční server je **Live `86dd7c5`**, deployment `dep-db139brm8hqs73dj0tfg`, health 200 a anonymní přístup zůstává odmítnutý; 93 cílených regresí prošlo. Po explicitním souhlasu vlastníka je **App Privacy zveřejněné** a po osobním potvrzení vlastníkem **DAC7 Active**. DSA je stále **In Review**. Kontaktní údaje a instrukce App Review jsou uložené, ale přihlašovací účet recenzenta a snímky pro obchod zůstávají nedokončené. Záznam verze dosud odkazuje na build 3; veřejné podání aplikace ani zveřejnění neproběhlo.
+
+Oddělená cloudová podpora Sandbox je připravená podle [APP_REVIEW_SANDBOX.md](APP_REVIEW_SANDBOX.md), prošlo 110 cílených testů. Cloudová služba ještě neexistuje a distribuční směrování zatím není implementované; nový server s trvalým diskem stojí 7.25 USD měsíčně plus případné daně a čeká na souhlas vlastníka. Produkční Apple nákupy zůstávají vypnuté. Níže zachované starší odstavce popisují předchozí etapy a neznamenají aktuální dokončení těchto zbývajících bodů.
+
 - Placené členství Apple Developer je aktivní, tým `5DATUX4X32`, Individual. Existuje aplikace **SpravaVozidel**, Apple ID **6818048361**, bundle ID `cz.toozservis.spravavozidel.ios`, SKU `spravavozidel-ios`, primární jazyk čeština. Nativní název je SprávaVozidel; spor o původní název obchodu není tímto vyřešen.
 - **Verze 1.0.0, build 3 je skutečně nahraná a zpracovaná Applem.** App Store Connect → TestFlight ukazuje upload **Complete** a build **Ready to Submit** (3. 10. 2026, 20:44 místního času). Build UUID `6dd4532c-0c5f-4d61-be93-7d259e810937`. Toto není schválení App Review, veřejné vydání ani rozeslané pozvánky: build má 0 skupin a 0 jednotlivých testerů.
 - Záznam App Store verze je stále **Prepare for Submission**, s ručním zveřejněním. České popisy, klíčová slova, odkazy podpory a privacy jsou uložené. Věkový dotazník je uložený s výsledkem **4+**; aplikace není označená jako aplikace pro děti. Snímky pro obchod a omezený účet pro recenzenta zůstávají nedokončené.

@@ -39,7 +39,7 @@ def catalog(current_user: Customer = Depends(get_current_user), db: Session = De
         if exc.status_code != 503:
             raise
         return dict(enabled=False, message=exc.detail, products=[], **_status(db, current_user))
-    from .mobile_billing import FEATURES
+    from ...licensing.feature_labels import FEATURES
     return dict(enabled=True, message=None, environment=cfg.environment.value,
         products=[dict(id=key, plan=plan, period=period, vehicles_limit=store.PLAN_LIMITS[plan],
                   features=[title for flag, title in FEATURES.items() if store.PLAN_FEATURES[plan].get(flag)])

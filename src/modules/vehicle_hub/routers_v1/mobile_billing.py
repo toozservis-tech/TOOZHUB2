@@ -14,6 +14,7 @@ from ..models import Customer, LicensePaymentTransaction, Tenant
 from .auth import get_current_user
 from . import license_status as billing
 from ...licensing.service import PLAN_FEATURES, PLAN_LIMITS
+from ...licensing.feature_labels import FEATURES
 
 router = APIRouter(prefix="/mobile")
 CONTRACT_VERSION = "SV-COMGATE-2026-09-29"
@@ -26,13 +27,6 @@ DOCUMENTS = [
 SELLER = dict(name="ToozServis Auto/Pneu Tomáš Zachurčok", company_id="87854716",
               address="Gorkého 2351/19a, 568 02 Svitavy, Česká republika",
               email="info@toozservis.cz", phone="+420731552299")
-FEATURES = {
-    "manual_service_records_enabled": "Ruční servisní úkony (Zdarma: 2 u vozidla)",
-    "reminders_enabled": "Připomínky termínů", "ares_enabled": "Vyhledání firmy v ARES",
-    "vehicle_history_enabled": "Servisní historie", "documents_enabled": "Dokumenty k vozidlu",
-    "costs_tracking_enabled": "Evidence nákladů", "statistics_enabled": "Statistiky",
-    "sharing_with_service_enabled": "Sdílení se servisem", "vin_decode_enabled": "Načítání VIN, ORV a STK",
-}
 
 
 class Selection(BaseModel):
