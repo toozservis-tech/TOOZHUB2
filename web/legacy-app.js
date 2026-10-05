@@ -2062,7 +2062,7 @@
             if (mode === 'service') {
                 return 'Servisní účet podléhá schválení developerem. Před aktivací proběhne kontrola údajů a účelu registrace.';
             }
-            return 'Standardní registrace uživatele s okamžitou aktivací.';
+            return 'Registrace uživatele s potvrzením e-mailové adresy.';
         }
 
         function setRegistrationMode(mode = 'user') {
@@ -2153,6 +2153,7 @@
                     return;
                 }
                 saveAuthSession(response.access_token, response.user);
+                updateRememberedLoginPreferences();
                 location.reload();
             } catch (error) { showFormError('loginErrorContainer', error.message); }
             finally { if (button) button.disabled = false; }

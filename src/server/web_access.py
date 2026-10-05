@@ -64,6 +64,7 @@ def customer_web():
     source = Path(__file__).resolve().parents[2] / 'web' / 'index.html'
     html = source.read_text().replace('<title>Evidence Vozidel</title>', '<title>Evidence Vozidel – webová aplikace</title>').replace('/admin-session.js', '/web/customer-session.js')
     html = html.replace('</head>', '<link rel="stylesheet" href="customer.css"></head>')
+    html = html.replace('Po zadání 8 číslic se automaticky načtou údaje z ARES.', 'Firemní údaje nyní vyplňte ručně. Načítání z ARES je dostupné po přihlášení.')
     html = html.replace('Ověřuji přihlášení administrátora…', 'Načítám Evidence Vozidel…')
     return HTMLResponse(html, headers={'Cache-Control': 'no-store', 'Content-Security-Policy': LEGACY_ADMIN_CONTENT_SECURITY_POLICY, 'X-Frame-Options': 'DENY'})
 
