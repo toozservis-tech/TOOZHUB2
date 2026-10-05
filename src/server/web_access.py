@@ -2,7 +2,7 @@
 from pathlib import Path
 import time
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func
@@ -16,6 +16,8 @@ from src.modules.vehicle_hub.account_state import customer_is_deleted, customer_
 from src.modules.vehicle_hub.email_verification import pending_verification
 
 PUBLIC_WEB_PAGES = {
+    "customer-session.js", "customer.css", "assets/auth-seq-step1-vehicles.png", "assets/auth-seq-step2-add-vehicle.png", "assets/auth-seq-step4-reservations.png", "legacy-actions.js", "legacy-app.js", "legacy-lookups.js",
+    "storage_migration.js", "ai-features.js", "theme.css", "app.css", "inline-styles.css",
     "service-invitation.html",
     "reservations.html",
     "open-app.html", "payment-return.html", "assets/mastercard-mark.svg", "chatbot/widget.js", "chatbot/robot-logo.png",
@@ -45,6 +47,16 @@ def require_web_admin(token, db):
     from src.core.mfa import require_admin_assurance
     require_admin_assurance(db, user, payload)
     return payload
+
+@router.get('/web/customer.html', include_in_schema=False)
+def customer_web():
+    # Reuse the maintained UI, but never expose the administrator session.
+    from src.core.browser_policy import LEGACY_ADMIN_CONTENT_SECURITY_POLICY
+    source = Path(__file__).resolve().parents[2] / 'web' / 'index.html'
+    html = source.read_text().replace('<title>Evidence Vozidel</title>', '<title>Evidence Vozidel – webová aplikace</title>').replace('/admin-session.js', '/web/customer-session.js')
+    html = html.replace('</head>', '<link rel="stylesheet" href="customer.css"></head>')
+    html = html.replace('Ověřuji přihlášení administrátora…', 'Načítám Evidence Vozidel…')
+    return HTMLResponse(html, headers={'Cache-Control': 'no-store', 'Content-Security-Policy': LEGACY_ADMIN_CONTENT_SECURITY_POLICY, 'X-Frame-Options': 'DENY'})
 
 @router.get('/admin-login', include_in_schema=False)
 def admin_login():

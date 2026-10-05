@@ -2140,7 +2140,22 @@
         // Přihlášení - Cloudflare-safe verze
         async function handleLogin(event) {
             event?.preventDefault();
-            AdminBrowserSession.end('verification');
+            if (!window.CustomerWeb) { AdminBrowserSession.end('verification'); return; }
+            const button = document.querySelector('#loginForm button[type="submit"]');
+            if (button) button.disabled = true;
+            try {
+                const response = await apiCall('/user/login', 'POST', {
+                    email: document.getElementById('loginEmail').value.trim(),
+                    password: document.getElementById('loginPassword').value
+                });
+                if (response.two_factor_required) {
+                    openTwoFactorChallenge(response.challenge_token, response.challenge_expires_in || 300);
+                    return;
+                }
+                saveAuthSession(response.access_token, response.user);
+                location.reload();
+            } catch (error) { showFormError('loginErrorContainer', error.message); }
+            finally { if (button) button.disabled = false; }
         }
 
         // Zajistit globální dostupnost handleLogin
@@ -2183,6 +2198,7 @@
 
                 const staySignedIn = document.getElementById('staySignedInCheckbox')?.checked === true;
                 saveAuthSession(response.access_token, response.user, staySignedIn);
+                if (window.CustomerWeb) { location.reload(); return; }
                 if ((!currentUser || !currentUser.email) && accessToken) {
                     await ensureCurrentUserProfileLoaded({ force: true });
                 }
@@ -3024,9 +3040,11 @@
                     zip: zip || null,
                     phone: phone || null
                 });
+                if (window.CustomerWeb) { showLogin(); showAlert(response.email_sent ? 'Účet byl vytvořen. Potvrďte e-mail a přihlaste se.' : 'Účet byl vytvořen, potvrzovací e-mail se nepodařilo odeslat. Přihlaste se a požádejte o nový.', 'info'); return; }
                 if (response.access_token) {
                     saveAuthSession(response.access_token, response.user, getStaySignedInPreference());
                 } else {
+                    if (window.CustomerWeb) { showLogin(); showAlert('Účet byl vytvořen. Potvrďte e-mail a přihlaste se.', 'success'); return; }
                     saveAuthSession(null, response, getStaySignedInPreference());
                 }
                 if (errorContainer) {
@@ -3393,7 +3411,15 @@
         }
 
         // Zobrazení přihlášení (skrýt dashboard)
-        function showLogin() { AdminBrowserSession.end('verification'); }
+        function showLogin() {
+            if (!window.CustomerWeb) { AdminBrowserSession.end('verification'); return; }
+            document.getElementById('adminSessionLoading')?.remove();
+            const auth = document.getElementById('authSection');
+            auth.classList.remove('hidden'); auth.style.display = '';
+            document.getElementById('dashboard').classList.add('hidden');
+            document.getElementById('loginForm').classList.remove('hidden');
+            document.getElementById('registerForm').classList.add('hidden');
+        }
 
         // Zobrazení dashboardu (skrýt login)
         function showDashboard() {
@@ -3597,6 +3623,7 @@
         }
 
         function applyLicenseToUI(license) {
+            if (window.CustomerWeb) document.body.dataset.webPlan = ['admin', 'developer_admin', 'service'].includes(currentUser?.role) ? 'premium' : (license?.plan || 'free');
             const flags = {
                 vinEnabled: isFeatureEnabled(license, 'vin_decode_enabled'),
                 remindersEnabled: isFeatureEnabled(license, 'reminders_enabled'),
@@ -3616,14 +3643,14 @@
             const vinInput = document.getElementById('vehicleVin');
             if (vinInput) {
                 vinInput.disabled = false; // VIN lze vždy vyplnit ručně
-                vinInput.title = flags.vinEnabled ? '' : 'Automatické načtení VIN je dostupné až od plánu PREMIUM';
+                vinInput.title = flags.vinEnabled ? '' : 'Automatické načtení VIN je dostupné od plánu BASIC';
                 vinInput.placeholder = flags.vinEnabled
                     ? 'Zadejte VIN - automaticky se načtou data'
                     : 'Zadejte VIN (data vyplňte ručně)';
             }
             const vinInfo = document.getElementById('vinSourceText');
             if (vinInfo && !flags.vinEnabled) {
-                vinInfo.textContent = 'Automatické VIN dekódování je dostupné od plánu PREMIUM. Vyplňte údaje ručně.';
+                vinInfo.textContent = 'Automatické VIN dekódování je dostupné od plánu BASIC. Vyplňte údaje ručně.';
             }
 
             const remindersContainer = document.getElementById('remindersContainer');
@@ -3633,13 +3660,13 @@
 
             // Pokud VIN auto-fill není povolen, upravit placeholdery polí z VIN
             const vinDependentPlaceholders = [
-                { id: 'vehicleModel', disabledText: 'Vyplňte ručně (auto-fill až v plánu PREMIUM)', enabledText: 'Načte se z VIN' },
-                { id: 'vehicleYear', disabledText: 'Vyplňte ručně (auto-fill až v plánu PREMIUM)', enabledText: 'Načte se z VIN' },
-                { id: 'vehicleEngine', disabledText: 'Vyplňte ručně (auto-fill až v plánu PREMIUM)', enabledText: 'Načte se z VIN' },
-                { id: 'vehicleTyres', disabledText: 'Vyplňte ručně (auto-fill až v plánu PREMIUM)', enabledText: 'Načte se z VIN' },
-                { id: 'vehicleAdditionalNotes', disabledText: 'Vyplňte ručně (auto-fill až v plánu PREMIUM)', enabledText: 'Načte se z VIN' },
-                { id: 'vehicleInspectionDate', disabledText: 'Vyplňte ručně (auto-fill až v plánu PREMIUM)', enabledText: 'Načte se z VIN' },
-                { id: 'vehicleStkDate', disabledText: 'Vyplňte ručně (auto-fill až v plánu PREMIUM)', enabledText: 'Načte se z VIN' },
+                { id: 'vehicleModel', disabledText: 'Vyplňte ručně (automatické vyplnění v plánu BASIC)', enabledText: 'Načte se z VIN' },
+                { id: 'vehicleYear', disabledText: 'Vyplňte ručně (automatické vyplnění v plánu BASIC)', enabledText: 'Načte se z VIN' },
+                { id: 'vehicleEngine', disabledText: 'Vyplňte ručně (automatické vyplnění v plánu BASIC)', enabledText: 'Načte se z VIN' },
+                { id: 'vehicleTyres', disabledText: 'Vyplňte ručně (automatické vyplnění v plánu BASIC)', enabledText: 'Načte se z VIN' },
+                { id: 'vehicleAdditionalNotes', disabledText: 'Vyplňte ručně (automatické vyplnění v plánu BASIC)', enabledText: 'Načte se z VIN' },
+                { id: 'vehicleInspectionDate', disabledText: 'Vyplňte ručně (automatické vyplnění v plánu BASIC)', enabledText: 'Načte se z VIN' },
+                { id: 'vehicleStkDate', disabledText: 'Vyplňte ručně (automatické vyplnění v plánu BASIC)', enabledText: 'Načte se z VIN' },
             ];
             vinDependentPlaceholders.forEach(field => {
                 const el = document.getElementById(field.id);
@@ -5799,7 +5826,7 @@
         // Načtení dat z VIN (nová verze s GET endpointem)
         async function loadVinData(vin) {
             if (window.__licenseFlags && window.__licenseFlags.vinEnabled === false) {
-                showAlert('VIN dekódování je dostupné od plánu PREMIUM.', 'info');
+                showAlert('VIN dekódování je dostupné od plánu BASIC.', 'info');
                 return;
             }
 
@@ -8478,7 +8505,7 @@
                     };
                     attachmentsPayload.push(attachmentPayload);
                 }
-                recordData.attachments = JSON.stringify(attachmentsPayload);
+                if (currentLicensePlanForUi !== 'free' || ['admin', 'developer_admin', 'service'].includes(currentUser?.role)) recordData.attachments = JSON.stringify(attachmentsPayload);
 
                 showAlert('Přidávám servisní úkon...', 'info');
                 await apiCall(`/api/v1/vehicles/${vehicleId}/records`, 'POST', recordData);
@@ -8767,7 +8794,7 @@
                 console.error("Error loading tachometer history:");
                 container.innerHTML = `
                     <div class="vehicle-tachometer-error">
-                        Historii STK se nepodařilo načíst.
+                        ${currentLicensePlanForUi === 'free' ? 'Historie STK je dostupná v tarifu Basic nebo Premium.' : 'Historii STK se nepodařilo načíst.'}
                     </div>
                 `;
             }
@@ -9514,6 +9541,7 @@
                     attachments: JSON.stringify(sanitizedAttachments),
                 };
 
+                if (currentLicensePlanForUi === 'free' && !['admin', 'developer_admin', 'service'].includes(currentUser?.role)) delete updateData.attachments;
                 showAlert('Ukládám změny...', 'info');
                 await apiCall(`/api/v1/vehicles/${vehicleId}/records/${recordId}`, 'PUT', updateData);
 
@@ -10347,12 +10375,14 @@
             API_URL = getApiBaseUrl();
             document.getElementById('configButton')?.classList.add('hidden');
             accessToken = AdminBrowserSession.token();
+            if (!accessToken && window.CustomerWeb) { showLogin(); initLoginModeFromState(); initRememberedLoginPreferences(); return; }
             if (!accessToken) return;
             try {
                 await AdminBrowserSession.verify();
                 const profile = await apiCall('/user/me', 'GET');
-                if (!['admin', 'developer_admin'].includes(profile?.role)) throw new Error('Přístup je určen administrátorům.');
+                if (!window.CustomerWeb && !['admin', 'developer_admin'].includes(profile?.role)) throw new Error('Přístup je určen administrátorům.');
                 currentUser = profile;
+                if (window.CustomerWeb && await showCustomerEmailVerification()) return;
                 markAuthSessionEstablished();
                 capturePendingPaymentReturnFromUrl();
                 setupActivityTracking();
@@ -16845,6 +16875,7 @@
             if (!result?.access_token) return;
             saveAuthSession(result.access_token, currentUser);
             await AdminBrowserSession.verify();
+            if (window.CustomerWeb) return;
             const response = await AdminBrowserSession.request('/admin-web-session', {method:'POST'});
             if (!response.ok) throw new Error('Přihlaste se znovu pro otevření administrace.');
             await response.text();

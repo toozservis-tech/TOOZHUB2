@@ -260,7 +260,7 @@ def public_file_list(path: str = ""):
 
 @router.get("/")
 def root():
-    return RedirectResponse(url="/web/index.html", status_code=302)
+    return RedirectResponse(url="/web/customer.html", status_code=302)
 
 
 @router.get("/api")

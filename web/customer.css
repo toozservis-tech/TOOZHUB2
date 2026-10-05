@@ -1,0 +1,20 @@
+/* Customer portal uses the existing application layout. */
+.auth-login-option:has(#staySignedInCheckbox) { display:none; }
+body[data-web-plan="free"] #serviceReportEditor-add,
+body[data-web-plan="free"] .form-group:has(#serviceAttachmentSourceType-add),
+body[data-web-plan="free"] .form-group:has(#serviceAttachmentFile-add) { display:none; }
+@media (max-width:600px) {
+  .auth-layout { display:block; }
+  .auth-promo { display:none; }
+  .vehicle-modal-content { max-width:100%; }
+  input,select,textarea { font-size:16px; }
+}
+
+.btn, .tab.active { background:linear-gradient(110deg,#f9a33c,#cb741f) !important; color:#202b3d !important; border-color:transparent !important; }
+.btn-secondary { background:#e7ebf2 !important; }
+@media(max-width:600px) {
+  .tabs { display:flex !important; flex-direction:row !important; flex-wrap:nowrap !important; overflow-x:auto; padding-bottom:10px; }
+  .tabs button { flex:0 0 auto !important; width:auto !important; min-width:100px; }
+}
+
+.customer-verification{max-width:550px;margin:10vh auto;padding:24px}.customer-verification .btn{display:block;width:100%;margin-top:16px}
