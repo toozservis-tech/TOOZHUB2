@@ -1501,7 +1501,7 @@
                 throw new Error('Push notifikace vyžadují HTTPS nebo localhost.');
             }
             if (pushSwRegistration) return pushSwRegistration;
-            pushSwRegistration = await navigator.serviceWorker.register('/web/sw.js', { scope: '/web/' });
+            pushSwRegistration = await navigator.serviceWorker.register(window.CustomerWeb ? '/web/customer-sw.js' : '/web/sw.js', { scope: '/web/' });
             return pushSwRegistration;
         }
 

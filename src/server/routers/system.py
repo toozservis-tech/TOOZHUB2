@@ -294,7 +294,7 @@ def api_root():
             "vehicles": "/api/v1/vehicles",
             "decode_vin": "/api/vehicles/decode-vin",
         },
-        "web_interface": "/web/index.html" if Path(__file__).parent.parent.parent.parent.joinpath("web").exists() else None,
+        "web_interface": "/web/customer.html" if Path(__file__).parent.parent.parent.parent.joinpath("web").exists() else None,
     }
 
 

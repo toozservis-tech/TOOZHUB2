@@ -11,6 +11,10 @@ def test_public_customer_shell_keeps_admin_and_backups_private():
     app.mount('/web', AdminStaticFiles(directory='web', public_pages=PUBLIC_WEB_PAGES))
     with TestClient(app) as client:
         page = client.get('/web/customer.html')
+        worker = client.get('/web/customer-sw.js')
+        assert worker.status_code == 200
+        assert '/web/customer.html' in worker.text
+        assert "url.origin === self.location.origin" in worker.text
         assert page.status_code == 200
         assert '/web/customer-session.js' in page.text
         assert '/admin-session.js' not in page.text

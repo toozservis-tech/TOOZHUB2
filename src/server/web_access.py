@@ -48,6 +48,15 @@ def require_web_admin(token, db):
     require_admin_assurance(db, user, payload)
     return payload
 
+@router.get('/web/customer-sw.js', include_in_schema=False)
+def customer_worker():
+    from fastapi.responses import Response
+    source = Path(__file__).resolve().parents[2] / 'web' / 'sw.js'
+    script = source.read_text().replace('/web/index.html', '/web/customer.html')
+    # Existing notification payloads may still carry the compatibility route.
+    script = script.replace("return url.href;", "return url.pathname === '/web/index.html' ? new URL('/web/customer.html' + url.search, self.location.origin).href : url.href;")
+    return Response(script, media_type='text/javascript', headers={'Cache-Control': 'no-store'})
+
 @router.get('/web/customer.html', include_in_schema=False)
 def customer_web():
     # Reuse the maintained UI, but never expose the administrator session.
