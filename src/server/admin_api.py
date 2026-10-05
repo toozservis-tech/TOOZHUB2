@@ -1219,8 +1219,8 @@ def _default_env_int(name: str, default: int = 0) -> int:
 
 def get_default_admin_settings() -> Dict[str, Dict[str, Dict[str, Any]]]:
     """Výchozí konfigurace administrace (uložená jako JSON)."""
-    comgate_basic_monthly = max(0, _default_env_int("COMGATE_PRICE_BASIC_HALERS", 9900))
-    comgate_premium_monthly = max(0, _default_env_int("COMGATE_PRICE_PREMIUM_HALERS", 29900))
+    comgate_basic_monthly = max(0, _default_env_int("COMGATE_PRICE_BASIC_HALERS", 14900))
+    comgate_premium_monthly = max(0, _default_env_int("COMGATE_PRICE_PREMIUM_HALERS", 44900))
     comgate_basic_yearly = max(0, _default_env_int("COMGATE_PRICE_BASIC_YEARLY_HALERS", comgate_basic_monthly * 10))
     comgate_premium_yearly = max(0, _default_env_int("COMGATE_PRICE_PREMIUM_YEARLY_HALERS", comgate_premium_monthly * 10))
 

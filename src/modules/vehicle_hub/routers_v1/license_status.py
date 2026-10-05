@@ -227,7 +227,7 @@ def _load_comgate_config() -> Dict[str, object]:
         get_runtime_setting_int(
             "comgate",
             "price_basic_monthly_halers",
-            _env_int("COMGATE_PRICE_BASIC_HALERS", 9900),
+            _env_int("COMGATE_PRICE_BASIC_HALERS", 14900),
             settings=runtime_settings,
         ),
     )
@@ -236,7 +236,7 @@ def _load_comgate_config() -> Dict[str, object]:
         get_runtime_setting_int(
             "comgate",
             "price_premium_monthly_halers",
-            _env_int("COMGATE_PRICE_PREMIUM_HALERS", 29900),
+            _env_int("COMGATE_PRICE_PREMIUM_HALERS", 44900),
             settings=runtime_settings,
         ),
     )

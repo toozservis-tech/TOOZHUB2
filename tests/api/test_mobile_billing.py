@@ -25,6 +25,9 @@ def setup(monkeypatch):
     db.commit()
     monkeypatch.setattr(billing, 'load_runtime_settings', lambda: {})
     cfg = billing._load_comgate_config()
+    # Historical-price fixtures deliberately stay independent of the current catalog.
+    cfg['plans'] = {'basic': {'monthly': 9900, 'yearly': 99000},
+                    'premium': {'monthly': 29900, 'yearly': 299000}}
     cfg.update(enabled=True, configured=True, merchant='507933', secret='fixture-secret', test_mode=False)
     monkeypatch.setattr(billing, '_load_comgate_config', lambda: cfg)
     monkeypatch.setattr(billing, '_ensure_subscription_schema', lambda *a, **k: True)
@@ -312,3 +315,17 @@ def test_recurring_checkout_requests_only_consented_authority(setup, monkeypatch
     _, calls = created(setup, monkeypatch)
     assert calls[0]['initRecurring'] == 'true'
     assert json.loads(db.query(LicensePaymentTransaction).one().payload_json)['legal_consents']['recurring'] is True
+
+
+@pytest.mark.parametrize("plan,period,amount", [
+    ("basic", "monthly", 14900), ("basic", "yearly", 149000),
+    ("premium", "monthly", 44900), ("premium", "yearly", 449000),
+])
+def test_approved_catalog_amount_reaches_gateway(setup, monkeypatch, plan, period, amount):
+    db, user, cfg = setup
+    cfg['plans'] = {'basic': {'monthly': 14900, 'yearly': 149000},
+                    'premium': {'monthly': 44900, 'yearly': 449000}}
+    _, calls = created(setup, monkeypatch, purchase(
+        plan=plan, billing_period=period, expected_amount_halers=amount))
+    assert int(calls[0]['price']) == amount
+    assert db.query(LicensePaymentTransaction).one().amount_halers == amount

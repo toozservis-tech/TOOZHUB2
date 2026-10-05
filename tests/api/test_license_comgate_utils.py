@@ -107,10 +107,10 @@ def test_load_comgate_config_defaults_to_pricing(monkeypatch):
     monkeypatch.delenv("COMGATE_PRICE_PREMIUM_YEARLY_HALERS", raising=False)
 
     cfg = license_status._load_comgate_config()
-    assert cfg["plans"]["basic"]["monthly"] == 9900
-    assert cfg["plans"]["premium"]["monthly"] == 29900
-    assert cfg["plans"]["basic"]["yearly"] == 99000
-    assert cfg["plans"]["premium"]["yearly"] == 299000
+    assert cfg["plans"]["basic"]["monthly"] == 14900
+    assert cfg["plans"]["premium"]["monthly"] == 44900
+    assert cfg["plans"]["basic"]["yearly"] == 149000
+    assert cfg["plans"]["premium"]["yearly"] == 449000
 
 
 def test_load_comgate_config_includes_test_one_time_fallback_flag(monkeypatch):

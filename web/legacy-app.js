@@ -3726,8 +3726,8 @@
 
         function getDefaultComgatePlans() {
             return {
-                basic: { monthly: 9900, yearly: 99000 },
-                premium: { monthly: 29900, yearly: 299000 },
+                basic: { monthly: 14900, yearly: 149000 },
+                premium: { monthly: 44900, yearly: 449000 },
             };
         }
 
