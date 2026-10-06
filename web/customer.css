@@ -33,3 +33,5 @@ body[data-web-plan="free"] .form-group:has(#serviceAttachmentFile-add) { display
 #customerOverviewTab,#customerArchivesTab,#customerInvitationsTab{padding:20px}
 .customer-feature-body summary{font-weight:700;cursor:pointer;margin:20px 0 10px}
 @media(max-width:600px){.customer-feature-grid{grid-template-columns:1fr}.customer-feature-dialog{width:94vw}.customer-feature-body{padding:15px}.customer-feature-actions button{flex:1 1 140px}}
+
+.service-photo-preview{display:block;max-width:100%;max-height:50vh;object-fit:contain;margin:16px auto}.service-photo-preview[hidden]{display:none}.customer-field select{padding:12px;border:1px solid #aebbd0;border-radius:9px;font:inherit}

@@ -15797,6 +15797,7 @@
             `;
 
             updateServiceWorkspaceVehicleSelect(selectedCustomerId || null);
+            window.ServiceFeatures?.workspaceLoaded(container);
         }
 
         async function loadServiceWorkspace() {

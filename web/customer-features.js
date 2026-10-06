@@ -115,6 +115,7 @@
     async function invitations() {
         const target=$('customerInvitationsTab');target.innerHTML='<h2>Pozvánky servisů</h2><p>Přijetím servis získá vaše kontaktní údaje a může připravovat nová vozidla. Historii stávajících vozidel sdílíte samostatně v sekci Servisy.</p>';
         const captured=session().snapshot(), data=await request('/api/v1/services/workspace/invitations/incoming');session().assertCurrent(captured);
+        void global.ServiceFeatures?.customerRequests(target);
         if(!data.items.length)target.append(document.createTextNode('Žádné čekající pozvánky.'));
         for(const item of data.items){const el=document.createElement('article');el.className='customer-feature-card';el.innerHTML=`<h3>${h(item.service_name)}</h3><p>${h(item.service_email)}</p><p>${h(item.message)}</p><p>Platí do ${h(date(item.expires_at))}</p>`;
             const decide=async accept=>{if(!await confirmAction(accept?`Propojit účet se servisem ${item.service_name}? Servis získá vaše kontaktní údaje. Historii vozidel tím nesdílíte.`:'Odmítnout tuto pozvánku?'))return;const result=await request('/api/v1/services/workspace/invitations/accept','POST',{invitation_id:item.id,decision:accept?'accept':'decline'});if(result.accepted!==accept)throw new Error('Rozhodnutí nebylo potvrzeno serverem.');await invitations();};
@@ -123,12 +124,17 @@
     }
     function vehicleLoaded(vehicle) {
         if(!$('vehicleModalBody'))return;
+        if(vehicle.permissions?.can_edit_vehicle===false){
+            for(const control of $('vehicleModalBody').querySelectorAll('.vehicle-photo-actions,.vehicle-info-edit,.vehicle-info-display > button'))control.remove();
+            for(const row of $('vehicleModalBody').querySelectorAll('.vehicle-info-row.editable'))row.classList.remove('editable');
+        }
         const el=document.createElement('section');el.className='customer-feature-card';el.innerHTML=`<h3>Další funkce vozidla</h3><p>Aktuální stav: ${h(vehicle.current_mileage_km??'Nezadáno')} km</p>`;
         if(vehicle.permissions?.can_record_mileage!==false)el.append(action('Zapsat aktuální km',()=>mileage(vehicle)));
         if(vehicle.permissions?.can_edit_vehicle!==false)el.append(action('Upravit údaje vozidla',()=>editVehicle(vehicle)));
         if(vehicle.permissions?.can_import_tachometer!==false)el.append(action('Načíst km a platnost STK',()=>tachometer(vehicle)));
-        el.append(action('Fotodokumentace oprav',()=>repairSessions(vehicle.id)));
-        el.append(action('Náklady a statistiky',()=>analytics(panel('Náklady vozidla'),vehicle.id)),action('PDF report',()=>download(`/api/v1/vehicles/${vehicle.id}/pdf`,'historie-vozidla.pdf')));
+        el.append(action('Fotodokumentace oprav',()=>global.isServiceWorkspaceRole?.()&&global.ServiceFeatures?global.ServiceFeatures.repairs(vehicle):repairSessions(vehicle.id)));
+        if(!global.isServiceWorkspaceRole?.())el.append(action('Náklady a statistiky',()=>analytics(panel('Náklady vozidla'),vehicle.id)));
+        el.append(action('PDF report',()=>download(`/api/v1/vehicles/${vehicle.id}/pdf`,'historie-vozidla.pdf')));
         $('vehicleModalBody').prepend(el);
     }
     function mileage(vehicle) {
@@ -202,6 +208,6 @@
     }
     function load(tab) {const fn={customerOverview:overview,customerArchives:archives,customerInvitations:invitations}[tab];if(fn)void fn().catch(e=>{if(e.name!=='AbortError')showError(e.message);});}
     global.addEventListener('admin-session-ended',()=>global.CustomerFeatures?.reset());
-    global.CustomerFeatures={downloadPDF:id=>download(`/api/v1/vehicles/${Number(id)}/pdf`,'historie-vozidla.pdf'),install,load,vehicleLoaded,profileLoaded,extraVehicleData,clearDraft:()=>{draft=null;},reset:()=>{draft=null;loadVersion++;for(const dialog of document.querySelectorAll('dialog.customer-feature-dialog')){dialog.close();dialog.remove();}for(const id of ['customerOverviewTab','customerArchivesTab','customerInvitationsTab'])if($(id))$(id).replaceChildren();}};
+    global.CustomerFeatures={ui:{request,action,panel,input,h,showError,confirmAction,readImage,photoButton,download,repairPhotos,tierError},downloadPDF:id=>download(`/api/v1/vehicles/${Number(id)}/pdf`,'historie-vozidla.pdf'),install,load,vehicleLoaded,profileLoaded,extraVehicleData,clearDraft:()=>{draft=null;},reset:()=>{draft=null;loadVersion++;for(const dialog of document.querySelectorAll('dialog.customer-feature-dialog')){dialog.close();dialog.remove();}for(const id of ['customerOverviewTab','customerArchivesTab','customerInvitationsTab'])if($(id))$(id).replaceChildren();}};
     if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install);else install();
 })(typeof window==='undefined'?globalThis:window);
