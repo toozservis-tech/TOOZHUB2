@@ -3244,6 +3244,7 @@
         function updateRoleBasedDashboardTabs() {
             loginMode = getStoredLoginModePreference();
             const serviceMode = isServiceWorkspaceRole();
+            for (const key of ['customerOverview','customerArchives','customerInvitations']) setDashboardTabVisibility(key, !serviceMode);
 
             if (serviceMode) {
                 // Finální servisní dashboard: 1 Klienti 2 Kalendář 3 Připomínky 4 Přidat vozidlo 5 Nastavení 6 Podpora
@@ -6529,7 +6530,8 @@
                 notes: fullNotes || null,
                 stk_valid_until: stkDate || null,
                 insurance_provider: null,
-                insurance_valid_until: null
+                insurance_valid_until: null,
+                ...(window.CustomerFeatures?.extraVehicleData(vin) || {})
             };
 
 
@@ -6538,6 +6540,7 @@
                 showAlert('Přidávám vozidlo...', 'info');
 
                 const vehicle = await apiCall('/api/v1/vehicles', 'POST', vehicleData);
+                window.CustomerFeatures?.clearDraft();
 
 
                 if (vehiclePhotoFile && vehicle && vehicle.id) {
@@ -7045,6 +7048,7 @@
                 // Načíst servisní záznamy
                 await loadServiceRecordsModal(vehicleId);
                 await loadVehicleTachometerHistorySection(vehicleId);
+                window.CustomerFeatures?.vehicleLoaded(vehicle);
 
             } catch (error) {
                 console.error("Error loading vehicle detail:");
@@ -9124,6 +9128,10 @@
 
         // Generování PDF s historií servisních záznamů - globální funkce
         window.generateServiceRecordsPDF = async function(vehicleId) {
+            if (window.CustomerFeatures) {
+                try { return await window.CustomerFeatures.downloadPDF(vehicleId); }
+                catch (error) { if (error.name !== 'AbortError') showAlert(error.message, 'error'); return; }
+            }
 
 
 
@@ -10122,7 +10130,7 @@
                 support: 'supportTab'
             };
 
-            const targetContentId = tabMap[tab];
+            const targetContentId = tabMap[tab] || (window.CustomerFeatures && ['customerOverview', 'customerArchives', 'customerInvitations'].includes(tab) ? tab + 'Tab' : null);
             const targetContent = targetContentId ? document.getElementById(targetContentId) : null;
             if (targetContent) {
                 targetContent.classList.add('active');
@@ -10133,6 +10141,7 @@
                 targetButton.classList.add('active');
             }
 
+            window.CustomerFeatures?.load(tab);
             if (tab === 'vehicles') {
                 applyVehicleViewModeUI();
                 loadVehicles(false);
@@ -16473,6 +16482,7 @@
                     </div>
                 `;
                 container.classList.remove('loading');
+                window.CustomerFeatures?.profileLoaded();
                 container.dataset.renderedFor = cacheOwnerKey;
                 markUiSectionLoaded(profileUiState);
                 setSettingsPanel('account');
@@ -17818,6 +17828,7 @@
 
 // Session closure must also remove local previews and stop background refreshes.
 function clearLegacySessionData() {
+    window.CustomerFeatures?.reset();
     stopInactivityTimer(); stopLicenseRefresh(); stopClientGeoRefresh(); stopReminderNotificationHeartbeat(); stopSystemNotificationsPolling();
     clearInterval(serverStatusCheckInterval); serverStatusCheckInterval = null;
     currentUser = null; accessToken = null; authSecuritySettingsCache = null; clearClientGeoTelemetry();

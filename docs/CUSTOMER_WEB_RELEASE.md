@@ -9,3 +9,14 @@ Oprava ručních servisních úkonů Free: neposílat implicitní dokumentová m
 Ověření na lokální izolované SQLite databázi a smyšlených účtech v Chromu: přihlášení, obnovení stránky, přidání vozidla, detail, dva ruční úkony Free, odmítnutí třetího, připomínky, rezervace, nastavení, odhlášení, druhý účet nevidí vozidlo prvního. Kontrola šířky 390 px. Automatické testy: veřejné soubory versus chráněná administrace, revokace relací, CSP, zákaz úniku tokenu na cizí origin, zákaz admin tokenu v zákaznické relaci a opožděná odpověď po přepnutí účtu.
 
 Webové platby používají stávající serverové nastavení Comgate. Tato změna neaktivuje bránu ani neprovádí žádný skutečný nákup. Úspěšný placený checkout, skutečný Android a úplná shoda všech pokročilých iOS obrazovek nejsou touto kontrolou potvrzeny.
+
+
+## Rozšíření zákaznického webu — 6. 10. 2026
+
+Doplněn přehled s náklady a statistikami, archiv vlastnictví, příchozí pozvánky servisů, ruční zápis kilometrů, úprava technických údajů, načtení km/STK s uživatelem vyplněnou CAPTCHA, čtení fotodokumentace oprav a serverový PDF report. Přidání vozidla nyní nabízí VIN/číslo ORV, lokální dekódování QR pomocí přibaleného jsQR 1.4.0 (licence v `web/vendor`) a fotografie obou stran pro serverové rozpoznání dokladu bez QR. Výsledek se vždy kontroluje před uložením; samotné načtení nic nevytváří.
+
+Nové obrazovky používají stávající autorizované API; tato změna nepovoluje další práva a neupravuje databázové schéma. Rozpracované dialogy a importní údaje se zahodí při ukončení relace. Odpovědi patřící starému účtu se nepoužijí. Statické soubory jsou povolené jednotlivě a CSP zůstává zachované.
+
+Ověřeno: 83 Python testů (veřejný web, administrativní hranice, kilometry, souhlas s pozvánkou, soukromí vlastnictví a ORV) a 7 Node testů (identifikátory, přenos SPZ, izolace relací). V lokálním Chromu se smyšlenými daty ověřeno: přehled/statistiky, prázdný i naplněný archiv s historií, odmítnutí pozvánky s vlastním potvrzovacím dialogem, zápis kilometrů, změna motoru, ruční ORV i QR z galerie, kontrola SPZ a vytvoření vozidla, stažený PDF a rozložení na 390 px. Volání registru a pozvánky používají místní testovací odpovědi; ukládání vozidel, kilometry, statistiky a archiv používají skutečné API nad oddělenou SQLite.
+
+Omezení této kontroly: nebylo ověřeno focení na skutečném Androidu, OCR skutečného dokladu ani živé zadání CAPTCHA registru. Úplná shoda všech iOS funkcí není tvrzena; lokální iOS šablony ani systémové funkce telefonu nejsou tímto automaticky přeneseny na web.

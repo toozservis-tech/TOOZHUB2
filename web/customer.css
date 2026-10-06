@@ -18,3 +18,18 @@ body[data-web-plan="free"] .form-group:has(#serviceAttachmentFile-add) { display
 }
 
 .customer-verification{max-width:550px;margin:10vh auto;padding:24px}.customer-verification .btn{display:block;width:100%;margin-top:16px}
+
+/* Shared customer tools: desktop and narrow phone layouts. */
+.customer-feature-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin:18px 0}
+.customer-feature-card{padding:20px;border:1px solid #d3dae5;border-radius:18px;background:var(--card-bg,#f3f5f9);margin:12px 0;overflow-wrap:anywhere}
+.customer-feature-card h3,.customer-feature-card h4{margin:0 0 12px}.customer-feature-card strong{font-size:1.6rem}
+.customer-feature-actions{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}
+.customer-feature-card button,.customer-feature-body button{margin:5px}
+.customer-feature-dialog{width:min(720px,94vw);max-height:88dvh;border:1px solid #ccd2dd;border-radius:20px;padding:0;background:#f4f6fa;color:#202b3d;box-shadow:0 20px 70px #0006}
+.customer-feature-dialog::backdrop{background:#111b2bcc}.customer-feature-dialog header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 22px;background:#e5eaf3;position:sticky;top:0;z-index:1}
+.customer-feature-dialog header h2{margin:0;font-size:1.25rem}.customer-feature-body{padding:22px;overflow-wrap:anywhere}
+.customer-field{display:flex;flex-direction:column;gap:7px;margin:15px 0}.customer-field input{padding:12px;border:1px solid #aebbd0;border-radius:9px;width:100%;box-sizing:border-box;font:inherit}
+.customer-table{overflow-x:auto}.customer-table table{width:100%;border-collapse:collapse}.customer-table th,.customer-table td{text-align:left;padding:12px;border-bottom:1px solid #ccd2dd}
+#customerOverviewTab,#customerArchivesTab,#customerInvitationsTab{padding:20px}
+.customer-feature-body summary{font-weight:700;cursor:pointer;margin:20px 0 10px}
+@media(max-width:600px){.customer-feature-grid{grid-template-columns:1fr}.customer-feature-dialog{width:94vw}.customer-feature-body{padding:15px}.customer-feature-actions button{flex:1 1 140px}}

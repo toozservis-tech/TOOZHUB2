@@ -20,7 +20,7 @@ def test_public_customer_shell_keeps_admin_and_backups_private():
         assert '/admin-session.js' not in page.text
         assert page.headers['content-security-policy'] == LEGACY_ADMIN_CONTENT_SECURITY_POLICY
         assert page.headers['cache-control'] == 'no-store'
-        for asset in ['customer-session.js','customer.css','legacy-app.js','legacy-actions.js','legacy-lookups.js','theme.css','app.css','inline-styles.css']:
+        for asset in ['customer-session.js','customer-features.js','vendor/jsQR-1.4.0.js','customer.css','legacy-app.js','legacy-actions.js','legacy-lookups.js','theme.css','app.css','inline-styles.css']:
             assert client.get('/web/'+asset).status_code == 200
         for private in ['index.html', 'index.html.backup_now', 'index_minimal.html']:
             assert client.get('/web/'+private, follow_redirects=False).status_code == 303
