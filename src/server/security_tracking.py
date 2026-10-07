@@ -7,6 +7,7 @@ import ipaddress
 import json
 import math
 import os
+import re
 import time
 from typing import Any, Dict, Optional
 from urllib.parse import quote
@@ -334,6 +335,33 @@ def lookup_ip_location(ip_value: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
 
+def access_diagnostics(request=None):
+    """Bounded client hints are diagnostics, never authorization inputs."""
+    data = {"server_environment": "sandbox" if os.getenv("SV_ISOLATED_APPLE_SANDBOX") == "1" else "production"}
+    headers = getattr(request, "headers", {})
+    for header, key in [("x-client-platform", "client_platform"), ("x-app-version", "app_version"),
+                        ("x-app-build", "app_build"), ("x-app-os", "app_os")]:
+        value = headers.get(header, "")
+        if value and len(value) <= 64 and re.fullmatch(r"[A-Za-z0-9 ._-]+", value):
+            data[key] = value
+    return data
+
+
+def access_event_view(item):
+    """Expose only diagnostic fields; never arbitrary stored payloads."""
+    try:
+        details = json.loads(item.details or "{}")
+        if not isinstance(details, dict):
+            details = {}
+    except (ValueError, TypeError):
+        details = {}
+    allowed = ("reason", "server_environment", "client_platform", "app_version", "app_build", "app_os")
+    result = {k: str(details[k])[:128] for k in allowed if k in details}
+    result.setdefault("server_environment", access_diagnostics()["server_environment"])
+    result["user_agent"] = (item.user_agent or "")[:256]
+    return result
+
+
 def log_security_event(
     *,
     event_type: str,
@@ -387,6 +415,7 @@ def log_security_event(
             if browser_geo.get("captured_at"):
                 base_details["geo_captured_at"] = browser_geo.get("captured_at")
 
+        base_details.update(access_diagnostics(request))
         base_details["geo_source"] = source or "unknown"
 
         entry = SecurityAccessLog(

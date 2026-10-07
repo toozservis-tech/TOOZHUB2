@@ -2,7 +2,7 @@
 Admin API router pro Správa vozidel
 Přístupné pouze pro developer_admin/admin role
 """
-from fastapi import APIRouter, Depends, HTTPException, Request as FastAPIRequest
+from fastapi import APIRouter, Depends, HTTPException, Query, Request as FastAPIRequest
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect, func
@@ -20,6 +20,7 @@ import ipaddress
 import secrets
 import string
 
+from src.server.security_tracking import access_event_view
 from src.core.private_errors import report_exception
 from src.core.auth import get_current_user_email, security
 from src.core.branding import APP_DISPLAY_NAME, canonical_display_name
@@ -4910,6 +4911,26 @@ def get_users_presence(
         raise HTTPException(status_code=500, detail="Chyba při načítání online/offline stavu.")
 
 
+@router.get("/control-center/access-history")
+def get_access_history(
+    limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0),
+    search: str = Query("", max_length=200),
+    email: str = Depends(require_control_center_admin), db: Session = Depends(get_db),
+):
+    query = db.query(SecurityAccessLog)
+    if search.strip():
+        term = "%" + search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        query = query.filter(SecurityAccessLog.user_email.ilike(term, escape="\\") |
+                             SecurityAccessLog.ip_address.ilike(term, escape="\\"))
+    total = query.count()
+    rows = query.order_by(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc()).offset(offset).limit(limit).all()
+    return {"total": total, "offset": offset, "limit": limit, "items": [
+        {"id": item.id, "event_type": item.event_type, "user_email": item.user_email,
+         "ip_address": item.ip_address, "endpoint": item.endpoint,
+         "created_at": item.created_at.replace(tzinfo=timezone.utc).isoformat() if item.created_at else None,
+         **access_event_view(item)} for item in rows]}
+
+
 @router.get("/control-center/security-monitor")
 def get_security_monitor(
     email: str = Depends(require_control_center_admin),
@@ -4996,6 +5017,7 @@ def get_security_monitor(
             ],
             "latest_events": [
                 {
+                    **access_event_view(item),
                     "id": item.id,
                     "event_type": item.event_type,
                     "user_email": item.user_email,

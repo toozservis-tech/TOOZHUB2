@@ -595,6 +595,14 @@
                 <div id="cc-security-failed-ips-table" class="tool-table-wrap"></div>
                 <div id="cc-security-table" class="tool-table-wrap"></div>
                 <div id="cc-security-events-table" class="tool-table-wrap"></div>
+                <h4>Historie připojení a přihlášení</h4>
+                <label for="access-search">E-mail nebo IP adresa</label>
+                <input id="access-search" type="search" maxlength="200" placeholder="Hledat ve všech uložených událostech">
+                <button type="button" onclick="loadAccessHistory(0)">Vyhledat / obnovit</button>
+                <p id="access-status" role="status"></p>
+                <div id="access-history" class="tool-table-wrap"></div>
+                <button id="access-prev" type="button" onclick="loadAccessHistory(accessOffset - 50)" disabled>Předchozí</button>
+                <button id="access-next" type="button" onclick="loadAccessHistory(accessOffset + 50)" disabled>Další</button>
                 <details class="cc-technical-details">
                   <summary>Podklady pro technickou podporu</summary>
                   <pre id="cc-security-technical" class="tool-result cc-technical-result"></pre>
