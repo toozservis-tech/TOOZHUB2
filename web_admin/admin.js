@@ -4046,9 +4046,12 @@ async function loadControlCenterSecurityMonitor() {
         { key: 'event_type', label: 'Událost', render: (row) => escapeHtml(row.event_type || '-') },
         { key: 'user_email', label: 'Uživatel', render: (row) => escapeHtml(row.user_email || '-') },
         { key: 'ip_address', label: 'IP', render: (row) => escapeHtml(row.ip_address || '-') },
+        { key: 'server_environment', label: 'Server', render: (row) => row.server_environment === 'sandbox' ? 'Testovací' : 'Produkční' },
+        { key: 'reason', label: 'Důvod', render: (row) => escapeHtml(({user_not_found:'Účet na tomto serveru neexistuje',invalid_password:'Nesprávné heslo',account_disabled:'Účet pozastaven',account_deleted:'Účet deaktivován',rate_limit:'Příliš mnoho pokusů',blocked_ip:'Blokovaná IP'})[row.reason] || row.reason || '—') },
+        { key: 'user_agent', label: 'Aplikace / prohlížeč', render: (row) => escapeHtml([row.app_version, row.app_build && ('sestavení ' + row.app_build), row.app_os, row.user_agent].filter(Boolean).join(' · ')) },
         { key: 'endpoint', label: 'Endpoint', render: (row) => escapeHtml(row.endpoint || '-') },
       ],
-      latestEvents.slice(0, 40),
+      latestEvents,
     );
     setControlCenterResult('cc-security-result', data);
   } catch (error) {
@@ -4827,3 +4830,35 @@ window.addEventListener('DOMContentLoaded', () => {
     showLoginScreen();
   }
 });
+
+
+let accessOffset = 0;
+let accessLoading = false;
+async function loadAccessHistory(offset = 0) {
+  if (accessLoading) return;
+  accessLoading = true;
+  const status = document.getElementById('access-status');
+  const previous = document.getElementById('access-prev');
+  const next = document.getElementById('access-next');
+  previous.disabled = next.disabled = true;
+  status.textContent = 'Načítám historii…';
+  try {
+    const query = new URLSearchParams({limit:'50', offset:String(Math.max(0, offset)), search:document.getElementById('access-search').value});
+    const data = await apiRequest('GET', '/admin-api/control-center/access-history?' + query);
+    renderControlCenterTable('access-history', [
+      {key:'created_at',label:'Čas',render:r=>formatDateTime(r.created_at)},
+      {key:'user_email',label:'Účet',render:r=>escapeHtml(r.user_email || '—')},
+      {key:'event_type',label:'Událost',render:r=>escapeHtml(r.event_type)},
+      {key:'reason',label:'Důvod',render:r=>escapeHtml(({user_not_found:'Účet na tomto serveru neexistuje',invalid_password:'Nesprávné heslo',account_disabled:'Účet pozastaven',rate_limit:'Příliš mnoho pokusů'})[r.reason] || r.reason || '—')},
+      {key:'server_environment',label:'Server',render:r=>r.server_environment==='sandbox'?'Testovací':'Produkční'},
+      {key:'ip_address',label:'IP',render:r=>escapeHtml(r.ip_address || '—')},
+      {key:'user_agent',label:'Aplikace / prohlížeč',render:r=>escapeHtml(r.user_agent || '—')},
+      {key:'endpoint',label:'Požadavek',render:r=>escapeHtml(r.endpoint || '—')}
+    ], data.items);
+    accessOffset = Math.max(0, offset);
+    status.textContent = `Strana ${Math.floor(accessOffset/50)+1} · ${data.total} událostí`;
+    previous.disabled = accessOffset === 0;
+    next.disabled = accessOffset + 50 >= data.total;
+  } catch(error) { status.textContent = error.message || 'Historii se nepodařilo načíst.'; }
+  finally { accessLoading = false; }
+}

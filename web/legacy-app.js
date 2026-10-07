@@ -2389,7 +2389,7 @@
                                 <strong>✓ Reset odkaz byl odeslán</strong><br><br>
                                 Na email <strong>${escapeHtml(email)}</strong> byl odeslán odkaz pro obnovení hesla.<br>
                                 Zkontrolujte prosím svou emailovou schránku (i složku spam).<br><br>
-                                <small>Odkaz je platný 24 hodin.</small>
+                                <small>Odkaz je platný 30 minut.</small>
                             </div>
                         `;
                     }
@@ -2444,9 +2444,9 @@
                         resetContainer.innerHTML = `
                             <div class="alert alert-info" style="margin-top: 15px;">
                                 <strong>ℹ️ Požadavek zpracován</strong><br><br>
-                                Pokud email existuje, byl odeslán reset odkaz.<br>
+                                Pokud existuje aktivní účet s tímto e-mailem, obdržíte odkaz pro obnovu hesla.<br>
                                 Zkontrolujte prosím svou emailovou schránku (i složku spam).<br><br>
-                                <small>Odkaz je platný 24 hodin.</small>
+                                <small>Odkaz je platný 30 minut.</small>
                             </div>
                         `;
                     }
