@@ -48,3 +48,37 @@ class AccessHistory(unittest.TestCase):
         self.assertEqual(data['app_build'],'14')
         self.assertNotIn('app_os',data)
         self.assertEqual(access_event_view(SimpleNamespace(details='[]',user_agent=None))['user_agent'],'')
+
+    def test_account_overview_and_exact_stable_history(self):
+        account = self.register().json()
+        headers = {'Authorization': 'Bearer ' + self.verified_admin_token(account['user']['id'])}
+        path = '/admin-api/control-center/access-accounts'
+        self.assertEqual(self.client.get(path, headers=headers).status_code, 403)
+        with self.Session() as db:
+            db.get(Customer, account['user']['id']).role = 'admin'
+            for i in range(55):
+                db.add(SecurityAccessLog(user_email='one@example.com', event_type='login_success',
+                    created_at=datetime(2026, 1, 1) + timedelta(seconds=i)))
+            db.add(SecurityAccessLog(user_email='two@example.com', event_type='login_failed',
+                created_at=datetime(2026, 1, 2)))
+            db.add(SecurityAccessLog(user_email='one@example.com.evil', event_type='login_failed',
+                created_at=datetime(2026, 1, 3)))
+            db.commit()
+        result = self.client.get(path+'?search=example.com', headers=headers)
+        self.assertEqual(result.status_code, 200, result.text)
+        one = next(r for r in result.json()['items'] if r['actor'] == 'one@example.com')
+        self.assertEqual(one['event_count'], 55)
+        self.assertEqual(one['created_at'], '2026-01-01T00:00:54+00:00')
+        failed = self.client.get(path+'?failures=true', headers=headers).json()['items']
+        self.assertNotIn('one@example.com', [r['actor'] for r in failed])
+        hist='/admin-api/control-center/access-history?actor=one@example.com&limit=50'
+        first=self.client.get(hist,headers=headers).json()
+        self.assertEqual(first['total'],55)
+        with self.Session() as db:
+            db.add(SecurityAccessLog(user_email='one@example.com',event_type='login_success'))
+            db.commit()
+        second=self.client.get(hist+'&offset=50&before_id='+str(first['snapshot_id']),headers=headers).json()
+        self.assertEqual(second['total'],55)
+        self.assertEqual(len(second['items']),5)
+        self.assertFalse(set(r['id'] for r in first['items']) & set(r['id'] for r in second['items']))
+        self.assertEqual(self.client.get(path+'?role=other',headers=headers).status_code,422)
