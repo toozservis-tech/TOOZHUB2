@@ -4909,24 +4909,64 @@ def get_users_presence(
         raise HTTPException(status_code=500, detail="Chyba při načítání online/offline stavu.")
 
 
+def _access_row(item):
+    return {"id": item.id, "event_type": item.event_type, "user_email": item.user_email,
+            "ip_address": item.ip_address, "endpoint": item.endpoint,
+            "created_at": item.created_at.replace(tzinfo=timezone.utc).isoformat() if item.created_at else None,
+            **access_event_view(item)}
+
+
+@router.get("/control-center/access-accounts")
+def get_access_accounts(
+    limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
+    search: str = Query("", max_length=200), role: str = Query("all", pattern="^(all|user|service|admin)$"),
+    failures: bool = False,
+    email: str = Depends(require_control_center_admin), db: Session = Depends(get_db),
+):
+    # Aggregate the complete retained history, never just one page of events.
+    actor = func.coalesce(func.nullif(SecurityAccessLog.user_email, ""),
+                          "IP: " + func.coalesce(SecurityAccessLog.ip_address, "nezjištěna"))
+    ranked = db.query(SecurityAccessLog.id.label("id"), actor.label("actor"),
+        func.count().over(partition_by=actor).label("count"),
+        func.row_number().over(partition_by=actor,
+            order_by=(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc())).label("rank"))
+    if failures:
+        ranked = ranked.filter(SecurityAccessLog.event_type.in_(["login_failed", "login_rate_limited", "blocked_ip"]))
+    ranked = ranked.subquery()
+    query = db.query(SecurityAccessLog, ranked.c.actor, ranked.c.count, Customer.name, Customer.role).join(
+        ranked, ranked.c.id == SecurityAccessLog.id).outerjoin(Customer, Customer.email == SecurityAccessLog.user_email).filter(ranked.c.rank == 1)
+    if search.strip():
+        term = "%" + search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        query = query.filter(ranked.c.actor.ilike(term, escape="\\") | Customer.name.ilike(term, escape="\\"))
+    if role != "all":
+        query = query.filter(Customer.role.in_(["admin", "developer_admin"]) if role == "admin" else Customer.role == role)
+    total = query.count()
+    rows = query.order_by(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc()).offset(offset).limit(limit).all()
+    return {"total": total, "items": [{**_access_row(item), "actor": actor_name,
+        "event_count": count, "name": name, "role": account_role} for item, actor_name, count, name, account_role in rows]}
+
+
 @router.get("/control-center/access-history")
 def get_access_history(
     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0),
-    search: str = Query("", max_length=200),
+    search: str = Query("", max_length=200), actor: str = Query("", max_length=320),
+    before_id: Optional[int] = Query(None, ge=1),
     email: str = Depends(require_control_center_admin), db: Session = Depends(get_db),
 ):
     query = db.query(SecurityAccessLog)
+    if actor:
+        actor_key = func.coalesce(func.nullif(SecurityAccessLog.user_email, ""), "IP: " + func.coalesce(SecurityAccessLog.ip_address, "nezjištěna"))
+        query = query.filter(actor_key == actor)
+    snapshot_id = before_id or db.query(func.max(SecurityAccessLog.id)).scalar() or 0
+    query = query.filter(SecurityAccessLog.id <= snapshot_id)
     if search.strip():
         term = "%" + search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         query = query.filter(SecurityAccessLog.user_email.ilike(term, escape="\\") |
                              SecurityAccessLog.ip_address.ilike(term, escape="\\"))
     total = query.count()
     rows = query.order_by(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc()).offset(offset).limit(limit).all()
-    return {"total": total, "offset": offset, "limit": limit, "items": [
-        {"id": item.id, "event_type": item.event_type, "user_email": item.user_email,
-         "ip_address": item.ip_address, "endpoint": item.endpoint,
-         "created_at": item.created_at.replace(tzinfo=timezone.utc).isoformat() if item.created_at else None,
-         **access_event_view(item)} for item in rows]}
+    return {"total": total, "offset": offset, "limit": limit, "snapshot_id": snapshot_id,
+            "items": [_access_row(item) for item in rows]}
 
 
 @router.get("/control-center/security-monitor")
