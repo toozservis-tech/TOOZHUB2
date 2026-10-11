@@ -355,7 +355,7 @@ def access_event_view(item):
             details = {}
     except (ValueError, TypeError):
         details = {}
-    allowed = ("reason", "server_environment", "client_platform", "app_version", "app_build", "app_os")
+    allowed = ("reason", "server_environment", "client_platform", "app_version", "app_build", "app_os", "method", "status", "duration_ms", "resource", "request_id")
     result = {k: str(details[k])[:128] for k in allowed if k in details}
     result.setdefault("server_environment", access_diagnostics()["server_environment"])
     result["user_agent"] = (item.user_agent or "")[:256]
@@ -491,6 +491,8 @@ def log_user_activity(
     normalized = (user_email or "").strip().lower()
     if not normalized:
         return
+    if request is not None and getattr(request.state, "activity_actor", None):
+        return  # Completion middleware records this request with its outcome.
     if not _remember_activity(normalized):
         return
 
@@ -507,3 +509,42 @@ def log_user_activity(
         endpoint=endpoint,
         details=payload,
     )
+
+
+def log_completed_activity(request, status_code, elapsed_ms):
+    """Record authenticated server operations, never request bodies or query secrets."""
+    actor = getattr(request.state, "activity_actor", None)
+    if not actor:
+        return
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if not path or path.startswith("/admin-api/control-center/access-"):
+        return
+    import uuid
+    resource = ", ".join(f"{key}={value}" for key, value in request.path_params.items()
+                         if (key == "id" or key.endswith("_id")) and str(value).isdigit())[:128]
+    log_security_event(event_type="request_failed" if status_code >= 400 else "request_completed",
+        request=request, endpoint=path, **actor,
+        details={"method": request.method, "status": status_code,
+                 "duration_ms": max(0, round(elapsed_ms)), "resource": resource,
+                 "request_id": str(uuid.uuid4())})
+
+
+async def completed_activity_middleware(request, call_next):
+    import time
+    from starlette.concurrency import run_in_threadpool
+    started = time.monotonic()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        try:
+            await run_in_threadpool(log_completed_activity, request, status_code,
+                                    (time.monotonic() - started) * 1000)
+        except Exception:
+            # Diagnostics must never make the user's operation fail.
+            import logging
+            logging.getLogger(__name__).warning("Activity persistence failed")
+

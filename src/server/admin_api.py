@@ -4933,7 +4933,7 @@ def get_access_accounts(
         func.row_number().over(partition_by=actor,
             order_by=(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc())).label("rank"))
     if failures:
-        ranked = ranked.filter(SecurityAccessLog.event_type.in_(["login_failed", "login_rate_limited", "blocked_ip"]))
+        ranked = ranked.filter(SecurityAccessLog.event_type.in_(["login_failed", "login_rate_limited", "blocked_ip", "request_failed"]))
     ranked = ranked.subquery()
     query = db.query(SecurityAccessLog, ranked.c.actor, ranked.c.count, Customer.name, Customer.role).join(
         ranked, ranked.c.id == SecurityAccessLog.id).outerjoin(Customer, Customer.email == SecurityAccessLog.user_email).filter(ranked.c.rank == 1)

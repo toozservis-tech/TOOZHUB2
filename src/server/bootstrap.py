@@ -236,6 +236,8 @@ def _register_exception_handler(app: FastAPI) -> None:
 
 
 def _register_middlewares(app: FastAPI) -> None:
+    from src.server.security_tracking import completed_activity_middleware
+    app.middleware("http")(completed_activity_middleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
