@@ -4950,14 +4950,22 @@ def get_access_accounts(
 def get_access_history(
     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0),
     search: str = Query("", max_length=200), actor: str = Query("", max_length=320),
-    before_id: Optional[int] = Query(None, ge=1),
+    before_id: Optional[str] = Query(None, max_length=20),
     email: str = Depends(require_control_center_admin), db: Session = Depends(get_db),
 ):
     query = db.query(SecurityAccessLog)
     if actor:
         actor_key = func.coalesce(func.nullif(SecurityAccessLog.user_email, ""), "IP: " + func.coalesce(SecurityAccessLog.ip_address, "nezjištěna"))
         query = query.filter(actor_key == actor)
-    snapshot_id = before_id or db.query(func.max(SecurityAccessLog.id)).scalar() or 0
+    cursor = None
+    if before_id:
+        try:
+            cursor = int(before_id)
+            if cursor < 1:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Neplatná stránka historie.")
+    snapshot_id = cursor or db.query(func.max(SecurityAccessLog.id)).scalar() or 0
     query = query.filter(SecurityAccessLog.id <= snapshot_id)
     if search.strip():
         term = "%" + search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"

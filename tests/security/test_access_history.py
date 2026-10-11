@@ -28,6 +28,12 @@ class AccessHistory(unittest.TestCase):
         first=self.client.get(path+'?limit=2&search=review',headers=headers)
         self.assertEqual(first.status_code,200,first.text)
         self.assertEqual(first.json()['total'],3)
+        for suffix in ('&before_id', '&before_id='):
+            response = self.client.get(path+'?search=review'+suffix, headers=headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()['total'], 3)
+        for value in ('bad', '0', '-1'):
+            self.assertEqual(self.client.get(path+'?before_id='+value, headers=headers).status_code, 422)
         self.assertEqual(len(first.json()['items']),2)
         self.assertNotIn('DO-NOT-EXPOSE',first.text)
         self.assertNotIn('SECRET',first.text)
