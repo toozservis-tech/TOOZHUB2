@@ -134,7 +134,8 @@ test('expiration removes a protected view and cancels its outstanding work',asyn
  const f=await fixture();try{
  await f.page.evaluate(async()=>{
   AdminBrowserSession.protect(()=>sessionStorage.setItem('expiry-cleanup','yes'));
-  window.fetch=async()=>new Response(JSON.stringify({required:true,verified:true,valid_until:(Date.now()+80)/1000}));
+  const deadline=(Date.now()+80)/1000;
+  window.fetch=async()=>new Response(JSON.stringify({required:true,verified:true,valid_until:deadline}));
   await AdminBrowserSession.verify();
  });
  await f.page.waitForURL('**/admin-login?next=**');
@@ -237,5 +238,23 @@ test('generic HTTP success cannot discard an unconfirmed logout receipt',async()
   return {pending:AdminBrowserSession.hasPendingLogouts(),token:AdminBrowserSession.token()};
  },tokenWithReceipt('c'));
  assert.deepEqual(result,{pending:true,token:null});
+ }finally{await f.context.close();}
+});
+
+
+test('a server-extended activity deadline keeps the administrator page open',async()=>{
+ const f=await fixture();try{
+ await f.page.evaluate(async()=>{
+  AdminBrowserSession.protect(()=>{});
+  let first=true;
+  window.fetch=async()=>{
+   const until=(Date.now()+(first?80:3600000))/1000;first=false;
+   return new Response(JSON.stringify({required:true,verified:true,valid_until:until}));
+  };
+  await AdminBrowserSession.verify();
+ });
+ await f.page.waitForTimeout(1200);
+ assert.equal(await f.page.evaluate(()=>AdminBrowserSession.token()),'SESSION-A');
+ assert.ok((await f.page.locator('body').textContent()).includes('SYNTHETIC PRIVATE DATA'));
  }finally{await f.context.close();}
 });

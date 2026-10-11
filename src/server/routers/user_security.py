@@ -246,7 +246,7 @@ def verify_admin(payload: TotpDisableRequest, request: Request, response: Respon
                        customer_id=customer.id, tenant_id=customer.tenant_id,
                        endpoint=str(request.url.path), details={"method": "password_totp"})
     return {"access_token": create_access_token(claims),
-            "message": "Administrátor ověřen na 15 minut."}
+            "message": "Administrátor ověřen. Nové ověření je potřeba po 12 hodinách nečinnosti."}
 
 
 @router.post("/user/security/biometric")
@@ -402,3 +402,20 @@ def contact_support(
         report_exception(exc)
 
     return {'sent': True, 'message': 'Zpráva byla odeslána podpoře. Odpovíme na váš e-mail.'}
+
+
+@router.post("/user/session/renew")
+def renew_account_session(request: Request, response: Response,
+                          email: str = Depends(get_current_user_email), db=Depends(get_db)):
+    """Renew an active account session without granting fresh administrator assurance.
+
+    Keep the session identity so any logout ticket revokes all renewed copies.
+    Password changes, disabled accounts and server logout remain authoritative.
+    """
+    claims = decode_access_token_payload(request.headers.get('authorization', '').split(' ', 1)[-1])
+    if not claims or not isinstance(claims.get('jti'), str):
+        raise HTTPException(401, 'Přihlaste se znovu pro obnovení přihlášení.')
+    response.headers['Cache-Control'] = 'no-store'
+    data = {key: claims[key] for key in ('sub', 'sv', 'amr', 'mfa_at') if key in claims}
+    token = create_access_token(data, expires_delta=timedelta(days=30), session_id=claims['jti'])
+    return {'access_token': token}

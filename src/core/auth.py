@@ -88,7 +88,7 @@ def get_current_user_email(
     request.state.activity_actor = {"user_email": normalized_email, "customer_id": customer.id,
                                     "tenant_id": customer.tenant_id}
     if pending_verification(db, customer.id) and (request.method, request.url.path) not in {
-        ("GET", "/user/me"), ("DELETE", "/user/me"), ("GET", "/user/me/export"),
+        ("POST", "/user/session/renew"), ("GET", "/user/me"), ("DELETE", "/user/me"), ("GET", "/user/me/export"),
         ("PUT", "/user/change-password"),
         ("GET", "/user/email-verification"), ("POST", "/user/email-verification/resend"),
     }:

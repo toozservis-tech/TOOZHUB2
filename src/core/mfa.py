@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, update, delete
 
 from src.core.config import JWT_SECRET_KEY
 from src.modules.vehicle_hub.database import Base
@@ -164,9 +164,16 @@ def verified_claims(customer):
             'amr':['pwd','otp'],'mfa_at':int(time.time())}
 
 
-ADMIN_VERIFICATION_SECONDS = 15 * 60
+class AdminSessionActivity(Base):
+    __tablename__ = 'admin_session_activity'
+    digest = Column(String(64), primary_key=True)
+    verified_at = Column(Integer, nullable=False)
+    last_seen = Column(Integer, nullable=False, index=True)
+
+
+ADMIN_VERIFICATION_SECONDS = 12 * 60 * 60
 ADMIN_BOOTSTRAP_ROUTES = frozenset({
-    ('GET', '/user/me'), ('GET', '/user/email-verification'),
+    ('GET', '/user/me'), ('POST', '/user/session/renew'), ('GET', '/user/email-verification'),
     ('POST', '/user/email-verification/resend'),
     ('GET', '/user/security/settings'), ('GET', '/user/security/admin-status'),
     ('POST', '/user/security/admin-verify'), ('POST', '/user/security/totp/setup'),
@@ -174,21 +181,42 @@ ADMIN_BOOTSTRAP_ROUTES = frozenset({
 })
 
 
-def admin_assurance_status(db, customer, claims):
+def admin_assurance_status(db, customer, claims, *, touch=False):
     required = (customer.role or '').strip().lower() in {'admin', 'developer_admin'}
     settings = db.query(CustomerSecuritySettings).filter_by(customer_id=customer.id).first() if required else None
     enrolled = bool(settings and settings.two_factor_enabled)
     if enrolled:
         read_secret(settings.totp_secret)  # Fail closed on missing/corrupt configured factors.
     checked_at = claims.get('mfa_at')
+    now = int(time.time())
     valid_timestamp = isinstance(checked_at, (int, float)) and not isinstance(checked_at, bool)
-    fresh = valid_timestamp and 0 <= time.time() - checked_at < ADMIN_VERIFICATION_SECONDS
+    last_seen = checked_at if valid_timestamp else 0
+    digest = hashlib.sha256(str(claims.get('jti', '')).encode()).hexdigest()
+    row = db.get(AdminSessionActivity, digest) if required and claims.get('jti') else None
+    if row and row.verified_at == checked_at:
+        last_seen = max(last_seen, row.last_seen)
+    fresh = valid_timestamp and 0 <= now - last_seen < ADMIN_VERIFICATION_SECONDS
     verified = not required or bool(enrolled and fresh and claims.get('amr') == ['pwd', 'otp'])
+    if required and verified and touch and claims.get('jti'):
+        # Only an already valid, password+OTP-verified session can extend activity.
+        # An expired session cannot resurrect itself through status polling.
+        if row:
+            db.execute(update(AdminSessionActivity).where(AdminSessionActivity.digest == digest,
+                AdminSessionActivity.last_seen <= now).values(verified_at=int(checked_at), last_seen=now))
+        else:
+            from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            insert = pg_insert if db.get_bind().dialect.name == 'postgresql' else sqlite_insert
+            db.execute(insert(AdminSessionActivity).values(digest=digest,
+                verified_at=int(checked_at), last_seen=now).on_conflict_do_nothing(index_elements=['digest']))
+        db.execute(delete(AdminSessionActivity).where(AdminSessionActivity.last_seen < now - 31 * 86400))
+        db.commit()
+        last_seen = now
     return {'required': required, 'enrolled': enrolled, 'verified': verified,
-            'valid_until': int(checked_at + ADMIN_VERIFICATION_SECONDS) if required and verified else None}
+            'valid_until': int(last_seen + ADMIN_VERIFICATION_SECONDS) if required and verified else None}
 
 
 def require_admin_assurance(db, customer, claims):
-    if not admin_assurance_status(db, customer, claims)['verified']:
+    if not admin_assurance_status(db, customer, claims, touch=True)['verified']:
         raise HTTPException(403, 'Pro přístup administrátora potvrďte heslo a nový kód z autentikátoru.',
                             headers={'X-Admin-Verification': 'required'})

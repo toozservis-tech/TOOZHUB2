@@ -3070,24 +3070,12 @@
         // Odhlášení
         function handleLogout() { void AdminBrowserSession.logout(); }
 
-        // Sledování aktivity pro automatické odhlášení
+        // Session expiry and administrator verification are enforced by the server.
+        // A local 15-minute timer must not revoke an otherwise active account.
         let inactivityTimer = null;
-        let inactivityTimeout = 15 * 60 * 1000; // 15 minut v milisekundách
-
         function resetInactivityTimer() {
-            // Zrušit stávající timer
-            if (inactivityTimer) {
-                clearTimeout(inactivityTimer);
-            }
-
-            // Pokud je uživatel přihlášen, nastavit nový timer
-            if (currentUser && accessToken) {
-                inactivityTimer = setTimeout(() => {
-
-                    showAlert('Byl jste automaticky odhlášen kvůli nečinnosti (15 minut).', 'warning');
-                    handleLogout();
-                }, inactivityTimeout);
-            }
+            if (inactivityTimer) clearTimeout(inactivityTimer);
+            inactivityTimer = null;
         }
 
         function stopInactivityTimer() {
