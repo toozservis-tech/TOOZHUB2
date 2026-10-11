@@ -491,8 +491,6 @@ def log_user_activity(
     normalized = (user_email or "").strip().lower()
     if not normalized:
         return
-    if request is not None and getattr(request.state, "activity_actor", None):
-        return  # Completion middleware records this request with its outcome.
     if not _remember_activity(normalized):
         return
 
