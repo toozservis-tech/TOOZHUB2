@@ -4909,7 +4909,7 @@ def get_users_presence(
         raise HTTPException(status_code=500, detail="Chyba při načítání online/offline stavu.")
 
 
-ACCESS_PROBLEM_EVENTS = ("login_failed", "login_rate_limited", "blocked_ip", "request_failed")
+ACCESS_PROBLEM_EVENTS = ("login_failed", "login_rate_limited", "blocked_ip", "login_blocked_ip", "request_failed")
 
 
 def _access_row(item):

@@ -18,7 +18,7 @@ class AccessHistory(unittest.TestCase):
         headers = {'Authorization':'Bearer '+self.verified_admin_token(account['user']['id'])}
         with self.Session() as db:
             db.get(Customer, account['user']['id']).role = 'admin'
-            for actor, event, age in [('healthy@example.com','login_success',0), ('warning@example.com','login_failed',0), ('error@example.com','request_failed',0), ('error@example.com','request_completed',0), ('old@example.com','login_failed',72)]:
+            for actor, event, age in [('healthy@example.com','login_success',0), ('warning@example.com','login_blocked_ip',0), ('error@example.com','request_failed',0), ('error@example.com','request_completed',0), ('old@example.com','login_failed',72)]:
                 db.add(SecurityAccessLog(user_email=actor,event_type=event,created_at=datetime.utcnow()-timedelta(hours=age)))
             db.commit()
         path = '/admin-api/control-center/access-accounts'
