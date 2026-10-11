@@ -126,7 +126,8 @@
         }
         deadline = status.valid_until * 1000;
         clearTimeout(expiryTimer);
-        expiryTimer = setTimeout(() => end('expired'), Math.min(900000, Math.max(0, deadline - Date.now())));
+        // Re-read the server's activity deadline; a timer is not proof of logout.
+        expiryTimer = setTimeout(() => { if (!document.hidden) void verify().catch(() => {}); }, Math.min(300000, Math.max(1000, deadline - Date.now())));
         return status;
     }
     function jwtClaims(value) {

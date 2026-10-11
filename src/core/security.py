@@ -133,7 +133,7 @@ def needs_rehash(hashed_password: str) -> bool:
     return False
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, *, session_id: Optional[str] = None) -> str:
     """
     Vytvoří JWT access token.
 
@@ -150,7 +150,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
     to_encode = data.copy()
     # Every issuance is a distinct session, even within one clock second.
-    to_encode["jti"] = secrets.token_urlsafe(24)
+    to_encode["jti"] = session_id or secrets.token_urlsafe(24)
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:

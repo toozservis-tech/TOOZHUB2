@@ -145,7 +145,7 @@ class MFASecurity(unittest.TestCase):
         self.assertEqual(self.client.post('/admin-web-session',headers=headers).status_code,200)
         with patch('src.modules.vehicle_hub.routers_v1.auth.log_user_activity'):
             self.assertTrue(self.client.get('/fixture/optional-admin',headers=headers).json()['present'])
-        with patch.object(mfa.time,'time',return_value=self.now+901):
+        with patch.object(mfa.time,'time',return_value=self.now+mfa.ADMIN_VERIFICATION_SECONDS+1):
             self.assertEqual(self.client.get('/admin-api/control-center/capabilities',headers=headers).status_code,403)
             self.assertFalse(self.client.get('/user/security/admin-status',headers=headers).json()['verified'])
             self.assertEqual(self.client.post('/admin-web-session',headers=headers).status_code,403)
@@ -165,12 +165,31 @@ class MFASecurity(unittest.TestCase):
         from src.core.security import create_access_token
         self.make_admin();self.enroll()
         with self.Session() as db: version=db.get(Customer,self.uid).session_version
-        for extra in [{},{'amr':['pwd']},{'amr':['pwd','otp'],'mfa_at':True},{'amr':['pwd','otp'],'mfa_at':self.now+1},{'amr':['pwd','otp'],'mfa_at':self.now-901}]:
+        for extra in [{},{'amr':['pwd']},{'amr':['pwd','otp'],'mfa_at':True},{'amr':['pwd','otp'],'mfa_at':self.now+1},{'amr':['pwd','otp'],'mfa_at':self.now-mfa.ADMIN_VERIFICATION_SECONDS-1}]:
             token=create_access_token({'sub':'mfa@example.com','sv':version,**extra})
             r=self.client.get('/admin-api/control-center/capabilities',headers={'Authorization':'Bearer '+token})
             self.assertEqual(r.status_code,403,r.text)
         r=self.client.get('/admin-api/control-center/capabilities',headers={'Authorization':'Bearer invalid'})
         self.assertEqual(r.status_code,401)
+
+    def test_admin_activity_extends_assurance_but_status_polling_does_not(self):
+        self.make_admin(); _, token = self.enroll()
+        headers = {'Authorization': 'Bearer ' + token}
+        path = '/admin-api/control-center/capabilities'
+        with patch.object(mfa.time, 'time', return_value=self.now+3600):
+            self.assertEqual(self.client.get(path, headers=headers).status_code, 200)
+        with patch.object(mfa.time, 'time', return_value=self.now+12*3600):
+            status = self.client.get('/user/security/admin-status', headers=headers).json()
+            self.assertTrue(status['verified'])
+            self.assertEqual(status['valid_until'], self.now+13*3600)
+        with patch.object(mfa.time, 'time', return_value=self.now+13*3600):
+            self.assertEqual(self.client.get(path, headers=headers).status_code, 403)
+            self.assertFalse(self.client.get('/user/security/admin-status', headers=headers).json()['verified'])
+            self.assertEqual(self.client.get('/user/me', headers=headers).status_code, 200)
+            renewed = self.client.post('/user/session/renew', headers=headers)
+            self.assertEqual(renewed.status_code, 200, renewed.text)
+            new_headers = {'Authorization': 'Bearer ' + renewed.json()['access_token']}
+            self.assertEqual(self.client.get(path, headers=new_headers).status_code, 403)
 
     def test_account_budget_survives_new_login_challenges_and_sessions(self):
         secret,_=self.enroll()

@@ -4,7 +4,7 @@ A signed unexpired token is enough to revoke itself; logout intentionally does
 not require a still-active account, verified email or current admin assurance.
 """
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import Column, DateTime, String, delete, select
@@ -55,11 +55,13 @@ def revoke_tokens(db, tokens=(), *, tickets=()) -> None:
             continue  # Invalid/expired credentials are already unusable.
         expiry = datetime.fromtimestamp(float(payload['exp']), timezone.utc).replace(tzinfo=None)
         digest = token_digest(token, payload)
+        expiry = max(expiry, datetime.utcnow() + timedelta(days=31))
         rows[digest] = {'digest': digest, 'expires_at': expiry, 'revoked_at': datetime.utcnow()}
     for ticket in tickets:
         payload = decode_logout_ticket(ticket)
         if payload:
             expiry = datetime.fromtimestamp(float(payload['exp']), timezone.utc).replace(tzinfo=None)
+            expiry = max(expiry, datetime.utcnow() + timedelta(days=31))
             rows[payload['sid']] = {'digest': payload['sid'], 'expires_at': expiry, 'revoked_at': datetime.utcnow()}
     if not rows:
         return

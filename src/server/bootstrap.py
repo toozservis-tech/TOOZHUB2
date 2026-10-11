@@ -464,7 +464,8 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
             RevokedAccessToken.__table__.create(bind=db.get_bind(), checkfirst=True)
             from src.modules.vehicle_hub.email_verification import EmailVerification
             EmailVerification.__table__.create(bind=db.get_bind(), checkfirst=True)
-            from src.core.mfa import MFAState, MFALoginChallenge, MFAAttemptBudget, encrypt_legacy_seeds
+            from src.core.mfa import MFAState, MFALoginChallenge, MFAAttemptBudget, AdminSessionActivity, encrypt_legacy_seeds
+            AdminSessionActivity.__table__.create(bind=db.get_bind(), checkfirst=True)
             MFAState.__table__.create(bind=db.get_bind(), checkfirst=True)
             MFALoginChallenge.__table__.create(bind=db.get_bind(), checkfirst=True)
             MFAAttemptBudget.__table__.create(bind=db.get_bind(), checkfirst=True)
