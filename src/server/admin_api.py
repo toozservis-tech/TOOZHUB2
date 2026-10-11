@@ -5,7 +5,7 @@ Přístupné pouze pro developer_admin/admin role
 from fastapi import APIRouter, Depends, HTTPException, Query, Request as FastAPIRequest
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect, func
+from sqlalchemy import text, inspect, func, case
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timezone, timedelta
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -4911,9 +4911,13 @@ def get_users_presence(
         raise HTTPException(status_code=500, detail="Chyba při načítání online/offline stavu.")
 
 
+ACCESS_PROBLEM_EVENTS = ("login_failed", "login_rate_limited", "blocked_ip", "request_failed")
+
+
 def _access_row(item):
     return {"id": item.id, "event_type": item.event_type, "user_email": item.user_email,
             "ip_address": item.ip_address, "endpoint": item.endpoint,
+            "severity": "error" if item.event_type == "request_failed" else "warning" if item.event_type in ACCESS_PROBLEM_EVENTS else "success",
             "created_at": item.created_at.replace(tzinfo=timezone.utc).isoformat() if item.created_at else None,
             **access_event_view(item)}
 
@@ -4922,7 +4926,7 @@ def _access_row(item):
 def get_access_accounts(
     limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
     search: str = Query("", max_length=200), role: str = Query("all", pattern="^(all|user|service|admin)$"),
-    failures: bool = False,
+    failures: bool = False, hours: int = Query(0, ge=0, le=87600),
     email: str = Depends(require_control_center_admin), db: Session = Depends(get_db),
 ):
     # Aggregate the complete retained history, never just one page of events.
@@ -4930,12 +4934,16 @@ def get_access_accounts(
                           "IP: " + func.coalesce(SecurityAccessLog.ip_address, "nezjištěna"))
     ranked = db.query(SecurityAccessLog.id.label("id"), actor.label("actor"),
         func.count().over(partition_by=actor).label("count"),
+        func.sum(case((SecurityAccessLog.event_type.in_(ACCESS_PROBLEM_EVENTS), 1), else_=0)).over(partition_by=actor).label("problem_count"),
+        func.sum(case((SecurityAccessLog.event_type == "request_failed", 1), else_=0)).over(partition_by=actor).label("error_count"),
         func.row_number().over(partition_by=actor,
             order_by=(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc())).label("rank"))
+    if hours:
+        ranked = ranked.filter(SecurityAccessLog.created_at >= datetime.utcnow() - timedelta(hours=hours))
     if failures:
-        ranked = ranked.filter(SecurityAccessLog.event_type.in_(["login_failed", "login_rate_limited", "blocked_ip", "request_failed"]))
+        ranked = ranked.filter(SecurityAccessLog.event_type.in_(ACCESS_PROBLEM_EVENTS))
     ranked = ranked.subquery()
-    query = db.query(SecurityAccessLog, ranked.c.actor, ranked.c.count, Customer.name, Customer.role).join(
+    query = db.query(SecurityAccessLog, ranked.c.actor, ranked.c.count, Customer.name, Customer.role, ranked.c.problem_count, ranked.c.error_count).join(
         ranked, ranked.c.id == SecurityAccessLog.id).outerjoin(Customer, Customer.email == SecurityAccessLog.user_email).filter(ranked.c.rank == 1)
     if search.strip():
         term = "%" + search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -4945,7 +4953,9 @@ def get_access_accounts(
     total = query.count()
     rows = query.order_by(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc()).offset(offset).limit(limit).all()
     return {"total": total, "items": [{**_access_row(item), "actor": actor_name,
-        "event_count": count, "name": name, "role": account_role} for item, actor_name, count, name, account_role in rows]}
+        "event_count": count, "name": name, "role": account_role, "problem_count": problem_count,
+        "error_count": error_count, "severity": "error" if error_count else "warning" if problem_count else "success"}
+        for item, actor_name, count, name, account_role, problem_count, error_count in rows]}
 
 
 @router.get("/control-center/access-history")
@@ -4953,9 +4963,14 @@ def get_access_history(
     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0),
     search: str = Query("", max_length=200), actor: str = Query("", max_length=320),
     before_id: Optional[str] = Query(None, max_length=20),
+    failures: bool = False, hours: int = Query(0, ge=0, le=87600),
     email: str = Depends(require_control_center_admin), db: Session = Depends(get_db),
 ):
     query = db.query(SecurityAccessLog)
+    if failures:
+        query = query.filter(SecurityAccessLog.event_type.in_(ACCESS_PROBLEM_EVENTS))
+    if hours:
+        query = query.filter(SecurityAccessLog.created_at >= datetime.utcnow() - timedelta(hours=hours))
     if actor:
         actor_key = func.coalesce(func.nullif(SecurityAccessLog.user_email, ""), "IP: " + func.coalesce(SecurityAccessLog.ip_address, "nezjištěna"))
         query = query.filter(actor_key == actor)

@@ -13,6 +13,26 @@ class AccessHistory(unittest.TestCase):
     register = fixtures.AccountFlows.register
     verified_admin_token = fixtures.AccountFlows.verified_admin_token
 
+    def test_problem_period_severity_and_drilldown_exclude_healthy_accounts(self):
+        account = self.register().json()
+        headers = {'Authorization':'Bearer '+self.verified_admin_token(account['user']['id'])}
+        with self.Session() as db:
+            db.get(Customer, account['user']['id']).role = 'admin'
+            for actor, event, age in [('healthy@example.com','login_success',0), ('warning@example.com','login_failed',0), ('error@example.com','request_failed',0), ('error@example.com','request_completed',0), ('old@example.com','login_failed',72)]:
+                db.add(SecurityAccessLog(user_email=actor,event_type=event,created_at=datetime.utcnow()-timedelta(hours=age)))
+            db.commit()
+        path = '/admin-api/control-center/access-accounts'
+        rows = self.client.get(path+'?hours=24',headers=headers).json()['items']
+        self.assertEqual({r['actor']:r['severity'] for r in rows}, {'healthy@example.com':'success','warning@example.com':'warning','error@example.com':'error'})
+        rows = self.client.get(path+'?hours=24&failures=true',headers=headers).json()['items']
+        self.assertEqual({r['actor'] for r in rows}, {'warning@example.com','error@example.com'})
+        self.assertTrue(all(r['problem_count'] == 1 for r in rows))
+        history = self.client.get('/admin-api/control-center/access-history?actor=error@example.com&hours=24&failures=true',headers=headers).json()
+        self.assertEqual(history['total'],1)
+        self.assertEqual(history['items'][0]['severity'],'error')
+        all_history = self.client.get(path+'?hours=0&failures=true',headers=headers).json()
+        self.assertIn('old@example.com',[r['actor'] for r in all_history['items']])
+
     def test_history_is_admin_only_paginated_searchable_and_secret_free(self):
         account=self.register().json()
         headers={'Authorization':'Bearer '+self.verified_admin_token(account['user']['id'])}
