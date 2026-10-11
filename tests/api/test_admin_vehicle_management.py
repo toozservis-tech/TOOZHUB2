@@ -77,7 +77,16 @@ def test_reviewed_merge_preserves_owner_privacy_and_archives_source(scenario):
     assert s.client.get('/admin-api/vehicles/duplicates').json()['total']==0
     assert s.db.query(m.DeveloperActionAuditLog).filter_by(action_type='vehicle.merge').count()==1
     s.actor=s.actors['buyer']
+    # Free exposes only the actor's own manual records; it must not expose
+    # a previous owner's merged history. Give Basic explicitly to exercise
+    # redaction of historical records, independently of subscription gating.
+    free_records=s.client.get(f'/api/v1/vehicles/{s.target.id}/records')
+    assert free_records.status_code==200 and free_records.json()==[]
+    from src.modules.licensing.service import get_or_create_license
+    license_row=get_or_create_license(s.db,s.actor.tenant_id,commit_changes=False)
+    license_row.plan='basic';license_row.status='active';license_row.valid_to=None;s.db.commit()
     visible=s.client.get(f'/api/v1/vehicles/{s.target.id}/records').json()
+    assert len(visible)==1
     assert visible[0]['description']!='Private original work' and visible[0].get('attachments') is None
     assert s.client.get(f'/api/v1/vehicles/{s.target.id}/records/attachments/download?key=tenant_2/vehicle_{s.source.id}/private.pdf').status_code==403
     s.actor=s.actors['owner']
