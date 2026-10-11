@@ -5746,8 +5746,9 @@ def get_control_center_jobs(
     db: Session = Depends(get_db),
 ):
     """Background job control status."""
-    reminder_env_enabled = os.getenv("ENABLE_REMINDER_NOTIFICATION_WORKER", "1") in {"1", "true", "True"}
-    license_env_enabled = os.getenv("ENABLE_LICENSE_SUBSCRIPTION_WORKER", "1") in {"1", "true", "True"}
+    from src.server.control_center_jobs import is_job_enabled
+    reminder_env_enabled = is_job_enabled("reminders.notification.check")
+    license_env_enabled = is_job_enabled("license.subscription.cycle")
 
     jobs = []
     for name, env_enabled, interval in [
@@ -5768,6 +5769,7 @@ def get_control_center_jobs(
             {
                 "name": name,
                 "env_enabled": env_enabled,
+                "runtime_control_supported": True,
                 "is_paused": paused,
                 "state": "paused" if paused else ("running" if env_enabled else "disabled"),
                 "effective_enabled": bool(env_enabled and not paused),
@@ -5778,7 +5780,7 @@ def get_control_center_jobs(
             }
         )
 
-    from src.modules.licensing.apple_reconciliation import JOB_NAME, interval_seconds, worker_enabled, reconciliation_summary
+    from src.modules.licensing.apple_reconciliation import JOB_NAME, interval_seconds, reconciliation_summary
     available, unavailable_reason, summary = True, None, {}
     try:
         summary = reconciliation_summary(db)
@@ -5788,8 +5790,8 @@ def get_control_center_jobs(
         available, unavailable_reason = False, "Stav kontroly App Storu nelze načíst. Zkuste přehled aktualizovat."
     pause_meta = get_job_pause_metadata(JOB_NAME)
     paused = bool(pause_meta.get("paused"))
-    enabled = worker_enabled()
-    jobs.append({"name": JOB_NAME, "env_enabled": enabled, "is_paused": paused,
+    enabled = is_job_enabled(JOB_NAME)
+    jobs.append({"name": JOB_NAME, "env_enabled": enabled, "runtime_control_supported": True, "is_paused": paused,
                  "available": available, "unavailable_reason": unavailable_reason,
                  "state": "disabled" if not available or not enabled else "paused" if paused else "running",
                  "effective_enabled": bool(available and enabled and not paused),
@@ -5907,16 +5909,10 @@ def resume_control_center_job(
     if job_name == "privacy.files.erase":
         raise HTTPException(409, "Dokončování potvrzeného odstranění souborů běží automaticky a nelze je pozastavit.")
     if job_name == "apple.subscription.reconcile":
-        from src.modules.licensing.apple_reconciliation import require_ready, worker_enabled
+        from src.modules.licensing.apple_reconciliation import require_ready
         require_ready(db)
-        if not worker_enabled():
-            raise HTTPException(409, "Pravidelná kontrola App Storu je vypnutá na serveru.")
-    env_key = {"license.subscription.cycle": "ENABLE_LICENSE_SUBSCRIPTION_WORKER",
-               "reminders.notification.check": "ENABLE_REMINDER_NOTIFICATION_WORKER",
-               "apple.subscription.reconcile": "ENABLE_APPLE_RECONCILIATION_WORKER"}[job_name]
-    if os.getenv(env_key, "1") not in {"1", "true", "True"}:
-        raise HTTPException(409, "Automatika je vypnutá v nastavení serveru. Obnovení v administraci ji nezapne.")
-    set_job_paused(job_name, False, actor_email=email, reason=payload.reason)
+    from src.server.control_center_jobs import enable_job
+    enable_job(job_name, actor_email=email, reason=payload.reason)
     log_developer_action(
         db,
         developer_email=email,
@@ -5927,7 +5923,7 @@ def resume_control_center_job(
         result="success",
         status_code=200,
     )
-    return {"message": f"Job '{job_name}' byl obnoven", "job_name": job_name, "paused": False}
+    return {"message": "Automatické zpracování je zapnuté. Jednorázový běh nebyl spuštěn.", "job_name": job_name, "paused": False, "enabled": True}
 
 
 @router.get("/control-center/notifications")

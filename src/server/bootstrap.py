@@ -24,7 +24,7 @@ from src.core.security_middleware import AntiTamperingMiddleware, RateLimitMiddl
 from src.modules.vehicle_hub.account_state import ensure_customer_account_state_schema
 from src.modules.vehicle_hub.database import SessionLocal, engine
 from src.modules.vehicle_hub.schema_management import get_capabilities
-from src.server.control_center_jobs import is_job_paused
+from src.server.control_center_jobs import should_run_job
 from src.server.main_helpers import APP_VERSION, APP_VERSION_NAME, BUILD_DATE, UPDATE_INFO
 from src.server.routers import instances
 from src.server.routers.system import public_path, router as system_router
@@ -115,8 +115,8 @@ async def _reminder_notification_worker() -> None:
     while True:
         db = SessionLocal()
         try:
-            if is_job_paused("reminders.notification.check"):
-                print("[REMINDERS_WORKER] paused by Developer Control Center")
+            if not should_run_job("reminders.notification.check"):
+                print("[REMINDERS_WORKER] automation disabled or paused")
             else:
                 from src.modules.vehicle_hub.routers_v1.reminders import check_and_send_reminder_notifications
 
@@ -141,8 +141,8 @@ async def _license_subscription_worker() -> None:
     while True:
         db = SessionLocal()
         try:
-            if is_job_paused("license.subscription.cycle"):
-                print("[LICENSE_SUBSCRIPTION_WORKER] paused by Developer Control Center")
+            if not should_run_job("license.subscription.cycle"):
+                print("[LICENSE_SUBSCRIPTION_WORKER] automation disabled or paused")
             else:
                 from src.modules.vehicle_hub.routers_v1.license_status import process_license_subscription_jobs
 
@@ -169,7 +169,7 @@ async def _apple_reconciliation_worker() -> None:
     await asyncio.sleep(35)
     while True:
         try:
-            if not await asyncio.to_thread(is_job_paused, JOB_NAME):
+            if os.getenv("APPLE_IAP_ENABLED") == "1" and await asyncio.to_thread(should_run_job, JOB_NAME):
                 result = await asyncio.to_thread(reconcile_subscriptions)
                 print(f"[APPLE_RECONCILIATION] checked={result['checked']}, errors={result['errors']}, skipped={result['skipped']}")
         except Exception:
@@ -502,24 +502,19 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
         if _file_erasure_task is None:
             _file_erasure_task = asyncio.create_task(_private_file_erasure_worker())
 
-        if not ENABLE_REMINDER_NOTIFICATION_WORKER:
-            print("[REMINDERS_WORKER] disabled (ENABLE_REMINDER_NOTIFICATION_WORKER=0)")
-        elif _reminder_notification_task is None:
+        if _reminder_notification_task is None:
             _reminder_notification_task = asyncio.create_task(_reminder_notification_worker())
-            print(f"[REMINDERS_WORKER] started (interval={REMINDER_NOTIFICATION_WORKER_INTERVAL_SEC}s)")
+            print(f"[REMINDERS_WORKER] monitor started (interval={REMINDER_NOTIFICATION_WORKER_INTERVAL_SEC}s)")
 
-        if not ENABLE_LICENSE_SUBSCRIPTION_WORKER:
-            print("[LICENSE_SUBSCRIPTION_WORKER] disabled (ENABLE_LICENSE_SUBSCRIPTION_WORKER=0)")
-        elif _license_subscription_task is None:
+        if _license_subscription_task is None:
             _license_subscription_task = asyncio.create_task(_license_subscription_worker())
-            print(f"[LICENSE_SUBSCRIPTION_WORKER] started (interval={LICENSE_SUBSCRIPTION_WORKER_INTERVAL_SEC}s)")
+            print(f"[LICENSE_SUBSCRIPTION_WORKER] monitor started (interval={LICENSE_SUBSCRIPTION_WORKER_INTERVAL_SEC}s)")
 
-        from src.modules.licensing.apple_reconciliation import worker_enabled, interval_seconds
-        if worker_enabled() and _apple_reconciliation_task is None:
+        from src.modules.licensing.apple_reconciliation import interval_seconds
+        if _apple_reconciliation_task is None:
             _apple_reconciliation_task = asyncio.create_task(_apple_reconciliation_worker())
-            print(f"[APPLE_RECONCILIATION] started (interval={interval_seconds()}s)")
-        elif not worker_enabled():
-            print("[APPLE_RECONCILIATION] disabled until App Store is enabled")
+            print(f"[APPLE_RECONCILIATION] monitor started (interval={interval_seconds()}s)")
+
 
     @app.on_event("shutdown")
     async def _stop_background_workers() -> None:

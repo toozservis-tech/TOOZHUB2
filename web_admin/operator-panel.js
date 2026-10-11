@@ -42,20 +42,22 @@ function opButton(title, description, action, disabled=false) {
   const b=opElement('button',null,'btn-secondary operator-action'); b.type='button';b.disabled=disabled;
   b.append(opElement('strong',title),opElement('small',description)); b.onclick=action;return b;
 }
-function operatorConfirm({title,description,confirmLabel='Potvrdit změnu',reason=false,password=false,danger=false}) {
+function operatorConfirm({title,description,confirmLabel='Potvrdit změnu',reason=false,password=false,danger=false,confirmationPhrase=null}) {
   if(document.getElementById('operator-confirm'))return Promise.resolve(null);
   return new Promise(resolve=>{
     const previous=document.activeElement,dialog=opElement('dialog',null,'operator-dialog');dialog.id='operator-confirm';
     const form=document.createElement('form');form.method='dialog';
     const heading=opElement('h2',title);heading.id='operator-dialog-title';dialog.setAttribute('aria-labelledby',heading.id);
     const descriptionEl=opElement('p',description);descriptionEl.id='operator-dialog-description';dialog.setAttribute('aria-describedby',descriptionEl.id);
-    form.append(heading,descriptionEl);let reasonInput,passInput;
+    form.append(heading,descriptionEl);let reasonInput,passInput,phraseInput;
+    if(confirmationPhrase){const label=opElement('label',`Pro potvrzení napište ${confirmationPhrase}`);phraseInput=document.createElement('input');phraseInput.required=true;phraseInput.autocomplete='off';label.append(phraseInput);form.append(label);}
     if(password){const label=opElement('label','Nové heslo (nepovinné)');passInput=document.createElement('input');passInput.type='password';passInput.autocomplete='new-password';passInput.minLength=6;passInput.maxLength=72;label.append(passInput);form.append(label,opElement('p','Nechte prázdné pro vygenerování dočasného hesla. Vyplněné heslo musí mít alespoň 6 znaků.','operator-hint'));}
     if(reason){const label=opElement('label','Důvod změny');reasonInput=document.createElement('textarea');reasonInput.required=true;reasonInput.minLength=3;reasonInput.maxLength=1000;reasonInput.rows=3;label.append(reasonInput);form.append(label);}
     if(danger){const label=opElement('label',null,'operator-check');const box=document.createElement('input');box.type='checkbox';box.required=true;label.append(box,opElement('span','Rozumím popsanému dopadu a chci akci provést.'));form.append(label);}
     const actions=opElement('div',null,'operator-dialog-actions');const cancel=opElement('button','Zrušit','btn-secondary');cancel.type='button';cancel.onclick=()=>dialog.close();const submit=opElement('button',confirmLabel,danger?'btn-danger':'btn-primary');submit.type='submit';actions.append(cancel,submit);form.append(actions);dialog.append(form);document.body.append(dialog);
     let answer=null;
-    form.onsubmit=e=>{e.preventDefault();if(reasonInput&&reasonInput.value.trim().length<3){reasonInput.setCustomValidity('Napište alespoň 3 znaky důvodu.');reasonInput.reportValidity();return;}answer={reason:reasonInput?.value.trim()||null,password:passInput?.value||''};dialog.close();};
+    form.onsubmit=e=>{e.preventDefault();if(phraseInput&&phraseInput.value.trim()!==confirmationPhrase){phraseInput.setCustomValidity(`Napište přesně ${confirmationPhrase}`);phraseInput.reportValidity();return;}if(reasonInput&&reasonInput.value.trim().length<3){reasonInput.setCustomValidity('Napište alespoň 3 znaky důvodu.');reasonInput.reportValidity();return;}answer={reason:reasonInput?.value.trim()||null,password:passInput?.value||''};dialog.close();};
+    if(phraseInput)phraseInput.oninput=()=>phraseInput.setCustomValidity('');
     if(reasonInput)reasonInput.oninput=()=>reasonInput.setCustomValidity('');
     dialog.addEventListener('close',()=>{dialog.remove();previous?.focus();resolve(answer);},{once:true});dialog.showModal();(danger?cancel:(reasonInput||submit)).focus();
   });
@@ -68,7 +70,7 @@ async function opAction(key,resultId,fn) {
 }
 function operatorJobView(job) {
   if(job.available===false)return {label:'Čeká na dokončení nastavení',resume:false,pause:false,run:false,note:job.unavailable_reason||'Propojení služby zatím není připravené.'};
-  if(!job.env_enabled)return {label:'Automatika vypnutá na serveru',resume:false,pause:false,run:!job.is_paused, note:'Tlačítko jednorázové kontroly automatiku nezapíná. Pravidelný běh musí nejprve povolit správce nasazení serveru.'};
+  if(!job.env_enabled)return {label:'Automatika vypnutá na serveru',resume:job.runtime_control_supported===true,pause:false,run:!job.is_paused, note:job.runtime_control_supported===true?'Zapnout automatiku povolí pravidelnou práci i po restartu serveru. Jednorázové spuštění tento stav nemění.':'Tento server vyžaduje aktualizaci pro zapnutí z administrace. Jednorázové spuštění automatiku nezapíná.'};
   if(job.pause_supported===false)return {label:'Automatika zapnutá',resume:false,pause:false,run:true,note:'Dokončování již potvrzených žádostí běží automaticky a nelze je pozastavit.'};
   if(job.is_paused)return {label:'Pozastavená',resume:true,pause:false,run:false,note:'Nejdříve obnovte automatiku. Potom můžete spustit jednorázovou kontrolu.'};
   return {label:'Automatika zapnutá',resume:false,pause:true,run:true,note:'Jde o nastavení pravidelného běhu; tento údaj nepotvrzuje dokončení poslední kontroly.'};
@@ -83,7 +85,7 @@ function renderOperatorJobs(data) {
     if(job.last_success_at)card.append(opElement('p',`Poslední ověřené předplatné: ${new Date(job.last_success_at).toLocaleString('cs-CZ')}`));
     if(Number(job.retry_count)>0)card.append(opElement('p',`Kontroly čekající na opakování: ${job.retry_count}`,'operator-error'));
     const actions=opElement('div',null,'operator-job-actions');
-    for(const [action,label,hint,allowed] of [['run','Provést kontrolu nyní',meta.impact,view.run],['pause','Pozastavit automatiku',meta.pause,view.pause],['resume','Obnovit automatiku','Povolí další naplánované kontroly. Jednorázovou kontrolu nespouští.',view.resume]]){
+    for(const [action,label,hint,allowed] of [['run','Jednorázově spustit',meta.impact,view.run],['pause','Vypnout automatiku',meta.pause,view.pause],['resume','Zapnout automatiku','Povolí další naplánované kontroly. Jednorázovou kontrolu nespouští.',view.resume]]){
       const button=opButton(label,hint,()=>operatorJobAction(job.name,action),!allowed||operatorPending.has('job:'+job.name));button.dataset.operation='job:'+job.name;actions.append(button);
     }card.append(actions);container.append(card);
   }
@@ -95,11 +97,11 @@ async function operatorJobAction(name,action) {
   const job=controlCenterDataState.jobs?.jobs?.find(j=>j.name===name);if(!job){opResult('cc-job-action-result','Nejprve načtěte stav automatických kontrol.',true);return;}
   if(!operatorJobView(job)[action]){opResult('cc-job-action-result','Tato akce není v aktuálním stavu dostupná. Aktualizujte přehled.',true);return;}
   await opAction('job:'+name,'cc-job-action-result',async()=>{
-    const label={run:'Provést kontrolu nyní',pause:'Pozastavit automatiku',resume:'Obnovit automatiku'}[action];
-    const answer=await operatorConfirm({title:`${label}: ${meta.title}`,description:action==='run'?meta.impact:action==='pause'?meta.pause:'Automatické kontroly budou opět povolené podle nastavení serveru.',confirmLabel:label,reason:action!=='run',danger:true});if(!answer)return;
+    const label={run:'Jednorázově spustit',pause:'Vypnout automatiku',resume:'Zapnout automatiku'}[action];
+    const answer=await operatorConfirm({title:`${label}: ${meta.title}`,description:action==='run'?meta.impact:action==='pause'?meta.pause:'Pravidelná práce bude trvale zapnutá i po restartu serveru. ' + meta.impact,confirmLabel:label,reason:action!=='run',danger:true,confirmationPhrase:name==='license.subscription.cycle'&&action!=='pause'?'SPUSTIT PLATBY':null});if(!answer)return;
     opResult('cc-job-action-result',`${meta.title}: požadavek se zpracovává. Vyčkejte na výsledek.`);
     const data=await apiRequest('POST',`/admin-api/control-center/jobs/${action}`,{job_name:name,...(answer.reason?{reason:answer.reason}:{})});
-    const summary=data.result||{};let message=action==='run'?'Jednorázová kontrola dokončena.':action==='pause'?'Automatické kontroly byly pozastaveny.':'Automatické kontroly byly znovu povoleny.';
+    const summary=data.result||{};let message=action==='run'?'Jednorázová kontrola dokončena. Nastavení automatiky se nezměnilo.':action==='pause'?'Automatické kontroly byly pozastaveny.':'Automatické kontroly byly znovu povoleny.';
     const labels={removed:'Odstraněné soubory',retrying:'Soubory čekající na opakování',checked_reminders:'Prověřené připomínky',checked_auto_stk:'Prověřené termíny STK',notifications_sent:'Odeslaná oznámení',email_notifications_sent:'Z toho e-mailem',push_notifications_sent:'Z toho do telefonu',renewal_success:'Obnovená předplatná',renewal_failed:'Neúspěšné obnovy',downgraded_free:'Převedeno na bezplatný tarif',notified:'Odeslaná upozornění',cancel_finalized:'Ukončená předplatná',errors:'Chyby',sent:'Odesláno',failed:'Neodesláno',checked:'Zkontrolováno'};
     const counts=Object.entries(labels).filter(([k])=>typeof summary[k]==='number').map(([k,label])=>`${label}: ${summary[k]}`);
     const partial=Number(summary.retrying||0)>0||Number(summary.errors||0)>0||Number(summary.failed||0)>0||Number(summary.renewal_failed||0)>0;
@@ -162,6 +164,7 @@ resetSettingsCategory=()=>{renderSettingsCategory(currentSettingsCategory);showS
 const originalRenderSettings=renderSettingsCategory;
 renderSettingsCategory=function(category){originalRenderSettings(category);const area=document.getElementById('settings-categories');area?.querySelectorAll('input[data-key],select[data-key],textarea[data-key]').forEach(el=>{if(el.type==='number'){el.min='0';}const item=el.closest('.setting-item');const key=el.dataset.key;const help={jwt_expiration_hours:'Jak dlouho může zůstat přihlášení platné. Běžná obsluha tuto hodnotu nemusí měnit.',cors_origins:'Seznam povolených webových adres je spravován v nasazení serveru.',backup_enabled:'Tato historická volba sama nezapne cloudové zálohování. Použijte sekci Zálohy a obnova.',autostart_enabled:'Týká se původní aplikace pro počítač; cloudový server tímto tlačítkem nespustíte.'};if(help[key])item?.append(opElement('p',help[key],'operator-hint'));});};
 function initOperatorPanel(){
+  initOperatorGuides();
   const users=document.getElementById('cc-module-users');if(users&&!document.getElementById('operator-account-result')){const el=opElement('div',null,'operator-result');el.id='operator-account-result';el.setAttribute('role','status');users.append(el);}
   document.getElementById('operator-user-search')?.addEventListener('input',operatorUserChoices);document.getElementById('cc-insight-user-id')?.addEventListener('change',operatorSelectedUser);document.getElementById('cc-broadcast-target-type')?.addEventListener('change',operatorRecipientChoices);
   document.getElementById('cc-restore-scope')?.addEventListener('change',async()=>{const scope=document.getElementById('cc-restore-scope').value;document.getElementById('cc-restore-user-id').disabled=scope!=='user';document.getElementById('cc-restore-vehicle-id').disabled=scope!=='vehicle';if(scope==='vehicle'){try{const rows=await fetchAllList('/admin-api/vehicles');opFillSelect('cc-restore-vehicle-id',rows,r=>`${r.plate||'Bez SPZ'} — ${r.brand||''} ${r.model||''} ${r.nickname||''}`);}catch(e){showGlobalError('Seznam vozidel se nepodařilo načíst.');}}});
@@ -169,6 +172,104 @@ function initOperatorPanel(){
   for(const [key,names] of Object.entries({account:['disableUserFromControlCenter','enableUserFromControlCenter','forceLogoutFromControlCenter','resetUserPasswordFromControlCenter'],license:['updateUserLicenseFromControlCenter'],broadcast:['broadcastControlCenterNotification'],cleanup:['runControlCenterStorageCleanup'],restore:['restoreControlCenterBackup'],ip:['blockIpFromControlCenter','unblockIpFromControlCenter']}))for(const name of names)document.querySelectorAll(`[data-admin-click="${name}"]`).forEach(b=>b.dataset.operation=key);
   operatorUserChoices();if(controlCenterDataState.jobs)renderOperatorJobs(controlCenterDataState.jobs);
 }
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initOperatorPanel);else initOperatorPanel();
+
 
 initDefaultSettings=async()=>{if(!await operatorConfirm({title:'Doplnit chybějící nastavení',description:'Doplní nové položky doporučenými hodnotami. Uložené hodnoty včetně nastavení e-mailů a plateb zůstanou zachované.',confirmLabel:'Doplnit položky'}))return;try{await apiRequest('POST','/admin-api/settings/init-defaults');await loadSettings();showSuccess('Chybějící položky byly doplněny.');}catch(e){showGlobalError(e.message);}};
+
+const operatorGuides = {
+  "cc-module-payments": {
+    "topic": "Platby a licence",
+    "steps": [
+      "Pomáhá řešit nesoulad mezi zaplaceným předplatným a přístupem uživatele.",
+      "1. V Platbách a transakcích ověřte účet a stav platby.\n2. Rozlište nákup u Applu a platbu přes web.\n3. Otevřete odpovídající kontrolu předplatného.\n4. Po dokončení ověřte tarif účtu.",
+      "Webová úloha může účtovat skutečné platby. Kontrola u Applu může změnit tarif podle ověřeného předplatného. Nastavení brány měňte jen s ověřenými údaji."
+    ],
+    "example": "Apple potvrzuje Premium, aplikace ukazuje Free. Porovnejte účet a transakci a použijte kontrolu App Storu, nikoli webové účtování."
+  },
+  "cc-module-users": {
+    "topic": "Aktivita",
+    "steps": [
+      "Najde poslední zaznamenané kroky účtu a chyby, které pomohou vyšetřit problém.",
+      "1. Vyhledejte jméno nebo e-mail.\n2. Role a přepínač Pouze problémy filtrují ihned. Zadané jméno nebo e-mail potvrďte tlačítkem Hledat.\n3. Otevřete účet a porovnejte čas s hlášením uživatele.\n4. Pro podporu rozbalte technické podrobnosti a ID požadavku.",
+      "Historie zachycuje zaznamenané události, ne každý dotyk nebo práci bez připojení. IP sama nepotvrzuje, že šlo o Apple. Zobrazené časy jsou v pásmu Praha."
+    ],
+    "example": "Uživatel hlásí chybu v 9:15. Vyhledejte jeho účet, otevřete historii a porovnejte události kolem 9:15 v pražském čase."
+  },
+  "cc-module-security": {
+    "topic": "Zabezpečení",
+    "steps": [
+      "Umožňuje dohledat bezpečnostní události a blokovat nebo povolit IP adresu.",
+      "1. Nejdříve ověřte událost, čas a IP v historii.\n2. Zjistěte, zda adresu nesdílí více uživatelů nebo vaše administrace.\n3. Zadejte přesnou adresu a důvod.\n4. Po zásahu ověřte blokované adresy a historii změn.",
+      "IP neprokazuje totožnost člověka. Blokování může odpojit celou firmu i vás. Pokud si dopadem nejste jistí, předejte případ technické podpoře."
+    ],
+    "example": "Více neúspěšných přihlášení ze stejné IP nemusí být útok: jednu adresu může sdílet celý servis. Nejprve ověřte historii."
+  },
+  "cc-module-backups": {
+    "topic": "Data a údržba",
+    "steps": [
+      "Kontroly indexů a vazeb pouze hledají problémy. Zálohy, obnova a úklid jsou samostatné zásahy.",
+      "1. Při podezření na chybu nejprve spusťte kontrolu vazeb a uchovejte výsledek.\n2. Před obnovou ověřte datum zálohy a přesný rozsah a zajistěte aktuální zálohu.\n3. Před úklidem zkontrolujte počet souborů a jejich stáří.",
+      "Kontrola vazeb data neopravuje. Obnova přepíše vybraná data; úklid trvale odstraní staré provozní soubory a místní zálohy. Obnova cloudové databáze zde není dostupná. Prázdný seznam místních záloh neříká, zda existují zálohy u poskytovatele."
+    ],
+    "example": "Chybí vazba záznamu na vozidlo: kontrola vypíše problém, ale data sama nezmění. Obnovu zálohy nepoužívejte bez ověření jejího rozsahu."
+  },
+  "cc-module-jobs": {
+    "topic": "Automatické kontroly",
+    "steps": [
+      "Server pravidelně zpracovává předplatné, připomínky a potvrzené žádosti o odstranění souborů.",
+      "1. Zkontrolujte stav konkrétní úlohy.\n2. Rozbalte její ovládání a přečtěte dopad.\n3. Ruční spuštění použijte jen při řešení konkrétního problému.\n4. Výsledek ověřte v souvisejícím přehledu.",
+      "Spuštění může měnit data, účtovat platby nebo odesílat zprávy. Pozastavení zastaví další běhy, nikoli nutně právě běžící práci. Zapnout automatiku trvale povolí další pravidelné běhy. Jednorázové spuštění její nastavení nemění. Pokud služba není připravená, přehled uvede důvod a ovládání zůstane nedostupné."
+    ],
+    "example": "Připomínka má odejít v 10:00. Zapnutá automatika ji prověří při nejbližším běhu. Jednorázové spuštění ji prověří nyní a další běhy nezapne."
+  },
+  "cc-module-notifications": {
+    "topic": "Oznámení uživatelům",
+    "steps": [
+      "Zveřejní zprávu v aplikaci vybraným příjemcům.",
+      "1. Nejdříve vyberte příjemce; výchozí volba zahrnuje všechny.\n2. Napište krátký nadpis a srozumitelný text.\n3. V náhledu ověřte celou zprávu i skupinu.\n4. Po zveřejnění zkontrolujte historii oznámení.",
+      "Nevkládejte hesla ani soukromé údaje zákazníků. Zveřejněnou zprávu již mohl příjemce přečíst; nespoléhejte na možnost vzít ji zpět."
+    ],
+    "example": "Odstávku pro jeden servis oznamte pouze danému servisu. Volba Všichni zveřejní zprávu všem vybraným skupinám."
+  },
+  "cc-module-audit": {
+    "topic": "Změny správců",
+    "steps": [
+      "Dohledání administrátorských zásahů.",
+      "Najděte správce, čas, operaci, důvod a výsledek. Porovnejte s aktuálním stavem dotčeného záznamu.",
+      "Záznam požadavku nemusí znamenat úspěšné dokončení. Otevření historie nic nevrací zpět."
+    ],
+    "example": "Po pozastavení účtu zde hledejte správce, čas a uvedený důvod; poté ověřte aktuální stav účtu."
+  },
+  "cc-module-infra": {
+    "topic": "Provoz API",
+    "steps": [
+      "Požadavky aplikací na server za posledních 24 hodin.",
+      "Porovnejte čas a chybové odpovědi; konkrétní účet dohledávejte v Aktivitě.",
+      "Automatické požadavky nejsou jednotlivá kliknutí. Prázdný přehled neprokazuje bezchybný provoz."
+    ],
+    "example": "Více chyb ve stejnou minutu pomůže určit čas výpadku. Konkrétního uživatele dohledáte v Aktivitě."
+  },
+  "cc-module-command": {
+    "topic": "Provoz",
+    "steps": [
+      "Začněte u problému, který řešíte. Samotné otevření přehledů nic nemění.",
+      "1. Při výpadku otevřete Dostupnost služeb.\n2. U potíží jednoho člověka otevřete Aktivitu a vyhledejte účet.\n3. U plateb nebo e-mailů otevřete příslušný přehled.\n4. Zásah spusťte až po zjištění příčiny.",
+      "Před potvrzením vždy zkontrolujte server, příjemce a rozsah. Testovací a produkční server mají odlišná data. Po chybě spojení nejprve ověřte výsledek; neopakujte zásah naslepo."
+    ],
+    "example": "Zákazník nevidí zaplacený tarif: nejprve vyhledejte jeho aktivitu a platbu. Hromadnou obnovu plateb nespouštějte jako první krok."
+  }
+};
+function initOperatorGuides(){
+  for(const [id,help] of Object.entries(operatorGuides)){
+    const area=document.getElementById(id);if(!area||area.querySelector('[data-operator-guide]'))continue;
+    const details=opElement('details',null,'cc-module-details');details.dataset.operatorGuide='true';
+    details.append(opElement('summary','Návod, dopad a příklad'));
+    for(const [index,label] of ['K čemu slouží','Jak postupovat','Důležité dopady'].entries()){
+      details.append(opElement('strong',label));
+      for(const line of help.steps[index].split('\n'))details.append(opElement('p',line));
+    }
+    details.append(opElement('strong','Příklad z praxe'),opElement('p',help.example));area.append(details);
+  }
+}
+
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initOperatorPanel);else initOperatorPanel();

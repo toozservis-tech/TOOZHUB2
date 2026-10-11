@@ -4,6 +4,7 @@ Runtime řízení background jobů pro Developer Control Center (pause/resume).
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -35,6 +36,12 @@ def load_jobs_state() -> Dict[str, Any]:
         payload.setdefault("paused", {})
         if not isinstance(payload["paused"], dict):
             raise ValueError("Invalid paused job state")
+        for key in ("enabled", "last_change"):
+            payload.setdefault(key, {})
+            if not isinstance(payload[key], dict):
+                raise ValueError("Invalid automation settings")
+        if any(not isinstance(value, bool) for value in payload["enabled"].values()):
+            raise ValueError("Invalid automation switch")
         payload.setdefault("updated_at", None)
         return payload
     except (ValueError, OSError) as exc:
@@ -84,3 +91,46 @@ def get_job_pause_metadata(job_name: str) -> Dict[str, Any]:
         return {}
     raw = paused_map.get(job_name)
     return raw if isinstance(raw, dict) else {}
+
+
+JOB_ENABLE_ENV = {
+    "reminders.notification.check": "ENABLE_REMINDER_NOTIFICATION_WORKER",
+    "license.subscription.cycle": "ENABLE_LICENSE_SUBSCRIPTION_WORKER",
+    "apple.subscription.reconcile": "ENABLE_APPLE_RECONCILIATION_WORKER",
+}
+
+
+def is_job_enabled(job_name: str) -> bool:
+    """Persistent operator choice overrides the deployment default, not readiness."""
+    return _enabled_in_state(job_name, load_jobs_state())
+
+
+def _enabled_in_state(job_name: str, state: Dict[str, Any]) -> bool:
+    key = JOB_ENABLE_ENV[job_name]
+    enabled = state.get("enabled", {})
+    if not isinstance(enabled, dict):
+        raise RuntimeError("Neplatné nastavení automatických kontrol.")
+    if job_name in enabled:
+        value = enabled[job_name]
+        if not isinstance(value, bool):
+            raise RuntimeError("Neplatný stav automatické kontroly.")
+        return value
+    return os.getenv(key, "1").lower() in {"1", "true", "yes", "on"}
+
+
+def enable_job(job_name: str, actor_email: str, reason: str) -> None:
+    if job_name not in JOB_ENABLE_ENV:
+        raise ValueError("Unsupported automation")
+    with _state_lock:
+        state = load_jobs_state()
+        state.setdefault("enabled", {})[job_name] = True
+        state["paused"].pop(job_name, None)
+        state.setdefault("last_change", {})[job_name] = {
+            "actor": actor_email, "reason": reason, "at": datetime.utcnow().isoformat(),
+        }
+        save_jobs_state(state)
+
+
+def should_run_job(job_name: str) -> bool:
+    state = load_jobs_state()
+    return _enabled_in_state(job_name, state) and not bool(state["paused"].get(job_name))

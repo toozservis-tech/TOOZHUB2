@@ -31,11 +31,54 @@ class OperatorControls(unittest.TestCase):
             self.assertTrue(admin_api.repair_database(email='admin@example.com', db=db)['success'])
             self.assertGreater(admin_api.reindex_database(email='admin@example.com', db=db)['table_count'], 2)
 
-    def test_disabled_worker_cannot_report_resumed(self):
-        with patch.dict('os.environ', {'ENABLE_LICENSE_SUBSCRIPTION_WORKER':'0'}), patch.object(admin_api,'set_job_paused') as save:
-            with self.assertRaises(HTTPException) as caught:
-                admin_api.resume_control_center_job(admin_api.JobStateRequest(job_name='license.subscription.cycle',reason='test'),None,'admin@example.com',None)
-            self.assertEqual(caught.exception.status_code,409);save.assert_not_called()
+    def test_disabled_workers_can_be_enabled_durably_and_paused(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(jobs, 'JOBS_STATE_FILE', Path(folder)/'jobs.json'), patch.object(jobs, 'cached_file'), patch.object(jobs, 'persist_file', side_effect=lambda path,content,**kw:path.write_bytes(content)), patch.object(admin_api, 'log_developer_action'), patch('src.modules.licensing.apple_reconciliation.require_ready'):
+            for name, env in jobs.JOB_ENABLE_ENV.items():
+                with self.subTest(job=name), patch.dict('os.environ', {env:'0'}):
+                    self.assertFalse(jobs.should_run_job(name))
+                    result = admin_api.resume_control_center_job(admin_api.JobStateRequest(job_name=name,reason='Enable synthetic test'),None,'admin@example.com',None)
+                    self.assertTrue(result['enabled'])
+                    # Re-read the persisted file, as after a process restart.
+                    self.assertTrue(jobs.should_run_job(name))
+                    self.assertEqual(jobs.load_jobs_state()['last_change'][name]['actor'], 'admin@example.com')
+                    admin_api.pause_control_center_job(admin_api.JobStateRequest(job_name=name,reason='Pause synthetic test'),None,'admin@example.com',None)
+                    self.assertFalse(jobs.should_run_job(name))
+                    self.assertTrue(jobs.is_job_enabled(name))
+                    admin_api.resume_control_center_job(admin_api.JobStateRequest(job_name=name,reason='Resume synthetic test'),None,'admin@example.com',None)
+                    self.assertTrue(jobs.should_run_job(name))
+            for value in [{'enabled': []}, {'enabled': {'license.subscription.cycle': 'false'}}, {'last_change': []}]:
+                jobs.JOBS_STATE_FILE.write_text(json.dumps(value))
+                with self.assertRaises(RuntimeError): jobs.should_run_job('license.subscription.cycle')
+
+    def test_running_worker_observes_enable_and_disable_without_restart(self):
+        # Execute the actual worker body without importing startup/server side effects.
+        import ast
+        import asyncio
+        from unittest.mock import MagicMock
+        from types import SimpleNamespace
+        source = ast.parse(Path('src/server/bootstrap.py').read_text())
+        cases = [
+            ('_reminder_notification_worker', 'src.modules.vehicle_hub.routers_v1.reminders.check_and_send_reminder_notifications', 'REMINDER_NOTIFICATION_WORKER_INTERVAL_SEC'),
+            ('_license_subscription_worker', 'src.modules.vehicle_hub.routers_v1.license_status.process_license_subscription_jobs', 'LICENSE_SUBSCRIPTION_WORKER_INTERVAL_SEC'),
+        ]
+        for worker_name, processor, interval_key in cases:
+            with self.subTest(worker=worker_name):
+                sleeps = []
+                async def sleep(seconds):
+                    sleeps.append(seconds)
+                    if len(sleeps) == 4:
+                        raise asyncio.CancelledError()
+                gate = MagicMock(side_effect=[False, True, False])
+                session = MagicMock()
+                scope = {'asyncio': SimpleNamespace(sleep=sleep), 'SessionLocal': lambda: session,
+                         'should_run_job': gate, interval_key: 300}
+                definition = next(node for node in source.body if isinstance(node, ast.AsyncFunctionDef) and node.name == worker_name)
+                exec(compile(ast.Module(body=[definition], type_ignores=[]), '<actual-worker>', 'exec'), scope)
+                with patch(processor, return_value={}) as process:
+                    with self.assertRaises(asyncio.CancelledError): asyncio.run(scope[worker_name]())
+                    process.assert_called_once_with(db=session)
+                self.assertEqual(gate.call_count, 3)
+                self.assertEqual(session.close.call_count, 3)
 
     def test_confirmed_file_erasure_cannot_be_paused_or_falsely_resumed(self):
         with patch.object(admin_api,'set_job_paused') as save:
