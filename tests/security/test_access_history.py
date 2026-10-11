@@ -82,3 +82,45 @@ class AccessHistory(unittest.TestCase):
         self.assertEqual(len(second['items']),5)
         self.assertFalse(set(r['id'] for r in first['items']) & set(r['id'] for r in second['items']))
         self.assertEqual(self.client.get(path+'?role=other',headers=headers).status_code,422)
+
+    def test_completed_requests_record_result_without_payload_or_query(self):
+        from src.server.security_tracking import log_completed_activity
+        request = SimpleNamespace(state=SimpleNamespace(activity_actor={
+            'user_email':'user@example.com','customer_id':1,'tenant_id':1}),
+            scope={'route':SimpleNamespace(path='/api/v1/vehicles/{vehicle_id}')},
+            path_params={'vehicle_id':42,'token':'DO-NOT-STORE'},method='PUT')
+        with patch('src.server.security_tracking.log_security_event') as log:
+            log_completed_activity(request,422,15.6)
+            event=log.call_args.kwargs
+            self.assertEqual(event['event_type'],'request_failed')
+            self.assertEqual(event['details']['status'],422)
+            self.assertEqual(event['details']['resource'],'vehicle_id=42')
+            self.assertEqual(event['endpoint'],'/api/v1/vehicles/{vehicle_id}')
+            self.assertNotIn('DO-NOT-STORE',str(event['details']))
+            log_completed_activity(request,200,8)
+            self.assertEqual(log.call_args.kwargs['event_type'],'request_completed')
+        request.state=SimpleNamespace()
+        with patch('src.server.security_tracking.log_security_event') as log:
+            log_completed_activity(request,401,1)
+            log.assert_not_called()
+
+    def test_activity_middleware_records_success_and_failure_outcomes(self):
+        from fastapi import FastAPI, Request, HTTPException
+        from fastapi.testclient import TestClient
+        from src.server.security_tracking import completed_activity_middleware
+        app=FastAPI()
+        app.middleware('http')(completed_activity_middleware)
+        @app.get('/vehicle/{vehicle_id}')
+        async def action(vehicle_id:int, request:Request):
+            request.state.activity_actor={'user_email':'test@example.com'}
+            if vehicle_id == 2:
+                raise HTTPException(403,'Private detail must not be logged')
+            return {'ok':True}
+        with patch('src.server.security_tracking.log_security_event') as log:
+            client=TestClient(app)
+            self.assertEqual(client.get('/vehicle/1?token=secret').status_code,200)
+            self.assertEqual(log.call_args.kwargs['details']['status'],200)
+            self.assertEqual(client.get('/vehicle/2').status_code,403)
+            self.assertEqual(log.call_args.kwargs['event_type'],'request_failed')
+            self.assertNotIn('Private detail',str(log.call_args.kwargs['details']))
+            self.assertEqual(log.call_args.kwargs['endpoint'],'/vehicle/{vehicle_id}')
