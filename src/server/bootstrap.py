@@ -31,6 +31,7 @@ from src.server.routers.system import public_path, router as system_router
 from src.server.routers.user_account import router as user_account_router
 from src.server.routers.user_auth import router as user_auth_router
 from src.server.routers.user_security import router as user_security_router
+from src.server.routers.public_demo import router as public_demo_router
 from src.server.runtime_settings import get_runtime_setting_bool
 
 
@@ -416,6 +417,7 @@ def _include_feature_routers(app: FastAPI) -> None:
     app.include_router(user_auth_router)
     app.include_router(user_account_router)
     app.include_router(user_security_router)
+    app.include_router(public_demo_router)
     app.include_router(system_router)
 
 
