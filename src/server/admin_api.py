@@ -2,7 +2,7 @@
 Admin API router pro Správa vozidel
 Přístupné pouze pro developer_admin/admin role
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Request as FastAPIRequest
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request as FastAPIRequest
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect, func, case
@@ -4954,6 +4954,20 @@ def get_access_accounts(
         "event_count": count, "name": name, "role": account_role, "problem_count": problem_count,
         "error_count": error_count, "severity": "error" if error_count else "warning" if problem_count else "success"}
         for item, actor_name, count, name, account_role, problem_count, error_count in rows]}
+
+
+@router.get("/control-center/demo-access")
+def get_demo_access(
+    response: Response,
+    search: str = Query("", max_length=320),
+    status: str = Query("all", pattern="^(all|sending|sent|verified|expired|delivery_failed|superseded|locked)$"),
+    limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
+    email: str = Depends(require_control_center_admin), db: Session = Depends(get_db),
+):
+    """Operational history only; customer and demo bearer tokens are denied."""
+    from src.server.routers.public_demo import demo_access_list
+    response.headers["Cache-Control"] = "no-store"
+    return demo_access_list(db, search=search, status=status, limit=limit, offset=offset)
 
 
 @router.get("/control-center/access-history")

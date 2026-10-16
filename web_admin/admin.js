@@ -643,6 +643,9 @@ function loadSectionData(section) {
     case 'audit':
       loadAuditLog();
       break;
+    case 'demo-access':
+      loadDemoAccess();
+      break;
     case 'activity':
       loadActivityAccounts();
       break;
@@ -4780,7 +4783,7 @@ function showDashboard() {
   
   // Načíst přehled jako výchozí
   const initial = location.hash.slice(1);
-  switchSection(['overview','users','activity','vehicles','services','records','audit','settings','system','control-center'].includes(initial) ? initial : 'overview');
+  switchSection(['overview','users','activity','demo-access','vehicles','services','records','audit','settings','system','control-center'].includes(initial) ? initial : 'overview');
 }
 
 // ============================================

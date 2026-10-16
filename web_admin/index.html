@@ -75,6 +75,7 @@
           <button data-section="activity" class="nav-item">
             <span class="nav-icon">🕘</span><span class="nav-text">Aktivita uživatelů</span>
           </button>
+          <button data-section="demo-access" class="nav-item"><span class="nav-icon">✉️</span><span class="nav-text">Vstupy do dema</span></button>
           <button data-section="vehicles" class="nav-item">
             <span class="nav-icon">🚗</span>
             <span class="nav-text">Vozidla</span>
@@ -152,6 +153,19 @@
             <div id="activity-timeline"></div><div id="activity-detail-pages" class="activity-pages"></div>
           </section>
           <p class="activity-help">Zelená: bez zaznamenané chyby. Žlutá: upozornění při přístupu. Červená: chyba požadavku. Kroky a kliknutí se zobrazují až z verze aplikace, která je zaznamenává; starší kroky nelze zpětně doplnit. Historie není záznamem každého dotyku nebo práce bez připojení.</p>
+        </section>
+
+        <section id="section-demo-access" class="content-section">
+          <div class="section-header"><h1>Vstupy do dema</h1></div>
+          <p>Nejnovější žádosti jsou nahoře. Každé vyžádání kódu má vlastní řádek; historii evidujeme 90 dní.</p>
+          <form id="demo-filters" class="activity-filters">
+            <label>E-mail<input id="demo-search" type="search" maxlength="320" placeholder="Vyhledat e-mail"></label>
+            <label>Stav<select id="demo-status-filter"><option value="all">Všechny žádosti</option><option value="verified">Ověřený e-mail</option><option value="sent">Kód odeslán</option><option value="delivery_failed">Kód se neodeslal</option><option value="expired">Platnost skončila</option><option value="locked">Vyčerpány pokusy</option></select></label>
+            <button type="submit" class="btn-primary">Hledat / obnovit</button>
+          </form>
+          <p id="demo-status" role="status" aria-live="polite"></p>
+          <div id="demo-items" class="activity-accounts"></div><div id="demo-pages" class="activity-pages"></div>
+          <p class="activity-help">Časy jsou v pásmu Praha. Zelená = e-mail ověřen, žlutá = neověřený nebo skončený vstup, červená = problém. Odeslání neprokazuje doručení. Ověření potvrzuje zadání správného kódu, nikoli totožnost člověka ani další kroky v demu. Kódy se nezobrazují a adresy neslouží k marketingu. Starší adresy z doby před nasazením přehledu nelze zpětně doplnit.</p>
         </section>
 
         <!-- Sekce: Uživatelé -->
@@ -1108,8 +1122,9 @@
   </div>
 
   <script src="/admin-session.js"></script>
-  <script src="admin.js?v=20261016"></script>
+  <script src="admin.js?v=demo20261016-20261016"></script>
   <script src="activity.js?v=20261016"></script>
+  <script src="demo-access.js?v=20261016"></script>
   <script src="entity-management.js?v=20261002"></script>
   <script src="workspace.js?v=20261003"></script>
   <script src="operator-panel.js?v=20261011-automation"></script>

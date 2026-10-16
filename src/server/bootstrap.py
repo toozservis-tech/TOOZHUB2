@@ -179,6 +179,24 @@ async def _apple_reconciliation_worker() -> None:
         await asyncio.sleep(interval_seconds())
 
 
+_demo_history_task = None
+
+
+async def _demo_history_worker() -> None:
+    def clean():
+        from src.server.routers.public_demo import ensure_schema, prune_demo_history
+        with SessionLocal() as db:
+            ensure_schema(db)
+            prune_demo_history(db)
+            db.commit()
+    while True:
+        try:
+            await asyncio.to_thread(clean)
+        except Exception:
+            print("[DEMO_HISTORY] retention cleanup unavailable; retry in one hour")
+        await asyncio.sleep(3600)
+
+
 async def _private_file_erasure_worker() -> None:
     from src.core.file_erasure import process_file_erasures
     await asyncio.sleep(10)
@@ -455,7 +473,7 @@ def _mount_static_directories(app: FastAPI) -> None:
 def _register_lifecycle_hooks(app: FastAPI) -> None:
     @app.on_event("startup")
     async def _start_background_workers() -> None:
-        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _file_erasure_task
+        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _file_erasure_task, _demo_history_task
         db = SessionLocal()
         try:
             from src.modules.vehicle_hub.models import (VehicleOwnershipArchive, VehicleRecordPrivacy,
@@ -477,6 +495,8 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
             AccountErasureReceipt.__table__.create(bind=db.get_bind(), checkfirst=True)
             from src.modules.vehicle_hub.account_erasure import ErasedTenant
             ErasedTenant.__table__.create(bind=db.get_bind(), checkfirst=True)
+            from src.server.routers.public_demo import ensure_schema as ensure_demo_schema
+            ensure_demo_schema(db)
             ensure_customer_account_state_schema(db)
             capabilities = get_capabilities(db)
             unavailable = [
@@ -502,6 +522,9 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
         finally:
             db.close()
 
+        if _demo_history_task is None:
+            _demo_history_task = asyncio.create_task(_demo_history_worker())
+
         if _file_erasure_task is None:
             _file_erasure_task = asyncio.create_task(_private_file_erasure_worker())
 
@@ -521,7 +544,15 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
 
     @app.on_event("shutdown")
     async def _stop_background_workers() -> None:
-        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _file_erasure_task
+        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _file_erasure_task, _demo_history_task
+        if _demo_history_task is not None:
+            _demo_history_task.cancel()
+            try:
+                await _demo_history_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                _demo_history_task = None
         if _file_erasure_task is not None:
             _file_erasure_task.cancel()
             try:

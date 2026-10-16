@@ -7,7 +7,7 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import Column, String, Integer, DateTime, update, delete
+from sqlalchemy import Column, String, Integer, DateTime, update, delete, case
 from src.core.config import JWT_SECRET_KEY
 from src.modules.vehicle_hub.database import Base, get_db
 from src.modules.email_client.service import EmailService
@@ -27,6 +27,46 @@ class DemoChallenge(Base):
     attempts = Column(Integer, nullable=False, default=0)
     consumed = Column(Integer, nullable=False, default=0)
 
+# Separate from short-lived challenges: never expose the OTP or its digest.
+DEMO_HISTORY_DAYS = 90
+
+class DemoAccess(Base):
+    __tablename__ = "public_demo_access"
+    id = Column(Integer, primary_key=True)
+    challenge_hash = Column(String(64), nullable=False, unique=True)
+    email = Column(String(320), nullable=False, index=True)
+    requested_at = Column(DateTime, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    sent_at = Column(DateTime)
+    verified_at = Column(DateTime)
+    status = Column(String(24), nullable=False, default="sending")
+    attempts = Column(Integer, nullable=False, default=0)
+
+
+def prune_demo_history(db, now=None):
+    db.execute(delete(DemoAccess).where(DemoAccess.requested_at < (now or datetime.utcnow())-timedelta(days=DEMO_HISTORY_DAYS)))
+
+
+def demo_access_list(db, search="", status="all", limit=50, offset=0):
+    ensure_schema(db)
+    now = datetime.utcnow()
+    prune_demo_history(db, now)
+    db.commit()
+    state = case((DemoAccess.status.in_(["sent", "sending"]) & (DemoAccess.expires_at <= now), "expired"), else_=DemoAccess.status)
+    query = db.query(DemoAccess, state.label("state"))
+    if search.strip():
+        query = query.filter(DemoAccess.email.contains(search.strip().lower(), autoescape=True))
+    if status != "all":
+        query = query.filter(state == status)
+    total = query.count()
+    rows = query.order_by(DemoAccess.requested_at.desc(), DemoAccess.id.desc()).offset(offset).limit(limit).all()
+    def stamp(value):
+        return value.isoformat(timespec="seconds") + "Z" if value else None
+    return {"total": total, "retention_days": DEMO_HISTORY_DAYS, "items": [
+        {"id": row.id, "email": row.email, "requested_at": stamp(row.requested_at),
+         "sent_at": stamp(row.sent_at), "verified_at": stamp(row.verified_at),
+         "status": state, "attempts": row.attempts} for row, state in rows]}
+
 class SendCode(BaseModel):
     email: EmailStr
 
@@ -39,6 +79,7 @@ def _digest(value):
 
 def ensure_schema(db):
     DemoChallenge.__table__.create(db.get_bind(), checkfirst=True)
+    DemoAccess.__table__.create(db.get_bind(), checkfirst=True)
 
 @router.post("/request-code")
 def request_code(payload: SendCode, request: Request, response: Response, db=Depends(get_db)):
@@ -59,6 +100,11 @@ def request_code(payload: SendCode, request: Request, response: Response, db=Dep
     challenge = secrets.token_urlsafe(24)
     db.execute(delete(DemoChallenge).where(DemoChallenge.expires_at < now-timedelta(days=1)))
     db.execute(update(DemoChallenge).where(DemoChallenge.email_hash == eh).values(consumed=1))
+    prune_demo_history(db, now)
+    db.execute(update(DemoAccess).where(DemoAccess.email == email,
+        DemoAccess.status.in_(["sent", "sending"])).values(status="superseded"))
+    db.add(DemoAccess(challenge_hash=_digest("audit:"+challenge), email=email,
+        requested_at=now, expires_at=now+timedelta(minutes=10), status="sending", attempts=0))
     row = DemoChallenge(id=challenge, email_hash=eh, digest=_digest(challenge+":"+code),
         created_at=now, expires_at=now+timedelta(minutes=10), attempts=0, consumed=0)
     db.add(row)
@@ -77,8 +123,13 @@ def request_code(payload: SendCode, request: Request, response: Response, db=Dep
         if sent is not True:
             raise RuntimeError("mail not accepted")
     except Exception:
-        db.execute(update(DemoChallenge).where(DemoChallenge.id==challenge).values(consumed=1)); db.commit()
+        db.execute(update(DemoChallenge).where(DemoChallenge.id==challenge).values(consumed=1))
+        db.execute(update(DemoAccess).where(DemoAccess.challenge_hash==_digest("audit:"+challenge)).values(status="delivery_failed"))
+        db.commit()
         raise HTTPException(503, "Kód se nepodařilo odeslat. Zkuste to později.") from None
+    db.execute(update(DemoAccess).where(DemoAccess.challenge_hash==_digest("audit:"+challenge)).values(
+        sent_at=datetime.utcnow(), status=case((DemoAccess.status == "sending", "sent"), else_=DemoAccess.status)))
+    db.commit()
     return {"challenge_id": challenge, "message": "Kód jsme odeslali. Platí 10 minut."}
 
 @router.post("/verify-code")
@@ -91,12 +142,21 @@ def verify_code(payload: VerifyCode, request: Request, response: Response, db=De
     allowed = (DemoChallenge.id==payload.challenge_id, DemoChallenge.consumed==0,
         DemoChallenge.attempts<5, DemoChallenge.expires_at>now)
     changed = db.execute(update(DemoChallenge).where(*allowed).values(attempts=DemoChallenge.attempts+1)).rowcount
+    if changed:
+        db.execute(update(DemoAccess).where(DemoAccess.challenge_hash==_digest("audit:"+payload.challenge_id)).values(attempts=DemoAccess.attempts+1))
     db.commit()
     row = db.get(DemoChallenge, payload.challenge_id)
     if not changed or not row or not hmac.compare_digest(row.digest, _digest(payload.challenge_id+":"+payload.code)):
+        if changed and row and row.attempts >= 5:
+            db.execute(update(DemoAccess).where(DemoAccess.challenge_hash==_digest("audit:"+payload.challenge_id),
+                DemoAccess.status=="sent").values(status="locked"))
+            db.commit()
         raise HTTPException(400, "Kód není platný, vypršel nebo byl použit. Vyžádejte nový kód.")
     used = db.execute(update(DemoChallenge).where(DemoChallenge.id==payload.challenge_id,
         DemoChallenge.consumed==0, DemoChallenge.expires_at>now).values(consumed=1)).rowcount
+    if used == 1:
+        db.execute(update(DemoAccess).where(DemoAccess.challenge_hash==_digest("audit:"+payload.challenge_id)).values(
+            status="verified", verified_at=now))
     db.commit()
     if used != 1:
         raise HTTPException(400, "Kód již byl použit. Vyžádejte nový kód.")
