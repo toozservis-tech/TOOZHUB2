@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from unittest.mock import patch
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
@@ -76,6 +77,19 @@ def test_mixed_old_and_new_vehicles_remain_visible(context):
     ensure_vehicle_owner_assignment(db, vehicle=migrated, owner=old)
     db.commit()
     assert get_owned_vehicle_ids(db, old) == {legacy_vehicle.id, migrated.id}
+
+
+def test_migrated_garage_does_not_repeat_per_vehicle_backfill(context):
+    db, old, _, vehicle = context
+    ensure_vehicle_owner_assignment(db, vehicle=vehicle, owner=old)
+    for number in range(20):
+        car = Vehicle(tenant_id=old.tenant_id, user_email=old.email, nickname=f'Fixture {number}')
+        db.add(car); db.flush()
+        ensure_vehicle_owner_assignment(db, vehicle=car, owner=old)
+    db.commit()
+    with patch('src.modules.vehicle_hub.ownership.backfill_vehicle_owner_assignment') as backfill:
+        assert len(get_owned_vehicle_ids(db, old)) == 21
+        backfill.assert_not_called()
 
 
 @pytest.mark.parametrize("state", ["is_disabled", "is_deleted"])

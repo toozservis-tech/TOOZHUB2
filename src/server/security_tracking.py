@@ -14,7 +14,7 @@ from urllib.parse import quote
 from urllib.request import Request as UrlRequest, urlopen
 
 from src.core.branding import APP_SERVER_PRODUCT_TOKEN
-from src.modules.vehicle_hub.database import SessionLocal
+from src.modules.vehicle_hub.database import AuditSessionLocal as SessionLocal
 from src.modules.vehicle_hub.models import SecurityAccessLog
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -545,4 +545,3 @@ async def completed_activity_middleware(request, call_next):
             # Diagnostics must never make the user's operation fail.
             import logging
             logging.getLogger(__name__).warning("Activity persistence failed")
-

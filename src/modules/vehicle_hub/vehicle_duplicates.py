@@ -123,7 +123,7 @@ def merge_vehicles(db, *, source_id, target_id, preview_token, confirmed_identit
     retained = {m.VehicleOwnership, m.VehicleOwnershipArchive, m.VehicleORVScan, m.VehicleVINClaim,
                 m.ServiceRecordAuditLog, m.ServiceVehicleLookupAudit}
     known = {(model.__tablename__, key) for model, key in references()}
-    inspector = inspect(db.bind)
+    inspector = inspect(db.connection())
     for table in inspector.get_table_names():
         if table in ("vehicles", "vehicle_vin_claims"): continue
         for fk in inspector.get_foreign_keys(table):

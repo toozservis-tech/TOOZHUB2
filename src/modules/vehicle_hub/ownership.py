@@ -356,7 +356,17 @@ def get_owned_vehicle_ids(
     if not normalized_email:
         return owned_vehicle_ids
 
-    legacy_query = db.query(Vehicle).filter(func.lower(Vehicle.user_email) == normalized_email)
+    # The active assignments above are authoritative. Backfill only cars with
+    # no ownership history at all; never lock and re-read every migrated car
+    # merely because its legacy email still matches. The locked backfill helper
+    # rechecks history in case another request creates it concurrently.
+    has_history = db.query(VehicleOwnership.id).filter(
+        VehicleOwnership.vehicle_id == Vehicle.id,
+    ).exists()
+    legacy_query = db.query(Vehicle).filter(
+        func.lower(Vehicle.user_email) == normalized_email,
+        ~has_history,
+    )
     if tenant_scope is not None:
         legacy_query = legacy_query.filter(Vehicle.tenant_id == tenant_scope)
 

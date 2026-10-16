@@ -37,7 +37,7 @@ def worker_enabled():
 def require_ready(db):
     cfg = store.config()
     store.require_schema(db)
-    if not inspect(db.get_bind()).has_table(AppleReconciliationState.__tablename__):
+    if not inspect(db.connection()).has_table(AppleReconciliationState.__tablename__):
         raise HTTPException(503, "Pravidelná kontrola App Storu čeká na dokončení nastavení databáze.")
     return cfg
 

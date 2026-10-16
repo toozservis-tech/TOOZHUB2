@@ -69,7 +69,7 @@ def apple_services(cfg):
 
 
 def require_schema(db):
-    existing = set(inspect(db.get_bind()).get_table_names())
+    existing = set(inspect(db.connection()).get_table_names())
     if not {AppleBillingIdentity.__tablename__, AppleSubscription.__tablename__, AppleReconciliationState.__tablename__} <= existing:
         raise HTTPException(503, "Databáze předplatného čeká na dokončení nastavení.")
 

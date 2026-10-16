@@ -321,7 +321,7 @@ def get_reminders(
         try:
             # Zkontrolovat, zda tabulka Reminder existuje
             try:
-                inspector = inspect(db.bind)
+                inspector = inspect(db.connection())
                 table_names = inspector.get_table_names()
                 if 'reminders' in table_names:
                     # Filtrovat podle customer_id a tenant_id (pokud existuje)

@@ -5,10 +5,20 @@ No runtime create_all/ALTER TABLE in request flow.
 from __future__ import annotations
 
 from typing import Dict, Iterable, List, Mapping
+from threading import Lock
+from time import monotonic
+from weakref import WeakKeyDictionary
 
 from fastapi import HTTPException
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
+
+# Only successful structural checks are shared, never account data or access
+# decisions. Each engine/connection has its own short-lived cache. Explicit
+# capability reports always inspect the database, including during migrations.
+_READY_TTL_SECONDS = 60
+_ready_by_bind = WeakKeyDictionary()
+_ready_lock = Lock()
 
 
 MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
@@ -107,22 +117,15 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
 }
 
 
-def _table_names(db: Session) -> set[str]:
-    inspector = inspect(db.bind)
-    return set(inspector.get_table_names())
-
-
-def _column_names(db: Session, table_name: str) -> set[str]:
-    inspector = inspect(db.bind)
-    return {str(col.get("name")) for col in inspector.get_columns(table_name) if col.get("name")}
-
-
 def module_schema_report(db: Session, module_name: str) -> dict:
     requirements = MODULE_REQUIREMENTS.get(module_name, {})
     required_tables = set(requirements.get("tables") or set())
     required_columns: Mapping[str, Iterable[str]] = requirements.get("columns") or {}
 
-    tables = _table_names(db)
+    # Reuse this request's connection. Opening another pool connection for each
+    # reflected table wastes round trips and can exhaust a small cloud pool.
+    inspector = inspect(db.connection())
+    tables = set(inspector.get_table_names())
     missing_tables = sorted(table for table in required_tables if table not in tables)
     missing_columns: List[str] = []
 
@@ -131,7 +134,7 @@ def module_schema_report(db: Session, module_name: str) -> dict:
             for column in columns:
                 missing_columns.append(f"{table_name}.{column}")
             continue
-        existing_columns = _column_names(db, table_name)
+        existing_columns = {str(col["name"]) for col in inspector.get_columns(table_name) if col.get("name")}
         for column in columns:
             if column not in existing_columns:
                 missing_columns.append(f"{table_name}.{column}")
@@ -146,8 +149,19 @@ def module_schema_report(db: Session, module_name: str) -> dict:
 
 
 def assert_module_ready(db: Session, module_name: str, *, detail_prefix: str) -> None:
+    bind = db.get_bind()
+    # Include the current requirements so a changed requirement cannot inherit
+    # a previous successful result in a long-lived process.
+    requirements_key = repr(MODULE_REQUIREMENTS.get(module_name, {}))
+    key = (module_name, requirements_key)
+    with _ready_lock:
+        ready_until = _ready_by_bind.get(bind, {}).get(key, 0)
+    if monotonic() < ready_until:
+        return
     report = module_schema_report(db, module_name)
     if report["available"]:
+        with _ready_lock:
+            _ready_by_bind.setdefault(bind, {})[key] = monotonic() + _READY_TTL_SECONDS
         return
     problems = []
     if report["missing_tables"]:
