@@ -643,6 +643,9 @@ function loadSectionData(section) {
     case 'audit':
       loadAuditLog();
       break;
+    case 'activity':
+      loadActivityAccounts();
+      break;
     case 'system':
       // Systémové nástroje se načítají při kliknutí
       break;
@@ -4777,7 +4780,7 @@ function showDashboard() {
   
   // Načíst přehled jako výchozí
   const initial = location.hash.slice(1);
-  switchSection(['overview','users','vehicles','services','records','audit','settings','system','control-center'].includes(initial) ? initial : 'overview');
+  switchSection(['overview','users','activity','vehicles','services','records','audit','settings','system','control-center'].includes(initial) ? initial : 'overview');
 }
 
 // ============================================

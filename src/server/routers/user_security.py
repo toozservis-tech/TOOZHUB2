@@ -38,7 +38,17 @@ from src.server.security_helpers import (
 from src.server.security_tracking import extract_client_ip, log_security_event, log_user_activity
 
 
+from src.server.client_activity import UIEventBatch, save_ui_events
+
 router = APIRouter()
+
+
+@router.post('/user/activity', status_code=204)
+def record_ui_activity(payload: UIEventBatch, request: Request,
+                       email: str = Depends(get_current_user_email)):
+    _limit_auth(request, 'ui-activity', email=email, calls=20, period=60)
+    save_ui_events(request, payload.events)
+    return Response(status_code=204)
 
 
 def support_recipient(sender: str) -> str:

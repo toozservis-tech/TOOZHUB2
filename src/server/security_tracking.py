@@ -359,6 +359,13 @@ def access_event_view(item):
     result = {k: str(details[k])[:128] for k in allowed if k in details}
     result.setdefault("server_environment", access_diagnostics()["server_environment"])
     result["user_agent"] = (item.user_agent or "")[:256]
+    if getattr(item, 'event_type', '') in ('client_screen', 'client_action'):
+        from src.server.client_activity import UI_ACTIONS
+        code = details.get('ui_code')
+        if isinstance(code, str) and code in UI_ACTIONS:
+            result.update(ui_code=code, ui_label=UI_ACTIONS[code],
+                          occurred_at=str(details.get('occurred_at', ''))[:40],
+                          received_at=str(details.get('received_at', ''))[:40])
     return result
 
 
@@ -516,7 +523,7 @@ def log_completed_activity(request, status_code, elapsed_ms):
         return
     route = request.scope.get("route")
     path = getattr(route, "path", None)
-    if not path or path.startswith("/admin-api/control-center/access-"):
+    if not path or path.startswith("/admin-api/control-center/access-") or path == '/user/activity':
         return
     import uuid
     resource = ", ".join(f"{key}={value}" for key, value in request.path_params.items()

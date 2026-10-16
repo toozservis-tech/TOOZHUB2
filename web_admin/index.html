@@ -6,6 +6,7 @@
   <title>Evidence Vozidel – Administrace</title>
   <link rel="stylesheet" href="admin.css?v=20260929" />
   <link rel="stylesheet" href="workspace.css?v=20261003" />
+  <link rel="stylesheet" href="activity.css?v=20261016" />
 </head>
 <body>
   <!-- Přihlašovací obrazovka -->
@@ -71,6 +72,9 @@
             <span class="nav-icon">👥</span>
             <span class="nav-text">Uživatelé</span>
           </button>
+          <button data-section="activity" class="nav-item">
+            <span class="nav-icon">🕘</span><span class="nav-text">Aktivita uživatelů</span>
+          </button>
           <button data-section="vehicles" class="nav-item">
             <span class="nav-icon">🚗</span>
             <span class="nav-text">Vozidla</span>
@@ -124,6 +128,30 @@
           <div id="recent-activity" class="activity-list">
             <!-- Naplní se JavaScriptem -->
           </div>
+        </section>
+
+        <section id="section-activity" class="content-section">
+          <div class="section-header"><h1>Aktivita uživatelů</h1></div>
+          <p>Nejnovější aktivní účty jsou nahoře. Otevřete účet a projděte jeho kroky, výsledky a případné chyby.</p>
+          <form id="activity-filters" class="activity-filters">
+            <label>Jméno nebo e-mail<input id="activity-search" type="search" maxlength="200" placeholder="Vyhledat účet"></label>
+            <label>Role<select id="activity-role"><option value="all">Všichni</option><option value="user">Zákazníci</option><option value="service">Servisy</option><option value="admin">Administrátoři</option></select></label>
+            <label>Období<select id="activity-hours"><option value="24">Posledních 24 hodin</option><option value="168">Posledních 7 dní</option><option value="0">Celá historie</option></select></label>
+            <label><input id="activity-problems" type="checkbox"> Pouze problémy</label>
+            <button type="submit" class="btn-primary">Hledat</button>
+          </form>
+          <p id="activity-status" role="status" aria-live="polite"></p>
+          <div id="activity-accounts" class="activity-accounts"></div>
+          <div id="activity-pages" class="activity-pages"></div>
+          <section id="activity-detail" hidden>
+            <button id="activity-back" class="btn-secondary">← Zpět na účty</button>
+            <h2 id="activity-actor"></h2>
+            <label>Zobrazit <select id="activity-kind"><option value="all">Všechny události</option><option value="steps">Kroky a kliknutí</option><option value="requests">Požadavky a výsledky</option></select></label>
+            <label><input id="activity-detail-problems" type="checkbox"> Pouze problémy</label>
+            <p>Klepnutí je krok nahlášený aplikací. Výsledek operace potvrzuje až navazující požadavek serveru. Časy jsou v pásmu Praha.</p>
+            <div id="activity-timeline"></div><div id="activity-detail-pages" class="activity-pages"></div>
+          </section>
+          <p class="activity-help">Zelená: bez zaznamenané chyby. Žlutá: upozornění při přístupu. Červená: chyba požadavku. Kroky a kliknutí se zobrazují až z verze aplikace, která je zaznamenává; starší kroky nelze zpětně doplnit. Historie není záznamem každého dotyku nebo práce bez připojení.</p>
         </section>
 
         <!-- Sekce: Uživatelé -->
@@ -1080,7 +1108,8 @@
   </div>
 
   <script src="/admin-session.js"></script>
-  <script src="admin.js?v=20261003"></script>
+  <script src="admin.js?v=20261016"></script>
+  <script src="activity.js?v=20261016"></script>
   <script src="entity-management.js?v=20261002"></script>
   <script src="workspace.js?v=20261003"></script>
   <script src="operator-panel.js?v=20261011-automation"></script>

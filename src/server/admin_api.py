@@ -4961,10 +4961,15 @@ def get_access_history(
     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0),
     search: str = Query("", max_length=200), actor: str = Query("", max_length=320),
     before_id: Optional[str] = Query(None, max_length=20),
+    kind: str = Query('all', pattern='^(all|steps|requests)$'),
     failures: bool = False, hours: int = Query(0, ge=0, le=87600),
     email: str = Depends(require_control_center_admin), db: Session = Depends(get_db),
 ):
     query = db.query(SecurityAccessLog)
+    if kind == 'steps':
+        query = query.filter(SecurityAccessLog.event_type.in_(('client_screen', 'client_action')))
+    elif kind == 'requests':
+        query = query.filter(SecurityAccessLog.event_type.in_(('request_completed', 'request_failed', 'api_activity')))
     if failures:
         query = query.filter(SecurityAccessLog.event_type.in_(ACCESS_PROBLEM_EVENTS))
     if hours:
