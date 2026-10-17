@@ -29,7 +29,7 @@ def archive_out(row):
     profile = json.loads(row.profile_json)
     return {'id': row.id, 'vehicle_id': row.vehicle_id, 'created_at': row.created_at,
             'nickname': profile.get('nickname') or 'Vozidlo', 'plate': profile.get('plate'),
-            'vin': profile.get('vin')}
+            'vin': profile.get('vin'), 'lifecycle': profile.get('lifecycle')}
 
 
 @router.get('')

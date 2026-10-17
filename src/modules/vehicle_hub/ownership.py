@@ -250,6 +250,19 @@ def may_restore_vehicle_profile(db: Session, *, vehicle: Vehicle, customer: Cust
         if any(row.is_active for row in history):
             return False
         latest = history[0]
+        # A seller's/last operator's report is not permission to reclaim the
+        # vehicle by entering its VIN. These endings require reviewed transfer.
+        # Archives exist before release; do not depend on a newly installed
+        # lifecycle table when evaluating legacy recovery paths.
+        from .models import VehicleOwnershipArchive
+        period_key = f'{vehicle.id}:{latest.id}:{(latest.owned_from or latest.assigned_at).isoformat()}'
+        ended = db.query(VehicleOwnershipArchive).filter_by(period_key=period_key,
+            owner_customer_id=latest.customer_id).first()
+        if ended:
+            import json
+            metadata = json.loads(ended.profile_json).get('lifecycle') or {}
+            if metadata.get('action') in {'sold', 'scrapped'}:
+                return False
         # Ambiguous legacy periods must be resolved by an administrator.
         newest = latest.owned_from or latest.assigned_at
         from .models import VehicleOwnershipArchive

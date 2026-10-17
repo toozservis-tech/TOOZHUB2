@@ -22,6 +22,22 @@ _ready_lock = Lock()
 
 
 MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
+    "vehicle_lifecycle": {
+        "tables": {"vehicle_lifecycle_events", "vehicle_ownerships", "vehicle_ownership_archives",
+                   "vehicle_record_privacy", "vehicle_repair_privacy", "vehicle_attachment_privacy",
+                   "service_jobs", "reservations"},
+        "columns": {
+            "vehicle_lifecycle_events": {"vehicle_id", "ownership_id", "ownership_started_at", "owner_id",
+                "actor_id", "client_id", "payload_hash", "action", "state", "version", "note",
+                "effective_date", "created_at", "archive_id", "response_json"},
+            "vehicle_ownerships": {"owned_from", "owned_until", "assigned_at", "is_active", "is_primary"},
+            "service_jobs": {"ownership_id", "ownership_started_at", "status"},
+        },
+    },
+    "vehicle_updates": {"tables": {"vehicle_updates", "vehicle_update_receipts"},
+        "columns": {"vehicle_updates": {"ownership_id", "ownership_started_at", "dedupe_key"}}},
+    "service_jobs": {"tables": {"service_jobs", "service_job_events", "vehicle_updates", "vehicle_update_receipts"},
+        "columns": {"service_jobs": {"ownership_id", "ownership_started_at", "intake_id", "final_record_id"}}},
     "vehicles": {
         "tables": {"vehicles", "vehicle_ownerships", "vehicle_tachometer_history_entries", "vehicle_orv_scans"},
         "columns": {

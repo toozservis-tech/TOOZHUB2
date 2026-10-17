@@ -156,6 +156,43 @@ def erase_account(db, customer) -> dict[str, int]:
                            m.ServiceRecord.created_by_service_customer_id == account_id,
                            m.ServiceRecord.id.in_(archived_records))
     record_ids = [row.id for row in db.query(m.ServiceRecord).filter(record_condition)]
+
+    from .vehicle_lifecycle_models import VehicleLifecycleEvent
+    if inspect(db.connection()).has_table(VehicleLifecycleEvent.__tablename__):
+        remove(VehicleLifecycleEvent, or_(VehicleLifecycleEvent.owner_id == account_id,
+            VehicleLifecycleEvent.actor_id == account_id, VehicleLifecycleEvent.vehicle_id.in_(vehicle_ids),
+            VehicleLifecycleEvent.archive_id.in_(archive_ids)))
+
+    # The inbox and job timeline hold private ownership-period data and foreign
+    # keys to records, intake forms, accounts and ownership rows. Erase their
+    # dependants first, including earlier periods after a vehicle transfer.
+    from .service_job_models import ServiceJob, ServiceJobEvent
+    from .vehicle_update_models import VehicleUpdate, VehicleUpdateReceipt
+    inspector = inspect(db.connection())
+    ownership_ids = [identity for (identity,) in db.query(m.VehicleOwnership.id).filter(or_(
+        m.VehicleOwnership.customer_id == account_id, m.VehicleOwnership.vehicle_id.in_(vehicle_ids)))]
+    intake_ids = [identity for (identity,) in db.query(m.ServiceIntake.id).filter(or_(
+        m.ServiceIntake.customer_id == account_id, m.ServiceIntake.service_id == account_id,
+        m.ServiceIntake.vehicle_id.in_(vehicle_ids)))]
+    job_ids = []
+    if inspector.has_table(ServiceJob.__tablename__):
+        job_ids = [identity for (identity,) in db.query(ServiceJob.id).filter(or_(
+            ServiceJob.owner_id == account_id, ServiceJob.service_id == account_id,
+            ServiceJob.vehicle_id.in_(vehicle_ids), ServiceJob.ownership_id.in_(ownership_ids),
+            ServiceJob.final_record_id.in_(record_ids), ServiceJob.intake_id.in_(intake_ids)))]
+    if inspector.has_table(VehicleUpdate.__tablename__):
+        update_ids = [identity for (identity,) in db.query(VehicleUpdate.id).filter(or_(
+            VehicleUpdate.recipient_id == account_id, VehicleUpdate.actor_id == account_id,
+            VehicleUpdate.vehicle_id.in_(vehicle_ids), VehicleUpdate.ownership_id.in_(ownership_ids),
+            VehicleUpdate.service_job_id.in_(job_ids)))]
+        if inspector.has_table(VehicleUpdateReceipt.__tablename__):
+            remove(VehicleUpdateReceipt, or_(VehicleUpdateReceipt.update_id.in_(update_ids),
+                VehicleUpdateReceipt.recipient_id == account_id))
+        remove(VehicleUpdate, VehicleUpdate.id.in_(update_ids))
+    if inspector.has_table(ServiceJobEvent.__tablename__):
+        remove(ServiceJobEvent, or_(ServiceJobEvent.job_id.in_(job_ids), ServiceJobEvent.actor_id == account_id))
+    if inspector.has_table(ServiceJob.__tablename__):
+        remove(ServiceJob, ServiceJob.id.in_(job_ids))
     record_condition = m.ServiceRecord.id.in_(record_ids)
     for row in db.query(m.ServiceRecord).filter(record_condition).with_for_update():
         for path in _attachments(row.attachments):

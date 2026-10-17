@@ -56,7 +56,12 @@ def create_service_intake(
         signature=intake_data.signature
     )
     
+    # Intake, lifecycle and owner notification are one atomic transaction.
+    intake._skip_vehicle_update = True
     db.add(intake)
+    db.flush()
+    from .service_jobs import create_job_from_intake
+    create_job_from_intake(db, intake=intake, current_user=current_user)
     db.commit()
     db.refresh(intake)
     

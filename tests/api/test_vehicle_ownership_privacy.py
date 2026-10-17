@@ -254,3 +254,33 @@ def test_buyer_account_erasure_preserves_previous_owner_archive_without_reopenin
     assert s.db.query(m.ServiceRecord).one().description==PRIVATE
     assert s.db.get(m.Vehicle,car_id).notes is None
     assert not may_restore_vehicle_profile(s.db,vehicle=s.db.get(m.Vehicle,car_id),customer=s.owner)
+
+
+@pytest.mark.parametrize('erased_role', ['owner', 'service'])
+def test_erasure_removes_completed_job_inbox_and_receipts_in_fk_order(data, erased_role):
+    from src.modules.vehicle_hub.routers_v1.service_jobs import create_job, update_job, JobCreate, JobUpdate
+    from src.modules.vehicle_hub.service_job_models import ServiceJob, ServiceJobEvent
+    from src.modules.vehicle_hub.vehicle_update_models import VehicleUpdate, VehicleUpdateReceipt
+    s = data
+    job = create_job(s.car.id, JobCreate(client_id=uuid4(), title='Soukromá oprava', description=PRIVATE), s.service, s.db)
+    update_job(job['id'], JobUpdate(client_id=uuid4(), expected_version=1,
+        status='in_progress', message=PRIVATE), s.service, s.db)
+    completed = update_job(job['id'], JobUpdate(client_id=uuid4(), expected_version=2,
+        status='completed', message=PRIVATE), s.service, s.db)
+    notices = s.db.query(VehicleUpdate).filter_by(service_job_id=job['id']).all()
+    assert len(notices) == 3
+    for notice in notices:
+        s.db.add(VehicleUpdateReceipt(update_id=notice.id, recipient_id=s.owner.id))
+    s.db.commit()
+    transfer(s)
+    buyer_id, vehicle_id = s.buyer.id, s.car.id
+    erased_id = getattr(s, erased_role).id
+    erase_account(s.db, getattr(s, erased_role)); s.db.commit(); s.db.expire_all()
+    assert s.db.get(ServiceJob, job['id']) is None
+    assert not s.db.query(ServiceJobEvent).filter_by(job_id=job['id']).first()
+    assert s.db.get(m.ServiceRecord, completed['final_record_id']) is None
+    assert not s.db.query(VehicleUpdate).filter_by(service_job_id=job['id']).first()
+    assert not s.db.query(VehicleUpdate).filter_by(actor_id=erased_id).first()
+    assert s.db.query(VehicleUpdateReceipt).count() == 0
+    assert s.db.get(m.Customer, buyer_id)
+    assert s.db.get(m.Vehicle, vehicle_id)

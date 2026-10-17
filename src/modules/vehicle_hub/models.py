@@ -4,6 +4,11 @@ from datetime import datetime
 
 from .database import Base
 
+# Import additive models and register transactional service-change publication
+# for all ORM writers, including legacy endpoints and imports.
+from . import vehicle_update_models  # noqa: F401,E402
+from . import vehicle_updates  # noqa: F401,E402
+
 
 class Tenant(Base):
     """Tenant (zákazník/firma) - multi-tenant architektura"""
@@ -1069,3 +1074,8 @@ class VehicleVINClaim(Base):
     __tablename__ = 'vehicle_vin_claims'
     vin = Column(String, primary_key=True)
     vehicle_id = Column(Integer, ForeignKey('vehicles.id', ondelete='CASCADE'), nullable=False, index=True)
+
+# Register additive job tables for migration metadata and non-router writers.
+from . import service_job_models  # noqa: E402,F401
+
+from . import vehicle_lifecycle_models  # noqa: E402,F401

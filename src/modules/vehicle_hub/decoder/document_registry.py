@@ -68,8 +68,11 @@ def technical_fields(payload: object, query: RegistryLookupRequest) -> RegistryV
         raise HTTPException(502, "Registr nevrátil platný VIN.")
     if (query.vin and query.vin != vin) or (query.orv and query.orv != orv):
         raise HTTPException(502, "Vozidlo z registru neodpovídá zadanému dokladu.")
-    year = data.get("RokVyroby")
-    year = int(year) if str(year).isdigit() and 1900 <= int(year) <= 2100 else None
+    # Normalize an explicit manufacture year only. First registration and the
+    # VIN model year are different facts and must never fill this field.
+    year_text = value("RokVyroby")
+    year = int(year_text) if re.fullmatch(r"[0-9]{4}", year_text or "") else None
+    year = year if year is not None and 1900 <= year <= 2100 else None
     first = value("DatumPrvniRegistrace")
     try:
         first = date.fromisoformat(first[:10]).isoformat() if first else None

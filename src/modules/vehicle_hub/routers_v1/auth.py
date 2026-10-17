@@ -48,6 +48,7 @@ def get_current_user(
         tenant_id=user.tenant_id,
         endpoint=str(request.url.path) if request else None,
     )
+    db.info["vehicle_update_actor_id"] = user.id
     return user
 
 
@@ -108,6 +109,7 @@ def get_current_user_optional(
                 endpoint=str(request.url.path) if request else None,
                 details={"source": "optional_auth"},
             )
+            db.info["vehicle_update_actor_id"] = user.id
             return user
         return None
     except Exception:
@@ -153,6 +155,7 @@ def get_current_user_id(
         raise HTTPException(status_code=404, detail="Uživatel nenalezen")
     if customer_is_deleted(user) or customer_is_disabled(user):
         raise HTTPException(status_code=401, detail="Účet je neaktivní")
+    db.info["vehicle_update_actor_id"] = user.id
     return user.id
 
 

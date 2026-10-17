@@ -85,8 +85,35 @@ def test_route_requires_authenticated_user_and_limits_calls(monkeypatch):
     rate_limiter.clear('registry-user:991232');rate_limiter.clear('registry-documents-global')
     with TestClient(app) as client:
         assert client.post('/api/v1/vehicles/registry-lookup',json={'vin':VIN}).status_code==401
-        app.dependency_overrides[vehicles.get_current_user]=lambda:SimpleNamespace(id=991232)
+        app.dependency_overrides[vehicles.get_current_user]=lambda:SimpleNamespace(id=991232, role="service")
         for _ in range(8):assert client.post('/api/v1/vehicles/registry-lookup',json={'vin':VIN}).status_code==200
         assert client.post('/api/v1/vehicles/registry-lookup',json={'vin':VIN}).status_code==429
     assert len(calls)==8
     rate_limiter.clear('registry-user:991232');rate_limiter.clear('registry-documents-global')
+
+
+@pytest.mark.parametrize('raw,expected', [
+    (2011, 2011), ('2011', 2011), (' 2011 ', 2011), ('\t2011\t', 2011),
+    (1900, 1900), (2100, 2100), (1899, None), (2101, None),
+    (None, None), ('', None), ('unknown', None), (True, None), (False, None),
+    (2011.5, None), (2011.0, None), ('2011-01-01', None), ('2011/2012', None),
+    ('²²²²', None), ('٢٠١١', None), ({'year': 2011}, None), ([2011], None),
+])
+def test_explicit_manufacture_year_normalized_without_inference(raw, expected):
+    data = deepcopy(PAYLOAD)
+    data['Data']['RokVyroby'] = raw
+    result = registry.technical_fields(data, registry.RegistryLookupRequest(vin=VIN))
+    assert result.production_year == expected
+    assert result.first_registration_date == '1997-03-21'
+    assert result.vin == VIN and result.brand == 'ŠKODA'
+
+
+def test_manufacture_year_and_first_registration_remain_distinct():
+    data = deepcopy(PAYLOAD)
+    data['Data']['RokVyroby'] = ' 1996 '
+    result = registry.technical_fields(data, registry.RegistryLookupRequest(vin=VIN))
+    assert result.production_year == 1996
+    assert result.first_registration_date == '1997-03-21'
+    data['Data'].pop('RokVyroby')
+    result = registry.technical_fields(data, registry.RegistryLookupRequest(vin=VIN))
+    assert result.production_year is None  # No date/VIN model-year substitution.

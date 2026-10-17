@@ -2656,10 +2656,20 @@ def delete_vehicle(
         raise HTTPException(status_code=403, detail="Nemáte oprávnění odebrat toto vozidlo")
 
     try:
-        if not owner or not release_vehicle_owner_assignment(
-                db, vehicle=vehicle, owner=owner, revoked_by_customer_id=current_user.id):
+        if not owner:
             raise HTTPException(status_code=409, detail="Aktuální vlastnická vazba vozidla už není aktivní.")
-
+        # Preserve the legacy owner/admin policy, but archive before release and
+        # apply the same open-work guard as the explicit lifecycle action.
+        from uuid import uuid4
+        from .. import vehicle_lifecycle as lifecycle
+        from .vehicle_lifecycle import VehicleLifecycleAction
+        lifecycle.ready(db)
+        assignment = get_primary_vehicle_owner_assignment(db, vehicle.id)
+        _, version = lifecycle.current_state(db, assignment)
+        lifecycle.apply_action(db, vehicle_id=vehicle.id, actor=current_user,
+            payload=VehicleLifecycleAction(client_id=uuid4(), ownership_id=assignment.id,
+                ownership_token=lifecycle.ownership_token(vehicle.id, assignment),
+                expected_version=version, action='removed'), legacy_assignment=assignment)
         db.commit()
 
         return {
