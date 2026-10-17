@@ -157,3 +157,7 @@ a launch kroky exit 0). Root ověřil v Device Hubu přihlášený dashboard
 iOS bez původního panelu. Přihlášení tedy zůstalo zachováno po této aktualizaci.
 Produkční nové API stále nebylo nasazeno; původní HTTP 404 není touto
 úpravou serveru vyřešená. Výsledky `/tmp/tooz-notice-fix-result.json`.
+
+## Explicit release migration entry point
+
+Use `python -m scripts.migrate_mobile_release` as the pre-deploy command for this mobile release. It applies the canonical service-update migration (0014), then owner lifecycle (0015), stops on failure, and can be rerun. The Docker image explicitly includes this module and both canonical migration modules/files. No application-startup migration was added.

@@ -30,7 +30,7 @@ Sold and scrapped periods cannot be restored merely by entering the VIN. A revie
 
 Legacy `DELETE /api/v1/vehicles/{id}` retains its existing owner/admin authorization but now performs the same immediate archival and open-work checks, recording `removed`. It still never deletes the VIN or technical history.
 
-Deployment order: apply Alembic `20261017_0014`, then additive `20261017_0015`, before starting the changed API. The standalone `scripts/migrate_vehicle_lifecycle.py` applies only 0015. No endpoint performs schema DDL. An absent lifecycle schema fails closed with 503. Account erasure removes lifecycle events before their referenced archives/ownership/accounts.
+Recommended explicit pre-deploy command: `python -m scripts.migrate_mobile_release`. This single module applies additive `20261017_0014` and then `20261017_0015` before starting the changed API; a failure exits unsuccessfully and stops deployment. It needs no shell condition or argument quoting. The standalone `scripts/migrate_vehicle_lifecycle.py` applies only 0015. No endpoint performs schema DDL. An absent lifecycle schema fails closed with 503. Account erasure removes lifecycle events before their referenced archives/ownership/accounts.
 
 Validation uses isolated temporary SQLite databases: lifecycle, privacy, sharing, VIN recovery, jobs, notices and migration regression tests. No real account mutations are required.
 

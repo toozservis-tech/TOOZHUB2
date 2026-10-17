@@ -7,6 +7,7 @@
 !scripts/migrate_web_prices.py
 !scripts/migrate_service_updates.py
 !scripts/migrate_vehicle_lifecycle.py
+!scripts/migrate_mobile_release.py
 !scripts/migrate_apple_billing.py
 !scripts/migrate_workshops_vehicle_identity.py
 !alembic/

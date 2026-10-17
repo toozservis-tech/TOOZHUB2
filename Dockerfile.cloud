@@ -14,6 +14,7 @@ COPY scripts/migrate_apple_billing.py ./scripts/migrate_apple_billing.py
 COPY scripts/migrate_workshops_vehicle_identity.py ./scripts/migrate_workshops_vehicle_identity.py
 COPY scripts/migrate_service_updates.py ./scripts/migrate_service_updates.py
 COPY scripts/migrate_vehicle_lifecycle.py ./scripts/migrate_vehicle_lifecycle.py
+COPY scripts/migrate_mobile_release.py ./scripts/migrate_mobile_release.py
 COPY alembic/versions/20261002_0013_workshops_vehicle_identity.py ./alembic/versions/20261002_0013_workshops_vehicle_identity.py
 COPY alembic/versions/20261017_0014_service_jobs_updates.py ./alembic/versions/20261017_0014_service_jobs_updates.py
 COPY alembic/versions/20261017_0015_vehicle_lifecycle.py ./alembic/versions/20261017_0015_vehicle_lifecycle.py
