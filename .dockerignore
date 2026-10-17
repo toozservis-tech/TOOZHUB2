@@ -4,10 +4,15 @@
 !VERSION
 !VERSION.py
 !scripts/
+!scripts/migrate_web_prices.py
+!scripts/migrate_service_updates.py
+!scripts/migrate_vehicle_lifecycle.py
 !scripts/migrate_apple_billing.py
 !scripts/migrate_workshops_vehicle_identity.py
 !alembic/
 !alembic/versions/
+!alembic/versions/20261017_0014_service_jobs_updates.py
+!alembic/versions/20261017_0015_vehicle_lifecycle.py
 !alembic/versions/20261002_0013_workshops_vehicle_identity.py
 !src/
 !src/**
