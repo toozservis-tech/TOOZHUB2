@@ -346,3 +346,51 @@ def upload_service_job_photo(
     ))
     db.commit()
     return {"photo": _photo_payload(photo), "job": _serialize(db, job)}
+
+
+
+class JobHandover(BaseModel):
+    client_id: UUID
+    expected_version: int = Field(ge=1)
+
+
+@router.post('/service-jobs/{job_id}/handover')
+def hand_over_job(
+    job_id: int, payload: JobHandover,
+    current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    """Independent immutable hand-over receipt; the finalized repair record stays locked."""
+    _service(current_user)
+    job = db.get(ServiceJob, job_id)
+    if job is None:
+        raise HTTPException(404, "Zakázka nebyla nalezena.")
+    lock_vehicle_access(db, job.vehicle_id)
+    db.refresh(job)
+    _authorize(db, job, current_user, write=True)
+    digest = _digest(payload.model_dump())
+    previous = db.query(ServiceJobEvent).filter_by(job_id=job.id, client_id=str(payload.client_id)).first()
+    if previous:
+        if previous.payload_hash != digest or previous.status != "handed_over":
+            raise HTTPException(409, "Předání má jiné údaje.")
+        return _serialize(db, job)
+    if job.status != "completed":
+        raise HTTPException(409, "Předání lze potvrdit až po dokončení práce.")
+    if job.version != payload.expected_version:
+        raise HTTPException(409, "Zakázka se mezitím změnila. Obnovte stav.")
+    job.status = "handed_over"
+    job.version += 1
+    job.updated_at = datetime.utcnow()
+    db.add(ServiceJobEvent(
+        job_id=job.id, actor_id=current_user.id, client_id=str(payload.client_id),
+        payload_hash=digest, status="handed_over", message="Vozidlo předáno zákazníkovi.",
+    ))
+    db.flush()
+    publish_vehicle_update(
+        db, vehicle_id=job.vehicle_id, actor_id=current_user.id,
+        event_type="job.handed_over", title="Vozidlo předáno ze servisu",
+        message="Servis označil vozidlo jako předané.",
+        source_type="service_job", source_id=job.id,
+        dedupe_key=f"service-job:{job.id}:handover", service_job_id=job.id,
+    )
+    db.commit()
+    return _serialize(db, job)
