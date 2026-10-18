@@ -376,7 +376,7 @@ private struct VehicleServiceBookingSheet: View {
         } catch {
             errorMessage = UserFacingErrorMapper.message(
                 for: error,
-                context: .load,
+                context: .account,
                 fallback: "Seznam servisů teď není dostupný. Zkuste to znovu."
             )
         }
