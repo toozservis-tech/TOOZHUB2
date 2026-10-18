@@ -8,6 +8,7 @@ from io import BytesIO
 from uuid import uuid4
 
 from PIL import Image
+from test_service_http_lifecycle import http_flow
 from src.modules.vehicle_hub.models import Customer, Reservation, ServiceRecord, VehicleServiceLink
 from src.modules.vehicle_hub.routers_v1 import reservations
 from src.modules.vehicle_hub.service_job_models import ServiceJobPhoto
