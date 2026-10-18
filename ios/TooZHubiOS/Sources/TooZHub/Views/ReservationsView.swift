@@ -684,10 +684,18 @@ struct ServiceReservationWorkspaceSheet: View {
     @State private var showHandoverConfirmation = false
 
     private let api = APIClient()
-    private let quickTasks = [
-        "Příjem – foto", "Diagnostika", "Olej a filtry", "Brzdy",
-        "Pneuservis", "Podvozek", "Klimatizace", "STK", "Zkušební jízda"
-    ]
+    private var quickTasks: [String] {
+        let subject = "\(reservation.serviceType ?? "") \(reservation.note ?? "")".lowercased()
+        var selected: [String] = []
+        if subject.contains("brzd") { selected += ["Kontrola brzd", "Výměna destiček", "Kotouče"] }
+        if subject.contains("olej") || subject.contains("filtr") { selected += ["Výměna oleje", "Olejový filtr", "Vzduchový filtr"] }
+        if subject.contains("pneu") || subject.contains("kola") { selected += ["Demontáž kol", "Přezutí", "Vyvážení"] }
+        if subject.contains("klima") { selected += ["Kontrola těsnosti", "Plnění klimatizace"] }
+        if subject.contains("diagnost") || subject.contains("závad") { selected += ["Načtení závad", "Kontrola elektroinstalace"] }
+        selected += ["Vizuální kontrola", "Diagnostika", "Zkušební jízda", "Kontrola hotové práce"]
+        var seen = Set<String>()
+        return selected.filter { seen.insert($0).inserted }
+    }
 
     private var canWriteJob: Bool {
         snapshot?.accessApproved == true && job != nil
@@ -714,7 +722,7 @@ struct ServiceReservationWorkspaceSheet: View {
                             .font(Theme.Typography.body)
                     }
                     LabeledContent("Stav rezervace", value: snapshot?.reservationStatus ?? reservation.status)
-                    LabeledContent("Termín", value: reservation.startDatetime.formatted(date: .numeric, time: .shortened))
+                    LabeledContent("Termín", value: (snapshot?.scheduledAt ?? reservation.startDatetime).formatted(date: .numeric, time: .shortened))
                 }
 
                 if isLoading {
@@ -742,7 +750,8 @@ struct ServiceReservationWorkspaceSheet: View {
                                 .disabled(isSaving)
                             }
                             if context.reservationStatus.uppercased() != "CANCELLED" &&
-                               context.reservationStatus.uppercased() != "COMPLETED" {
+                               context.reservationStatus.uppercased() != "COMPLETED" &&
+                               (job == nil || job?.status == "received") {
                                 Toggle("Upravit termín", isOn: $editAppointment)
                                 if editAppointment {
                                     DatePicker(
@@ -1049,14 +1058,28 @@ struct ServiceReservationWorkspaceSheet: View {
             let caption: String
             let contentBase64: String
         }
-        guard !data.isEmpty, data.count <= 10_000_000 else {
+        guard let photo = UIImage(data: data) else {
+            errorMessage = "Nepodařilo se načíst fotografii."
+            return
+        }
+        let longest = max(photo.size.width, photo.size.height)
+        let scale = min(1.0, 2048.0 / max(longest, 1.0))
+        let image = UIGraphicsImageRenderer(
+            size: CGSize(width: photo.size.width * scale, height: photo.size.height * scale)
+        ).image { _ in
+            photo.draw(in: CGRect(origin: .zero,
+                                  size: CGSize(width: photo.size.width * scale,
+                                               height: photo.size.height * scale)))
+        }
+        guard let jpeg = image.jpegData(compressionQuality: 0.78),
+              !jpeg.isEmpty, jpeg.count <= 10_000_000 else {
             errorMessage = "Fotografie je příliš velká."
             return
         }
         let payload = ImageBody(
             clientId: UUID(),
             caption: photoCaption,
-            contentBase64: data.base64EncodedString()
+            contentBase64: jpeg.base64EncodedString()
         )
         guard let body = try? api.encodeBody(payload) else { return }
         struct ImageResult: Decodable { let photo: WorkshopJobPhoto; let job: WorkshopJobSnapshot }
