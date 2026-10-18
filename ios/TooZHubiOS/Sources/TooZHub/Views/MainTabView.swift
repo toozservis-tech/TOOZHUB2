@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct MainTabView: View {
     @EnvironmentObject private var env: AppEnvironment
@@ -6,6 +7,7 @@ struct MainTabView: View {
 
     @State private var userSelection: UserTab = .dashboard
     @State private var serviceSelection: ServiceTab = .clients
+    @State private var isKeyboardVisible = false
     private let tabBarReservedHeight: CGFloat = 124
 
     private var role: String {
@@ -25,29 +27,37 @@ struct MainTabView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: isServiceRole)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            isKeyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isKeyboardVisible = false
+        }
     }
 
     private var userShell: some View {
         ZStack(alignment: .bottom) {
             userContent
             .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: tabBarReservedHeight)
+                Color.clear.frame(height: isKeyboardVisible ? 0 : tabBarReservedHeight)
             }
 
-            HubFloatingTabBar(
-                items: UserTab.allCases.map {
-                    HubFloatingTabBar.Item(
-                        id: $0.rawValue,
-                        title: $0.title,
-                        icon: $0.icon,
-                        isCenter: $0 == .service
-                    )
-                },
-                selectedId: userSelection.rawValue
-            ) { selectedId in
-                guard let selected = UserTab(rawValue: selectedId) else { return }
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                    userSelection = selected
+            if !isKeyboardVisible {
+                HubFloatingTabBar(
+                    items: UserTab.allCases.map {
+                        HubFloatingTabBar.Item(
+                            id: $0.rawValue,
+                            title: $0.title,
+                            icon: $0.icon,
+                            isCenter: $0 == .service
+                        )
+                    },
+                    selectedId: userSelection.rawValue
+                ) { selectedId in
+                    guard let selected = UserTab(rawValue: selectedId) else { return }
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        userSelection = selected
+                    }
                 }
             }
         }
@@ -64,23 +74,25 @@ struct MainTabView: View {
         ZStack(alignment: .bottom) {
             serviceContent
             .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: tabBarReservedHeight)
+                Color.clear.frame(height: isKeyboardVisible ? 0 : tabBarReservedHeight)
             }
 
-            HubFloatingTabBar(
-                items: ServiceTab.allCases.map {
-                    HubFloatingTabBar.Item(
-                        id: $0.rawValue,
-                        title: $0.title,
-                        icon: $0.icon,
-                        isCenter: $0 == .reminders
-                    )
-                },
-                selectedId: serviceSelection.rawValue
-            ) { selectedId in
-                guard let selected = ServiceTab(rawValue: selectedId) else { return }
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                    serviceSelection = selected
+            if !isKeyboardVisible {
+                HubFloatingTabBar(
+                    items: ServiceTab.allCases.map {
+                        HubFloatingTabBar.Item(
+                            id: $0.rawValue,
+                            title: $0.title,
+                            icon: $0.icon,
+                            isCenter: $0 == .reminders
+                        )
+                    },
+                    selectedId: serviceSelection.rawValue
+                ) { selectedId in
+                    guard let selected = ServiceTab(rawValue: selectedId) else { return }
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        serviceSelection = selected
+                    }
                 }
             }
         }
