@@ -1,5 +1,8 @@
 """Transactional, owner-scoped workshop lifecycle. No runtime schema changes."""
 from datetime import datetime
+import base64
+import binascii
+from io import BytesIO
 from hashlib import sha256
 import json
 from typing import Literal, Optional
@@ -12,7 +15,7 @@ from ..database import get_db
 from ..models import Customer, Vehicle, ServiceRecord, ServiceRecordAuditLog
 from ..ownership import lock_vehicle_access, get_primary_vehicle_owner_assignment
 from ..service_access import require_service_vehicle_link, get_active_vehicle_service_link, attach_service_access_to_record
-from ..service_job_models import ServiceJob, ServiceJobEvent
+from ..service_job_models import ServiceJob, ServiceJobEvent, ServiceJobPhoto
 from ..schema_management import assert_module_ready
 from ..vehicle_updates import publish_vehicle_update
 from .auth import get_current_user
@@ -39,6 +42,22 @@ class JobUpdate(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
     mileage: Optional[int] = Field(default=None, ge=0, le=10000000)
     price: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
+
+
+class JobPhotoUpload(BaseModel):
+    client_id: UUID
+    caption: str = Field(default="Foto vozidla", max_length=200)
+    content_base64: str = Field(min_length=80, max_length=15_000_000)
+
+
+def _photo_payload(photo):
+    return {
+        "id": photo.id,
+        "caption": photo.caption,
+        "mime_type": photo.mime_type,
+        "file_size": photo.file_size,
+        "created_at": photo.created_at,
+    }
 
 
 def _digest(data):
@@ -86,7 +105,9 @@ def _authorize(db, job, user, write=False):
 def _serialize(db, job):
     return {key: getattr(job, key) for key in ('id', 'vehicle_id', 'service_id', 'status', 'title', 'description', 'mileage', 'version', 'created_at', 'updated_at', 'completed_at', 'final_record_id')} | {
         'events': [{key: getattr(event, key) for key in ('id', 'status', 'message', 'created_at', 'actor_id')}
-                   for event in db.query(ServiceJobEvent).filter_by(job_id=job.id).order_by(ServiceJobEvent.id).all()]}
+                   for event in db.query(ServiceJobEvent).filter_by(job_id=job.id).order_by(ServiceJobEvent.id).all()],
+        'photos': [_photo_payload(photo) for photo in db.query(ServiceJobPhoto)
+                   .filter_by(job_id=job.id).order_by(ServiceJobPhoto.id).all()]}
 
 
 @router.get('/vehicles/{vehicle_id}/service-jobs')
@@ -222,9 +243,18 @@ def update_job(job_id: int, payload: JobUpdate, current_user: Customer = Depends
         history = db.query(ServiceJobEvent).filter_by(job_id=job.id).order_by(ServiceJobEvent.id).all()
         timeline_note = '\n'.join(f'{item.created_at.isoformat()} [{item.status}] {item.message}' for item in history)
         timeline_note += f'\n{now.isoformat()} [completed] {payload.message.strip()}'
+        photos = db.query(ServiceJobPhoto).filter_by(job_id=job.id).order_by(ServiceJobPhoto.id).all()
+        attachments_json = json.dumps([{
+            "storage_key": photo.storage_key,
+            "file_name": f"foto_{photo.id}.jpg",
+            "mime_type": photo.mime_type,
+            "file_size": photo.file_size,
+            "caption": photo.caption,
+        } for photo in photos], ensure_ascii=False) if photos else None
         record = ServiceRecord(tenant_id=job.tenant_id, vehicle_id=job.vehicle_id, user_id=current_user.id,
             performed_at=now, mileage=job.mileage, description=payload.message.strip(),
-            price=payload.price, note=timeline_note, category=job.title, created_by_ai=False)
+            price=payload.price, note=timeline_note, category=job.title, attachments=attachments_json,
+            created_by_ai=False)
         record._skip_vehicle_update = True
         attach_service_access_to_record(record=record, current_user=current_user, access_link=link)
         db.add(record)
@@ -249,3 +279,70 @@ def update_job(job_id: int, payload: JobUpdate, current_user: Customer = Depends
         dedupe_key=f'service-job:{job.id}:update:{payload.client_id}', service_job_id=job.id)
     db.commit()
     return _serialize(db, job)
+
+
+
+@router.post('/service-jobs/{job_id}/photos')
+def upload_service_job_photo(
+    job_id: int, payload: JobPhotoUpload,
+    current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    """Save compressed, EXIF-free photos as private vehicle evidence while job is open."""
+    import hashlib
+    from PIL import Image, UnidentifiedImageError
+    from .service_records import _store_attachment_for_vehicle
+
+    _service(current_user)
+    job = db.get(ServiceJob, job_id)
+    if not job:
+        raise HTTPException(404, "Zakázka nebyla nalezena.")
+    lock_vehicle_access(db, job.vehicle_id)
+    db.refresh(job)
+    _authorize(db, job, current_user, write=True)
+    digest = hashlib.sha256(payload.content_base64.encode('ascii')).hexdigest()
+    previous = db.query(ServiceJobPhoto).filter_by(job_id=job.id, client_id=str(payload.client_id)).first()
+    if previous:
+        if previous.sha256 != digest:
+            raise HTTPException(409, "Stejné ID fotografie bylo použito pro jiný snímek.")
+        return {"photo": _photo_payload(previous), "job": _serialize(db, job)}
+    if job.status in ("completed", "cancelled"):
+        raise HTTPException(409, "K uzavřené zakázce nelze přidat další fotografie.")
+    try:
+        content = base64.b64decode(payload.content_base64, validate=True)
+    except (ValueError, binascii.Error):
+        raise HTTPException(422, "Poškozený obrázek.")
+    if len(content) > 10_000_000:
+        raise HTTPException(413, "Fotografie je příliš velká.")
+    try:
+        with Image.open(BytesIO(content)) as img:
+            img.verify()
+        with Image.open(BytesIO(content)) as img:
+            if img.width * img.height > 28_000_000:
+                raise HTTPException(413, "Fotografie má příliš vysoké rozlišení.")
+            img.thumbnail((2048, 2048))
+            rgb = img.convert("RGB")
+            output = BytesIO()
+            rgb.save(output, "JPEG", quality=82, optimize=True)
+            sanitized = output.getvalue()
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise HTTPException(422, "Soubor není platný obrázek.")
+    vehicle = db.get(Vehicle, job.vehicle_id)
+    stored = _store_attachment_for_vehicle(
+        vehicle_id=job.vehicle_id, vehicle=vehicle, current_user=current_user, db=db,
+        file_name="servisni_foto.jpg", file_mime_type="image/jpeg", content=sanitized,
+    )
+    photo = ServiceJobPhoto(
+        job_id=job.id, actor_id=current_user.id, client_id=str(payload.client_id),
+        sha256=digest, storage_key=stored["storage_key"], mime_type="image/jpeg",
+        file_size=len(sanitized), caption=payload.caption.strip() or "Foto vozidla",
+    )
+    db.add(photo)
+    job.updated_at = datetime.utcnow()
+    job.version += 1
+    db.add(ServiceJobEvent(
+        job_id=job.id, actor_id=current_user.id, client_id=str(payload.client_id),
+        payload_hash=digest, status=job.status,
+        message="Fotografie: " + (photo.caption or "Vozidlo"),
+    ))
+    db.commit()
+    return {"photo": _photo_payload(photo), "job": _serialize(db, job)}
