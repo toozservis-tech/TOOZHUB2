@@ -7,6 +7,9 @@ struct ServiceClientsView: View {
     @State private var selectedVehicleContext: ServiceVehicleContext?
     @State private var requestSendError: String?
     @State private var requestSendSuccess: String?
+    @State private var incomingReservations: [Reservation] = []
+    @State private var selectedIncomingReservation: Reservation?
+    @State private var reservationsError: String?
 
     init() {
         _viewModel = StateObject(wrappedValue: ServiceClientsViewModel(service: ServiceWorkspaceService(api: APIClient())))
@@ -16,6 +19,7 @@ struct ServiceClientsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                    incomingReservationsSection
                     SectionHeader(
                         title: "Vozidla klientů / Připojit vozidlo",
                         subtitle: "Servis může vozidlo najít podle SPZ nebo VIN, ale historii uvidí až po schválení uživatelem.",
@@ -117,6 +121,11 @@ struct ServiceClientsView: View {
                     }
                 }
             }
+            .sheet(item: $selectedIncomingReservation, onDismiss: {
+                Task { await reload() }
+            }) { reservation in
+                ServiceReservationWorkspaceSheet(reservation: reservation)
+            }
             .task { await reload() }
             .refreshable { await reload() }
         }
@@ -124,7 +133,71 @@ struct ServiceClientsView: View {
 
     private func reload() async {
         guard let token = env.authManager.token else { return }
-        await viewModel.load(token: token)
+        async let workspace: Void = viewModel.load(token: token)
+        async let reservations: Void = loadIncomingReservations(token: token)
+        _ = await (workspace, reservations)
+    }
+
+    private func loadIncomingReservations(token: String) async {
+        do {
+            incomingReservations = try await env.reservationService.fetchServiceReservations(token: token)
+            reservationsError = nil
+        } catch {
+            reservationsError = UserFacingErrorMapper.message(
+                for: error, context: .account,
+                fallback: "Příchozí rezervace teď nelze načíst."
+            )
+        }
+    }
+
+    private var incomingReservationsSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            SectionHeader(
+                title: "Příchozí zakázky",
+                subtitle: "Rezervace klientů – i když ještě neschválili přístup k historii vozidla.",
+                trailing: AnyView(PillBadge(
+                    title: "\(incomingReservations.filter { $0.status.uppercased() == "PENDING" }.count) čeká",
+                    style: .warning
+                ))
+            )
+
+            if let reservationsError {
+                InlineFeedbackCard(message: reservationsError, tone: .warning)
+            }
+            if incomingReservations.isEmpty {
+                Text("Zatím nemáte žádnou příchozí rezervaci.")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            } else {
+                ForEach(incomingReservations.sorted(by: { $0.startDatetime > $1.startDatetime }).prefix(30)) { booking in
+                    Button {
+                        selectedIncomingReservation = booking
+                    } label: {
+                        HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                            Image(systemName: "car.rear.and.tire.marks")
+                                .foregroundStyle(Theme.Colors.accent)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(booking.vehicleName ?? booking.vehiclePlate ?? "Vozidlo")
+                                    .font(Theme.Typography.bodyStrong)
+                                    .foregroundStyle(.white)
+                                Text(booking.customerName ?? "Zákazník rezervace")
+                                    .font(Theme.Typography.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                Text("\(booking.startDatetime.formatted(date: .abbreviated, time: .shortened)) · \(booking.serviceType ?? "Servis")")
+                                    .font(Theme.Typography.tiny)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(Theme.Colors.accent)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .hubDarkCard()
+                }
+            }
+        }
     }
 
     private var legacyWorkspaceBanner: some View {
