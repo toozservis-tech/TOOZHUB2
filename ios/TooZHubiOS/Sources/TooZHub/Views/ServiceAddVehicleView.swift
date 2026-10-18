@@ -96,7 +96,14 @@ struct ServiceAddVehicleView: View {
         }
     }
 
+    private enum InputField: Hashable {
+        case inviteEmail, inviteName, inviteMessage
+        case vin, nickname, brand, model, year, plate
+        case currentMileage, lastStkMileage
+    }
+
     @EnvironmentObject private var env: AppEnvironment
+    @FocusState private var focusedField: InputField?
     @State private var customers: [ServiceWorkspaceCustomer] = []
     @State private var selectedCustomerId: Int = 0
     @State private var assignmentMode: AssignmentMode = .linkedCustomer
@@ -158,6 +165,7 @@ struct ServiceAddVehicleView: View {
             Form {
                 Section("Přidání pomocí ORV") {
                     Button {
+                        focusedField = nil
                         showORVScanFlow = true
                     } label: {
                         Label("Naskenovat ORV", systemImage: "doc.text.viewfinder")
@@ -192,9 +200,12 @@ struct ServiceAddVehicleView: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
                             .keyboardType(.emailAddress)
+                            .focused($focusedField, equals: .inviteEmail)
                         TextField("Jméno majitele", text: $inviteName)
+                            .focused($focusedField, equals: .inviteName)
                         TextField("Zpráva do pozvánky", text: $inviteMessage, axis: .vertical)
                             .lineLimit(2...4)
+                            .focused($focusedField, equals: .inviteMessage)
                     } else {
                         Picker("Vyberte klienta", selection: $selectedCustomerId) {
                             ForEach(customers) { customer in
@@ -209,21 +220,29 @@ struct ServiceAddVehicleView: View {
                         TextField("VIN", text: $vin)
                             .textInputAutocapitalization(.characters)
                             .autocorrectionDisabled(true)
+                            .focused($focusedField, equals: .vin)
                         Button("Načíst") {
+                            focusedField = nil
                             Task { await decodeVIN() }
                         }
                         .disabled(vinLoading || !VehicleInputValidator.isValidVIN(vin))
                     }
                     TextField("Název", text: $nickname)
+                        .focused($focusedField, equals: .nickname)
                     TextField("Značka", text: $brand)
+                        .focused($focusedField, equals: .brand)
                     TextField("Model", text: $model)
+                        .focused($focusedField, equals: .model)
                     TextField("Rok výroby", text: $year)
                         .keyboardType(.numberPad)
+                        .focused($focusedField, equals: .year)
                     HStack {
                         TextField("SPZ", text: $plate)
                             .textInputAutocapitalization(.characters)
                             .autocorrectionDisabled(true)
+                            .focused($focusedField, equals: .plate)
                         Button("Načíst") {
+                            focusedField = nil
                             Task { await decodePlate() }
                         }
                         .disabled(vinLoading || plate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -231,10 +250,13 @@ struct ServiceAddVehicleView: View {
                     DatePicker("Platnost STK", selection: $stkDate, displayedComponents: .date)
                     TextField("Aktuální stav km", text: $currentMileageKm)
                         .keyboardType(.numberPad)
+                        .focused($focusedField, equals: .currentMileage)
                     TextField("Poslední km ze STK/emisí", text: $lastStkMileageKm)
                         .keyboardType(.numberPad)
+                        .focused($focusedField, equals: .lastStkMileage)
 
                     Button {
+                        focusedField = nil
                         Task { await startTachometerLookup() }
                     } label: {
                         HStack {
@@ -290,6 +312,7 @@ struct ServiceAddVehicleView: View {
 
                 Section {
                     Button(isInviteMode ? "Zařadit vozidlo a poslat pozvánku" : "Přidat vozidlo klientovi") {
+                        focusedField = nil
                         Task { await submit() }
                     }
                     .disabled(
@@ -300,6 +323,15 @@ struct ServiceAddVehicleView: View {
                         mileageValidationError != nil ||
                         orvValidationError != nil
                     )
+                }
+            }
+            .scrollDismissesKeyboard(.immediately)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Hotovo") {
+                        focusedField = nil
+                    }
                 }
             }
             .navigationTitle("Přidat vozidlo")
