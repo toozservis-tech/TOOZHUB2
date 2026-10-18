@@ -1,0 +1,36 @@
+name: iOS Simulator Build
+
+on:
+  pull_request:
+    paths:
+      - 'ios/TooZHubiOS/**'
+      - '.github/workflows/ios-simulator-build.yml'
+  workflow_dispatch:
+
+jobs:
+  simulator-build:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify updated Swift syntax
+        run: |
+          xcrun swiftc -frontend -parse ios/TooZHubiOS/Sources/TooZHub/Views/MainTabView.swift
+          xcrun swiftc -frontend -parse ios/TooZHubiOS/Sources/TooZHub/Views/ServiceAddVehicleView.swift
+
+      - name: Compile app for iOS Simulator without signing
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios/TooZHubiOS/TooZHubiOS.xcodeproj \
+            -scheme TooZHubiOS \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/EvidenceVozidelDerivedData" \
+            CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/ios-build.log" 2>&1 || {
+              tail -n 160 "$RUNNER_TEMP/ios-build.log"
+              exit 1
+            }
+          tail -n 25 "$RUNNER_TEMP/ios-build.log"
