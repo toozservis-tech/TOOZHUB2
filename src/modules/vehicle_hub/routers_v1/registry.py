@@ -13,6 +13,7 @@ from . import (
     service_intake,
     repair_photos,
     reservations,
+    booking_requests,
     reminders,
     reminder_settings,
     ai,
@@ -43,6 +44,7 @@ api_router.include_router(analytics.router)  # Náklady, kategorie, měsíční 
 api_router.include_router(service_intake.router)
 api_router.include_router(repair_photos.router)
 api_router.include_router(reservations.router)
+api_router.include_router(booking_requests.router)
 # Static settings must precede /reminders/{reminder_id}, particularly for PUT.
 api_router.include_router(reminder_settings.router)  # Nastavení připomínek
 api_router.include_router(reminders.router)

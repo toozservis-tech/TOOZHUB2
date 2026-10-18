@@ -171,6 +171,15 @@ def erase_account(db, customer) -> dict[str, int]:
     inspector = inspect(db.connection())
     ownership_ids = [identity for (identity,) in db.query(m.VehicleOwnership.id).filter(or_(
         m.VehicleOwnership.customer_id == account_id, m.VehicleOwnership.vehicle_id.in_(vehicle_ids)))]
+    from .booking_request_models import BookingRequest, BookingRequestEvent
+    if inspector.has_table(BookingRequest.__tablename__):
+        booking_ids = [identity for (identity,) in db.query(BookingRequest.id).filter(or_(
+            BookingRequest.owner_id == account_id, BookingRequest.service_id == account_id,
+            BookingRequest.vehicle_id.in_(vehicle_ids), BookingRequest.ownership_id.in_(ownership_ids)))]
+        if inspector.has_table(BookingRequestEvent.__tablename__):
+            remove(BookingRequestEvent, or_(BookingRequestEvent.request_id.in_(booking_ids),
+                BookingRequestEvent.actor_id == account_id))
+        remove(BookingRequest, BookingRequest.id.in_(booking_ids))
     intake_ids = [identity for (identity,) in db.query(m.ServiceIntake.id).filter(or_(
         m.ServiceIntake.customer_id == account_id, m.ServiceIntake.service_id == account_id,
         m.ServiceIntake.vehicle_id.in_(vehicle_ids)))]

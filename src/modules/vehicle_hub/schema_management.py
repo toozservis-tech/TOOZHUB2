@@ -110,6 +110,7 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
             "service_vehicle_lookup_audit",
         },
     },
+    "booking_requests": {"tables": {"service_booking_requests", "service_booking_request_events", "reservations", "vehicle_updates", "vehicle_update_receipts"}},
     "reservations": {
         "tables": {"reservations", "service_vehicle_access"},
         "columns": {"reservations": {"source_platform"}},

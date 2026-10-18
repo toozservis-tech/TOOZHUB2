@@ -312,6 +312,7 @@ def create_reservation(
     # Those permissions continue through the explicit customer approval flow.
     
     # Kontrola kolize časů (základní)
+    db.query(Customer).filter(Customer.id == reservation_data.service_id).with_for_update().first()
     existing = db.query(ReservationModel).filter(
         ReservationModel.service_id == reservation_data.service_id,
         ReservationModel.start_datetime == reservation_data.start_datetime,
@@ -582,6 +583,7 @@ def update_reservation(
         reservation.note = reservation_data.note
     if reservation_data.start_datetime is not None:
         # Ochrana proti dvojitému slotu v rámci stejného servisu
+        db.query(Customer).filter(Customer.id == reservation.service_id).with_for_update().first()
         conflict = db.query(ReservationModel).filter(
             ReservationModel.id != reservation.id,
             ReservationModel.service_id == reservation.service_id,
@@ -708,6 +710,12 @@ def delete_reservation(
         },
     )
 
+    # Preserve the negotiation history while detaching the deleted calendar item.
+    from sqlalchemy import inspect
+    from ..booking_request_models import BookingRequest
+    if inspect(db.connection()).has_table(BookingRequest.__tablename__):
+        db.query(BookingRequest).filter_by(reservation_id=reservation.id).update(
+            {'reservation_id': None, 'status': 'cancelled'}, synchronize_session=False)
     db.delete(reservation)
     db.commit()
     

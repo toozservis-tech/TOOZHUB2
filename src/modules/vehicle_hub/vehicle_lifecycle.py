@@ -63,6 +63,13 @@ def actions_for(state):
 
 
 def ensure_no_open_work(db, vehicle_id, assignment):
+    from sqlalchemy import inspect
+    from .booking_request_models import BookingRequest
+    if inspect(db.connection()).has_table(BookingRequest.__tablename__):
+        enquiry = db.query(BookingRequest.id).filter_by(vehicle_id=vehicle_id, ownership_id=assignment.id,
+            ownership_started_at=period_start(assignment)).filter(BookingRequest.status.in_(['pending', 'proposed'])).first()
+        if enquiry:
+            raise HTTPException(409, 'Vozidlo má otevřený požadavek na servis. Nejdříve jej zrušte v Rezervacích nebo dokončete domluvu.')
     job = db.query(ServiceJob.id).filter_by(vehicle_id=vehicle_id, ownership_id=assignment.id,
         ownership_started_at=period_start(assignment)).filter(
             ServiceJob.status.notin_(['completed', 'cancelled'])).first()

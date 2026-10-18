@@ -10,7 +10,7 @@ from scripts import migrate_mobile_release as release
 def test_mobile_release_upgrades_existing_baseline_and_is_repeatable(tmp_path):
     engine = create_engine(f'sqlite:///{tmp_path}/mobile-release.sqlite')
     added = {'service_jobs', 'service_job_events', 'vehicle_updates', 'vehicle_update_receipts',
-             'vehicle_lifecycle_events'}
+             'vehicle_lifecycle_events', 'service_booking_requests', 'service_booking_request_events'}
     try:
         Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
         with engine.begin() as connection:
@@ -21,7 +21,7 @@ def test_mobile_release_upgrades_existing_baseline_and_is_repeatable(tmp_path):
         assert added.issubset(inspect(engine).get_table_names())
         with sessionmaker(bind=engine)() as db:
             assert db.get(models.Tenant, 901).name == 'Retained tenant'
-            for module in ('service_jobs', 'vehicle_updates', 'vehicle_lifecycle'):
+            for module in ('service_jobs', 'vehicle_updates', 'vehicle_lifecycle', 'booking_requests'):
                 assert module_schema_report(db, module)['available']
     finally:
         engine.dispose()

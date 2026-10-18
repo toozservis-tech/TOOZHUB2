@@ -16,6 +16,10 @@ from src.core.file_erasure import enqueue_file_erasure, private_path
 
 
 LABELS = {
+    'service_booking_requests': 'Požadavky na objednání servisu',
+    'service_booking_request_events': 'Průběh domluvy se servisem',
+    'vehicle_updates': 'Aktualizace pro vlastníka',
+    'vehicle_update_receipts': 'Potvrzení přečtení aktualizací',
     'service_records': 'Servisní záznamy', 'service_record_audit_logs': 'Historie úprav záznamů',
     'reservations': 'Rezervace', 'reminders': 'Připomínky', 'service_intakes': 'Příjmy do servisu',
     'vehicle_orv_scans': 'Doklady ORV', 'vehicle_tachometer_history_entries': 'Historie STK a kilometrů',
