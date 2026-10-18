@@ -659,3 +659,530 @@ private struct ServiceBookingDecisionSheet: View {
         }
     }
 }
+
+
+// One-hand service reception: the reservation is a lead, not owner consent.
+// All history reads and writes are still authorized on the server per vehicle.
+struct ServiceReservationWorkspaceSheet: View {
+    let reservation: Reservation
+    @EnvironmentObject private var env: AppEnvironment
+    @Environment(\.dismiss) private var dismiss
+    @State private var snapshot: WorkshopReservationSnapshot?
+    @State private var job: WorkshopJobSnapshot?
+    @State private var isLoading = true
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    @State private var infoMessage: String?
+    @State private var appointmentTime = Date().addingTimeInterval(86_400)
+    @State private var editAppointment = false
+    @State private var mileage = ""
+    @State private var note = ""
+    @State private var price = ""
+    @State private var photoCaption = "Příjem vozidla"
+    @State private var selectedImage: PhotosPickerItem?
+    @State private var showCamera = false
+    @State private var showHandoverConfirmation = false
+
+    private let api = APIClient()
+    private let quickTasks = [
+        "Příjem – foto", "Diagnostika", "Olej a filtry", "Brzdy",
+        "Pneuservis", "Podvozek", "Klimatizace", "STK", "Zkušební jízda"
+    ]
+
+    private var canWriteJob: Bool {
+        snapshot?.accessApproved == true && job != nil
+    }
+
+    private var parsedMileage: Int? {
+        let clean = mileage.replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: ".", with: "")
+        return clean.isEmpty ? nil : Int(clean)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Příjem vozidla") {
+                    LabeledContent("Zákazník", value: snapshot?.customerName ?? reservation.customerName ?? "Zákazník rezervace")
+                    LabeledContent("Vozidlo", value: snapshot?.vehicleName ?? reservation.vehicleName ?? "Vozidlo")
+                    if let plate = snapshot?.vehiclePlate ?? reservation.vehiclePlate {
+                        LabeledContent("SPZ", value: plate)
+                    }
+                    LabeledContent("Požadavek", value: reservation.serviceType ?? "Servis")
+                    if let text = reservation.note, !text.isEmpty {
+                        Text(text)
+                            .font(Theme.Typography.body)
+                    }
+                    LabeledContent("Stav rezervace", value: snapshot?.reservationStatus ?? reservation.status)
+                    LabeledContent("Termín", value: reservation.startDatetime.formatted(date: .numeric, time: .shortened))
+                }
+
+                if isLoading {
+                    Section { ProgressView("Načítám zakázku") }
+                } else {
+                    if let errorMessage {
+                        Section {
+                            Text(errorMessage).foregroundStyle(.red)
+                            Button("Načíst znovu") { Task { await reload() } }
+                        }
+                    }
+                    if let infoMessage {
+                        Section {
+                            Text(infoMessage)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                        }
+                    }
+
+                    if let context = snapshot, context.ownerStillValid {
+                        Section("Termín a potvrzení") {
+                            if context.reservationStatus.uppercased() == "PENDING" {
+                                Button("Potvrdit rezervaci") {
+                                    Task { await updateReservation(status: "CONFIRMED") }
+                                }
+                                .disabled(isSaving)
+                            }
+                            if context.reservationStatus.uppercased() != "CANCELLED" &&
+                               context.reservationStatus.uppercased() != "COMPLETED" {
+                                Toggle("Upravit termín", isOn: $editAppointment)
+                                if editAppointment {
+                                    DatePicker(
+                                        "Nový termín",
+                                        selection: $appointmentTime,
+                                        in: Date().addingTimeInterval(60)...,
+                                        displayedComponents: [.date, .hourAndMinute]
+                                    )
+                                    Button("Uložit nový termín") {
+                                        Task { await updateReservation(date: appointmentTime) }
+                                    }
+                                    .disabled(isSaving)
+                                }
+                            }
+                        }
+
+                        if context.reservationStatus.uppercased() == "CONFIRMED" {
+                            if !context.accessApproved {
+                                Section("Souhlas majitele") {
+                                    Label("Rezervace neuděluje přístup k historii vozidla.", systemImage: "lock.shield")
+                                        .font(Theme.Typography.caption)
+                                    if context.accessRequested {
+                                        Text("Žádost o přístup čeká na schválení majitelem.")
+                                    } else {
+                                        Button("Vyžádat přístup jedním klepnutím") {
+                                            Task { await requestAccess() }
+                                        }
+                                        .disabled(isSaving)
+                                    }
+                                    Button("Zkontrolovat schválení") { Task { await reload() } }
+                                }
+                            } else if job == nil {
+                                Section("Příjem zakázky") {
+                                    Button {
+                                        Task { await startJob() }
+                                    } label: {
+                                        Label("Přijmout vozidlo", systemImage: "car.side.rear.open")
+                                    }
+                                    .disabled(isSaving)
+                                    Text("Příjem naváže na rezervaci. Nevytvoří duplicitní vozidlo.")
+                                        .font(Theme.Typography.caption)
+                                }
+                            }
+                        }
+
+                        if let job {
+                            Section("Průběh zakázky") {
+                                LabeledContent("Stav", value: job.statusLabel)
+                                if let km = job.mileage {
+                                    LabeledContent("Při příjmu", value: "\(km.formatted()) km")
+                                }
+
+                                if job.status == "received" {
+                                    Button("Zahájit práci") {
+                                        Task { await updateJob(status: "in_progress", message: "Práce na vozidle zahájena.") }
+                                    }
+                                    .disabled(isSaving)
+                                }
+
+                                if job.status == "received" || job.status == "in_progress" {
+                                    TextField("Stav tachometru (km)", text: $mileage)
+                                        .keyboardType(.numberPad)
+                                    TextField("Krátká poznámka / práce", text: $note, axis: .vertical)
+                                        .lineLimit(1...3)
+
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 6) {
+                                            ForEach(quickTasks, id: \.self) { task in
+                                                Button(task) { note = task }
+                                                    .buttonStyle(.bordered)
+                                                    .controlSize(.small)
+                                            }
+                                        }
+                                    }
+
+                                    Button("Zapsat úkon") {
+                                        Task { await updateJob(status: nil, message: note) }
+                                    }
+                                    .disabled(isSaving || note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                                    HStack {
+                                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                                            Button("Vyfotit") { showCamera = true }
+                                        }
+                                        PhotosPicker(selection: $selectedImage, matching: .images) {
+                                            Label("Přidat foto", systemImage: "camera")
+                                        }
+                                    }
+                                    TextField("Popisek fotografie", text: $photoCaption)
+                                    TextField("Cena celkem Kč (volitelně)", text: $price)
+                                        .keyboardType(.decimalPad)
+
+                                    Button("Dokončit opravu") {
+                                        Task {
+                                            await updateJob(
+                                                status: "completed",
+                                                message: note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                                    ? "Oprava dokončena, vozidlo připraveno k předání."
+                                                    : note
+                                            )
+                                        }
+                                    }
+                                    .disabled(isSaving || (job.status != "in_progress"))
+                                }
+
+                                if job.status == "completed" {
+                                    Label("Vozidlo připraveno k předání", systemImage: "checkmark.seal")
+                                    Button("Předat zákazníkovi") { showHandoverConfirmation = true }
+                                        .disabled(isSaving)
+                                } else if job.status == "handed_over" {
+                                    Label("Vozidlo předáno zákazníkovi", systemImage: "checkmark.circle.fill")
+                                }
+
+                                if !job.photos.isEmpty {
+                                    Text("Fotodokumentace: \(job.photos.count) snímků")
+                                        .font(Theme.Typography.captionStrong)
+                                    ForEach(job.photos) { photo in
+                                        Label(photo.caption ?? "Foto vozidla", systemImage: "photo")
+                                            .font(Theme.Typography.caption)
+                                    }
+                                }
+                            }
+
+                            if !job.events.isEmpty {
+                                Section("Historie úkonů") {
+                                    ForEach(job.events) { event in
+                                        HStack(alignment: .top) {
+                                            Text(event.message)
+                                                .font(Theme.Typography.caption)
+                                            Spacer(minLength: 8)
+                                            Text(event.createdAt.formatted(date: .numeric, time: .shortened))
+                                                .font(Theme.Typography.tiny)
+                                                .foregroundStyle(Theme.Colors.textSecondary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if let context = snapshot, !context.ownerStillValid {
+                        Section {
+                            Label("Vlastnictví vozidla se změnilo. Zakázku nelze zahájit.", systemImage: "exclamationmark.shield")
+                        }
+                    }
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle("Servisní zakázka")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Zavřít") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await reload() } } label: { Image(systemName: "arrow.clockwise") }
+                        .disabled(isSaving)
+                }
+            }
+            .confirmationDialog(
+                "Opravdu předat dokončené vozidlo?",
+                isPresented: $showHandoverConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Potvrdit předání") { Task { await handover() } }
+                Button("Zrušit", role: .cancel) {}
+            }
+            .sheet(isPresented: $showCamera) {
+                WorkshopCameraCapture { photoData in
+                    Task { await uploadPhoto(data: photoData) }
+                }
+            }
+            .onChange(of: selectedImage) { _, picked in
+                guard let picked else { return }
+                Task {
+                    if let data = try? await picked.loadTransferable(type: Data.self) {
+                        await uploadPhoto(data: data)
+                    }
+                    selectedImage = nil
+                }
+            }
+            .task { await reload() }
+        }
+    }
+
+    private func reload() async {
+        guard let token = env.authManager.token else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let context: WorkshopReservationSnapshot = try await api.request(
+                .get("/api/v1/reservations/\(reservation.id)/workspace"),
+                token: token
+            )
+            snapshot = context
+            if let jobInfo = context.job {
+                job = try await api.request(
+                    .get("/api/v1/service-jobs/\(jobInfo.id)"), token: token
+                )
+                mileage = job?.mileage.map(String.init) ?? mileage
+            } else {
+                job = nil
+            }
+            errorMessage = nil
+        } catch {
+            errorMessage = friendlyError(error, "Nepodařilo se načíst pracovní kartu.")
+        }
+    }
+
+    private func perform<T: Decodable>(_ endpoint: APIEndpoint, failure: String) async -> T? {
+        guard !isSaving, let token = env.authManager.token else { return nil }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let answer: T = try await api.request(endpoint, token: token)
+            infoMessage = nil
+            errorMessage = nil
+            await reload()
+            return answer
+        } catch {
+            errorMessage = friendlyError(error, failure)
+            return nil
+        }
+    }
+
+    private func updateReservation(status: String? = nil, date: Date? = nil) async {
+        struct Change: Encodable {
+            let status: String?
+            let startDatetime: Date?
+        }
+        guard let body = try? api.encodeBody(Change(status: status, startDatetime: date)) else { return }
+        let response: Reservation? = await perform(
+            .put("/api/v1/reservations/\(reservation.id)", body: body),
+            failure: "Termín nebo potvrzení se nepodařilo uložit."
+        )
+        if response != nil {
+            editAppointment = false
+            infoMessage = "Rezervace byla aktualizována."
+        }
+    }
+
+    private func requestAccess() async {
+        struct Answer: Decodable { let message: String }
+        let answer: Answer? = await perform(
+            .post("/api/v1/reservations/\(reservation.id)/request-access"),
+            failure: "Žádost o přístup nebylo možné odeslat."
+        )
+        if let answer { infoMessage = answer.message }
+    }
+
+    private func startJob() async {
+        let answer: WorkshopJobSnapshot? = await perform(
+            .post("/api/v1/reservations/\(reservation.id)/start-job"),
+            failure: "Příjem se nepodařilo založit. Ověřte stav schválení."
+        )
+        if answer != nil { infoMessage = "Vozidlo přijato. Můžete začít pracovat." }
+    }
+
+    private func updateJob(status: String?, message: String) async {
+        guard let job else { return }
+        struct Change: Encodable {
+            let clientId: UUID
+            let expectedVersion: Int
+            let status: String?
+            let message: String
+            let mileage: Int?
+            let price: Double?
+        }
+        let cost = price.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: ".")
+        let amount = cost.isEmpty ? nil : Double(cost)
+        if status == "completed" && !cost.isEmpty && amount == nil {
+            errorMessage = "Cena musí být platné číslo."
+            return
+        }
+        if !mileage.isEmpty && parsedMileage == nil {
+            errorMessage = "Stav tachometru musí být platné číslo."
+            return
+        }
+        let payload = Change(
+            clientId: UUID(),
+            expectedVersion: job.version,
+            status: status,
+            message: message,
+            mileage: parsedMileage,
+            price: status == "completed" ? amount : nil
+        )
+        guard let body = try? api.encodeBody(payload) else { return }
+        let answer: WorkshopJobSnapshot? = await perform(
+            .post("/api/v1/service-jobs/\(job.id)/updates", body: body),
+            failure: "Úkon se nepodařilo uložit. Načtěte aktuální stav zakázky."
+        )
+        if answer != nil {
+            note = ""
+            infoMessage = status == "completed" ? "Oprava dokončena, záznam uložen do historie." : "Úkon zapsán."
+        }
+    }
+
+    private func uploadPhoto(data: Data) async {
+        guard let job else {
+            errorMessage = "Nejdříve přijměte zakázku."
+            return
+        }
+        struct ImageBody: Encodable {
+            let clientId: UUID
+            let caption: String
+            let contentBase64: String
+        }
+        guard !data.isEmpty, data.count <= 10_000_000 else {
+            errorMessage = "Fotografie je příliš velká."
+            return
+        }
+        let payload = ImageBody(
+            clientId: UUID(),
+            caption: photoCaption,
+            contentBase64: data.base64EncodedString()
+        )
+        guard let body = try? api.encodeBody(payload) else { return }
+        struct ImageResult: Decodable { let photo: WorkshopJobPhoto; let job: WorkshopJobSnapshot }
+        let answer: ImageResult? = await perform(
+            .post("/api/v1/service-jobs/\(job.id)/photos", body: body),
+            failure: "Fotografii se nepodařilo uložit."
+        )
+        if answer != nil { infoMessage = "Fotografie uložena do zakázky." }
+    }
+
+    private func handover() async {
+        guard let job, let body = try? api.encodeBody(
+            WorkshopHandoverRequest(clientId: UUID(), expectedVersion: job.version)
+        ) else { return }
+        let answer: WorkshopJobSnapshot? = await perform(
+            .post("/api/v1/service-jobs/\(job.id)/handover", body: body),
+            failure: "Předání se nepodařilo zaznamenat."
+        )
+        if answer != nil { infoMessage = "Vozidlo předáno a zapsáno do historie." }
+    }
+
+    private func friendlyError(_ error: Error, _ fallback: String) -> String {
+        UserFacingErrorMapper.message(for: error, context: .account, fallback: fallback)
+    }
+}
+
+private struct WorkshopHandoverRequest: Encodable {
+    let clientId: UUID
+    let expectedVersion: Int
+}
+
+private struct WorkshopReservationSnapshot: Decodable {
+    let reservationId: Int
+    let vehicleId: Int
+    let customerId: Int
+    let vehicleName: String?
+    let vehiclePlate: String?
+    let customerName: String?
+    let customerEmail: String?
+    let workType: String?
+    let workNote: String?
+    let reservationStatus: String
+    let scheduledAt: Date
+    let ownerStillValid: Bool
+    let accessApproved: Bool
+    let accessRequested: Bool
+    let job: WorkshopJobSummary?
+}
+
+private struct WorkshopJobSummary: Decodable {
+    let id: Int
+    let status: String
+    let version: Int
+    let title: String
+    let mileage: Int?
+}
+
+private struct WorkshopJobSnapshot: Decodable {
+    let id: Int
+    let vehicleId: Int
+    let serviceId: Int
+    let status: String
+    let title: String
+    let description: String?
+    let mileage: Int?
+    let version: Int
+    let finalRecordId: Int?
+    let events: [WorkshopJobEvent]
+    let photos: [WorkshopJobPhoto]
+
+    var statusLabel: String {
+        switch status {
+        case "received": return "Přijato"
+        case "in_progress": return "Pracuje se"
+        case "completed": return "Hotovo"
+        case "handed_over": return "Předáno"
+        case "cancelled": return "Zrušeno"
+        default: return status
+        }
+    }
+}
+
+private struct WorkshopJobEvent: Decodable, Identifiable {
+    let id: Int
+    let status: String
+    let message: String
+    let createdAt: Date
+}
+
+private struct WorkshopJobPhoto: Decodable, Identifiable {
+    let id: Int
+    let caption: String?
+    let mimeType: String
+    let fileSize: Int
+}
+
+private struct WorkshopCameraCapture: UIViewControllerRepresentable {
+    let onPhoto: (Data) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let parent: WorkshopCameraCapture
+        init(parent: WorkshopCameraCapture) { self.parent = parent }
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            if let image = info[.originalImage] as? UIImage,
+               let bytes = image.jpegData(compressionQuality: 0.75) {
+                parent.onPhoto(bytes)
+            }
+            parent.dismiss()
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
+    }
+}
