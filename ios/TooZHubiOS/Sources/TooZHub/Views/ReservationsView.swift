@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UIKit
 
 struct ReservationsView: View {
     private enum ReservationFilter: String, CaseIterable, Identifiable {
@@ -14,6 +16,7 @@ struct ReservationsView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var viewModel: ReservationsViewModel
     @State private var showNewReservation = false
+    @State private var selectedServiceReservation: Reservation?
     @State private var selectedFilter: ReservationFilter = .all
     @State private var bookingRequests: [ServiceBookingRequestItem] = []
     @State private var selectedBookingRequest: ServiceBookingRequestItem?
@@ -118,6 +121,11 @@ struct ReservationsView: View {
                     await decideBooking(booking, action: action, message: message, proposedDate: date)
                 }
             }
+            .sheet(item: $selectedServiceReservation, onDismiss: {
+                Task { await reload(force: true) }
+            }) { reservation in
+                ServiceReservationWorkspaceSheet(reservation: reservation)
+            }
             .task { await reload() }
             .refreshable { await reload(force: true) }
         }
@@ -125,6 +133,19 @@ struct ReservationsView: View {
 
     private func reservationCard(_ reservation: Reservation) -> some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            if isServiceRole {
+                Button {
+                    selectedServiceReservation = reservation
+                } label: {
+                    Label("Otevřít zakázku", systemImage: "wrench.and.screwdriver")
+                        .font(Theme.Typography.captionStrong)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(Theme.Colors.primary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Příjem, změna termínu, práce a předání vozidla")
+            }
+
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(reservation.serviceType ?? "Servisní rezervace")
