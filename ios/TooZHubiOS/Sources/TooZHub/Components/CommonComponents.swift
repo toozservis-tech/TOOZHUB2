@@ -215,6 +215,8 @@ struct StatCard: View {
 struct VehicleCard: View {
     let vehicle: Vehicle
     var mode: VehicleCardMode = .grid
+    // Space reserved inside the card for the owning screen's compact quick actions.
+    var actionRowInset: CGFloat = 0
 
     private var yearText: String {
         vehicle.year.map(String.init) ?? "-"
@@ -292,6 +294,7 @@ struct VehicleCard: View {
                     .truncationMode(.middle)
             }
         }
+        .padding(.bottom, actionRowInset)
         .hubLightCard()
     }
 
@@ -325,6 +328,7 @@ struct VehicleCard: View {
 
             Spacer(minLength: 0)
         }
+        .padding(.bottom, actionRowInset)
         .hubLightCard()
     }
 
@@ -353,6 +357,7 @@ struct VehicleCard: View {
         }
         .padding(.horizontal, Theme.Spacing.md)
         .padding(.vertical, Theme.Spacing.sm)
+        .padding(.bottom, actionRowInset)
         .background(
             RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
                 .fill(Theme.Colors.lightCard)

@@ -10,6 +10,8 @@ struct VehiclesView: View {
     @State private var showAddVehicle = false
     @State private var editVehicle: Vehicle?
     @State private var selectedVehicleForDetail: Vehicle?
+    @State private var selectedVehicleForBooking: Vehicle?
+    @State private var pendingVehicleRemoval: Vehicle?
 
     private var selectedMode: VehicleCardMode {
         get { VehicleCardMode(rawValue: vehicleListModeRawValue) ?? .grid }
@@ -103,6 +105,20 @@ struct VehiclesView: View {
                     try await viewModel.updateVehicle(id: vehicle.id, request: request, token: token)
                 }
             }
+            .sheet(item: $selectedVehicleForBooking) { vehicle in
+                VehicleServiceBookingSheet(vehicle: vehicle)
+            }
+            .alert(item: $pendingVehicleRemoval) { vehicle in
+                Alert(
+                    title: Text("Odebrat vozidlo z profilu?"),
+                    message: Text("Vozidlo: \(vehicle.displayName). Tuto akci potvrďte jen tehdy, když ho chcete odebrat ze svého profilu."),
+                    primaryButton: .destructive(Text("Odebrat")) {
+                        guard let token = env.authManager.token else { return }
+                        Task { await viewModel.deleteVehicle(id: vehicle.id, token: token) }
+                    },
+                    secondaryButton: .cancel(Text("Zrušit"))
+                )
+            }
             .refreshable { await reload(force: true) }
             .task { await reload() }
         }
@@ -133,31 +149,270 @@ struct VehiclesView: View {
     }
 
     private func vehicleItem(_ vehicle: Vehicle) -> some View {
-        VStack(spacing: Theme.Spacing.sm) {
+        // The icon rail is inside the light card, not a second large action bar below it.
+        // Independent overlay controls prevent a tap on an icon opening the detail.
+        ZStack(alignment: .bottomTrailing) {
             Button {
                 selectedVehicleForDetail = vehicle
             } label: {
-                VehicleCard(vehicle: vehicle, mode: selectedMode)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VehicleCard(
+                    vehicle: vehicle,
+                    mode: selectedMode,
+                    actionRowInset: 50
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Otevřít detail vozidla \(vehicle.displayName)")
 
-            HStack(spacing: Theme.Spacing.sm) {
-                Button("Upravit") {
+            HStack(spacing: 6) {
+                smallCardAction(icon: "pencil", title: "Upravit vozidlo") {
                     editVehicle = vehicle
                 }
-                .buttonStyle(InlineChipButtonStyle(isSelected: true))
-
-                Button("Odebrat z profilu") {
-                    guard let token = env.authManager.token else { return }
-                    Task { await viewModel.deleteVehicle(id: vehicle.id, token: token) }
+                smallCardAction(icon: "wrench.and.screwdriver", title: "Správa vozidla") {
+                    selectedVehicleForDetail = vehicle
                 }
-                .buttonStyle(InlineChipButtonStyle(isSelected: false))
+                smallCardAction(icon: "calendar.badge.plus", title: "Poslat do servisu", prominent: true) {
+                    selectedVehicleForBooking = vehicle
+                }
+
+                Menu {
+                    Button("Odebrat z profilu", systemImage: "trash", role: .destructive) {
+                        pendingVehicleRemoval = vehicle
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.Colors.textOnLight)
+                        .frame(width: 38, height: 38)
+                        .background(Theme.Colors.lightMuted, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Další akce vozidla")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, Theme.Spacing.md)
+            .padding(.bottom, 6)
+        }
+    }
+
+    private func smallCardAction(
+        icon: String,
+        title: String,
+        prominent: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(prominent ? Theme.Colors.textOnLight : Theme.Colors.textOnLightSecondary)
+                .frame(width: 38, height: 38)
+                .background(
+                    prominent ? Theme.Colors.warningSoft : Theme.Colors.lightMuted,
+                    in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .help(title)
+    }
+}
+
+
+private struct VehicleBookingCreatePayload: Encodable {
+    let clientId: UUID
+    let vehicleId: Int
+    let serviceId: Int
+    let serviceType: String
+    let description: String
+    let preferredDatetime: Date?
+}
+
+private struct VehicleBookingCreateResult: Decodable {
+    let id: Int
+    let status: String
+}
+
+private struct VehicleServiceBookingSheet: View {
+    let vehicle: Vehicle
+
+    @EnvironmentObject private var env: AppEnvironment
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var services: [ServiceContact] = []
+    @State private var serviceId = 0
+    @State private var serviceType = "Oprava / diagnostika"
+    @State private var description = ""
+    @State private var prefersDate = false
+    @State private var preferredDate = Date().addingTimeInterval(86_400)
+    @State private var requestId = UUID()
+    @State private var isLoading = true
+    @State private var isSubmitting = false
+    @State private var isSubmitted = false
+    @State private var errorMessage: String?
+
+    private let bookingAPI = APIClient()
+    private let discoveryAPI = ReservationService(api: APIClient())
+
+    private var canSubmit: Bool {
+        !isLoading && !isSubmitting && !isSubmitted &&
+        serviceId > 0 &&
+        !serviceType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        (!prefersDate || preferredDate > Date())
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Vybrané vozidlo") {
+                    LabeledContent("Vozidlo", value: vehicle.displayName)
+                    if let plate = vehicle.plate, !plate.isEmpty {
+                        LabeledContent("SPZ", value: plate)
+                    }
+                }
+
+                Section("Vybrat servis") {
+                    if isLoading {
+                        ProgressView("Načítám dostupné servisy")
+                    } else if services.isEmpty {
+                        Text("Žádný dostupný servis. Zkuste seznam aktualizovat.")
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        Button("Načíst servisy znovu") {
+                            Task { await loadServices() }
+                        }
+                    } else {
+                        Picker("Servis", selection: $serviceId) {
+                            ForEach(services) { service in
+                                Text(service.name).tag(service.id)
+                            }
+                        }
+                    }
+                }
+
+                Section("Co je potřeba opravit?") {
+                    TextField("Typ práce", text: $serviceType)
+                    TextEditor(text: $description)
+                        .frame(minHeight: 95)
+                        .accessibilityLabel("Popis závady nebo požadované práce")
+                    Text("Popište závadu nebo požadovanou práci. Servis navrhne další postup.")
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+
+                Section("Termín") {
+                    Toggle("Navrhnout vlastní termín", isOn: $prefersDate)
+                    if prefersDate {
+                        DatePicker(
+                            "Požadovaný termín",
+                            selection: $preferredDate,
+                            in: Date().addingTimeInterval(60)...,
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                    } else {
+                        Text("Termín navrhne servis.")
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                }
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Section {
+                    if isSubmitted {
+                        Label("Požadavek byl odeslán servisu.", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Termín není potvrzený. Vyčkejte na odpověď servisu.")
+                            .font(Theme.Typography.caption)
+                        Button("Zavřít") { dismiss() }
+                    } else {
+                        Button {
+                            Task { await submitRequest() }
+                        } label: {
+                            if isSubmitting {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                            } else {
+                                Label("Poslat žádost do servisu", systemImage: "paperplane")
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                        .disabled(!canSubmit)
+                    }
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle("Poslat do servisu")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Zavřít") { dismiss() }
+                        .disabled(isSubmitting)
+                }
+            }
+            .task { await loadServices() }
+        }
+    }
+
+    private func loadServices() async {
+        guard let token = env.authManager.token else {
+            errorMessage = "Nejprve se přihlaste."
+            isLoading = false
+            return
+        }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let result = try await discoveryAPI.fetchServiceDiscovery(token: token)
+            services = result.filter { $0.id > 0 }
+            if !services.contains(where: { $0.id == serviceId }) {
+                serviceId = services.first?.id ?? 0
+            }
+            errorMessage = nil
+        } catch {
+            errorMessage = UserFacingErrorMapper.message(
+                for: error,
+                context: .account,
+                fallback: "Seznam servisů teď není dostupný. Zkuste to znovu."
+            )
+        }
+    }
+
+    private func submitRequest() async {
+        guard canSubmit, let token = env.authManager.token else { return }
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        let request = VehicleBookingCreatePayload(
+            clientId: requestId,
+            vehicleId: vehicle.id,
+            serviceId: serviceId,
+            serviceType: serviceType.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+            preferredDatetime: prefersDate ? preferredDate : nil
+        )
+        do {
+            let body = try bookingAPI.encodeBody(request)
+            let _: VehicleBookingCreateResult = try await bookingAPI.request(
+                .post("/api/v1/service-booking-requests", body: body),
+                token: token
+            )
+            isSubmitted = true
+        } catch {
+            // Keep the UUID for safe retries if the response was lost in transit.
+            errorMessage = UserFacingErrorMapper.message(
+                for: error,
+                context: .account,
+                fallback: "Žádost se nepodařilo odeslat. Zkuste to znovu."
+            )
         }
     }
 }
+
 
 private struct TachometerCaptchaSheet: View {
     let challenge: TachometerChallengeResponse
