@@ -34,8 +34,11 @@ MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
             "service_jobs": {"ownership_id", "ownership_started_at", "status"},
         },
     },
-    "vehicle_updates": {"tables": {"vehicle_updates", "vehicle_update_receipts"},
-        "columns": {"vehicle_updates": {"ownership_id", "ownership_started_at", "dedupe_key"}}},
+    "vehicle_updates": {"tables": {"vehicle_updates", "vehicle_update_receipts",
+        "vehicle_update_inbox_states", "vehicle_update_inbox_actions"},
+        "columns": {"vehicle_updates": {"ownership_id", "ownership_started_at", "dedupe_key"},
+            "vehicle_update_inbox_states": {"update_id", "recipient_id", "folder", "archived_at", "deleted_at", "updated_at"},
+            "vehicle_update_inbox_actions": {"update_id", "recipient_id", "from_read", "to_read", "from_folder", "to_folder", "occurred_at"}}},
     "service_jobs": {"tables": {"service_jobs", "service_job_events", "vehicle_updates", "vehicle_update_receipts"},
         "columns": {"service_jobs": {"ownership_id", "ownership_started_at", "intake_id", "final_record_id"}}},
     "vehicles": {

@@ -10,7 +10,9 @@ from scripts import migrate_mobile_release as release
 def test_mobile_release_upgrades_existing_baseline_and_is_repeatable(tmp_path):
     engine = create_engine(f'sqlite:///{tmp_path}/mobile-release.sqlite')
     added = {'service_jobs', 'service_job_events', 'vehicle_updates', 'vehicle_update_receipts',
-             'vehicle_lifecycle_events', 'service_booking_requests', 'service_booking_request_events'}
+             'vehicle_lifecycle_events', 'service_booking_requests', 'service_booking_request_events',
+             'vehicle_update_inbox_states', 'vehicle_update_inbox_actions',
+             'google_billing_identities', 'google_subscriptions'}
     try:
         Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
         with engine.begin() as connection:
@@ -69,7 +71,9 @@ def test_packaged_module_succeeds_in_fresh_python_process(tmp_path):
             shutil.copyfile(repo / source, destination)
     database_path = tmp_path / 'existing.sqlite'
     engine = create_engine(f'sqlite:///{database_path}')
-    added = {'service_jobs', 'service_job_events', 'vehicle_updates', 'vehicle_update_receipts', 'vehicle_lifecycle_events'}
+    added = {'service_jobs', 'service_job_events', 'vehicle_updates', 'vehicle_update_receipts', 'vehicle_lifecycle_events',
+             'vehicle_update_inbox_states', 'vehicle_update_inbox_actions',
+             'google_billing_identities', 'google_subscriptions'}
     Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
     engine.dispose()
     env = os.environ.copy()

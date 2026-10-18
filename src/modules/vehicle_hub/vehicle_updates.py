@@ -9,7 +9,46 @@ import json
 from uuid import uuid4
 from sqlalchemy import event, inspect, select
 from sqlalchemy.orm import Session
-from .vehicle_update_models import VehicleUpdate, VehicleUpdateReceipt
+from .vehicle_update_models import (VehicleUpdate, VehicleUpdateReceipt,
+    VehicleUpdateInboxState, VehicleUpdateInboxAction)
+
+
+def change_inbox_receipt(db, row, *, read=None, folder=None):
+    """Apply explicit state after the caller locks and authorizes the event.
+
+    Keeping read receipts unchanged preserves old clients and avoids rebuilding
+    their table. Marking unread removes only the current read marker; immutable
+    action history retains the transition. Folder moves never touch source data.
+    """
+    key = (row.id, row.recipient_id)
+    receipt = db.get(VehicleUpdateReceipt, key)
+    state = db.get(VehicleUpdateInboxState, key)
+    old_read = receipt is not None
+    old_folder = state.folder if state is not None else "inbox"
+    new_read = old_read if read is None else read
+    new_folder = old_folder if folder is None else folder
+    if new_folder not in ("inbox", "archive", "trash"):
+        raise ValueError("Invalid inbox folder")
+    if old_read == new_read and old_folder == new_folder:
+        return False
+    now = datetime.utcnow()
+    if new_read != old_read:
+        if new_read:
+            db.add(VehicleUpdateReceipt(update_id=row.id, recipient_id=row.recipient_id, read_at=now))
+        else:
+            db.delete(receipt)
+    if new_folder != old_folder:
+        if state is None:
+            state = VehicleUpdateInboxState(update_id=row.id, recipient_id=row.recipient_id)
+            db.add(state)
+        state.folder = new_folder
+        state.archived_at = now if new_folder == "archive" else None
+        state.deleted_at = now if new_folder == "trash" else None
+        state.updated_at = now
+    db.add(VehicleUpdateInboxAction(update_id=row.id, recipient_id=row.recipient_id,
+        from_read=old_read, to_read=new_read, from_folder=old_folder,
+        to_folder=new_folder, occurred_at=now))
+    return True
 
 
 def _attachment_keys(value):
@@ -177,5 +216,8 @@ def discard_pending_changes(db):
 
 @event.listens_for(Session, "before_flush")
 def forbid_event_removal(db, context, instances):
-    if any(isinstance(row, VehicleUpdate) for row in db.deleted):
+    if any(isinstance(row, (VehicleUpdate, VehicleUpdateInboxAction)) for row in db.deleted):
         raise RuntimeError("Vehicle update events are immutable")
+    if any(isinstance(row, VehicleUpdateInboxAction) and db.is_modified(row)
+           for row in db.dirty):
+        raise RuntimeError("Vehicle inbox action history is immutable")

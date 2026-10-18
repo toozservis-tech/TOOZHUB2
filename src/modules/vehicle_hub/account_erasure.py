@@ -167,7 +167,8 @@ def erase_account(db, customer) -> dict[str, int]:
     # keys to records, intake forms, accounts and ownership rows. Erase their
     # dependants first, including earlier periods after a vehicle transfer.
     from .service_job_models import ServiceJob, ServiceJobEvent
-    from .vehicle_update_models import VehicleUpdate, VehicleUpdateReceipt
+    from .vehicle_update_models import (VehicleUpdate, VehicleUpdateReceipt,
+        VehicleUpdateInboxState, VehicleUpdateInboxAction)
     inspector = inspect(db.connection())
     ownership_ids = [identity for (identity,) in db.query(m.VehicleOwnership.id).filter(or_(
         m.VehicleOwnership.customer_id == account_id, m.VehicleOwnership.vehicle_id.in_(vehicle_ids)))]
@@ -194,6 +195,12 @@ def erase_account(db, customer) -> dict[str, int]:
             VehicleUpdate.recipient_id == account_id, VehicleUpdate.actor_id == account_id,
             VehicleUpdate.vehicle_id.in_(vehicle_ids), VehicleUpdate.ownership_id.in_(ownership_ids),
             VehicleUpdate.service_job_id.in_(job_ids)))]
+        # This is explicit full account erasure, not the reversible inbox trash.
+        # Recipient state/history must precede its immutable source event.
+        for inbox_model in (VehicleUpdateInboxAction, VehicleUpdateInboxState):
+            if inspector.has_table(inbox_model.__tablename__):
+                remove(inbox_model, or_(inbox_model.update_id.in_(update_ids),
+                    inbox_model.recipient_id == account_id))
         if inspector.has_table(VehicleUpdateReceipt.__tablename__):
             remove(VehicleUpdateReceipt, or_(VehicleUpdateReceipt.update_id.in_(update_ids),
                 VehicleUpdateReceipt.recipient_id == account_id))
@@ -311,6 +318,10 @@ def erase_account(db, customer) -> dict[str, int]:
     from src.modules.licensing.apple_models import AppleBillingIdentity
     if inspect(db.connection()).has_table(AppleBillingIdentity.__tablename__):
         db.query(AppleBillingIdentity).filter_by(customer_id=account_id).update(
+            {"customer_id": None, "tenant_id": None}, synchronize_session=False)
+    from src.modules.licensing.google_models import GoogleBillingIdentity
+    if inspect(db.connection()).has_table(GoogleBillingIdentity.__tablename__):
+        db.query(GoogleBillingIdentity).filter_by(customer_id=account_id).update(
             {"customer_id": None, "tenant_id": None}, synchronize_session=False)
     remove(m.Customer, m.Customer.id == account_id)
 

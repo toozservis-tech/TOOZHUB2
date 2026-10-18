@@ -65,6 +65,7 @@ ENABLE_FILE_BROWSER = _env_bool("ENABLE_FILE_BROWSER", False)
 _reminder_notification_task: asyncio.Task | None = None
 _license_subscription_task: asyncio.Task | None = None
 _apple_reconciliation_task: asyncio.Task | None = None
+_google_reconciliation_task: asyncio.Task | None = None
 _file_erasure_task: asyncio.Task | None = None
 
 _MAINTENANCE_BYPASS_PREFIXES = (
@@ -163,6 +164,19 @@ async def _license_subscription_worker() -> None:
             db.close()
 
         await asyncio.sleep(LICENSE_SUBSCRIPTION_WORKER_INTERVAL_SEC)
+
+
+async def _google_reconciliation_worker() -> None:
+    from src.modules.licensing.google_reconciliation import worker_enabled, interval_seconds, reconcile_subscriptions
+    await asyncio.sleep(40)
+    while True:
+        try:
+            if worker_enabled():
+                result = await asyncio.to_thread(reconcile_subscriptions)
+                print(f"[GOOGLE_RECONCILIATION] checked={result['checked']}, errors={result['errors']}, skipped={result['skipped']}")
+        except Exception:
+            print("[GOOGLE_RECONCILIATION] check unavailable; configuration or connection needs attention")
+        await asyncio.sleep(interval_seconds())
 
 
 async def _apple_reconciliation_worker() -> None:
@@ -473,7 +487,7 @@ def _mount_static_directories(app: FastAPI) -> None:
 def _register_lifecycle_hooks(app: FastAPI) -> None:
     @app.on_event("startup")
     async def _start_background_workers() -> None:
-        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _file_erasure_task, _demo_history_task
+        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _google_reconciliation_task, _file_erasure_task, _demo_history_task
         db = SessionLocal()
         try:
             from src.modules.vehicle_hub.models import (VehicleOwnershipArchive, VehicleRecordPrivacy,
@@ -536,6 +550,9 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
             _license_subscription_task = asyncio.create_task(_license_subscription_worker())
             print(f"[LICENSE_SUBSCRIPTION_WORKER] monitor started (interval={LICENSE_SUBSCRIPTION_WORKER_INTERVAL_SEC}s)")
 
+        if _google_reconciliation_task is None:
+            _google_reconciliation_task = asyncio.create_task(_google_reconciliation_worker())
+
         from src.modules.licensing.apple_reconciliation import interval_seconds
         if _apple_reconciliation_task is None:
             _apple_reconciliation_task = asyncio.create_task(_apple_reconciliation_worker())
@@ -544,7 +561,7 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
 
     @app.on_event("shutdown")
     async def _stop_background_workers() -> None:
-        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _file_erasure_task, _demo_history_task
+        global _reminder_notification_task, _license_subscription_task, _apple_reconciliation_task, _google_reconciliation_task, _file_erasure_task, _demo_history_task
         if _demo_history_task is not None:
             _demo_history_task.cancel()
             try:
@@ -561,6 +578,14 @@ def _register_lifecycle_hooks(app: FastAPI) -> None:
                 pass
             finally:
                 _file_erasure_task = None
+        if _google_reconciliation_task is not None:
+            _google_reconciliation_task.cancel()
+            try:
+                await _google_reconciliation_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                _google_reconciliation_task = None
         if _apple_reconciliation_task is not None:
             _apple_reconciliation_task.cancel()
             try:

@@ -15,11 +15,15 @@ COPY scripts/migrate_workshops_vehicle_identity.py ./scripts/migrate_workshops_v
 COPY scripts/migrate_service_updates.py ./scripts/migrate_service_updates.py
 COPY scripts/migrate_vehicle_lifecycle.py ./scripts/migrate_vehicle_lifecycle.py
 COPY scripts/migrate_mobile_release.py ./scripts/migrate_mobile_release.py
+COPY scripts/migrate_google_billing.py ./scripts/migrate_google_billing.py
 COPY scripts/migrate_booking_requests.py ./scripts/migrate_booking_requests.py
+COPY scripts/migrate_vehicle_update_inbox.py ./scripts/migrate_vehicle_update_inbox.py
 COPY alembic/versions/20261002_0013_workshops_vehicle_identity.py ./alembic/versions/20261002_0013_workshops_vehicle_identity.py
 COPY alembic/versions/20261017_0014_service_jobs_updates.py ./alembic/versions/20261017_0014_service_jobs_updates.py
 COPY alembic/versions/20261017_0015_vehicle_lifecycle.py ./alembic/versions/20261017_0015_vehicle_lifecycle.py
 COPY alembic/versions/20261018_0016_booking_requests.py ./alembic/versions/20261018_0016_booking_requests.py
+COPY alembic/versions/20261018_0017_vehicle_update_inbox.py ./alembic/versions/20261018_0017_vehicle_update_inbox.py
+COPY alembic/versions/20261018_0018_google_billing.py ./alembic/versions/20261018_0018_google_billing.py
 RUN useradd --create-home appuser \
     && install -d -o appuser -g appuser /app/public_share /app/backups /app/logs
 USER appuser

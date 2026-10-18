@@ -104,7 +104,8 @@ def other_paid_license(db, tenant_id):
     # Do not sell a second subscription over an existing paid/manual entitlement.
     return bool(license and license.plan != "free" and license.status == "active"
                 and (not license.valid_to or license.valid_to > datetime.utcnow())) or bool(
-                    sub and sub.auto_renew_enabled)
+                    sub and (sub.auto_renew_enabled or
+                        (sub.provider == "google" and sub.status in {"pending", "on_hold", "paused"})))
 
 
 def assert_account_owner(db, identity):

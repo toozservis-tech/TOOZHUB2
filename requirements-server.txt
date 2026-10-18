@@ -23,3 +23,4 @@ aiosmtplib>=3,<6
 python-multipart>=0.0.18
 app-store-server-library==3.1.2
 cryptography==50.0.1  # Authenticator seed encryption
+google-auth>=2.40,<3  # Android Publisher OAuth and authenticated Pub/Sub RTDN

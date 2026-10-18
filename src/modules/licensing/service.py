@@ -119,15 +119,18 @@ def get_or_create_license(db: Session, tenant_id: int, *, commit_changes: bool =
     # Pokud licence existuje, ujistit se, že má správné funkce podle plánu
     if license_obj:
         needs_update = False
-        # Access expires even if an Apple notification is delayed or not delivered.
+        # Access expires even if a mobile-store notification is delayed or not delivered.
         # Existing vehicles/data are retained; only the available plan changes.
         if not admin_force_premium and license_obj.valid_to and license_obj.valid_to <= datetime.utcnow():
-            apple_sub = db.query(LicenseSubscription).filter_by(tenant_id=tenant_id, provider="apple").first()
-            if apple_sub:
+            db.query(Tenant).filter_by(id=tenant_id).with_for_update().one()
+            db.refresh(license_obj)  # A concurrent verified renewal may have extended it while we waited.
+            store_sub = db.query(LicenseSubscription).filter(
+                LicenseSubscription.tenant_id == tenant_id, LicenseSubscription.provider.in_(["apple", "google"])).populate_existing().first()
+            if store_sub and license_obj.valid_to and license_obj.valid_to <= datetime.utcnow():
                 license_obj.plan = "free"
                 license_obj.valid_to = None
-                apple_sub.plan_current = "free"
-                apple_sub.status = "canceled"
+                store_sub.plan_current = "free"
+                store_sub.status = "canceled"
                 needs_update = True
 
         if admin_force_premium and license_obj.plan != "premium":

@@ -26,6 +26,7 @@ from ..models import (
     Customer,
     LicensePaymentTransaction,
     LicenseSubscription,
+    Tenant,
 )
 from ..schema_management import assert_module_ready
 from src.server.runtime_settings import (
@@ -59,6 +60,7 @@ _SUBSCRIPTION_STATUS_SET = {
     "grace",
     "canceled",
     "legacy_manual",
+    "pending", "on_hold", "paused",  # Google Play obligations without current paid access.
 }
 _PAID_PLAN_SET = {"basic", "premium"}
 _SUBSCRIPTION_REQUIRED_TABLES = (
@@ -857,7 +859,8 @@ def _serialize_subscription(
 
 
 def _get_subscription(db: Session, tenant_id: int) -> Optional[LicenseSubscription]:
-    return db.query(LicenseSubscription).filter(LicenseSubscription.tenant_id == tenant_id).with_for_update().first()
+    db.query(Tenant).filter_by(id=tenant_id).with_for_update().one()
+    return db.query(LicenseSubscription).filter(LicenseSubscription.tenant_id == tenant_id).with_for_update().populate_existing().first()
 
 
 def _upsert_subscription(db: Session, tenant_id: int) -> LicenseSubscription:
@@ -1028,6 +1031,18 @@ def _send_subscription_notification(
     return {"email_sent": email_sent, "push_sent": push_sent}
 
 
+def _guard_store_subscription(db: Session, tenant_id: int) -> None:
+    # Serialize cross-provider callbacks with mobile purchase verification.
+    db.query(Tenant).filter_by(id=tenant_id).with_for_update().one()
+    subscription = db.query(LicenseSubscription).filter_by(tenant_id=tenant_id).populate_existing().first()
+    if subscription and subscription.provider in {"apple", "google"} and (
+        subscription.auto_renew_enabled or
+        (subscription.provider == "google" and subscription.status in {"pending", "on_hold", "paused"}) or
+        (subscription.current_period_end and subscription.current_period_end > _utcnow())
+    ):
+        raise HTTPException(409, "Platba koliduje s předplatným mobilního obchodu. Kontaktujte podporu.")
+
+
 def _activate_subscription_from_paid_payment(
     db: Session,
     *,
@@ -1037,6 +1052,7 @@ def _activate_subscription_from_paid_payment(
     trans_id: str,
     init_recurring_id: Optional[str],
 ) -> LicenseSubscription:
+    _guard_store_subscription(db, tenant_id)
     from src.modules.vehicle_hub.account_erasure import tenant_was_erased
     if tenant_was_erased(db, tenant_id):
         subscription = _upsert_subscription(db, tenant_id)
@@ -1087,6 +1103,7 @@ def _activate_legacy_manual_subscription_from_paid_payment(
     billing_period: str,
     trans_id: str,
 ) -> LicenseSubscription:
+    _guard_store_subscription(db, tenant_id)
     paid_at = _utcnow()
     upgrade_license_plan(db, tenant_id, plan, commit=False)
 
@@ -1125,6 +1142,7 @@ def _apply_legacy_quote_without_payment(
     subscription: LicenseSubscription,
     quote: Dict[str, Any],
 ) -> LicenseSubscription:
+    _guard_store_subscription(db, tenant_id)
     now = _utcnow()
     target_plan = _normalize_plan(str(quote.get("target_plan") or subscription.plan_current or "free"))
     billing_period = _normalize_billing_period_soft(str(quote.get("billing_period") or subscription.billing_period), default="monthly")
@@ -1190,6 +1208,7 @@ def _apply_legacy_quote_after_paid_callback(
     trans_id: str,
     paid_amount_halers: int,
 ) -> LicenseSubscription:
+    _guard_store_subscription(db, tenant_id)
     now = _utcnow()
     target_plan = _normalize_plan(str(quote.get("target_plan") or subscription.plan_current or "free"))
     billing_period = _normalize_billing_period_soft(str(quote.get("billing_period") or subscription.billing_period), default="monthly")
@@ -1802,12 +1821,14 @@ def create_comgate_checkout(
         raise HTTPException(status_code=400, detail="Tenant ID je mimo podporovaný rozsah pro Comgate refId.")
 
     tenant_id_int = int(tenant_id)
+    db.query(Tenant).filter_by(id=tenant_id_int).with_for_update().one()
     subscription = _get_subscription(db, tenant_id_int)
-    if subscription and subscription.provider == "apple" and (
+    if subscription and subscription.provider in {"apple", "google"} and (
         subscription.auto_renew_enabled or
+        (subscription.provider == "google" and subscription.status in {"pending", "on_hold", "paused"}) or
         (subscription.current_period_end and subscription.current_period_end > _utcnow())
     ):
-        raise HTTPException(409, "Účet má předplatné přes Apple. Spravujte ho v App Storu, aby nevznikla dvojí platba.")
+        raise HTTPException(409, "Účet má předplatné v App Storu nebo Google Play. Spravujte ho v příslušném obchodě, aby nevznikla dvojí platba.")
     subscription_status = _normalize_subscription_status(subscription.status) if subscription else ""
     recurring = subscription_status != "legacy_manual"
     if payload.expected_recurring is not None and payload.expected_recurring != recurring:
@@ -2316,3 +2337,6 @@ from .mobile_billing import router as mobile_billing_router
 router.include_router(mobile_billing_router)
 from .apple_billing import router as apple_billing_router
 router.include_router(apple_billing_router)
+
+from .google_billing import router as google_billing_router
+router.include_router(google_billing_router)
