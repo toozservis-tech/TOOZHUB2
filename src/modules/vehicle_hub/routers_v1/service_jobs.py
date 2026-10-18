@@ -405,7 +405,7 @@ def view_job_photo(
     """Authenticated image read, restricted to the same ownership period and service."""
     from fastapi.responses import Response
     from .service_records import _resolve_attachment_file
-    from ..vehicle_attachment_privacy import require_attachment_private
+    from ..vehicle_privacy import require_attachment_private
 
     job = db.get(ServiceJob, job_id)
     _authorize(db, job, current_user, write=False)
