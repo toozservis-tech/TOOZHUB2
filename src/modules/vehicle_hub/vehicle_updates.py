@@ -5,10 +5,34 @@ leave a notification behind. Captured recipients never change after a transfer.
 """
 from datetime import datetime
 from hashlib import sha256
+import json
 from uuid import uuid4
 from sqlalchemy import event, inspect, select
 from sqlalchemy.orm import Session
 from .vehicle_update_models import VehicleUpdate, VehicleUpdateReceipt
+
+
+def _attachment_keys(value):
+    """Only persisted file references, not inline parser summaries, are documents."""
+    try:
+        items = json.loads(value) if value else []
+    except (TypeError, ValueError):
+        return set()
+    if not isinstance(items, list):
+        return set()
+    return {key for item in items if isinstance(item, dict)
+            if isinstance(key := item.get("storage_key") or item.get("path"), str) and key}
+
+
+def _new_record_documents(db, row, fresh):
+    if fresh:
+        return _attachment_keys(row.attachments)
+    if not inspect(row).attrs.attachments.history.has_changes():
+        return set()
+    # Read the persisted value even if SQLAlchemy expired the attribute before
+    # assignment. A metadata refresh or unchanged reference is not a new file.
+    previous = db.connection().execute(select(type(row).attachments).where(type(row).id == row.id)).scalar()
+    return _attachment_keys(row.attachments) - _attachment_keys(previous)
 
 
 def publish_vehicle_update(db, *, vehicle_id, actor_id, event_type, title, message,
@@ -41,7 +65,7 @@ def publish_vehicle_update(db, *, vehicle_id, actor_id, event_type, title, messa
 def capture_service_changes(db, context, instances):
     from .models import (Customer, Vehicle, ServiceRecord, ServiceRecordAuditLog,
         ServiceIntake, ServiceAccessRequest, RepairPhotoSession, RepairEvidencePhoto,
-        Reminder, VehicleAttachmentPrivacy)
+        Reminder)
     from .schema_management import assert_module_ready
     candidates = []
     actor_context = db.info.get("vehicle_update_actor_id")
@@ -49,6 +73,7 @@ def capture_service_changes(db, context, instances):
         if getattr(row, "_skip_vehicle_update", False):
             continue
         fresh = row in db.new
+        new_documents = set()
         actor = vehicle_id = None
         kind = title = message = None
         if row in db.deleted and not isinstance(row, Reminder):
@@ -63,9 +88,14 @@ def capture_service_changes(db, context, instances):
         elif isinstance(row, ServiceIntake) and fresh:
             actor, vehicle_id = row.service_id, row.vehicle_id
             kind, title, message = "intake.received", "Vozidlo přijato do servisu", "Servis uložil příjem vozidla."
-        elif isinstance(row, ServiceRecord) and fresh:
-            actor, vehicle_id = row.created_by_service_customer_id or row.user_id, row.vehicle_id
-            kind, title, message = "record.created", "Nový servisní záznam", "Servis přidal záznam do historie vozidla."
+        elif isinstance(row, ServiceRecord):
+            actor = actor_context or ((row.created_by_service_customer_id or row.user_id) if fresh else None)
+            vehicle_id = row.vehicle_id
+            new_documents = _new_record_documents(db, row, fresh)
+            if fresh:
+                kind, title, message = "record.created", "Nový servisní záznam", "Servis přidal záznam do historie vozidla."
+            elif new_documents:
+                kind, title, message = "document.added", "Nové dokumenty v servisním záznamu", "Servis připojil dokumenty k uloženému servisnímu záznamu."
         elif isinstance(row, ServiceRecordAuditLog) and fresh:
             actor, vehicle_id = row.changed_by_user_id, row.vehicle_id
             kind, title, message = "record.updated", "Změna servisního záznamu", "V historii vozidla je nová úprava."
@@ -81,9 +111,6 @@ def capture_service_changes(db, context, instances):
             kind, title, message = "reminder.updated", "Aktualizace připomínky vozidla", "Servis přidal nebo upravil připomínku."
             if row in db.deleted:
                 kind, title, message = "reminder.deleted", "Odebraná připomínka vozidla", "Servis odebral připomínku vozidla."
-        elif isinstance(row, VehicleAttachmentPrivacy) and fresh:
-            actor, vehicle_id = row.author_customer_id, row.vehicle_id
-            kind, title, message = "document.added", "Nový dokument vozidla", "Servis nahrál dokument k vozidlu."
         elif isinstance(row, Vehicle) and not fresh and db.is_modified(row, include_collections=False):
             actor, vehicle_id = actor_context, row.id
             kind, title, message = "vehicle.updated", "Aktualizace vozidla", "Servis upravil informace o vozidle."
@@ -95,6 +122,12 @@ def capture_service_changes(db, context, instances):
         assert_module_ready(db, "vehicle_updates", detail_prefix="Upozornění vozidel nejsou připravena")
         candidates.append((row, actor, vehicle_id, kind, title, message,
                            str(uuid4()) if not fresh else 'created'))
+        if fresh and new_documents:
+            # Uploads are drafts. Publish only with the owning record, in the
+            # same transaction, so an abandoned upload never reaches the inbox.
+            candidates.append((row, actor, vehicle_id, "document.added",
+                "Nové dokumenty v servisním záznamu",
+                "Servis připojil dokumenty k uloženému servisnímu záznamu.", 'created'))
     if candidates:
         from .ownership import lock_vehicle_access
         for vehicle_id in sorted({item[2] for item in candidates}):

@@ -50,6 +50,7 @@ def list_updates(before_id: int | None = Query(None, gt=0), limit: int = Query(3
             [vehicles[row.vehicle_id].brand, vehicles[row.vehicle_id].model]))) if row.vehicle_id in vehicles else None,
         "vehicle_plate": vehicles[row.vehicle_id].plate if row.vehicle_id in vehicles else None,
         "service_job_id": row.service_job_id, "event_type": row.event_type,
+        "record_id": row.source_id if row.source_type == "service_records" else None,
         "title": row.title, "message": row.message, "occurred_at": iso(row.occurred_at),
         "source_type": row.source_type, "source_id": row.source_id,
         "read_at": iso(receipts.get(row.id))} for row in rows],
