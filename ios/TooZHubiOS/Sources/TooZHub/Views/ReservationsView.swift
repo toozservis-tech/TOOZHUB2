@@ -15,6 +15,10 @@ struct ReservationsView: View {
     @EnvironmentObject private var viewModel: ReservationsViewModel
     @State private var showNewReservation = false
     @State private var selectedFilter: ReservationFilter = .all
+    @State private var bookingRequests: [ServiceBookingRequestItem] = []
+    @State private var selectedBookingRequest: ServiceBookingRequestItem?
+    @State private var bookingError: String?
+    private let bookingAPI = APIClient()
 
     var body: some View {
         NavigationStack {
@@ -26,6 +30,15 @@ struct ReservationsView: View {
                             .foregroundStyle(Theme.Colors.textSecondary)
                         Spacer()
                         PillBadge(title: "\(filteredReservations.count) termínů", style: .success)
+                    }
+
+                    if !bookingRequests.isEmpty {
+                        bookingRequestsSection
+                    }
+                    if let bookingError {
+                        Text(bookingError)
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
                     }
 
                     if viewModel.isLoading {
@@ -95,6 +108,14 @@ struct ReservationsView: View {
                             role: env.authManager.user?.role ?? "user"
                         )
                     }
+                }
+            }
+            .sheet(item: $selectedBookingRequest) { booking in
+                ServiceBookingDecisionSheet(
+                    booking: booking,
+                    isServiceRole: isServiceRole
+                ) { action, message, date in
+                    await decideBooking(booking, action: action, message: message, proposedDate: date)
                 }
             }
             .task { await reload() }
@@ -332,6 +353,92 @@ struct ReservationsView: View {
         )
     }
 
+    private var bookingRequestsSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text(isServiceRole ? "Nové žádosti klientů o servis" : "Moje žádosti do servisu")
+                .font(Theme.Typography.sectionTitle)
+                .foregroundStyle(Theme.Colors.textPrimary)
+            ForEach(bookingRequests) { booking in
+                Button {
+                    selectedBookingRequest = booking
+                } label: {
+                    HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                        Image(systemName: "wrench.and.screwdriver")
+                            .foregroundStyle(Theme.Colors.primary)
+                            .frame(width: 26)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(booking.vehicleName)
+                                .font(Theme.Typography.bodyStrong)
+                                .foregroundStyle(Theme.Colors.textOnLight)
+                            Text(booking.serviceType)
+                                .font(Theme.Typography.caption)
+                                .foregroundStyle(Theme.Colors.textOnLightSecondary)
+                            Text(isServiceRole ? (booking.customerName ?? "Zákazník") : booking.serviceName)
+                                .font(Theme.Typography.tiny)
+                                .foregroundStyle(Theme.Colors.textOnLightSecondary)
+                        }
+                        Spacer(minLength: 4)
+                        PillBadge(title: booking.statusLabel, style: booking.statusStyle)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .hubLightCard()
+            }
+        }
+    }
+
+    private func loadBookings(token: String) async {
+        do {
+            let response: ServiceBookingList = try await bookingAPI.request(
+                .get("/api/v1/service-booking-requests"),
+                token: token
+            )
+            bookingRequests = response.items
+            bookingError = nil
+        } catch {
+            bookingError = UserFacingErrorMapper.message(
+                for: error, context: .account,
+                fallback: "Žádosti do servisu se teď nepodařilo načíst."
+            )
+        }
+    }
+
+    private func decideBooking(
+        _ booking: ServiceBookingRequestItem,
+        action: String,
+        message: String,
+        proposedDate: Date?
+    ) async -> String? {
+        guard let token = env.authManager.token else { return "Relace vypršela. Přihlaste se znovu." }
+        do {
+            let payload = ServiceBookingDecisionPayload(
+                clientId: UUID(),
+                expectedVersion: booking.version,
+                action: action,
+                message: message,
+                proposedDatetime: proposedDate
+            )
+            let body = try bookingAPI.encodeBody(payload)
+            let _: ServiceBookingRequestItem = try await bookingAPI.request(
+                .post("/api/v1/service-booking-requests/\(booking.id)/decision", body: body),
+                token: token
+            )
+            await loadBookings(token: token)
+            await viewModel.loadIfNeeded(
+                token: token,
+                role: env.authManager.user?.role ?? "user",
+                force: true
+            )
+            return nil
+        } catch {
+            return UserFacingErrorMapper.message(
+                for: error, context: .account,
+                fallback: "Odpověď se nepodařilo uložit. Obnovte seznam a zkuste to znovu."
+            )
+        }
+    }
+
     private func reload(force: Bool = false) async {
         guard let token = env.authManager.token else { return }
         await viewModel.loadIfNeeded(
@@ -339,6 +446,7 @@ struct ReservationsView: View {
             role: env.authManager.user?.role ?? "user",
             force: force
         )
+        await loadBookings(token: token)
     }
 
     private var serviceOptionsForCurrentUserRole: [ServiceContact] {
@@ -374,5 +482,159 @@ private struct VehicleInfoPillLight: View {
         .padding(.horizontal, Theme.Spacing.sm)
         .padding(.vertical, Theme.Spacing.xs)
         .background(Theme.Colors.lightMuted, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+    }
+}
+
+
+private struct ServiceBookingList: Decodable {
+    let items: [ServiceBookingRequestItem]
+}
+
+private struct ServiceBookingRequestItem: Decodable, Identifiable, Hashable {
+    let id: Int
+    let vehicleId: Int
+    let vehicleName: String
+    let vehiclePlate: String?
+    let serviceId: Int
+    let serviceName: String
+    let customerName: String?
+    let serviceType: String
+    let description: String
+    let status: String
+    let version: Int
+    let preferredDatetime: Date?
+    let proposedDatetime: Date?
+    let serviceReply: String?
+
+    var statusLabel: String {
+        switch status.lowercased() {
+        case "pending": return "Čeká"
+        case "proposed": return "Návrh termínu"
+        case "confirmed": return "Potvrzeno"
+        case "rejected": return "Odmítnuto"
+        case "cancelled": return "Zrušeno"
+        default: return status
+        }
+    }
+
+    var statusStyle: PillBadge.Style {
+        switch status.lowercased() {
+        case "confirmed": return .success
+        case "pending", "proposed": return .warning
+        case "rejected", "cancelled": return .danger
+        default: return .neutral
+        }
+    }
+}
+
+private struct ServiceBookingDecisionPayload: Encodable {
+    let clientId: UUID
+    let expectedVersion: Int
+    let action: String
+    let message: String
+    let proposedDatetime: Date?
+}
+
+private struct ServiceBookingDecisionSheet: View {
+    let booking: ServiceBookingRequestItem
+    let isServiceRole: Bool
+    let onSubmit: (String, String, Date?) async -> String?
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var reply = ""
+    @State private var proposedDate = Date().addingTimeInterval(86_400)
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Vozidlo a požadavek") {
+                    LabeledContent("Vozidlo", value: booking.vehicleName)
+                    LabeledContent("Práce", value: booking.serviceType)
+                    Text(booking.description)
+                    LabeledContent("Stav", value: booking.statusLabel)
+                    if let date = booking.preferredDatetime {
+                        LabeledContent("Požadovaný termín", value: date.formatted(date: .abbreviated, time: .shortened))
+                    }
+                    if let date = booking.proposedDatetime {
+                        LabeledContent("Návrh servisu", value: date.formatted(date: .abbreviated, time: .shortened))
+                    }
+                    if let serviceReply = booking.serviceReply, !serviceReply.isEmpty {
+                        Text(serviceReply)
+                    }
+                }
+
+                if booking.status == "pending" || booking.status == "proposed" {
+                    Section("Odpověď") {
+                        if isServiceRole {
+                            DatePicker(
+                                "Nový termín",
+                                selection: $proposedDate,
+                                in: Date().addingTimeInterval(60)...,
+                                displayedComponents: [.date, .hourAndMinute]
+                            )
+                        }
+                        TextField("Zpráva nebo důvod odmítnutí", text: $reply, axis: .vertical)
+                            .lineLimit(2...5)
+                    }
+
+                    Section {
+                        if isServiceRole {
+                            if booking.status == "pending", let when = booking.preferredDatetime, when > Date() {
+                                Button("Potvrdit požadovaný termín") { perform("accept") }
+                                    .disabled(isSubmitting)
+                            }
+                            Button("Navrhnout jiný termín") { perform("propose", date: proposedDate) }
+                                .disabled(isSubmitting || proposedDate <= Date())
+                            Button("Odmítnout", role: .destructive) { perform("reject") }
+                                .disabled(isSubmitting || reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        } else {
+                            if booking.status == "proposed", let when = booking.proposedDatetime, when > Date() {
+                                Button("Přijmout navržený termín") { perform("accept_proposal") }
+                                    .disabled(isSubmitting)
+                            }
+                            Button("Zrušit žádost", role: .destructive) { perform("cancel") }
+                                .disabled(isSubmitting)
+                        }
+                    }
+                }
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Servisní žádost")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Zavřít") { dismiss() }
+                        .disabled(isSubmitting)
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+        }
+    }
+
+    private func perform(_ action: String, date: Date? = nil) {
+        guard !isSubmitting else { return }
+        isSubmitting = true
+        errorMessage = nil
+        Task {
+            let result = await onSubmit(
+                action,
+                reply.trimmingCharacters(in: .whitespacesAndNewlines),
+                date
+            )
+            isSubmitting = false
+            if let result {
+                errorMessage = result
+            } else {
+                dismiss()
+            }
+        }
     }
 }
