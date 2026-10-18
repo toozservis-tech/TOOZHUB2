@@ -87,6 +87,10 @@ def test_booking_service_workflow_requires_owner_consent_and_is_idempotent(http_
     assert len(uploaded.json()["job"]["photos"]) == 1
     again = client.post(f"/api/v1/service-jobs/{job_id}/photos", headers=h["service"], json=photo_payload)
     assert again.status_code == 200 and again.json()["photo"]["id"] == uploaded.json()["photo"]["id"]
+    same_image = client.post(f"/api/v1/service-jobs/{job_id}/photos", headers=h["service"],
+                             json={**photo_payload, "client_id":str(uuid4())})
+    assert same_image.status_code == 200 and same_image.json()["photo"]["id"] == uploaded.json()["photo"]["id"]
+    assert same_image.json()["job"]["version"] == uploaded.json()["job"]["version"]
     assert client.get(f"/api/v1/service-jobs/{job_id}/photos/{uploaded.json()['photo']['id']}",
                       headers=h["stranger"]).status_code in (403,404)
     stored = client.get(f"/api/v1/service-jobs/{job_id}/photos/{uploaded.json()['photo']['id']}", headers=h["service"])
@@ -105,5 +109,8 @@ def test_booking_service_workflow_requires_owner_consent_and_is_idempotent(http_
         "client_id": str(uuid4()), "expected_version": finished.json()["version"]})
     assert handed.status_code == 200, handed.text
     assert handed.json()["status"] == "handed_over"
+    other = BytesIO()
+    Image.new("RGB", (120, 120), (22, 33, 44)).save(other, format="JPEG")
     assert client.post(f"/api/v1/service-jobs/{job_id}/photos", headers=h["service"],
-                       json={**photo_payload, "client_id":str(uuid4())}).status_code == 409
+                       json={**photo_payload, "client_id":str(uuid4()),
+                             "content_base64":base64.b64encode(other.getvalue()).decode("ascii")}).status_code == 409
