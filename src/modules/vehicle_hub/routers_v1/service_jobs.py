@@ -305,7 +305,7 @@ def upload_service_job_photo(
         if previous.sha256 != digest:
             raise HTTPException(409, "Stejné ID fotografie bylo použito pro jiný snímek.")
         return {"photo": _photo_payload(previous), "job": _serialize(db, job)}
-    if job.status in ("completed", "cancelled"):
+    if job.status in ("completed", "handed_over", "cancelled"):
         raise HTTPException(409, "K uzavřené zakázce nelze přidat další fotografie.")
     try:
         content = base64.b64decode(payload.content_base64, validate=True)
