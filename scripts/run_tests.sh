@@ -17,6 +17,7 @@ case "${MODE}" in
         exec .venv/bin/python -m pytest \
             tests/api/test_schema_migration_smoke.py \
             tests/api/test_identity_migration_noop.py \
+            tests/api/test_license_status_read_locks.py \
             tests/api/test_vehicle_ownership_source_of_truth.py \
             tests/api/test_service_record_audit_trail.py \
             tests/api/test_vehicle_owner_data_minimization.py \

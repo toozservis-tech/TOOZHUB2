@@ -122,7 +122,9 @@ def get_or_create_license(db: Session, tenant_id: int, *, commit_changes: bool =
         # Access expires even if a mobile-store notification is delayed or not delivered.
         # Existing vehicles/data are retained; only the available plan changes.
         if not admin_force_premium and license_obj.valid_to and license_obj.valid_to <= datetime.utcnow():
-            db.query(Tenant).filter_by(id=tenant_id).with_for_update().one()
+            # FOR NO KEY UPDATE serializes expiry transitions without blocking FK
+            # KEY SHARE checks from immutable audit inserts for this tenant.
+            db.query(Tenant).filter_by(id=tenant_id).with_for_update(key_share=True).one()
             db.refresh(license_obj)  # A concurrent verified renewal may have extended it while we waited.
             store_sub = db.query(LicenseSubscription).filter(
                 LicenseSubscription.tenant_id == tenant_id, LicenseSubscription.provider.in_(["apple", "google"])).populate_existing().first()
