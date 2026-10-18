@@ -858,9 +858,17 @@ def _serialize_subscription(
     }
 
 
-def _get_subscription(db: Session, tenant_id: int) -> Optional[LicenseSubscription]:
-    db.query(Tenant).filter_by(id=tenant_id).with_for_update().one()
-    return db.query(LicenseSubscription).filter(LicenseSubscription.tenant_id == tenant_id).with_for_update().populate_existing().first()
+def _get_subscription(
+    db: Session, tenant_id: int, *, for_update: bool = True
+) -> Optional[LicenseSubscription]:
+    query = db.query(LicenseSubscription).filter(LicenseSubscription.tenant_id == tenant_id)
+    if not for_update:
+        # A frequent read-only GET must not lock the tenant or subscription.
+        return query.first()
+    # FOR NO KEY UPDATE preserves cross-provider serialization while allowing
+    # FK KEY SHARE checks when independent security audit events are inserted.
+    db.query(Tenant).filter_by(id=tenant_id).with_for_update(key_share=True).one()
+    return query.with_for_update().populate_existing().first()
 
 
 def _upsert_subscription(db: Session, tenant_id: int) -> LicenseSubscription:
@@ -1033,7 +1041,7 @@ def _send_subscription_notification(
 
 def _guard_store_subscription(db: Session, tenant_id: int) -> None:
     # Serialize cross-provider callbacks with mobile purchase verification.
-    db.query(Tenant).filter_by(id=tenant_id).with_for_update().one()
+    db.query(Tenant).filter_by(id=tenant_id).with_for_update(key_share=True).one()
     subscription = db.query(LicenseSubscription).filter_by(tenant_id=tenant_id).populate_existing().first()
     if subscription and subscription.provider in {"apple", "google"} and (
         subscription.auto_renew_enabled or
@@ -1582,7 +1590,7 @@ def get_license_status_endpoint(
     
     _ensure_subscription_schema(db)
     status = get_license_status(db, tenant_id, current_user.email)
-    subscription = _get_subscription(db, tenant_id)
+    subscription = _get_subscription(db, tenant_id, for_update=False)
     status["subscription"] = _serialize_subscription(subscription, license_plan=status.get("plan", "free"))
     return LicenseStatusResponse(**status)
 
@@ -1821,7 +1829,7 @@ def create_comgate_checkout(
         raise HTTPException(status_code=400, detail="Tenant ID je mimo podporovaný rozsah pro Comgate refId.")
 
     tenant_id_int = int(tenant_id)
-    db.query(Tenant).filter_by(id=tenant_id_int).with_for_update().one()
+    db.query(Tenant).filter_by(id=tenant_id_int).with_for_update(key_share=True).one()
     subscription = _get_subscription(db, tenant_id_int)
     if subscription and subscription.provider in {"apple", "google"} and (
         subscription.auto_renew_enabled or
