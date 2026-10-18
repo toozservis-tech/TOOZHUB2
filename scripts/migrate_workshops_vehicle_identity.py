@@ -10,7 +10,35 @@ from alembic.operations import Operations
 from sqlalchemy import text
 
 
+def _already_applied(connection):
+    """Read-only check: avoid re-running DDL on a live, protected VIN table."""
+    if connection.dialect.name != "postgresql":
+        return False
+    return bool(connection.scalar(text("""
+        SELECT to_regclass('vehicle_vin_claims') IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgrelid = to_regclass('vehicles')
+              AND tgname = 'sv_vehicle_vin_guard'
+              AND NOT tgisinternal AND tgenabled <> 'D'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_attribute
+            WHERE attrelid = to_regclass('vehicles')
+              AND attname = 'merged_into_id' AND NOT attisdropped
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_attribute
+            WHERE attrelid = to_regclass('vehicles')
+              AND attname = 'merged_vin' AND NOT attisdropped
+          )
+    """)))
+
+
 def migrate_connection(connection):
+    if _already_applied(connection):
+        # Already guarded: never DROP / CREATE the VIN trigger on every boot.
+        return
     path = Path(__file__).resolve().parents[1] / 'alembic/versions/20261002_0013_workshops_vehicle_identity.py'
     spec = importlib.util.spec_from_file_location('workshop_identity_migration', path)
     module = importlib.util.module_from_spec(spec)
