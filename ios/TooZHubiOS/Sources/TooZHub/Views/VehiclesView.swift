@@ -10,6 +10,8 @@ struct VehiclesView: View {
     @State private var showAddVehicle = false
     @State private var editVehicle: Vehicle?
     @State private var selectedVehicleForDetail: Vehicle?
+    @State private var selectedVehicleForBooking: Vehicle?
+    @State private var pendingVehicleRemoval: Vehicle?
 
     private var selectedMode: VehicleCardMode {
         get { VehicleCardMode(rawValue: vehicleListModeRawValue) ?? .grid }
@@ -103,6 +105,20 @@ struct VehiclesView: View {
                     try await viewModel.updateVehicle(id: vehicle.id, request: request, token: token)
                 }
             }
+            .sheet(item: $selectedVehicleForBooking) { vehicle in
+                VehicleServiceBookingSheet(vehicle: vehicle)
+            }
+            .alert(item: $pendingVehicleRemoval) { vehicle in
+                Alert(
+                    title: Text("Odebrat vozidlo z profilu?"),
+                    message: Text("Vozidlo: \(vehicle.displayName). Tuto akci potvrďte jen tehdy, když ho chcete odebrat ze svého profilu."),
+                    primaryButton: .destructive(Text("Odebrat")) {
+                        guard let token = env.authManager.token else { return }
+                        Task { await viewModel.deleteVehicle(id: vehicle.id, token: token) }
+                    },
+                    secondaryButton: .cancel(Text("Zrušit"))
+                )
+            }
             .refreshable { await reload(force: true) }
             .task { await reload() }
         }
@@ -133,29 +149,71 @@ struct VehiclesView: View {
     }
 
     private func vehicleItem(_ vehicle: Vehicle) -> some View {
-        VStack(spacing: Theme.Spacing.sm) {
+        // The icon rail is inside the light card, not a second large action bar below it.
+        // Independent overlay controls prevent a tap on an icon opening the detail.
+        ZStack(alignment: .bottomTrailing) {
             Button {
                 selectedVehicleForDetail = vehicle
             } label: {
-                VehicleCard(vehicle: vehicle, mode: selectedMode)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VehicleCard(
+                    vehicle: vehicle,
+                    mode: selectedMode,
+                    actionRowInset: 50
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Otevřít detail vozidla \(vehicle.displayName)")
 
-            HStack(spacing: Theme.Spacing.sm) {
-                Button("Upravit") {
+            HStack(spacing: 6) {
+                smallCardAction(icon: "pencil", title: "Upravit vozidlo") {
                     editVehicle = vehicle
                 }
-                .buttonStyle(InlineChipButtonStyle(isSelected: true))
-
-                Button("Odebrat z profilu") {
-                    guard let token = env.authManager.token else { return }
-                    Task { await viewModel.deleteVehicle(id: vehicle.id, token: token) }
+                smallCardAction(icon: "wrench.and.screwdriver", title: "Správa vozidla") {
+                    selectedVehicleForDetail = vehicle
                 }
-                .buttonStyle(InlineChipButtonStyle(isSelected: false))
+                smallCardAction(icon: "calendar.badge.plus", title: "Poslat do servisu", prominent: true) {
+                    selectedVehicleForBooking = vehicle
+                }
+
+                Menu {
+                    Button("Odebrat z profilu", systemImage: "trash", role: .destructive) {
+                        pendingVehicleRemoval = vehicle
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.Colors.textOnLight)
+                        .frame(width: 38, height: 38)
+                        .background(Theme.Colors.lightMuted, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Další akce vozidla")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, Theme.Spacing.md)
+            .padding(.bottom, 6)
         }
+    }
+
+    private func smallCardAction(
+        icon: String,
+        title: String,
+        prominent: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(prominent ? Theme.Colors.textOnLight : Theme.Colors.textOnLightSecondary)
+                .frame(width: 38, height: 38)
+                .background(
+                    prominent ? Theme.Colors.warningSoft : Theme.Colors.lightMuted,
+                    in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .help(title)
     }
 }
 
