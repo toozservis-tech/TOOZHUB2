@@ -8,6 +8,7 @@ from scripts.migrate_vehicle_lifecycle import migrate as migrate_lifecycle
 from scripts.migrate_booking_requests import migrate as migrate_bookings
 from scripts.migrate_vehicle_update_inbox import migrate as migrate_inbox
 from scripts.migrate_google_billing import migrate as migrate_google
+from scripts.migrate_service_job_photos import migrate as migrate_job_photos
 
 
 def migrate(bind=None):
@@ -16,6 +17,7 @@ def migrate(bind=None):
     migrate_bookings(bind)
     migrate_inbox(bind)
     migrate_google(bind)
+    migrate_job_photos(bind)
 
 
 if __name__ == '__main__':

@@ -40,3 +40,19 @@ class ServiceJobEvent(Base):
     message = Column(Text, nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     __table_args__ = (UniqueConstraint('job_id', 'client_id', name='uq_service_job_event_client'),)
+
+
+class ServiceJobPhoto(Base):
+    """Immutable, owner-period-bound image reference for service-job evidence."""
+    __tablename__ = 'service_job_photos'
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey('service_jobs.id'), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey('customers.id'), nullable=False)
+    client_id = Column(String(36), nullable=False)
+    sha256 = Column(String(64), nullable=False)
+    storage_key = Column(String(500), nullable=False)
+    mime_type = Column(String(64), nullable=False)
+    file_size = Column(Integer, nullable=False)
+    caption = Column(String(200), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint('job_id', 'client_id', name='uq_service_job_photo_client'),)

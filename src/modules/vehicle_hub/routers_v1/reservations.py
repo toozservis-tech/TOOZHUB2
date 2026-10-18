@@ -720,3 +720,138 @@ def delete_reservation(
     db.commit()
     
     return {"message": "Rezervace byla smazána"}
+
+
+# A reservation is a service lead, not permission to read the owner's history.
+# Keep the operational hand-off separate from VIN/owner consent.
+def _service_reservation_or_404(db, reservation_id, actor):
+    if str(actor.role or "").lower() != "service" or actor.is_disabled or actor.is_deleted:
+        raise HTTPException(403, "Pouze aktivní servis může zpracovávat příchozí rezervace.")
+    booking = db.query(ReservationModel).filter(
+        ReservationModel.id == reservation_id,
+        ReservationModel.service_id == actor.id,
+    ).first()
+    if booking is None:
+        raise HTTPException(404, "Rezervace servisu nebyla nalezena.")
+    return booking
+
+
+def _reservation_job_client_id(reservation_id):
+    from uuid import uuid5, NAMESPACE_URL
+    return str(uuid5(NAMESPACE_URL, f"evidence-vozidel:booking-job:{reservation_id}"))
+
+
+@router.get("/{reservation_id}/workspace")
+def get_service_reservation_workspace(
+    reservation_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Operational intake context only; service history requires explicit access."""
+    from ..service_job_models import ServiceJob
+    from ..models import ServiceAccessRequest
+    from ..ownership import get_primary_vehicle_owner_assignment
+
+    booking = _service_reservation_or_404(db, reservation_id, current_user)
+    _enrich_reservations(db, [booking])
+    ownership = get_primary_vehicle_owner_assignment(db, booking.vehicle_id)
+    owns_booking_vehicle = bool(ownership and ownership.customer_id == booking.customer_id)
+    link = get_active_vehicle_service_link(
+        db, service_customer_id=current_user.id, vehicle_id=booking.vehicle_id
+    ) if owns_booking_vehicle else None
+    can_start = bool(link and link.scope_vehicle_history_read and link.scope_create_service_record)
+    pending = db.query(ServiceAccessRequest.id).filter(
+        ServiceAccessRequest.service_customer_id == current_user.id,
+        ServiceAccessRequest.vehicle_id == booking.vehicle_id,
+        ServiceAccessRequest.status == "pending",
+    ).first() is not None
+    job = None
+    if can_start:
+        job = db.query(ServiceJob).filter_by(
+            service_id=current_user.id, client_id=_reservation_job_client_id(booking.id)
+        ).first()
+    return {
+        "reservation_id": booking.id,
+        "vehicle_id": booking.vehicle_id,
+        "customer_id": booking.customer_id,
+        "vehicle_name": getattr(booking, "vehicle_name", None),
+        "vehicle_plate": getattr(booking, "vehicle_plate", None),
+        "customer_name": getattr(booking, "customer_name", None),
+        "customer_email": getattr(booking, "customer_email", None),
+        "work_type": booking.service_type,
+        "work_note": booking.note,
+        "reservation_status": booking.status,
+        "scheduled_at": booking.start_datetime,
+        "owner_still_valid": owns_booking_vehicle,
+        "access_approved": can_start,
+        "access_requested": pending,
+        "job": None if job is None else {
+            "id": job.id, "status": job.status, "version": job.version,
+            "title": job.title, "mileage": job.mileage,
+        },
+    }
+
+
+@router.post("/{reservation_id}/request-access")
+def request_booking_vehicle_access(
+    reservation_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Ask owner for existing granular vehicle permission, never silently grant it."""
+    from .service_workspace import create_service_access_request
+    from .schemas import ServiceAccessRequestCreateV1
+    from ..ownership import get_primary_vehicle_owner_assignment
+
+    booking = _service_reservation_or_404(db, reservation_id, current_user)
+    if _normalize_status(booking.status) in {"CANCELLED", "COMPLETED"}:
+        raise HTTPException(409, "Ukončená rezervace nemůže žádat o nový přístup.")
+    owner = get_primary_vehicle_owner_assignment(db, booking.vehicle_id)
+    if not owner or owner.customer_id != booking.customer_id:
+        raise HTTPException(409, "Vlastnictví vozidla se změnilo.")
+    vehicle = db.get(VehicleModel, booking.vehicle_id)
+    if not vehicle or not (vehicle.vin or vehicle.plate):
+        raise HTTPException(409, "Vozidlo nemá VIN ani SPZ pro ověření žádosti.")
+    return create_service_access_request(
+        payload=ServiceAccessRequestCreateV1(
+            vehicle_id=booking.vehicle_id,
+            lookup_query=vehicle.vin or vehicle.plate,
+            note=f"Servisní rezervace #{booking.id}",
+        ),
+        current_user=current_user,
+        db=db,
+    )
+
+
+@router.post("/{reservation_id}/start-job")
+def start_service_job_from_reservation(
+    reservation_id: int,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Idempotent hand-off to the existing immutable service-job lifecycle."""
+    from uuid import UUID
+    from ..ownership import get_primary_vehicle_owner_assignment
+    from ..service_access import require_service_vehicle_link
+    from .service_jobs import JobCreate, create_job
+
+    booking = _service_reservation_or_404(db, reservation_id, current_user)
+    if _normalize_status(booking.status) != "CONFIRMED":
+        raise HTTPException(409, "Nejprve potvrďte rezervaci.")
+    assignment = get_primary_vehicle_owner_assignment(db, booking.vehicle_id)
+    if not assignment or assignment.customer_id != booking.customer_id:
+        raise HTTPException(409, "Vozidlo už nepatří zákazníkovi z rezervace.")
+    require_service_vehicle_link(
+        db, current_user=current_user, vehicle_id=booking.vehicle_id, require_create_record=True
+    )
+    return create_job(
+        vehicle_id=booking.vehicle_id,
+        payload=JobCreate(
+            client_id=UUID(_reservation_job_client_id(booking.id)),
+            title=(booking.service_type or "Servisní zakázka")[:200],
+            description=booking.note,
+            mileage=None,
+        ),
+        current_user=current_user,
+        db=db,
+    )
