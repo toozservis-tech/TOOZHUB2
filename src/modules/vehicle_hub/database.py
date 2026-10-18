@@ -18,10 +18,11 @@ if schema and not re.fullmatch(r"[a-z][a-z0-9_]*", schema):
     raise RuntimeError("Invalid database schema")
 
 
-def _create_engine(*, pool_size=3, max_overflow=2):
+def _create_engine(*, pool_size=3, max_overflow=2, pool_timeout=5):
     if DB_URL.startswith(("postgresql", "postgres")):
         result = create_engine(DB_URL, pool_size=pool_size, max_overflow=max_overflow,
-                               pool_pre_ping=True, hide_parameters=True, future=True)
+                               pool_timeout=pool_timeout, pool_pre_ping=True,
+                               hide_parameters=True, future=True)
     else:
         result = create_engine(DB_URL, connect_args=connect_args, hide_parameters=True)
     if schema:
@@ -38,11 +39,11 @@ def _create_engine(*, pool_size=3, max_overflow=2):
 
 
 engine = _create_engine()
-# A request holds its transaction while writing its independent audit event.
-# Sharing the request pool can deadlock when every request needs one more
-# connection to finish. Reserve one bounded PostgreSQL connection for audit;
-# keep synchronous, durable writes and the same database/schema.
-audit_engine = _create_engine(pool_size=1, max_overflow=0) if engine.dialect.name == "postgresql" else engine
+# Independent audit writes must not share a request transaction or queue
+# behind a single connection. Retain synchronous committed audit records,
+# but bound pool checkout latency and serve concurrent legitimate requests.
+# The limit is five main + five audit connections per worker (not unbounded).
+audit_engine = _create_engine(pool_size=3, max_overflow=2, pool_timeout=5) if engine.dialect.name == "postgresql" else engine
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 AuditSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=audit_engine)
