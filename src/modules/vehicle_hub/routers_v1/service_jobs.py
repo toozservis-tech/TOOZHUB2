@@ -305,6 +305,10 @@ def upload_service_job_photo(
         if previous.sha256 != digest:
             raise HTTPException(409, "Stejné ID fotografie bylo použito pro jiný snímek.")
         return {"photo": _photo_payload(previous), "job": _serialize(db, job)}
+    # Re-selecting the same image after a lost response must not duplicate evidence.
+    matching_photo = db.query(ServiceJobPhoto).filter_by(job_id=job.id, sha256=digest).first()
+    if matching_photo:
+        return {"photo": _photo_payload(matching_photo), "job": _serialize(db, job)}
     if job.status in ("completed", "handed_over", "cancelled"):
         raise HTTPException(409, "K uzavřené zakázce nelze přidat další fotografie.")
     try:
