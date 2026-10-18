@@ -394,3 +394,30 @@ def hand_over_job(
     )
     db.commit()
     return _serialize(db, job)
+
+
+
+@router.get('/service-jobs/{job_id}/photos/{photo_id}')
+def view_job_photo(
+    job_id: int, photo_id: int,
+    current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    """Authenticated image read, restricted to the same ownership period and service."""
+    from fastapi.responses import Response
+    from .service_records import _resolve_attachment_file
+    from ..vehicle_attachment_privacy import require_attachment_private
+
+    job = db.get(ServiceJob, job_id)
+    _authorize(db, job, current_user, write=False)
+    photo = db.query(ServiceJobPhoto).filter_by(id=photo_id, job_id=job.id).first()
+    if photo is None:
+        raise HTTPException(404, "Fotografie nebyla nalezena.")
+    require_attachment_private(db, vehicle_id=job.vehicle_id, key=photo.storage_key, actor=current_user)
+    path = _resolve_attachment_file(photo.storage_key, vehicle_id=job.vehicle_id, db=db)
+    if not path or not path.is_file():
+        raise HTTPException(404, "Fotografie není v úložišti.")
+    return Response(
+        content=path.read_bytes(),
+        media_type=photo.mime_type,
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
