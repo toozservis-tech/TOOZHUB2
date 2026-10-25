@@ -113,6 +113,17 @@ class LinkExistingCustomerRequest(BaseModel):
     note: Optional[str] = Field(default=None, max_length=500)
 
 
+class CustomerEmailLookupRequest(BaseModel):
+    customer_email: EmailStr = Field(max_length=254)
+
+
+class CustomerEmailLookupResponse(BaseModel):
+    email: str
+    registration_status: Literal["registered", "new", "unavailable"]
+    connection_status: Literal["none", "pending", "linked"]
+    customer_id: Optional[int] = None  # Only an already-consented client may expose an ID.
+
+
 class SendServiceInviteRequest(BaseModel):
     invite_email: EmailStr
     invite_name: Optional[str] = Field(default=None, max_length=120)
@@ -2215,6 +2226,45 @@ def list_approved_service_vehicles(
     }
 
 
+def _customer_email_status(db, service, email: str) -> CustomerEmailLookupResponse:
+    """Exact-address lookup only; never return an unconnected person's profile."""
+    customer = _find_customer_by_email(db, email)
+    result = CustomerEmailLookupResponse(email=email, registration_status="new", connection_status="none")
+    if customer:
+        if (customer.id == service.id or str(customer.role or '').lower() != 'user'
+                or customer_is_disabled(customer) or customer_is_deleted(customer)):
+            result.registration_status = "unavailable"
+            return result
+        result.registration_status = "registered"
+        link = _get_active_link(db, service_customer_id=service.id, customer_id=customer.id)
+        if has_contact_consent(link, customer.id):
+            result.connection_status = "linked"
+            result.customer_id = customer.id
+            return result
+    pending = (db.query(ServiceCustomerInvite.id).filter(
+        ServiceCustomerInvite.service_customer_id == service.id,
+        func.lower(ServiceCustomerInvite.invite_email) == email,
+        ServiceCustomerInvite.status == "pending",
+        ServiceCustomerInvite.expires_at > datetime.utcnow(),
+        or_(ServiceCustomerInvite.invite_message.is_(None),
+            ~ServiceCustomerInvite.invite_message.startswith('__RESERVATION_AUTO_LINK__:')),
+    ).first())
+    if pending:
+        result.connection_status = "pending"
+    return result
+
+
+@router.post("/customers/lookup", response_model=CustomerEmailLookupResponse)
+def lookup_customer_email(payload: CustomerEmailLookupRequest,
+    current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+    if customer_is_disabled(current_user) or customer_is_deleted(current_user) or pending_verification(db, current_user.id):
+        raise HTTPException(403, "Vyhledávání je dostupné ověřenému aktivnímu servisu.")
+    limit_attempt(db, current_user.id, 'service-customer-lookup', limit=40)
+    return _customer_email_status(db, current_user, _normalize_email(payload.customer_email))
+
+
 @router.post("/customers/link-existing")
 def link_existing_customer(
     payload: LinkExistingCustomerRequest,
@@ -2301,6 +2351,13 @@ def send_service_invitation(
     lock_service_contacts(db, current_user.id)
 
     try:
+        recipient = _customer_email_status(db, current_user, invite_email)
+        if recipient.registration_status == "unavailable":
+            raise HTTPException(400, "Tento e-mail nelze přidat jako zákazníka. Zkontrolujte zákazníkův osobní účet.")
+        if recipient.connection_status == "linked":
+            db.commit()
+            return {"already_linked": True, "email_sent": False,
+                "message": "Zákazník už je propojený s vaším servisem. Najdete ho v Klientech."}
         # Zneplatnit staré čekající pozvánky pro stejný e-mail od stejného servisu.
         (
             db.query(ServiceCustomerInvite)
@@ -2346,9 +2403,11 @@ def send_service_invitation(
             "email_sent": bool(email_sent),
             "registration_url": invitation_url,
             "message": (
-                "Pozvánka byla odeslána na email zákazníka."
+                ("Žádost o propojení byla odeslána e-mailem a najdete ji také v aplikaci zákazníka v Pozvánkách servisů."
+                    if recipient.registration_status == "registered" else "Pozvánka byla odeslána e-mailem. Nový zákazník si založí účet a potom potvrdí propojení.")
                 if email_sent
-                else "Pozvánka je připravená v aplikaci zákazníka, ale e-mail se nepodařilo odeslat. Zkuste jej odeslat znovu."
+                else ("Žádost čeká v aplikaci zákazníka v Pozvánkách servisů, ale e-mail se nepodařilo odeslat."
+                    if recipient.registration_status == "registered" else "Pozvánka je uložená, ale e-mail se nepodařilo odeslat. Zkuste jej odeslat znovu v Odeslaných pozvánkách.")
             ),
         }
     except HTTPException:

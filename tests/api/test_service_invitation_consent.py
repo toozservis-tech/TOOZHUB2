@@ -63,6 +63,80 @@ def test_existing_account_must_accept_invitation(fixture):
     assert result['email_sent'] and len(s.delivered)==1
 
 
+def lookup(s, email, actor=None):
+    return workspace.lookup_customer_email(workspace.CustomerEmailLookupRequest(customer_email=email),
+        current_user=actor or s.service, db=s.db).model_dump()
+
+
+def test_email_lookup_distinguishes_registration_without_exposing_profile(fixture):
+    s=fixture
+    existing=lookup(s, 'OWNER@EXAMPLE.COM')
+    assert existing == {'email':'owner@example.com', 'registration_status':'registered',
+        'connection_status':'none', 'customer_id':None}
+    new=lookup(s, 'new@example.com')
+    assert new['registration_status']=='new' and new['connection_status']=='none'
+    assert len(s.delivered)==0 and s.db.query(ServiceCustomerLink).count()==0
+    assert s.db.query(ServiceCustomerInvite).count()==0
+
+
+def test_lookup_then_request_accept_and_repeated_add_is_idempotent(fixture):
+    s=fixture
+    assert lookup(s,s.owner.email)['connection_status']=='none'
+    send(s)
+    assert lookup(s,s.owner.email)['connection_status']=='pending'
+    assert workspace.list_service_customers(current_user=s.service,db=s.db)==[]
+    inbox=workspace.list_incoming_service_invitations(current_user=s.owner,db=s.db)['items']
+    assert len(inbox)==1
+    workspace.accept_service_invitation(workspace.AcceptServiceInviteRequest(invitation_id=inbox[0]['id']),
+        current_user=s.owner,db=s.db)
+    assert lookup(s,s.owner.email)['customer_id']==s.owner.id
+    assert lookup(s,s.owner.email)['connection_status']=='linked'
+    assert [x['customer_id'] for x in workspace.list_service_customers(current_user=s.service,db=s.db)]==[s.owner.id]
+    assert workspace.list_customer_vehicles(s.owner.id,current_user=s.service,db=s.db)==[]
+    repeated=send(s)
+    assert repeated['already_linked'] and not repeated['email_sent']
+    assert len(s.delivered)==1 and s.db.query(ServiceCustomerInvite).count()==1
+
+
+def test_lookup_pending_is_scoped_to_sender_and_expiry(fixture):
+    s=fixture; row=pending(s)
+    assert lookup(s,s.owner.email)['connection_status']=='pending'
+    row.service_customer_id=s.stranger.id; s.db.commit()
+    assert lookup(s,s.owner.email)['connection_status']=='none'
+    row.service_customer_id=s.service.id;row.expires_at=datetime.utcnow()-timedelta(seconds=1);s.db.commit()
+    assert lookup(s,s.owner.email)['connection_status']=='none'
+
+
+@pytest.mark.parametrize('state', ['self','admin','service','disabled','deleted'])
+def test_unavailable_email_cannot_be_invited_as_client(fixture,state):
+    s=fixture; actor=s.owner
+    if state=='self': actor=s.service
+    elif state in {'admin','service'}: actor.role=state
+    elif state=='disabled': actor.is_disabled=True
+    else: actor.is_deleted=True
+    s.db.commit()
+    assert lookup(s,actor.email)['registration_status']=='unavailable'
+    with pytest.raises(HTTPException) as exc:
+        workspace.send_service_invitation(workspace.SendServiceInviteRequest(invite_email=actor.email),
+            current_user=s.service,db=s.db)
+    assert exc.value.status_code==400 and not s.delivered
+
+
+def test_customer_cannot_enumerate_accounts_and_lookup_is_rate_limited(fixture):
+    s=fixture
+    with pytest.raises(HTTPException) as denied: lookup(s,s.stranger.email,actor=s.owner)
+    assert denied.value.status_code==403
+    for _ in range(40): lookup(s,s.owner.email)
+    with pytest.raises(HTTPException) as throttled: lookup(s,s.owner.email)
+    assert throttled.value.status_code==429
+
+
+def test_lookup_requires_a_complete_email(fixture):
+    from pydantic import ValidationError
+    for email in ['owner','@example.com','owner@','%example.com']:
+        with pytest.raises(ValidationError): workspace.CustomerEmailLookupRequest(customer_email=email)
+
+
 def test_resend_does_not_grant_access_to_registered_customer(fixture):
     s=fixture; row=pending(s)
     result=workspace.resend_service_invitation(row.id,current_user=s.service,db=s.db)
