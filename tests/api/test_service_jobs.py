@@ -20,7 +20,7 @@ def ctx(tmp_path):
         db.add(tenant); db.flush()
         owner = Customer(tenant_id=tenant.id, email='owner@example.test', role='user', password_hash='test')
         service = Customer(tenant_id=tenant.id, email='service@example.test', role='service', password_hash='test')
-        stranger = Customer(tenant_id=tenant.id, email='stranger@example.test', role='admin', password_hash='test')
+        stranger = Customer(tenant_id=tenant.id, email='stranger@example.test', role='user', password_hash='test')
         db.add_all([owner, service, stranger]); db.flush()
         vehicle = Vehicle(tenant_id=tenant.id, user_email=owner.email, vin='TMBAB7NE0F0123456', brand='Skoda', model='Octavia', plate='TEST001')
         db.add(vehicle); db.flush()
@@ -80,7 +80,7 @@ def test_conflicting_uuid_stale_version_and_direct_completion_are_rejected(ctx):
     assert db.query(ServiceJobEvent).count() == 1
 
 
-def test_no_admin_shortcut_and_revocation_blocks_service_but_not_owner(ctx):
+def test_unrelated_user_denied_and_revocation_blocks_service_but_not_owner(ctx):
     db, owner, service, stranger, _, _, link = ctx
     job, _ = accept(ctx)
     with pytest.raises(HTTPException):

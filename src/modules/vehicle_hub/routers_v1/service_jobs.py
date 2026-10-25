@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_, func, case
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from src.core.rbac import is_admin
 from ..database import get_db
 from ..models import Customer, Vehicle, ServiceRecord, ServiceRecordAuditLog, ServiceAccessRequest
 from ..ownership import lock_vehicle_access, get_primary_vehicle_owner_assignment
@@ -113,6 +114,13 @@ def _consent_state(db, job):
 def _authorize(db, job, user, write=False):
     if not job:
         raise HTTPException(404, 'Zakázka nebyla nalezena.')
+    if user.is_disabled or user.is_deleted:
+        raise HTTPException(403, 'Účet není aktivní.')
+    # Authenticated administrators inspect all ownership periods and consent
+    # states, as elsewhere in vehicle administration. MFA remains enforced by
+    # get_current_user; reading does not grant consent or impersonate a service.
+    if not write and is_admin(user.role):
+        return None
     if _private(job):
         # Work created by this service remains its own evidence, even after rejection
         # or transfer. It never grants access to the vehicle or the owner's history.
@@ -159,6 +167,16 @@ def _serialize(db, job):
 def list_jobs(vehicle_id: int, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db), access_request_id: Optional[int] = None):
     if current_user.is_disabled or current_user.is_deleted:
         raise HTTPException(403, 'Účet není aktivní.')
+    if is_admin(current_user.role):
+        if db.get(Vehicle, vehicle_id) is None:
+            raise HTTPException(404, 'Vozidlo nebylo nalezeno.')
+        query = db.query(ServiceJob).filter_by(vehicle_id=vehicle_id)
+        if access_request_id is not None:
+            request = db.get(ServiceAccessRequest, access_request_id)
+            if request is None or request.vehicle_id != vehicle_id:
+                raise HTTPException(404, 'Žádost nebyla nalezena.')
+            query = query.filter_by(access_request_id=access_request_id)
+        return {'items': [_serialize(db, job) for job in query.order_by(ServiceJob.id.desc()).all()]}
     if access_request_id is not None:
         _request_for_service(db, access_request_id, current_user, vehicle_id)
         jobs = db.query(ServiceJob).filter_by(access_request_id=access_request_id, service_id=current_user.id).order_by(ServiceJob.id.desc()).all()
