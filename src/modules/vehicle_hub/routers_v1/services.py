@@ -480,6 +480,9 @@ def resolve_service_access_request(
         request_row.decided_by_customer_id = current_user.id
         request_row.decision_note = (payload.note or "").strip() or None
         request_row.updated_at = datetime.utcnow()
+        if decision == "approved":
+            from .service_jobs import publish_work_after_consent
+            publish_work_after_consent(db, request_row, service, link)
         db.commit()
         return {
             "resolved": True,
@@ -489,6 +492,7 @@ def resolve_service_access_request(
             "service_id": int(request_row.service_customer_id),
         }
     except HTTPException:
+        db.rollback()
         raise
     except Exception as exc:
         db.rollback()

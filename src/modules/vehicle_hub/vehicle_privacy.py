@@ -104,11 +104,11 @@ def require_private_record(db, record, actor):
         raise HTTPException(403, 'Záznam původního vlastníka nelze měnit. Můžete přidat vlastní nový záznam.')
 
 
-def register_attachment(db, *, vehicle_id, key, actor):
+def register_attachment(db, *, vehicle_id, key, actor, private_to_author=False):
     from .ownership import get_primary_vehicle_owner_assignment
     ownership = get_primary_vehicle_owner_assignment(db, vehicle_id)
     db.add(VehicleAttachmentPrivacy(storage_key=key, vehicle_id=vehicle_id,
-        owner_customer_id=ownership.customer_id if ownership else None, author_customer_id=actor.id))
+        owner_customer_id=ownership.customer_id if ownership and not private_to_author else None, author_customer_id=actor.id))
     db.flush()
 
 
@@ -138,6 +138,14 @@ def may_read_repair_private(db, row, actor):
 def require_attachment_write_period(db, *, vehicle_id, key, record_id=None):
     """Reading original evidence does not authorize sharing it with a new owner."""
     file = db.get(VehicleAttachmentPrivacy, key)
+    if file is not None and file.owner_customer_id is None:
+        from .service_job_models import ServiceJob, ServiceJobPhoto, ServiceJobDocument
+        for evidence in (ServiceJobPhoto, ServiceJobDocument):
+            private_job = db.query(ServiceJob.id).join(evidence, evidence.job_id == ServiceJob.id).filter(
+                evidence.storage_key == key, ServiceJob.access_request_id.is_not(None),
+                ServiceJob.consent_published_at.is_(None)).first()
+            if private_job:
+                raise HTTPException(403, 'Příloha zakázky čeká na souhlas majitele. Nelze ji připojit k veřejnému záznamu.')
     if file is None or file.archive_id is None:
         return
     record = db.get(VehicleRecordPrivacy, record_id) if record_id else None

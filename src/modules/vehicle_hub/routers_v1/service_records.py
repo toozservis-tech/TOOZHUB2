@@ -389,6 +389,7 @@ def _store_attachment_for_vehicle(
     file_name: str,
     file_mime_type: str,
     content: bytes,
+    private_to_author: bool = False,
 ) -> dict[str, Any]:
     if not content:
         raise HTTPException(status_code=422, detail="Nahraný soubor je prázdný.")
@@ -421,7 +422,8 @@ def _store_attachment_for_vehicle(
     persist_file(target_file, content)
 
     storage_key = target_file.relative_to(SERVICE_RECORD_ATTACHMENTS_DIR).as_posix()
-    register_attachment(db, vehicle_id=vehicle_id, key=storage_key, actor=current_user)
+    register_attachment(db, vehicle_id=vehicle_id, key=storage_key, actor=current_user,
+                        private_to_author=private_to_author)
     return {
         "file_name": filename,
         "mime_type": mime_type,

@@ -9,13 +9,14 @@ from typing import Literal, Optional
 from uuid import UUID, uuid5, NAMESPACE_URL
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import or_, func, case
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from ..database import get_db
-from ..models import Customer, Vehicle, ServiceRecord, ServiceRecordAuditLog
+from ..models import Customer, Vehicle, ServiceRecord, ServiceRecordAuditLog, ServiceAccessRequest
 from ..ownership import lock_vehicle_access, get_primary_vehicle_owner_assignment
 from ..service_access import require_service_vehicle_link, get_active_vehicle_service_link, attach_service_access_to_record
-from ..service_job_models import ServiceJob, ServiceJobEvent, ServiceJobPhoto
+from ..service_job_models import ServiceJob, ServiceJobEvent, ServiceJobPhoto, ServiceJobDocument
 from ..schema_management import assert_module_ready
 from ..vehicle_updates import publish_vehicle_update
 from .auth import get_current_user
@@ -30,6 +31,7 @@ router = APIRouter(tags=['service-jobs-v1'], dependencies=[Depends(_schema_ready
 
 class JobCreate(BaseModel):
     client_id: UUID
+    access_request_id: Optional[int] = Field(default=None, gt=0)
     title: str = Field(min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=10000)
     mileage: Optional[int] = Field(default=None, ge=0, le=10000000)
@@ -80,9 +82,46 @@ def _service(user):
         raise HTTPException(403, 'Zakázku může měnit pouze oprávněný servis.')
 
 
+def _private(job):
+    return job.access_request_id is not None and job.consent_published_at is None
+
+
+def _same_ownership(db, job):
+    assignment = get_primary_vehicle_owner_assignment(db, job.vehicle_id)
+    return bool(assignment and assignment.customer_id == job.owner_id
+        and assignment.id == job.ownership_id
+        and (assignment.owned_from or assignment.assigned_at) == job.ownership_started_at)
+
+
+def _request_for_service(db, request_id, user, vehicle_id=None):
+    _service(user)
+    request = db.query(ServiceAccessRequest).filter_by(id=request_id, service_customer_id=user.id).populate_existing().first()
+    if request is None or (vehicle_id is not None and request.vehicle_id != vehicle_id):
+        raise HTTPException(404, 'Žádost nebyla nalezena.')
+    return request
+
+
+def _consent_state(db, job):
+    if not _private(job):
+        return 'approved'
+    if not _same_ownership(db, job):
+        return 'ownership_changed'
+    request = db.get(ServiceAccessRequest, job.access_request_id)
+    return request.status if request else 'unavailable'
+
+
 def _authorize(db, job, user, write=False):
     if not job:
         raise HTTPException(404, 'Zakázka nebyla nalezena.')
+    if _private(job):
+        # Work created by this service remains its own evidence, even after rejection
+        # or transfer. It never grants access to the vehicle or the owner's history.
+        _service(user)
+        if user.id != job.service_id:
+            raise HTTPException(404, 'Zakázka nebyla nalezena.')
+        if write and (_consent_state(db, job) not in ('pending', 'rejected')):
+            raise HTTPException(409, 'Souhlas nebo vlastník se změnil. Historie práce zůstává uložená.')
+        return None
     owner_id = _owner_id(db, job.vehicle_id)
     assignment = get_primary_vehicle_owner_assignment(db, job.vehicle_id)
     # Private progress belongs to the ownership period captured at acceptance.
@@ -104,6 +143,12 @@ def _authorize(db, job, user, write=False):
 
 def _serialize(db, job):
     return {key: getattr(job, key) for key in ('id', 'vehicle_id', 'service_id', 'status', 'title', 'description', 'mileage', 'version', 'created_at', 'updated_at', 'completed_at', 'final_record_id')} | {
+        'access_request_id': job.access_request_id,
+        'consent_status': _consent_state(db, job),
+        'shared_with_owner': not _private(job),
+        'completion_price': job.completion_price,
+        'documents': [{key: getattr(doc, key) for key in ('id', 'file_name', 'mime_type', 'file_size', 'created_at')}
+                      for doc in db.query(ServiceJobDocument).filter_by(job_id=job.id).order_by(ServiceJobDocument.id).all()],
         'events': [{key: getattr(event, key) for key in ('id', 'status', 'message', 'created_at', 'actor_id')}
                    for event in db.query(ServiceJobEvent).filter_by(job_id=job.id).order_by(ServiceJobEvent.id).all()],
         'photos': [_photo_payload(photo) for photo in db.query(ServiceJobPhoto)
@@ -111,9 +156,17 @@ def _serialize(db, job):
 
 
 @router.get('/vehicles/{vehicle_id}/service-jobs')
-def list_jobs(vehicle_id: int, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_jobs(vehicle_id: int, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db), access_request_id: Optional[int] = None):
     if current_user.is_disabled or current_user.is_deleted:
         raise HTTPException(403, 'Účet není aktivní.')
+    if access_request_id is not None:
+        _request_for_service(db, access_request_id, current_user, vehicle_id)
+        jobs = db.query(ServiceJob).filter_by(access_request_id=access_request_id, service_id=current_user.id).order_by(ServiceJob.id.desc()).all()
+        result = []
+        for job in jobs:
+            _authorize(db, job, current_user)
+            result.append(_serialize(db, job))
+        return {'items': result}
     owner_id = _owner_id(db, vehicle_id)
     assignment = get_primary_vehicle_owner_assignment(db, vehicle_id)
     query = db.query(ServiceJob).filter_by(vehicle_id=vehicle_id, owner_id=owner_id, ownership_id=assignment.id,
@@ -124,7 +177,45 @@ def list_jobs(vehicle_id: int, current_user: Customer = Depends(get_current_user
         if not link or not link.scope_vehicle_history_read:
             raise HTTPException(403, 'Servis nemá přístup k vozidlu.')
         query = query.filter_by(service_id=current_user.id)
+    if current_user.id == owner_id:
+        query = query.filter(or_(ServiceJob.access_request_id.is_(None), ServiceJob.consent_published_at.is_not(None)))
     return {'items': [_serialize(db, job) for job in query.order_by(ServiceJob.id.desc()).all()]}
+
+
+@router.get('/services/workspace/work-before-consent')
+def list_work_before_consent(current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db), offset: int = 0):
+    _service(current_user)
+    if offset < 0:
+        raise HTTPException(422, 'Neplatná stránka historie.')
+    last_job = db.query(func.max(ServiceJob.updated_at)).filter(
+        ServiceJob.access_request_id == ServiceAccessRequest.id,
+        ServiceJob.service_id == current_user.id).correlate(ServiceAccessRequest).scalar_subquery()
+    last_request = func.coalesce(ServiceAccessRequest.updated_at, ServiceAccessRequest.requested_at)
+    last_activity = case((last_job > last_request, last_job), else_=last_request)
+    query = db.query(ServiceAccessRequest).filter(
+        ServiceAccessRequest.service_customer_id == current_user.id,
+        or_(ServiceAccessRequest.status != 'approved', last_job.is_not(None)))
+    requests = query.order_by(last_activity.desc(), ServiceAccessRequest.id.desc()).offset(offset).limit(51).all()
+    has_more = len(requests) > 50
+    requests = requests[:50]
+    items = []
+    for request in requests:
+        vehicle = db.get(Vehicle, request.vehicle_id)
+        jobs = db.query(ServiceJob).filter_by(access_request_id=request.id, service_id=current_user.id).order_by(ServiceJob.id.desc()).all()
+        if request.status == 'approved' and not jobs:
+            continue
+        assignment = get_primary_vehicle_owner_assignment(db, request.vehicle_id)
+        current_owner = bool(assignment and assignment.customer_id == request.owner_customer_id
+            and (assignment.owned_from or assignment.assigned_at) <= request.requested_at)
+        state = request.status if current_owner else 'ownership_changed'
+        items.append({'id': request.id, 'vehicle_id': request.vehicle_id,
+            'vehicle_title': (' '.join(filter(None, [vehicle.brand, vehicle.model])) or vehicle.nickname or 'Vozidlo') if vehicle else 'Nedostupné vozidlo',
+            'plate': vehicle.plate if vehicle else None, 'status': state, 'requested_at': request.requested_at,
+            'decided_at': request.decided_at, 'decision_note': request.decision_note,
+            'job_count': len(jobs), 'can_create': current_owner and request.status in ('pending', 'approved'),
+            'can_work': current_owner and request.status in ('pending', 'rejected', 'approved'),
+            'last_activity_at': max([request.updated_at or request.requested_at] + [job.updated_at for job in jobs])})
+    return {'items': items, 'next_offset': offset + 50 if has_more else None}
 
 
 @router.get('/service-jobs/{job_id}')
@@ -174,9 +265,21 @@ def create_job_from_intake(db, *, intake, current_user):
 def create_job(vehicle_id: int, payload: JobCreate, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
     _service(current_user)
     lock_vehicle_access(db, vehicle_id)
-    require_service_vehicle_link(db, current_user=current_user, vehicle_id=vehicle_id, require_create_record=True)
+    request = None
+    if payload.access_request_id is not None:
+        request = _request_for_service(db, payload.access_request_id, current_user, vehicle_id)
+        assignment = get_primary_vehicle_owner_assignment(db, vehicle_id)
+        if (not assignment or assignment.customer_id != request.owner_customer_id
+                or (assignment.owned_from or assignment.assigned_at) > request.requested_at
+                or request.status not in ('pending', 'approved')):
+            raise HTTPException(409, 'U této žádosti již nelze založit novou zakázku.')
+    if request is None or request.status == 'approved':
+        require_service_vehicle_link(db, current_user=current_user, vehicle_id=vehicle_id, require_create_record=True)
     owner_id = _owner_id(db, vehicle_id)
-    digest = _digest({'vehicle_id': vehicle_id, **payload.model_dump()})
+    creation = payload.model_dump()
+    if payload.access_request_id is None:
+        creation.pop('access_request_id')  # Preserve replay hashes from older app versions.
+    digest = _digest({'vehicle_id': vehicle_id, **creation})
     existing = db.query(ServiceJob).filter_by(service_id=current_user.id, client_id=str(payload.client_id)).first()
     if existing:
         _authorize(db, existing, current_user, write=True)
@@ -189,7 +292,9 @@ def create_job(vehicle_id: int, payload: JobCreate, current_user: Customer = Dep
     assignment = get_primary_vehicle_owner_assignment(db, vehicle_id)
     job = ServiceJob(tenant_id=vehicle.tenant_id, vehicle_id=vehicle_id, service_id=current_user.id,
         owner_id=owner_id, ownership_id=assignment.id, ownership_started_at=assignment.owned_from or assignment.assigned_at, vin_snapshot=vehicle.vin, client_id=str(payload.client_id), creation_hash=digest,
-        title=payload.title.strip(), description=payload.description, mileage=payload.mileage)
+        title=payload.title.strip(), description=payload.description, mileage=payload.mileage,
+        access_request_id=request.id if request else None,
+        consent_published_at=datetime.utcnow() if request and request.status == 'approved' else None)
     db.add(job)
     try:
         db.flush()
@@ -200,13 +305,45 @@ def create_job(vehicle_id: int, payload: JobCreate, current_user: Customer = Dep
     db.add(ServiceJobEvent(job_id=job.id, actor_id=current_user.id, client_id=str(payload.client_id),
         payload_hash=digest, status='received', message=payload.description or 'Vozidlo přijato do servisu.'))
     db.flush()
-    publish_vehicle_update(db, vehicle_id=job.vehicle_id, actor_id=current_user.id,
-        event_type='job.received', title='Vozidlo přijato do servisu',
-        message=payload.description or job.title, source_type='service_job', source_id=job.id,
-        dedupe_key=f'service-job:{job.id}:created', service_job_id=job.id)
+    if not _private(job):
+        publish_vehicle_update(db, vehicle_id=job.vehicle_id, actor_id=current_user.id,
+            event_type='job.received', title='Vozidlo přijato do servisu',
+            message=payload.description or job.title, source_type='service_job', source_id=job.id,
+            dedupe_key=f'service-job:{job.id}:created', service_job_id=job.id)
     db.commit()
     return _serialize(db, job)
 
+
+def _publish_final_record(db, job, service, link, completion_message):
+    if job.final_record_id is not None:
+        return
+    history = db.query(ServiceJobEvent).filter_by(job_id=job.id).order_by(ServiceJobEvent.id).all()
+    timeline_note = '\n'.join(f'{item.created_at.isoformat()} [{item.status}] {item.message}' for item in history)
+    photos = db.query(ServiceJobPhoto).filter_by(job_id=job.id).order_by(ServiceJobPhoto.id).all()
+    documents = db.query(ServiceJobDocument).filter_by(job_id=job.id).order_by(ServiceJobDocument.id).all()
+    attachments_json = json.dumps([{
+        "storage_key": photo.storage_key,
+        "file_name": f"foto_{photo.id}.jpg",
+        "mime_type": photo.mime_type,
+        "file_size": photo.file_size,
+        "caption": photo.caption,
+    } for photo in photos] + [dict(storage_key=doc.storage_key, file_name=doc.file_name, mime_type=doc.mime_type, file_size=doc.file_size) for doc in documents], ensure_ascii=False) if photos or documents else None
+    record = ServiceRecord(tenant_id=job.tenant_id, vehicle_id=job.vehicle_id, user_id=service.id,
+        performed_at=job.completed_at, mileage=job.mileage, description=completion_message,
+        price=job.completion_price, note=timeline_note, category=job.title, attachments=attachments_json,
+        created_by_ai=False)
+    record._skip_vehicle_update = True
+    attach_service_access_to_record(record=record, current_user=service, access_link=link)
+    db.add(record)
+    db.flush()
+    from .service_records import _service_record_snapshot, _snapshot_json_and_hash
+    snapshot, record.snapshot_hash = _snapshot_json_and_hash(_service_record_snapshot(record))
+    audit = ServiceRecordAuditLog(tenant_id=job.tenant_id, service_record_id=record.id, vehicle_id=job.vehicle_id,
+        changed_by_user_id=service.id, action='create', previous_snapshot_json='{}',
+        new_snapshot_json=snapshot, snapshot_hash=record.snapshot_hash, change_reason='service_job_completion')
+    audit._skip_vehicle_update = True
+    db.add(audit)
+    job.final_record_id = record.id
 
 @router.post('/service-jobs/{job_id}/updates')
 def update_job(job_id: int, payload: JobUpdate, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -225,7 +362,7 @@ def update_job(job_id: int, payload: JobUpdate, current_user: Customer = Depends
         return _serialize(db, job)
     if job.version != payload.expected_version:
         raise HTTPException(409, 'Zakázka se změnila. Obnovte její stav.')
-    if job.status in ('completed', 'cancelled'):
+    if job.status in ('completed', 'cancelled', 'handed_over'):
         raise HTTPException(409, 'Ukončenou zakázku již nelze měnit.')
     if not payload.message.strip():
         raise HTTPException(422, 'Vyplňte zprávu pro vlastníka vozidla.')
@@ -239,44 +376,21 @@ def update_job(job_id: int, payload: JobUpdate, current_user: Customer = Depends
     if payload.mileage is not None:
         job.mileage = payload.mileage
     if target == 'completed':
-        # Completion and final history entry share this transaction and vehicle lock.
-        history = db.query(ServiceJobEvent).filter_by(job_id=job.id).order_by(ServiceJobEvent.id).all()
-        timeline_note = '\n'.join(f'{item.created_at.isoformat()} [{item.status}] {item.message}' for item in history)
-        timeline_note += f'\n{now.isoformat()} [completed] {payload.message.strip()}'
-        photos = db.query(ServiceJobPhoto).filter_by(job_id=job.id).order_by(ServiceJobPhoto.id).all()
-        attachments_json = json.dumps([{
-            "storage_key": photo.storage_key,
-            "file_name": f"foto_{photo.id}.jpg",
-            "mime_type": photo.mime_type,
-            "file_size": photo.file_size,
-            "caption": photo.caption,
-        } for photo in photos], ensure_ascii=False) if photos else None
-        record = ServiceRecord(tenant_id=job.tenant_id, vehicle_id=job.vehicle_id, user_id=current_user.id,
-            performed_at=now, mileage=job.mileage, description=payload.message.strip(),
-            price=payload.price, note=timeline_note, category=job.title, attachments=attachments_json,
-            created_by_ai=False)
-        record._skip_vehicle_update = True
-        attach_service_access_to_record(record=record, current_user=current_user, access_link=link)
-        db.add(record)
-        db.flush()
-        from .service_records import _service_record_snapshot, _snapshot_json_and_hash
-        snapshot, record.snapshot_hash = _snapshot_json_and_hash(_service_record_snapshot(record))
-        audit = ServiceRecordAuditLog(tenant_id=job.tenant_id, service_record_id=record.id, vehicle_id=job.vehicle_id,
-            changed_by_user_id=current_user.id, action='create', previous_snapshot_json='{}',
-            new_snapshot_json=snapshot, snapshot_hash=record.snapshot_hash, change_reason='service_job_completion')
-        audit._skip_vehicle_update = True
-        db.add(audit)
-        job.final_record_id, job.completed_at = record.id, now
+        job.completed_at = now
+        job.completion_price = payload.price
     db.add(ServiceJobEvent(job_id=job.id, actor_id=current_user.id, client_id=str(payload.client_id),
-        payload_hash=digest, status=target, message=payload.message.strip()))
+        payload_hash=digest, status=target, message=payload.message.strip(), created_at=now))
     db.flush()
+    if target == 'completed' and not _private(job):
+        _publish_final_record(db, job, current_user, link, payload.message.strip())
     titles = {'in_progress': 'Na vozidle probíhá oprava', 'completed': 'Servis vozidla dokončen',
               'cancelled': 'Servisní zakázka zrušena', 'received': 'Nová informace ze servisu'}
-    publish_vehicle_update(db, vehicle_id=job.vehicle_id, actor_id=current_user.id,
-        event_type=f'job.{target}' if payload.status else 'job.updated',
-        title=titles[target] if payload.status else 'Nová informace ze servisu',
-        message=payload.message.strip(), source_type='service_job', source_id=job.id,
-        dedupe_key=f'service-job:{job.id}:update:{payload.client_id}', service_job_id=job.id)
+    if not _private(job):
+        publish_vehicle_update(db, vehicle_id=job.vehicle_id, actor_id=current_user.id,
+            event_type=f'job.{target}' if payload.status else 'job.updated',
+            title=titles[target] if payload.status else 'Nová informace ze servisu',
+            message=payload.message.strip(), source_type='service_job', source_id=job.id,
+            dedupe_key=f'service-job:{job.id}:update:{payload.client_id}', service_job_id=job.id)
     db.commit()
     return _serialize(db, job)
 
@@ -299,7 +413,7 @@ def upload_service_job_photo(
     lock_vehicle_access(db, job.vehicle_id)
     db.refresh(job)
     _authorize(db, job, current_user, write=True)
-    digest = hashlib.sha256(payload.content_base64.encode('ascii')).hexdigest()
+    digest = hashlib.sha256(payload.content_base64.encode('utf-8')).hexdigest()
     previous = db.query(ServiceJobPhoto).filter_by(job_id=job.id, client_id=str(payload.client_id)).first()
     if previous:
         if previous.sha256 != digest:
@@ -334,6 +448,7 @@ def upload_service_job_photo(
     stored = _store_attachment_for_vehicle(
         vehicle_id=job.vehicle_id, vehicle=vehicle, current_user=current_user, db=db,
         file_name="servisni_foto.jpg", file_mime_type="image/jpeg", content=sanitized,
+        private_to_author=_private(job),
     )
     photo = ServiceJobPhoto(
         job_id=job.id, actor_id=current_user.id, client_id=str(payload.client_id),
@@ -389,13 +504,14 @@ def hand_over_job(
         payload_hash=digest, status="handed_over", message="Vozidlo předáno zákazníkovi.",
     ))
     db.flush()
-    publish_vehicle_update(
-        db, vehicle_id=job.vehicle_id, actor_id=current_user.id,
-        event_type="job.handed_over", title="Vozidlo předáno ze servisu",
-        message="Servis označil vozidlo jako předané.",
-        source_type="service_job", source_id=job.id,
-        dedupe_key=f"service-job:{job.id}:handover", service_job_id=job.id,
-    )
+    if not _private(job):
+        publish_vehicle_update(
+            db, vehicle_id=job.vehicle_id, actor_id=current_user.id,
+            event_type="job.handed_over", title="Vozidlo předáno ze servisu",
+            message="Servis označil vozidlo jako předané.",
+            source_type="service_job", source_id=job.id,
+            dedupe_key=f"service-job:{job.id}:handover", service_job_id=job.id,
+        )
     db.commit()
     return _serialize(db, job)
 
@@ -425,3 +541,118 @@ def view_job_photo(
         media_type=photo.mime_type,
         headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
+
+
+def publish_work_after_consent(db, request, service, link):
+    """Called inside owner approval transaction and the existing vehicle lock."""
+    from ..models import VehicleAttachmentPrivacy
+    jobs = db.query(ServiceJob).filter_by(access_request_id=request.id, service_id=service.id).all()
+    for job in jobs:
+        if not _private(job):
+            continue
+        if not _same_ownership(db, job) or job.owner_id != request.owner_customer_id:
+            raise HTTPException(409, 'Vlastnictví vozidla se změnilo. Práce zůstává v historii servisu.')
+        now = datetime.utcnow()
+        job.consent_published_at = now
+        job.updated_at = now
+        job.version += 1
+        for model in (ServiceJobPhoto, ServiceJobDocument):
+            for file in db.query(model).filter_by(job_id=job.id).all():
+                boundary = db.get(VehicleAttachmentPrivacy, file.storage_key)
+                if boundary is None or boundary.author_customer_id != service.id or boundary.vehicle_id != job.vehicle_id:
+                    raise HTTPException(409, 'Nelze ověřit přílohu zakázky; souhlas nebyl uložen.')
+                boundary.owner_customer_id = job.owner_id
+        if job.status in ('completed', 'handed_over'):
+            completion = db.query(ServiceJobEvent).filter_by(job_id=job.id, status='completed', created_at=job.completed_at).order_by(ServiceJobEvent.id.desc()).first()
+            _publish_final_record(db, job, service, link, completion.message if completion else job.title)
+        db.add(ServiceJobEvent(job_id=job.id, actor_id=request.owner_customer_id,
+            client_id=str(uuid5(NAMESPACE_URL, f'job-consent:{job.id}:{request.id}')),
+            payload_hash=_digest({'request_id': request.id}), status=job.status,
+            message='Majitel schválil přístup. Dosavadní práce a přílohy byly zpřístupněny.'))
+        db.flush()
+        publish_vehicle_update(db, vehicle_id=job.vehicle_id, actor_id=service.id,
+            event_type='job.shared', title='Servisní práce zpřístupněna',
+            message=job.title + ' — včetně práce uložené před souhlasem.',
+            source_type='service_job', source_id=job.id,
+            dedupe_key=f'service-job:{job.id}:consent', service_job_id=job.id)
+
+
+class JobDocumentUpload(BaseModel):
+    client_id: UUID
+    file_name: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=8, max_length=20_000_000)
+
+
+@router.post('/service-jobs/{job_id}/documents')
+def upload_job_document(job_id: int, payload: JobDocumentUpload,
+    current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    from pathlib import Path
+    from .service_records import _store_attachment_for_vehicle
+    _service(current_user)
+    job = db.get(ServiceJob, job_id)
+    if not job:
+        raise HTTPException(404, 'Zakázka nebyla nalezena.')
+    lock_vehicle_access(db, job.vehicle_id)
+    db.refresh(job)
+    _authorize(db, job, current_user, write=True)
+    digest = _digest(payload.model_dump(exclude={'client_id'}))
+    previous = db.query(ServiceJobDocument).filter_by(job_id=job.id, client_id=str(payload.client_id)).first()
+    if previous:
+        if previous.sha256 != digest:
+            raise HTTPException(409, 'Stejné ID přílohy patří jinému dokumentu.')
+        return _serialize(db, job)
+    if job.status in ('handed_over', 'cancelled'):
+        raise HTTPException(409, 'K předané nebo zrušené zakázce nelze přidat dokument.')
+    try:
+        content = base64.b64decode(payload.content_base64, validate=True)
+    except (ValueError, binascii.Error):
+        raise HTTPException(422, 'Poškozený dokument.')
+    if len(content) > 15_000_000:
+        raise HTTPException(413, 'Dokument je příliš velký (max 15 MB).')
+    name = Path(payload.file_name).name
+    if not name.lower().endswith('.pdf') or not content.startswith(b'%PDF-'):
+        raise HTTPException(415, 'Přiložte fakturu nebo dokument ve formátu PDF.')
+    # Parse the complete file before accepting it, not only its MIME/header.
+    from PyPDF2 import PdfReader
+    try:
+        pdf = PdfReader(BytesIO(content))
+        if pdf.is_encrypted or not len(pdf.pages):
+            raise ValueError('Unusable PDF')
+    except Exception:
+        raise HTTPException(422, 'PDF nelze otevřít nebo je chráněné heslem.')
+    stored = _store_attachment_for_vehicle(vehicle_id=job.vehicle_id, vehicle=db.get(Vehicle, job.vehicle_id),
+        current_user=current_user, db=db, file_name=name, file_mime_type='application/pdf', content=content,
+        private_to_author=_private(job))
+    doc = ServiceJobDocument(job_id=job.id, actor_id=current_user.id, client_id=str(payload.client_id),
+        sha256=digest, storage_key=stored['storage_key'], file_name=name, file_size=len(content))
+    db.add(doc)
+    job.version += 1
+    job.updated_at = datetime.utcnow()
+    db.add(ServiceJobEvent(job_id=job.id, actor_id=current_user.id, client_id=str(payload.client_id),
+        payload_hash=digest, status=job.status, message='Dokument: ' + name))
+    db.flush()
+    if not _private(job):
+        publish_vehicle_update(db, vehicle_id=job.vehicle_id, actor_id=current_user.id,
+            event_type='job.document', title='Nový dokument ze servisu', message=name,
+            source_type='service_job', source_id=job.id,
+            dedupe_key=f'service-job:{job.id}:document:{doc.id}', service_job_id=job.id)
+    db.commit()
+    return _serialize(db, job)
+
+
+@router.get('/service-jobs/{job_id}/documents/{document_id}')
+def view_job_document(job_id: int, document_id: int,
+    current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    from fastapi.responses import FileResponse
+    from .service_records import _resolve_attachment_file
+    from ..vehicle_privacy import require_attachment_private
+    job = db.get(ServiceJob, job_id)
+    _authorize(db, job, current_user)
+    doc = db.query(ServiceJobDocument).filter_by(id=document_id, job_id=job.id).first()
+    if not doc:
+        raise HTTPException(404, 'Dokument nebyl nalezen.')
+    require_attachment_private(db, vehicle_id=job.vehicle_id, key=doc.storage_key, actor=current_user)
+    path = _resolve_attachment_file(doc.storage_key, vehicle_id=job.vehicle_id, db=db)
+    if not path:
+        raise HTTPException(404, 'Soubor nebyl nalezen.')
+    return FileResponse(path, media_type='application/pdf', filename=doc.file_name)

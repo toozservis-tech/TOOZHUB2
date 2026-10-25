@@ -1,6 +1,6 @@
 """Append-only workshop job timeline, separate from private ownership history."""
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, UniqueConstraint, Float
 from .database import Base
 
 
@@ -26,6 +26,9 @@ class ServiceJob(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
     final_record_id = Column(Integer, ForeignKey('service_records.id'), nullable=True, unique=True)
+    access_request_id = Column(Integer, ForeignKey('service_access_requests.id'), nullable=True, index=True)
+    consent_published_at = Column(DateTime, nullable=True)
+    completion_price = Column(Float, nullable=True)
     __table_args__ = (UniqueConstraint('service_id', 'client_id', name='uq_service_job_client'),)
 
 
@@ -56,3 +59,19 @@ class ServiceJobPhoto(Base):
     caption = Column(String(200), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     __table_args__ = (UniqueConstraint('job_id', 'client_id', name='uq_service_job_photo_client'),)
+
+
+class ServiceJobDocument(Base):
+    """Original PDF evidence, private to the workshop until owner consent."""
+    __tablename__ = 'service_job_documents'
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey('service_jobs.id'), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey('customers.id'), nullable=False)
+    client_id = Column(String(36), nullable=False)
+    sha256 = Column(String(64), nullable=False)
+    storage_key = Column(String(500), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    mime_type = Column(String(64), nullable=False, default='application/pdf')
+    file_size = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint('job_id', 'client_id', name='uq_service_job_document_client'),)

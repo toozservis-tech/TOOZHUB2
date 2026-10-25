@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.modules.vehicle_hub.database import Base, get_db
-from src.modules.vehicle_hub.models import Customer, Tenant, Vehicle, ServiceRecord
+from src.modules.vehicle_hub.models import Customer, Tenant, Vehicle, ServiceRecord, License
 from src.modules.vehicle_hub.ownership import ensure_vehicle_owner_assignment
 from src.modules.vehicle_hub.routers_v1 import service_records as records
 from src.modules.vehicle_hub.routers_v1.auth import get_current_user
@@ -29,6 +29,7 @@ def files(tmp_path, monkeypatch):
         db.add(tenant);db.flush()
         user=Customer(email=f'fixture-{index}@example.invalid', role='user', tenant_id=tenant.id)
         db.add(user);db.flush()
+        db.add(License(tenant_id=tenant.id, plan='premium', status='active', vehicles_limit=100))
         car=Vehicle(tenant_id=tenant.id,user_email=user.email,nickname=f'Fixture {index}',stk_valid_until=date(2030,1,1))
         db.add(car);db.flush()
         ensure_vehicle_owner_assignment(db,vehicle=car,owner=user)

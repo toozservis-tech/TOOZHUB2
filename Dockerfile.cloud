@@ -17,6 +17,7 @@ COPY scripts/migrate_vehicle_lifecycle.py ./scripts/migrate_vehicle_lifecycle.py
 COPY scripts/migrate_mobile_release.py ./scripts/migrate_mobile_release.py
 COPY scripts/migrate_google_billing.py ./scripts/migrate_google_billing.py
 COPY scripts/migrate_service_job_photos.py ./scripts/migrate_service_job_photos.py
+COPY scripts/migrate_service_job_consent.py ./scripts/migrate_service_job_consent.py
 COPY scripts/migrate_booking_requests.py ./scripts/migrate_booking_requests.py
 COPY scripts/migrate_vehicle_update_inbox.py ./scripts/migrate_vehicle_update_inbox.py
 COPY alembic/versions/20261002_0013_workshops_vehicle_identity.py ./alembic/versions/20261002_0013_workshops_vehicle_identity.py
