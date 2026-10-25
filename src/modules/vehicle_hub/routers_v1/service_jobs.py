@@ -419,7 +419,7 @@ def upload_service_job_photo(
     job_id: int, payload: JobPhotoUpload,
     current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db),
 ):
-    """Save compressed, EXIF-free photos as private vehicle evidence while job is open."""
+    """Append EXIF-free evidence, including after completion, without reopening work."""
     import hashlib
     from PIL import Image, UnidentifiedImageError
     from .service_records import _store_attachment_for_vehicle
@@ -441,8 +441,8 @@ def upload_service_job_photo(
     matching_photo = db.query(ServiceJobPhoto).filter_by(job_id=job.id, sha256=digest).first()
     if matching_photo:
         return {"photo": _photo_payload(matching_photo), "job": _serialize(db, job)}
-    if job.status in ("completed", "handed_over", "cancelled"):
-        raise HTTPException(409, "K uzavřené zakázce nelze přidat další fotografie.")
+    if job.status in ("handed_over", "cancelled"):
+        raise HTTPException(409, "K předané nebo zrušené zakázce nelze přidat další fotografie.")
     try:
         content = base64.b64decode(payload.content_base64, validate=True)
     except (ValueError, binascii.Error):
@@ -479,8 +479,14 @@ def upload_service_job_photo(
     db.add(ServiceJobEvent(
         job_id=job.id, actor_id=current_user.id, client_id=str(payload.client_id),
         payload_hash=digest, status=job.status,
-        message="Fotografie: " + (photo.caption or "Vozidlo"),
+        message=("Fotografie doplněná po dokončení: " if job.status == "completed" else "Fotografie: ") + (photo.caption or "Vozidlo"),
     ))
+    db.flush()
+    if not _private(job):
+        publish_vehicle_update(db, vehicle_id=job.vehicle_id, actor_id=current_user.id,
+            event_type='job.photo', title='Nová fotografie ze servisu', message=photo.caption,
+            source_type='service_job', source_id=job.id,
+            dedupe_key=f'service-job:{job.id}:photo:{photo.id}', service_job_id=job.id)
     db.commit()
     return {"photo": _photo_payload(photo), "job": _serialize(db, job)}
 
