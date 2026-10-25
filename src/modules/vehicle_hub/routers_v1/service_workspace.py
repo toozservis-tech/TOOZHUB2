@@ -117,11 +117,26 @@ class CustomerEmailLookupRequest(BaseModel):
     customer_email: EmailStr = Field(max_length=254)
 
 
+class CustomerVehicleChoice(BaseModel):
+    id: int
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    year: Optional[int] = None
+    plate: Optional[str] = None
+    access_status: Literal["available", "pending", "approved"]
+
+
 class CustomerEmailLookupResponse(BaseModel):
     email: str
     registration_status: Literal["registered", "new", "unavailable"]
     connection_status: Literal["none", "pending", "linked"]
     customer_id: Optional[int] = None  # Only an already-consented client may expose an ID.
+    vehicles: list[CustomerVehicleChoice] = Field(default_factory=list)
+
+
+class CustomerVehicleAccessRequest(CustomerEmailLookupRequest):
+    vehicle_id: int = Field(gt=0)
+    note: Optional[str] = Field(default=None, max_length=500)
 
 
 class SendServiceInviteRequest(BaseModel):
@@ -2112,6 +2127,17 @@ def create_service_access_request(
         owner_customer = get_primary_vehicle_owner(db, vehicle)
         result_status = "matched" if owner_customer else "owner_missing"
 
+    # Revalidate the selected car against the exact email after taking the
+    # ownership lock. A stale lookup must never request a new owner's car.
+    if payload.customer_email is not None:
+        if owner_customer:
+            db.refresh(owner_customer)
+        if (not vehicle or vehicle.merged_into_id is not None or not owner_customer
+                or _normalize_email(owner_customer.email) != _normalize_email(payload.customer_email)
+                or str(owner_customer.role or '').lower() != 'user'
+                or customer_is_disabled(owner_customer) or customer_is_deleted(owner_customer)):
+            raise HTTPException(409, "Vozidlo už není u tohoto zákazníka dostupné. Vyhledejte e-mail znovu.")
+
     audit = log_vehicle_lookup(
         db,
         current_user=current_user,
@@ -2141,6 +2167,7 @@ def create_service_access_request(
         .filter(
             ServiceAccessRequest.service_customer_id == current_user.id,
             ServiceAccessRequest.vehicle_id == vehicle.id,
+            ServiceAccessRequest.owner_customer_id == owner_customer.id,
             ServiceAccessRequest.status == "pending",
         )
         .order_by(ServiceAccessRequest.id.desc())
@@ -2227,7 +2254,7 @@ def list_approved_service_vehicles(
 
 
 def _customer_email_status(db, service, email: str) -> CustomerEmailLookupResponse:
-    """Exact-address lookup only; never return an unconnected person's profile."""
+    """Exact-address lookup; expose only car identification, never history or documents."""
     customer = _find_customer_by_email(db, email)
     result = CustomerEmailLookupResponse(email=email, registration_status="new", connection_status="none")
     if customer:
@@ -2236,6 +2263,17 @@ def _customer_email_status(db, service, email: str) -> CustomerEmailLookupRespon
             result.registration_status = "unavailable"
             return result
         result.registration_status = "registered"
+        for vehicle in get_owned_vehicle_rows(db, customer):
+            owner = get_primary_vehicle_owner(db, vehicle)
+            if vehicle.merged_into_id is not None or not owner or owner.id != customer.id:
+                continue
+            approved = get_active_vehicle_service_link(db, service_customer_id=service.id, vehicle_id=vehicle.id)
+            pending = db.query(ServiceAccessRequest.id).filter_by(
+                service_customer_id=service.id, owner_customer_id=customer.id,
+                vehicle_id=vehicle.id, status="pending").first()
+            result.vehicles.append(CustomerVehicleChoice(
+                id=vehicle.id, brand=vehicle.brand, model=vehicle.model, year=vehicle.year,
+                plate=vehicle.plate, access_status="approved" if approved else "pending" if pending else "available"))
         link = _get_active_link(db, service_customer_id=service.id, customer_id=customer.id)
         if has_contact_consent(link, customer.id):
             result.connection_status = "linked"
@@ -2263,6 +2301,19 @@ def lookup_customer_email(payload: CustomerEmailLookupRequest,
         raise HTTPException(403, "Vyhledávání je dostupné ověřenému aktivnímu servisu.")
     limit_attempt(db, current_user.id, 'service-customer-lookup', limit=40)
     return _customer_email_status(db, current_user, _normalize_email(payload.customer_email))
+
+
+@router.post("/customers/vehicle-access-request")
+def request_customer_vehicle_access(payload: CustomerVehicleAccessRequest,
+    current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+    if customer_is_disabled(current_user) or customer_is_deleted(current_user) or pending_verification(db, current_user.id):
+        raise HTTPException(403, "Žádost může odeslat jen ověřený aktivní servis.")
+    limit_attempt(db, current_user.id, 'service-customer-vehicle-request', limit=20)
+    return create_service_access_request(ServiceAccessRequestCreateV1(
+        vehicle_id=payload.vehicle_id, customer_email=payload.customer_email,
+        lookup_query="email-selection", note=payload.note), current_user=current_user, db=db)
 
 
 @router.post("/customers/link-existing")

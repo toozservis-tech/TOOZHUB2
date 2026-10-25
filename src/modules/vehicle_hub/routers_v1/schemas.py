@@ -201,6 +201,7 @@ class ServiceAccessRequestCreateV1(BaseModel):
     vehicle_id: Optional[int] = Field(default=None, gt=0)
     lookup_query: str = Field(..., min_length=2, max_length=128)
     note: Optional[str] = Field(default=None, max_length=500)
+    customer_email: Optional[EmailStr] = None
 
 
 class ServiceAccessRequestDecisionV1(BaseModel):

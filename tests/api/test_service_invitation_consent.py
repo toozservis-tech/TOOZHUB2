@@ -72,7 +72,9 @@ def test_email_lookup_distinguishes_registration_without_exposing_profile(fixtur
     s=fixture
     existing=lookup(s, 'OWNER@EXAMPLE.COM')
     assert existing == {'email':'owner@example.com', 'registration_status':'registered',
-        'connection_status':'none', 'customer_id':None}
+        'connection_status':'none', 'customer_id':None, 'vehicles': existing['vehicles']}
+    assert {v['id'] for v in existing['vehicles']} == {v.id for v in s.cars}
+    assert all(set(v) == {'id','brand','model','year','plate','access_status'} for v in existing['vehicles'])
     new=lookup(s, 'new@example.com')
     assert new['registration_status']=='new' and new['connection_status']=='none'
     assert len(s.delivered)==0 and s.db.query(ServiceCustomerLink).count()==0
@@ -348,3 +350,79 @@ def test_deleted_customer_cannot_be_managed_even_with_historical_consent(fixture
         workspace.create_service_workspace_reminder(workspace.ServiceWorkspaceReminderCreateRequest(
             customer_id=s.owner.id,text='blocked fixture'),current_user=s.service,db=s.db)
     assert exc.value.status_code==404
+
+
+def request_car(s, car=None, email=None, actor=None):
+    return workspace.request_customer_vehicle_access(workspace.CustomerVehicleAccessRequest(
+        customer_email=email or s.owner.email, vehicle_id=(car or s.cars[0]).id,
+        note="Prosím potvrďte servis vybraného vozidla."), current_user=actor or s.service, db=s.db)
+
+
+def test_selected_car_requires_owner_consent_and_never_shares_other_cars(fixture):
+    from src.modules.vehicle_hub.models import License, ServiceAccessRequest
+    from src.modules.vehicle_hub.routers_v1.schemas import ServiceAccessRequestDecisionV1
+    s=fixture
+    s.db.add(License(tenant_id=s.owner.tenant_id,plan='premium',status='active',vehicles_limit=100));s.db.commit()
+    result=request_car(s)
+    assert result['created'] and result['status']=='pending'
+    assert workspace.list_service_customers(current_user=s.service,db=s.db)==[]
+    statuses={v['id']:v['access_status'] for v in lookup(s,s.owner.email)['vehicles']}
+    assert statuses=={s.cars[0].id:'pending',s.cars[1].id:'available'}
+    duplicate=request_car(s)
+    assert not duplicate['created'] and duplicate['request_id']==result['request_id']
+    assert s.db.query(ServiceAccessRequest).count()==1
+    assert services.get_service_access_requests(current_user=s.stranger,db=s.db)=={'requests':[]}
+    inbox=services.get_service_access_requests(current_user=s.owner,db=s.db)['requests']
+    assert len(inbox)==1 and inbox[0]['vehicle_id']==s.cars[0].id
+    decision=ServiceAccessRequestDecisionV1(decision='approved')
+    with pytest.raises(HTTPException) as exc:
+        services.resolve_service_access_request(result['request_id'],decision,current_user=s.stranger,db=s.db)
+    assert exc.value.status_code==404
+    services.resolve_service_access_request(result['request_id'],decision,current_user=s.owner,db=s.db)
+    assert [r['id'] for r in workspace.list_customer_vehicles(s.owner.id,current_user=s.service,db=s.db)]==[s.cars[0].id]
+    statuses={v['id']:v['access_status'] for v in lookup(s,s.owner.email)['vehicles']}
+    assert statuses=={s.cars[0].id:'approved',s.cars[1].id:'available'}
+    with pytest.raises(HTTPException) as exc: request_car(s)
+    assert exc.value.status_code==409
+
+
+def test_owner_can_reject_selected_vehicle(fixture):
+    from src.modules.vehicle_hub.routers_v1.schemas import ServiceAccessRequestDecisionV1
+    s=fixture;result=request_car(s)
+    services.resolve_service_access_request(result['request_id'],ServiceAccessRequestDecisionV1(decision='rejected'),current_user=s.owner,db=s.db)
+    assert workspace.list_service_customers(current_user=s.service,db=s.db)==[]
+    assert all(v['access_status']=='available' for v in lookup(s,s.owner.email)['vehicles'])
+
+
+@pytest.mark.parametrize('state',['wrong_email','transferred','released','merged','disabled','deleted'])
+def test_stale_or_tampered_selection_never_requests_another_owners_car(fixture,state):
+    from src.modules.vehicle_hub.models import ServiceAccessRequest
+    from src.modules.vehicle_hub.ownership import release_vehicle_owner_assignment
+    s=fixture;lookup(s,s.owner.email);email=s.owner.email
+    if state=='wrong_email': email=s.stranger.email
+    elif state=='transferred': ensure_vehicle_owner_assignment(s.db,vehicle=s.cars[0],owner=s.stranger)
+    elif state=='released': release_vehicle_owner_assignment(s.db,vehicle=s.cars[0],owner=s.owner)
+    elif state=='merged': s.cars[0].merged_into_id=s.cars[1].id
+    elif state=='disabled': s.owner.is_disabled=True
+    else: s.owner.is_deleted=True
+    s.db.commit()
+    with pytest.raises(HTTPException) as exc: request_car(s,email=email)
+    assert exc.value.status_code==409
+    assert s.db.query(ServiceAccessRequest).count()==0
+
+
+def test_vehicle_request_role_and_rate_limit(fixture):
+    s=fixture
+    with pytest.raises(HTTPException) as exc: request_car(s,actor=s.stranger)
+    assert exc.value.status_code==403
+    for _ in range(20): request_car(s)
+    with pytest.raises(HTTPException) as exc: request_car(s)
+    assert exc.value.status_code==429
+
+
+def test_lookup_excludes_released_and_merged_cars(fixture):
+    from src.modules.vehicle_hub.ownership import release_vehicle_owner_assignment
+    s=fixture
+    release_vehicle_owner_assignment(s.db,vehicle=s.cars[0],owner=s.owner)
+    s.cars[1].merged_into_id=s.cars[0].id;s.db.commit()
+    assert lookup(s,s.owner.email)['vehicles']==[]
