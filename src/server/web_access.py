@@ -22,7 +22,7 @@ PUBLIC_WEB_PAGES = {
     "reservations.html",
     "open-app.html", "payment-return.html", "assets/mastercard-mark.svg", "chatbot/widget.js", "chatbot/robot-logo.png",
     "reset-password.html", "verify-email.html", "cookies.html", "obchodni-podminky.html",
-    "ochrana-osobnich-udaju.html", "platebni-podminky.html", "reklamacni-rad.html",
+    "ochrana-osobnich-udaju.html", "smazani-uctu.html", "platebni-podminky.html", "reklamacni-rad.html",
     "assets/apple-pay-official.svg", "assets/google-pay-official.svg",
     "assets/mastercard-official.svg", "assets/visa-official.svg",
     "assets/comgate-logo-horizontal-red.png", "assets/toozservis-logo-icon.png",

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Jak smazat účet Evidence Vozidel a související data přes web, aplikaci nebo žádost na podporu.">
+  <title>Smazání účtu a dat | Evidence Vozidel</title>
+  <style>
+    :root { color-scheme: dark; --bg: #172031; --card: #29354c; --line: #52617b; --text: #fff; --muted: #d3dae6; --accent: #ffa13d; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 1rem/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+    main { width: min(100% - 32px, 1000px); margin: 36px auto; }
+    header { padding: 12px 0 28px; }
+    .brand { color: var(--accent); font-weight: 750; letter-spacing: .03em; }
+    h1 { font-size: clamp(1.8rem, 4vw, 2.65rem); line-height: 1.2; margin: 12px 0 18px; }
+    h2 { font-size: 1.3rem; line-height: 1.4; margin: 0 0 12px; }
+    h3 { font-size: 1.05rem; margin: 20px 0 8px; }
+    p { margin: 10px 0; }
+    p, li { color: var(--muted); }
+    strong { color: var(--text); }
+    a { color: #ffbc72; text-underline-offset: .2em; overflow-wrap: anywhere; }
+    a:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+    section { padding: 24px; margin-bottom: 18px; background: var(--card); border: 1px solid var(--line); border-radius: 20px; }
+    .steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .steps section { margin-bottom: 18px; }
+    ol, ul { margin: 12px 0 0; padding-left: 23px; }
+    li + li { margin-top: 10px; }
+    .button { display: inline-block; padding: 12px 18px; margin-top: 12px; background: var(--accent); border-radius: 12px; color: #172031; font-weight: 750; text-decoration: none; }
+    .note { border-left: 3px solid var(--accent); padding-left: 14px; margin: 18px 0 0; }
+    .small { font-size: .9rem; }
+    code { font: inherit; font-weight: 750; color: var(--text); white-space: nowrap; }
+    footer { padding: 8px 4px 28px; }
+    footer p { font-size: .9rem; }
+    @media (max-width: 680px) { main { margin-top: 20px; } .steps { grid-template-columns: 1fr; gap: 0; } section { padding: 20px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand">Evidence Vozidel</div>
+    <h1>Smazání účtu a dat</h1>
+    <p>Účet můžete trvale odstranit přímo na webu, v aplikaci pro Android nebo požádat podporu e-mailem. <strong>Pro smazání přes web nemusíte mít aplikaci nainstalovanou.</strong></p>
+    <a class="button" href="customer.html">Přihlásit se na web a smazat účet</a>
+    <p class="small">Po přihlášení otevřete Nastavení → Data a účet. Tlačítko výše účet samo nesmaže.</p>
+  </header>
+
+  <div class="steps">
+    <section aria-labelledby="web-steps">
+      <h2 id="web-steps">Na webu</h2>
+      <ol>
+        <li>Otevřete <a href="customer.html">webovou aplikaci Evidence Vozidel</a> a přihlaste se ke svému účtu.</li>
+        <li>Otevřete <strong>Nastavení → Data a účet → Trvalé smazání účtu</strong>.</li>
+        <li>Zadejte současné heslo a do potvrzovacího pole napište <code>SMAZAT UCET</code>.</li>
+        <li>Klepněte na <strong>Smazat účet a data</strong> a potvrďte závěrečný dotaz.</li>
+      </ol>
+      <p>Po úspěšném smazání se zobrazí potvrzení a budete odhlášeni.</p>
+    </section>
+    <section aria-labelledby="android-steps">
+      <h2 id="android-steps">V aplikaci pro Android</h2>
+      <ol>
+        <li>Přihlaste se ke svému účtu v aplikaci <strong>Evidence Vozidel</strong>.</li>
+        <li>Otevřete <strong>Profil → Smazání účtu</strong>.</li>
+        <li>Zadejte <strong>Současné heslo</strong> a do potvrzovacího pole napište <code>SMAZAT UCET</code>.</li>
+        <li>Klepněte na <strong>Trvale smazat účet</strong> a v závěrečném dotazu na <strong>Smazat účet</strong>.</li>
+      </ol>
+      <p>Aplikace zobrazí stav odstranění účtu. Pokud ji nemáte nebo tento postup nemůžete dokončit, použijte web či žádost níže.</p>
+    </section>
+  </div>
+
+  <section aria-labelledby="support">
+    <h2 id="support">Nemůžete se přihlásit? Požádejte e-mailem</h2>
+    <p>Na <a href="mailto:info@toozservis.cz?subject=%C5%BD%C3%A1dost%20o%20smaz%C3%A1n%C3%AD%20%C3%BA%C4%8Dtu%20Evidence%20Vozidel">info@toozservis.cz</a> pošlete žádost s předmětem <strong>Žádost o smazání účtu Evidence Vozidel</strong>. Uveďte e-mail účtu, který chcete odstranit; nejlépe pište přímo z této adresy.</p>
+    <p>Podpora s vámi ověří oprávnění k účtu a vyřízení žádosti. <strong>Neposílejte heslo ani kód z autentikátoru.</strong> Stejným kontaktem můžete požádat o odstranění konkrétních osobních údajů bez smazání celého účtu.</p>
+  </section>
+
+  <section aria-labelledby="before">
+    <h2 id="before">Před potvrzením smazání</h2>
+    <ul>
+      <li><strong>Smazání je trvalé.</strong> Odstraní účet a přístup k jeho obsahu; nejde o dočasné vypnutí nebo odhlášení.</li>
+      <li>Pokud chcete kopii dat, použijte před smazáním <strong>Stáhnout export dat</strong>. Export je dobrovolný.</li>
+      <li><strong>Smazání účtu samo nezruší obnovování předplatného v Apple nebo Google Play.</strong> Předplatné spravujte tam, kde jste jej pořídili. Zrušení předplatného není podmínkou smazání účtu.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="data">
+    <h2 id="data">Co se smaže a co zůstane</h2>
+    <h3>Účet a vlastní obsah</h3>
+    <p>Maže se uživatelský účet, profil a přihlašovací údaje, vlastní obsah včetně rezervací a připomínek, vazby na servisy a vlastní soukromé dokumenty a fotografie. Vozidlo se smaže, pokud nemá dalšího vlastníka ani historii jiného vlastníka, kterou je nutné zachovat. Vaše vlastnické vazby a osobní záznamy se odstraňují i u zachovaných vozidel.</p>
+    <h3>Sdílená a cizí data</h3>
+    <p>Spoluvlastněná vozidla a údaje náležející jiným uživatelům zůstávají zachovány pro jejich oprávněné uživatele. Smazáním svého účtu nemůžete odstranit účet jiného člověka ani jeho samostatné záznamy.</p>
+    <h3>Samostatný přístup do ukázky aplikace</h3>
+    <p>Pokud jste využili také veřejné demo, jeho historie ověřovacích e-mailů není uživatelským účtem a nemaže se tímto tlačítkem. Platí pro ni retenční doba 90 dnů; starší záznamy se odstraňují při dalším vyžádání kódu nebo otevření přehledu administrátorem. O odstranění této historie můžete rovněž požádat na <a href="mailto:info@toozservis.cz">info@toozservis.cz</a>.</p>
+    <h3>Platby, účetnictví a ochrana nákupů</h3>
+    <p>Platební a účetní evidence se uchovává po dobu vyžadovanou daňovými a účetními předpisy. Identifikátory a vazby nákupů v mobilních obchodech se zachovávají kvůli ověření nákupů a ochraně před jejich opětovným přiřazením jinému účtu; přímá vazba platební identity na odstraněný účet se odebere. Tyto záznamy nejsou odstraněny společně s účtem.</p>
+    <p>Pro uvedené platební záznamy není stanovena jedna společná lhůta automatického výmazu. U konkrétního záznamu vám dobu nebo důvod dalšího uchování upřesníme na <a href="mailto:info@toozservis.cz">info@toozservis.cz</a>. Další retenční kritéria uvádějí <a href="ochrana-osobnich-udaju.html">zásady ochrany osobních údajů</a>.</p>
+  </section>
+
+  <section aria-labelledby="completion">
+    <h2 id="completion">Kdy je odstranění dokončené</h2>
+    <p>Při samoobslužném smazání se účet a příslušné databázové záznamy odstraní při úspěšném potvrzení serverem. Soukromé soubory, které už nepoužívá jiný oprávněný záznam, se následně mažou na pozadí. Pokud je úložiště dočasně nedostupné, server odstranění souborů opakuje; proto neslibujeme pevnou dobu dokončení.</p>
+    <p>Technické potvrzení o odstranění je dostupné ještě <strong>30 dnů po dokončení mazání souborů</strong>, poté se vyřazuje. Jde o lhůtu pro kontrolu stavu smazání, nikoli o dobu dalšího uchování vašeho účtu.</p>
+    <p class="note">Pokud se zobrazí chyba nebo potřebujete ověřit stav žádosti, kontaktujte <a href="mailto:info@toozservis.cz">info@toozservis.cz</a>. Uveďte e-mail účtu a přibližný čas žádosti.</p>
+  </section>
+
+  <footer>
+    <p><a href="ochrana-osobnich-udaju.html">Ochrana osobních údajů</a> · <a href="customer.html">Webová aplikace</a></p>
+    <p>Provozovatel: ToozServis Auto/Pneu Tomáš Zachurčok (TooZ Servis), IČO 87854716. Kontakt: <a href="mailto:info@toozservis.cz">info@toozservis.cz</a>.</p>
+    <p>Návod aktualizován: 25. 10. 2026.</p>
+  </footer>
+</main>
+</body>
+</html>
