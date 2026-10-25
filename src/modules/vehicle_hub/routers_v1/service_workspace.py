@@ -130,7 +130,7 @@ class CustomerEmailLookupResponse(BaseModel):
     email: str
     registration_status: Literal["registered", "new", "unavailable"]
     connection_status: Literal["none", "pending", "linked"]
-    customer_id: Optional[int] = None  # Only an already-consented client may expose an ID.
+    customer_id: Optional[int] = None  # Requires contact consent or an approved vehicle.
     vehicles: list[CustomerVehicleChoice] = Field(default_factory=list)
 
 
@@ -2275,7 +2275,7 @@ def _customer_email_status(db, service, email: str) -> CustomerEmailLookupRespon
                 id=vehicle.id, brand=vehicle.brand, model=vehicle.model, year=vehicle.year,
                 plate=vehicle.plate, access_status="approved" if approved else "pending" if pending else "available"))
         link = _get_active_link(db, service_customer_id=service.id, customer_id=customer.id)
-        if has_contact_consent(link, customer.id):
+        if has_contact_consent(link, customer.id) or any(v.access_status == "approved" for v in result.vehicles):
             result.connection_status = "linked"
             result.customer_id = customer.id
             return result

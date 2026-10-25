@@ -379,6 +379,8 @@ def test_selected_car_requires_owner_consent_and_never_shares_other_cars(fixture
         services.resolve_service_access_request(result['request_id'],decision,current_user=s.stranger,db=s.db)
     assert exc.value.status_code==404
     services.resolve_service_access_request(result['request_id'],decision,current_user=s.owner,db=s.db)
+    assert lookup(s,s.owner.email)['connection_status']=='linked'
+    assert lookup(s,s.owner.email)['customer_id']==s.owner.id
     assert [r['id'] for r in workspace.list_customer_vehicles(s.owner.id,current_user=s.service,db=s.db)]==[s.cars[0].id]
     statuses={v['id']:v['access_status'] for v in lookup(s,s.owner.email)['vehicles']}
     assert statuses=={s.cars[0].id:'approved',s.cars[1].id:'available'}
