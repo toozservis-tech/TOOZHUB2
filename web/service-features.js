@@ -7,6 +7,38 @@
     const session = () => global.AdminBrowserSession;
     const serviceRole = () => Boolean(global.isServiceWorkspaceRole?.());
 
+    async function sentInvitations(notice='') {
+        if(!serviceRole())throw new Error('Tato část je určená servisu.');
+        const captured=session().snapshot(), body=panel('Odeslané pozvánky');
+        if(notice){const p=document.createElement('p');p.setAttribute('role','status');p.textContent=notice;body.append(p);}
+        const help=document.createElement('p');help.textContent='U dosud nepřijaté pozvánky můžete opravit e-mail. Původní pozvánka zůstane v historii a přestane platit.';body.append(help);
+        const items=await request('/api/v1/services/workspace/invitations?limit=200');session().assertCurrent(captured);if(!body.isConnected)return;
+        if(!items.length)body.append(document.createTextNode('Zatím nemáte odeslané pozvánky.'));
+        for(const item of items){
+            const card=document.createElement('article');card.className='customer-feature-card';
+            card.innerHTML=`<h3>${h(item.invite_name||'Zákazník')}</h3><p>${h(item.invite_email)}</p><p>${h(item.status_label)}</p>`;
+            if(item.can_edit_email===true)card.append(action('Upravit e-mail',()=>correctInvitationEmail(item)));
+            if(item.can_resend)card.append(action('Poslat pozvánku znovu',async()=>{
+                if(!await confirmAction(`Odeslat novou pozvánku na ${item.invite_email}?`))return;
+                const result=await request(`/api/v1/services/workspace/invitations/${item.id}/resend`,'POST');
+                await sentInvitations(result.message);
+            }));body.append(card);
+        }
+    }
+    function correctInvitationEmail(item) {
+        const body=panel('Upravit e-mail');
+        const explanation=document.createElement('p');explanation.textContent=`Původně: ${item.invite_email}. Původní pozvánka přestane platit. Případná dosud nepřevzatá vozidla připravená vaším servisem pro původní e-mail budou čekat na novou adresu; další vozidlo nevznikne. Už převzaté vozidlo tím nelze změnit.`;
+        const email=input('Opravený e-mail','inviteCorrectEmail','email',item.invite_email);email.lastChild.required=true;email.lastChild.maxLength=254;
+        body.append(explanation,email,action('Zkontrolovat změnu',async()=>{
+            const value=email.lastChild.value.trim().toLowerCase();
+            if(!email.lastChild.reportValidity())return;
+            if(value===item.invite_email.toLowerCase())throw new Error('Zadejte opravenou adresu. Pro stejnou použijte Poslat pozvánku znovu.');
+            if(!await confirmAction(`Uložit a odeslat znovu? Původně: ${item.invite_email}. Nově: ${value}. Původní pozvánka přestane platit.`))return;
+            const result=await request(`/api/v1/services/workspace/invitations/${item.id}/correct-recipient`,'POST',{invite_email:value,expected_email:item.invite_email});
+            await sentInvitations(result.message);
+        },false),action('Zpět na pozvánky',()=>sentInvitations()));
+    }
+
     async function workspaceLoaded(container) {
         if (!serviceRole()) return;
         const section = document.createElement('section');
@@ -37,7 +69,7 @@
                 }
             } catch (e) { if (e.name !== 'AbortError' && section.isConnected) results.textContent=e.message; }
         }), results, approved);
-        section.prepend(action('Práce a souhlas majitele',()=>workBeforeConsent()));
+        section.prepend(action('Odeslané pozvánky',()=>sentInvitations()),action('Práce a souhlas majitele',()=>workBeforeConsent()));
         container.prepend(section);
         async function loadApproved() {
             approved.innerHTML='<h4>Schválená vozidla</h4><p>Načítám…</p>';

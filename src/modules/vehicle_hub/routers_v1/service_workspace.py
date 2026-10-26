@@ -145,6 +145,11 @@ class SendServiceInviteRequest(BaseModel):
     invite_message: Optional[str] = Field(default=None, max_length=2000)
 
 
+class CorrectServiceInviteRecipientRequest(BaseModel):
+    invite_email: EmailStr
+    expected_email: EmailStr
+
+
 class PendingVehicleRegistrationRequest(BaseModel):
     invite_email: EmailStr
     invite_name: Optional[str] = Field(default=None, max_length=120)
@@ -521,6 +526,8 @@ Po potvrzení získá servis vaše kontaktní údaje. Přístup ke konkrétním 
 def _invitation_status_meta(status_raw: str, *, accepted_at: Optional[datetime]) -> tuple[str, str, bool]:
     status = str(status_raw or "").strip().lower()
 
+    if status == "corrected":
+        return "corrected", "Adresa opravena", True
     if status == "accepted":
         return "accepted", "Vyřízená (přijato)", True
     if status == "pending":
@@ -2338,7 +2345,6 @@ def list_service_invitations(
 ):
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
-    lock_service_contacts(db, current_user.id)
 
     rows = (
         db.query(ServiceCustomerInvite)
@@ -2348,19 +2354,13 @@ def list_service_invitations(
         .all()
     )
     now = datetime.utcnow()
-    changed = False
-    for row in rows:
-        if row.status == "pending" and row.expires_at and row.expires_at < now:
-            row.status = "expired"
-            row.updated_at = now
-            changed = True
-    if changed:
-        db.commit()
-
     result = []
     for row in rows:
+        # Listing must stay read-only: taking a write lock here can block other
+        # requests and security logging until response cleanup on SQLite.
+        display_status = "expired" if row.status == "pending" and row.expires_at and row.expires_at < now else str(row.status or "")
         normalized_status, status_label, is_completed = _invitation_status_meta(
-            str(row.status or ""),
+            display_status,
             accepted_at=row.accepted_at,
         )
         can_resend = normalized_status in {"pending", "expired", "cancelled"}
@@ -2373,7 +2373,8 @@ def list_service_invitations(
                 "status_label": status_label,
                 "is_completed": bool(is_completed),
                 "can_resend": bool(can_resend),
-                "can_delete": True,
+                "can_delete": normalized_status != "corrected",
+                "can_edit_email": normalized_status in {"pending", "expired"} and row.accepted_at is None and row.linked_customer_id is None,
                 "sent_at": row.sent_at.isoformat() if row.sent_at else None,
                 "accepted_at": row.accepted_at.isoformat() if row.accepted_at else None,
                 "expires_at": row.expires_at.isoformat() if row.expires_at else None,
@@ -2539,6 +2540,88 @@ def resend_service_invitation(
         raise HTTPException(status_code=500, detail="Pozvánku se nepodařilo znovu odeslat. Zkuste to později.") from exc
 
 
+@router.post("/invitations/{invite_id}/correct-recipient")
+def correct_service_invitation_recipient(
+    invite_id: int,
+    payload: CorrectServiceInviteRecipientRequest,
+    current_user: Customer = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Replace an unaccepted invitation; never transfer an owned vehicle."""
+    _require_service_workspace_role(current_user)
+    _ensure_service_workspace_schema(db)
+    limit_attempt(db, current_user.id, 'service-invitation-send', limit=10)
+    lock_service_contacts(db, current_user.id)
+    invite = db.query(ServiceCustomerInvite).filter_by(
+        id=invite_id, service_customer_id=current_user.id).populate_existing().first()
+    if not invite:
+        raise HTTPException(404, "Pozvánka nebyla nalezena.")
+    if invite.status not in {"pending", "expired"} or invite.accepted_at or invite.linked_customer_id:
+        raise HTTPException(409, "E-mail lze opravit jen u dosud nepřijaté pozvánky. Obnovte seznam.")
+    old_email = _normalize_email(invite.invite_email)
+    new_email = _normalize_email(str(payload.invite_email))
+    if old_email != _normalize_email(str(payload.expected_email)):
+        raise HTTPException(409, "Pozvánka se mezitím změnila. Obnovte seznam a zkontrolujte adresu.")
+    if old_email == new_email:
+        raise HTTPException(422, "Zadejte opravený e-mail. Pro stejnou adresu použijte Poslat pozvánku znovu.")
+    recipient = _customer_email_status(db, current_user, new_email)
+    if recipient.registration_status == "unavailable":
+        raise HTTPException(400, "Tento e-mail nelze použít jako zákaznický účet.")
+    if recipient.connection_status == "linked":
+        raise HTTPException(409, "Zákazník už je propojený. Vozidlo k němu přiřaďte v Klientech po kontrole vlastníka.")
+    if db.query(ServiceCustomerInvite.id).filter(
+        ServiceCustomerInvite.service_customer_id == current_user.id,
+        func.lower(ServiceCustomerInvite.invite_email) == new_email,
+        ServiceCustomerInvite.status == "pending",
+        ServiceCustomerInvite.expires_at > datetime.utcnow(),
+    ).first():
+        raise HTTPException(409, "Na tuto adresu už čeká jiná pozvánka. Nejdříve ji zkontrolujte v Odeslaných pozvánkách.")
+
+    # Old registrations have no invitation foreign key. Only the sender's own
+    # unclaimed preregistrations under the exact old address may follow it.
+    vehicles = (db.query(VehicleModel).join(VehicleServiceLink,
+        VehicleServiceLink.vehicle_id == VehicleModel.id).filter(
+            VehicleServiceLink.service_customer_id == current_user.id,
+            VehicleServiceLink.source_type == "pending_owner_registration",
+            func.lower(VehicleModel.user_email) == old_email,
+        ).distinct().order_by(VehicleModel.id).all())
+    for car in vehicles:
+        lock_vehicle_access(db, car.id)
+        db.refresh(car)
+        link = db.query(VehicleServiceLink).filter_by(vehicle_id=car.id,
+            service_customer_id=current_user.id, source_type="pending_owner_registration").populate_existing().first()
+        if (_normalize_email(car.user_email) != old_email or car.tenant_id != current_user.tenant_id
+                or car.merged_into_id is not None or not link or link.status != "approved"
+                or link.owner_customer_id != current_user.id
+                or db.query(VehicleOwnership.id).filter_by(vehicle_id=car.id).first()):
+            raise HTTPException(409, "Připravené vozidlo už bylo převzaté nebo změněné. E-mail nelze bezpečně přepsat; zkontrolujte vlastníka vozidla.")
+
+    now = datetime.utcnow()
+    replacement = ServiceCustomerInvite(service_tenant_id=invite.service_tenant_id,
+        service_customer_id=current_user.id, invite_email=new_email,
+        invite_name=invite.invite_name, invite_message=invite.invite_message,
+        token=secrets.token_urlsafe(32), status="pending", sent_at=now,
+        expires_at=now + timedelta(days=30))
+    invitation_url = _build_invitation_url(replacement.token)
+    # Keep the old recipient as history. 'corrected' cannot be revived by resend
+    # or cancellation, including from older clients.
+    invite.status = "corrected"
+    invite.token = secrets.token_urlsafe(32)
+    invite.updated_at = now
+    for car in vehicles:
+        car.user_email = new_email
+    db.add(replacement)
+    db.commit()
+    email_sent = _send_invitation_email(service_user=current_user, invite_email=new_email,
+        invite_name=replacement.invite_name, invite_message=replacement.invite_message,
+        invitation_url=invitation_url)
+    return {"corrected": True, "invite_id": replacement.id, "replaced_invite_id": invite_id,
+        "invite_email": new_email, "updated_vehicle_count": len(vehicles),
+        "email_sent": bool(email_sent), "message": (
+            "E-mail je opravený a nová pozvánka byla předána k odeslání. Původní pozvánka už neplatí."
+            if email_sent else "E-mail je opravený a původní pozvánka už neplatí, ale nový e-mail se nepodařilo odeslat. U nové adresy zvolte Poslat pozvánku znovu.")}
+
+
 @router.delete("/invitations/{invite_id}")
 def delete_service_invitation(
     invite_id: int,
@@ -2559,6 +2642,9 @@ def delete_service_invitation(
     )
     if not invite:
         raise HTTPException(status_code=404, detail="Pozvánka nebyla nalezena.")
+
+    if invite.status == "corrected":
+        raise HTTPException(409, "Nahrazená pozvánka zůstává v historii a nelze ji znovu aktivovat.")
 
     try:
         invite.status = "cancelled"
