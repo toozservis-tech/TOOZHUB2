@@ -132,6 +132,7 @@
         if(vehicle.permissions?.can_record_mileage!==false)el.append(action('Zapsat aktuální km',()=>mileage(vehicle)));
         if(vehicle.permissions?.can_edit_vehicle!==false)el.append(action('Upravit údaje vozidla',()=>editVehicle(vehicle)));
         if(vehicle.permissions?.can_import_tachometer!==false)el.append(action('Načíst km a platnost STK',()=>tachometer(vehicle)));
+        if(global.ServiceFeatures)el.append(action('Průběh servisu a aktualizace',()=>global.ServiceFeatures.jobs(vehicle.id)));
         el.append(action('Fotodokumentace oprav',()=>global.isServiceWorkspaceRole?.()&&global.ServiceFeatures?global.ServiceFeatures.repairs(vehicle):repairSessions(vehicle.id)));
         if(!global.isServiceWorkspaceRole?.())el.append(action('Náklady a statistiky',()=>analytics(panel('Náklady vozidla'),vehicle.id)));
         el.append(action('PDF report',()=>download(`/api/v1/vehicles/${vehicle.id}/pdf`,'historie-vozidla.pdf')));

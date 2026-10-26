@@ -37,6 +37,7 @@
                 }
             } catch (e) { if (e.name !== 'AbortError' && section.isConnected) results.textContent=e.message; }
         }), results, approved);
+        section.prepend(action('Práce a souhlas majitele',()=>workBeforeConsent()));
         container.prepend(section);
         async function loadApproved() {
             approved.innerHTML='<h4>Schválená vozidla</h4><p>Načítám…</p>';
@@ -131,5 +132,120 @@
             }
         }catch(e){if(e.name!=='AbortError'&&block.isConnected)ui.tierError(block,e);}
     }
-    global.ServiceFeatures={workspaceLoaded:container=>{void workspaceLoaded(container).catch(e=>{if(e.name!=='AbortError')showError(e.message);});},repairs,customerRequests};
+    const photoBatches=new Map();
+    const consentTitle=value=>({pending:'Čeká na souhlas · pouze u servisu',rejected:'Souhlas odmítnut · historie u servisu',revoked:'Souhlas byl odvolán',ownership_changed:'Změnil se majitel',approved:'Sdíleno s majitelem'}[value]||'Sdíleno s majitelem');
+    const statusTitle=value=>({received:'Přijato do servisu',in_progress:'Probíhá oprava',completed:'Dokončeno',handed_over:'Předáno',cancelled:'Zrušeno'}[value]||value);
+    const evidenceWritable=(job,actor)=>actor.role==='service' && Number(actor.id)===Number(job.service_id) && !['handed_over','cancelled'].includes(job.status) && !['revoked','ownership_changed'].includes(job.consent_status);
+    async function workBeforeConsent(offset=0) {
+        const body=panel('Práce a souhlas majitele');
+        body.textContent='Načítám zakázky…';
+        const reply=await request(`/api/v1/services/workspace/work-before-consent?offset=${offset}`);
+        if(!body.isConnected)return;
+        body.textContent='Vlastní práce servisu zůstává uložená i při odmítnutí. Majitel ji uvidí až po schválení.';
+        for(const row of reply.items||[]) {
+            const card=document.createElement('article');card.className='customer-feature-card';
+            card.innerHTML=`<h3>${h(row.vehicle_title||'Vozidlo')}</h3><p>${h(row.plate)} · ${h(consentTitle(row.status))}</p>`;
+            card.append(action('Zakázky a přílohy',()=>jobs(row.vehicle_id,row.id)));body.append(card);
+        }
+        if(!reply.items?.length)body.append(document.createTextNode('Žádné další žádosti a práce.'));
+        if(reply.next_offset!=null)body.append(action('Další žádosti',()=>workBeforeConsent(reply.next_offset)));
+    }
+    async function jobs(vehicleId,requestId) {
+        const body=panel('Průběh servisu a aktualizace');body.textContent='Načítám…';
+        const reply=await request(`/api/v1/vehicles/${Number(vehicleId)}/service-jobs${requestId?`?access_request_id=${Number(requestId)}`:''}`);
+        if(!body.isConnected)return;body.replaceChildren();
+        for(const job of reply.items||[]) {
+            const card=document.createElement('article');card.className='customer-feature-card';
+            card.innerHTML=`<h3>${h(job.title)}</h3><p>${h(statusTitle(job.status))} · ${h(consentTitle(job.consent_status))}</p><p>${h(job.description)}</p>`;
+            card.append(action('Fotografie, faktury a průběh',()=>jobEvidence(job.id)));body.append(card);
+        }
+        if(!reply.items?.length)body.textContent='Vozidlo zatím nemá dostupnou servisní zakázku.';
+    }
+    async function jobEvidence(jobId) {
+        jobId=Number(jobId);if(!Number.isSafeInteger(jobId)||jobId<=0)throw new Error('Neplatná zakázka.');
+        const captured=session().snapshot(),body=panel('Přílohy zakázky');body.textContent='Načítám…';
+        const [job,actor]=await Promise.all([request(`/api/v1/service-jobs/${jobId}`),request('/user/me')]);
+        session().assertCurrent(captured);if(!body.isConnected)return;
+        body.innerHTML=`<h3>${h(job.title)}</h3><p>${h(statusTitle(job.status))} · ${h(consentTitle(job.consent_status))}</p><p>Snímky a PDF se ukládají k této zakázce. Před souhlasem je vidí pouze servis; po souhlasu také majitel.</p>`;
+        const list=document.createElement('section');body.append(list);
+        const urls=[];const dialog=body.closest('dialog');dialog.addEventListener('close',()=>urls.forEach(URL.revokeObjectURL),{once:true});
+        function files(value) {
+            list.innerHTML=`<h3>Fotografie (${value.photos.length})</h3>`;
+            value.photos.forEach((photo,index)=>{
+                const row=document.createElement('div');
+                row.append(action(`${index+1}. ${photo.caption||'Fotografie práce'}`,async()=>{
+                    session().assertCurrent(captured);
+                    const r=await session().request(`/api/v1/service-jobs/${jobId}/photos/${photo.id}`);
+                    if(!r.ok)throw new Error('Fotografie není pro tento účet dostupná.');
+                    const blob=await r.blob();session().assertCurrent(captured);if(!body.isConnected)return;
+                    const url=URL.createObjectURL(blob);urls.push(url);
+                    const image=document.createElement('img');image.src=url;image.alt=`Fotografie zakázky ${photo.id}`;image.className='service-photo-preview';
+                    row.querySelector('img')?.remove();row.append(image);
+                }));list.append(row);
+            });
+            const title=document.createElement('h3');title.textContent='Faktury a dokumenty PDF';list.append(title);
+            for(const doc of value.documents)list.append(action(doc.file_name,()=>download(`/api/v1/service-jobs/${jobId}/documents/${doc.id}`,doc.file_name)));
+        }
+        files(job);
+        if(evidenceWritable(job,actor)) {
+            const caption=input('Popis fotografií','jobPhotoCaption','text','Fotografie práce');caption.lastChild.maxLength=200;
+            const picker=input('Vybrat více fotografií','jobPhotos','file');picker.lastChild.multiple=true;picker.lastChild.accept='image/*';
+            const selections=document.createElement('div'),result=document.createElement('p');result.setAttribute('role','status');
+            const key=String(actor.id)+':'+jobId;
+            let batch=photoBatches.get(key),busy=false;
+            const button=action('Přidat vybrané fotografie',async()=>{
+                session().assertCurrent(captured);if(busy||!batch?.items.length)return;
+                busy=true;batch.started=true;picker.lastChild.disabled=true;caption.lastChild.disabled=true;
+                selections.querySelectorAll('input').forEach(x=>x.disabled=true);
+                const close=dialog.querySelector('header button');close.disabled=true;
+                try {
+                    while(batch.done<batch.items.length) {
+                        session().assertCurrent(captured);
+                        const item=batch.items[batch.done];
+                        if(!item.payload) {
+                            const {canvas}=await readImage(item.file);session().assertCurrent(captured);
+                            item.payload={client_id:item.id,caption:batch.caption,content_base64:canvas.toDataURL('image/jpeg',0.82).split(',')[1]};
+                        }
+                        await request(`/api/v1/service-jobs/${jobId}/photos`,'POST',item.payload);
+                        session().assertCurrent(captured);batch.done++;item.payload=null;item.file=null;
+                        result.textContent=`Fotografie uloženy: ${batch.done} z ${batch.items.length}.`;
+                    }
+                    const updated=await request(`/api/v1/service-jobs/${jobId}`);session().assertCurrent(captured);
+                    if(body.isConnected)files(updated);
+                    photoBatches.delete(key);batch=null;picker.lastChild.value='';selections.replaceChildren();
+                    button.textContent='Přidat vybrané fotografie';
+                } catch(e) {
+                    if(e.name==='AbortError')throw e;
+                    result.textContent=`Fotografie uloženy: ${batch.done} z ${batch.items.length}. ${e.message} Uložené snímky zůstávají. Pokračujte stejnou dávkou.`;
+                    button.textContent='Pokračovat v nahrávání fotografií';
+                } finally {busy=false;close.disabled=false;picker.lastChild.disabled=Boolean(batch);caption.lastChild.disabled=Boolean(batch);}
+            },false);
+            dialog.addEventListener('cancel',e=>{if(busy)e.preventDefault();});
+            function chosen() {
+                selections.replaceChildren();
+                if(!batch)return;
+                if(batch.started) {picker.lastChild.disabled=true;caption.lastChild.disabled=true;button.textContent='Pokračovat v nahrávání fotografií';result.textContent=`Fotografie uloženy: ${batch.done} z ${batch.items.length}.`;return;}
+                for(const item of batch.items) {const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=true;check.addEventListener('change',()=>{item.selected=check.checked;});label.append(check,document.createTextNode(item.file.name));selections.append(label,document.createElement('br'));}
+                result.textContent=`Vybráno ${batch.items.length} fotografií. Před potvrzením se nic neodesílá.`;
+            }
+            // The same UUID and bytes are retained until the server acknowledges each file.
+            button.addEventListener('click',()=>{
+                if(batch&&!batch.started) {batch.items=batch.items.filter(x=>x.selected!==false);batch.caption=caption.lastChild.value.trim()||'Fotografie práce';}
+            },true);
+            picker.lastChild.addEventListener('change',()=>{
+                if(busy||batch?.started)return;
+                const selected=Array.from(picker.lastChild.files);
+                if(!selected.length)return;
+                batch={done:0,caption:'',started:false,items:selected.map(file=>({file,id:crypto.randomUUID(),selected:true}))};photoBatches.set(key,batch);chosen();
+            });
+            const info=document.createElement('p');info.textContent='Fotografie můžete doplnit i po dokončení. Zakázka zůstane dokončená; doplnění se zapíše do historie.';
+            body.append(info,caption,picker,selections,button,result);chosen();
+        }
+        const timeline=document.createElement('details');timeline.innerHTML='<summary>Historie zakázky</summary>';
+        for(const event of job.events||[]) {const p=document.createElement('p');p.textContent=`${new Date(event.created_at).toLocaleString('cs-CZ')} · ${statusTitle(event.status)} · ${event.message||''}`;timeline.append(p);}
+        body.append(timeline);
+    }
+    global.addEventListener('admin-session-ended',()=>photoBatches.clear());
+
+    global.ServiceFeatures={workspaceLoaded:container=>{void workspaceLoaded(container).catch(e=>{if(e.name!=='AbortError')showError(e.message);});},repairs,customerRequests,jobs,jobEvidence};
 })(window);

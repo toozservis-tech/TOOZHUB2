@@ -1,0 +1,16 @@
+name: Service photo permissions
+on:
+  push:
+    paths: ['web/service-features.js', 'tests/web/job-evidence-policy.cjs', '.github/workflows/service-photo-contract.yml']
+  pull_request:
+    paths: ['web/service-features.js', 'tests/web/job-evidence-policy.cjs', '.github/workflows/service-photo-contract.yml']
+  workflow_dispatch:
+jobs:
+  permissions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node tests/web/job-evidence-policy.cjs
