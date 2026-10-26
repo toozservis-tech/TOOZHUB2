@@ -30,8 +30,8 @@
                     const card = document.createElement('article');
                     card.className = 'customer-feature-card';
                     card.innerHTML = `<h4>${h(candidate.nickname || [candidate.brand,candidate.model].filter(Boolean).join(' ') || 'Vozidlo')}</h4><p>${h(candidate.plate_masked)} · ${h(candidate.vin_masked)}</p>`;
-                    if (candidate.status === 'already_approved') card.append(document.createTextNode('Přístup již byl schválen. Vozidlo najdete v seznamu níže.'));
-                    else if (candidate.status === 'pending_request') card.append(document.createTextNode('Žádost čeká na rozhodnutí majitele.'));
+                    if (candidate.status === 'already_approved') { card.append(document.createTextNode('Přístup již byl schválen.')); if(Number.isInteger(candidate.vehicle_id)&&candidate.vehicle_id>0)card.append(action('Otevřít vozidlo a zakázky',()=>jobs(candidate.vehicle_id))); }
+                    else if (candidate.status === 'pending_request') card.append(document.createTextNode('Žádost čeká na rozhodnutí majitele.'),action('Práce před souhlasem',()=>workBeforeConsent()));
                     else if (candidate.can_request_access) card.append(action('Požádat majitele o přístup', () => accessRequest(candidate, value)));
                     results.append(card);
                 }
