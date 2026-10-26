@@ -29,6 +29,7 @@ class ServiceJob(Base):
     access_request_id = Column(Integer, ForeignKey('service_access_requests.id'), nullable=True, index=True)
     consent_published_at = Column(DateTime, nullable=True)
     completion_price = Column(Float, nullable=True)
+    workflow_version = Column(Integer, nullable=False, default=0, server_default='0')
     __table_args__ = (UniqueConstraint('service_id', 'client_id', name='uq_service_job_client'),)
 
 
@@ -57,6 +58,7 @@ class ServiceJobPhoto(Base):
     mime_type = Column(String(64), nullable=False)
     file_size = Column(Integer, nullable=False)
     caption = Column(String(200), nullable=True)
+    stage = Column(String(32), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     __table_args__ = (UniqueConstraint('job_id', 'client_id', name='uq_service_job_photo_client'),)
 

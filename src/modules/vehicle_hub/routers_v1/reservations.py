@@ -828,6 +828,7 @@ def start_service_job_from_reservation(
     reservation_id: int,
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
+    workflow_version: int = 0,
 ):
     """Idempotent hand-off to the existing immutable service-job lifecycle."""
     from uuid import UUID
@@ -835,6 +836,8 @@ def start_service_job_from_reservation(
     from ..service_access import require_service_vehicle_link
     from .service_jobs import JobCreate, create_job
 
+    if workflow_version not in (0, 1):
+        raise HTTPException(422, "Neplatná verze postupu zakázky.")
     booking = _service_reservation_or_404(db, reservation_id, current_user)
     if _normalize_status(booking.status) != "CONFIRMED":
         raise HTTPException(409, "Nejprve potvrďte rezervaci.")
@@ -844,10 +847,17 @@ def start_service_job_from_reservation(
     require_service_vehicle_link(
         db, current_user=current_user, vehicle_id=booking.vehicle_id, require_create_record=True
     )
+    # A reservation always refers to its original job, even after a client upgrade.
+    from ..service_job_models import ServiceJob
+    from .service_jobs import get_job
+    existing = db.query(ServiceJob).filter_by(service_id=current_user.id, client_id=_reservation_job_client_id(booking.id)).first()
+    if existing:
+        return get_job(existing.id, current_user, db)
     return create_job(
         vehicle_id=booking.vehicle_id,
         payload=JobCreate(
             client_id=UUID(_reservation_job_client_id(booking.id)),
+            workflow_version=workflow_version,
             title=(booking.service_type or "Servisní zakázka")[:200],
             description=booking.note,
             mileage=None,

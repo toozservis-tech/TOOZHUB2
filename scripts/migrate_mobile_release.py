@@ -10,6 +10,7 @@ from scripts.migrate_vehicle_update_inbox import migrate as migrate_inbox
 from scripts.migrate_google_billing import migrate as migrate_google
 from scripts.migrate_service_job_photos import migrate as migrate_job_photos
 from scripts.migrate_service_job_consent import migrate as migrate_job_consent
+from scripts.migrate_service_job_workflow import migrate as migrate_job_workflow
 
 
 def migrate(bind=None):
@@ -20,6 +21,7 @@ def migrate(bind=None):
     migrate_google(bind)
     migrate_job_photos(bind)
     migrate_job_consent(bind)
+    migrate_job_workflow(bind)
 
 
 if __name__ == '__main__':

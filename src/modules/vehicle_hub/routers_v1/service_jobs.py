@@ -32,6 +32,7 @@ router = APIRouter(tags=['service-jobs-v1'], dependencies=[Depends(_schema_ready
 
 class JobCreate(BaseModel):
     client_id: UUID
+    workflow_version: Literal[0, 1] = 0
     access_request_id: Optional[int] = Field(default=None, gt=0)
     title: str = Field(min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=10000)
@@ -50,6 +51,7 @@ class JobUpdate(BaseModel):
 class JobPhotoUpload(BaseModel):
     client_id: UUID
     caption: str = Field(default="Foto vozidla", max_length=200)
+    stage: Optional[Literal['intake_front', 'intake_right', 'intake_rear', 'intake_left', 'damage', 'work', 'after']] = None
     content_base64: str = Field(min_length=80, max_length=15_000_000)
 
 
@@ -57,6 +59,7 @@ def _photo_payload(photo):
     return {
         "id": photo.id,
         "caption": photo.caption,
+        "stage": photo.stage,
         "mime_type": photo.mime_type,
         "file_size": photo.file_size,
         "created_at": photo.created_at,
@@ -177,6 +180,8 @@ def _serialize(db, job):
         'consent_status': _consent_state(db, job),
         'shared_with_owner': not _private(job),
         'completion_price': job.completion_price,
+        'workflow_version': job.workflow_version,
+        'workflow': _workflow(db, job),
         'documents': [{key: getattr(doc, key) for key in ('id', 'file_name', 'mime_type', 'file_size', 'created_at')}
                       for doc in db.query(ServiceJobDocument).filter_by(job_id=job.id).order_by(ServiceJobDocument.id).all()],
         'events': [{key: getattr(event, key) for key in ('id', 'status', 'message', 'created_at', 'actor_id')}
@@ -184,6 +189,27 @@ def _serialize(db, job):
         'photos': [_photo_payload(photo) for photo in db.query(ServiceJobPhoto)
                    .filter_by(job_id=job.id).order_by(ServiceJobPhoto.id).all()]}
 
+
+
+INTAKE_VIEWS = [('intake_front', 'Zepředu'), ('intake_right', 'Pravý bok'), ('intake_rear', 'Zezadu'), ('intake_left', 'Levý bok')]
+
+
+def _workflow(db, job):
+    photos = db.query(ServiceJobPhoto).filter_by(job_id=job.id).all()
+    stages = {photo.stage for photo in photos}
+    missing = [key for key, _ in INTAKE_VIEWS if key not in stages]
+    step = ('done' if job.status in ('completed', 'cancelled', 'handed_over') else
+            'intake' if missing else 'request' if job.status == 'received' else
+            'after' if 'after' not in stages else 'complete')
+    return {'enabled': job.workflow_version == 1, 'intake_complete': not missing,
+            'after_complete': 'after' in stages, 'missing_intake': missing, 'next_step': step}
+
+
+@router.get('/services/work-catalog')
+def work_catalog(current_user: Customer = Depends(get_current_user)):
+    _service(current_user)
+    from ..service_work_catalog import WORK_CATALOG
+    return {'version': 1, 'items': WORK_CATALOG}
 
 @router.get('/vehicles/{vehicle_id}/service-jobs')
 def list_jobs(vehicle_id: int, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db), access_request_id: Optional[int] = None):
@@ -317,6 +343,8 @@ def create_job(vehicle_id: int, payload: JobCreate, current_user: Customer = Dep
         require_service_vehicle_link(db, current_user=current_user, vehicle_id=vehicle_id, require_create_record=True)
     owner_id = _owner_id(db, vehicle_id)
     creation = payload.model_dump()
+    if not payload.workflow_version:
+        creation.pop('workflow_version')  # Old persisted requests keep their original hash.
     if payload.access_request_id is None:
         creation.pop('access_request_id')  # Preserve replay hashes from older app versions.
     digest = _digest({'vehicle_id': vehicle_id, **creation})
@@ -333,6 +361,7 @@ def create_job(vehicle_id: int, payload: JobCreate, current_user: Customer = Dep
     job = ServiceJob(tenant_id=vehicle.tenant_id, vehicle_id=vehicle_id, service_id=current_user.id,
         owner_id=owner_id, ownership_id=assignment.id, ownership_started_at=assignment.owned_from or assignment.assigned_at, vin_snapshot=vehicle.vin, client_id=str(payload.client_id), creation_hash=digest,
         title=payload.title.strip(), description=payload.description, mileage=payload.mileage,
+        workflow_version=payload.workflow_version,
         access_request_id=request.id if request else None,
         consent_published_at=datetime.utcnow() if request and request.status == 'approved' else None)
     db.add(job)
@@ -367,6 +396,7 @@ def _publish_final_record(db, job, service, link, completion_message):
         "mime_type": photo.mime_type,
         "file_size": photo.file_size,
         "caption": photo.caption,
+        "stage": photo.stage,
     } for photo in photos] + [dict(storage_key=doc.storage_key, file_name=doc.file_name, mime_type=doc.mime_type, file_size=doc.file_size) for doc in documents], ensure_ascii=False) if photos or documents else None
     record = ServiceRecord(tenant_id=job.tenant_id, vehicle_id=job.vehicle_id, user_id=service.id,
         performed_at=job.completed_at, mileage=job.mileage, description=completion_message,
@@ -411,6 +441,15 @@ def update_job(job_id: int, payload: JobUpdate, current_user: Customer = Depends
         raise HTTPException(409, 'Před dokončením nejprve zahajte práci.')
     if payload.price is not None and target != 'completed':
         raise HTTPException(422, 'Cenu uveďte při dokončení zakázky.')
+    if job.workflow_version == 1 and target != 'cancelled':
+        progress = _workflow(db, job)
+        if not progress['intake_complete']:
+            raise HTTPException(409, 'Nejprve uložte čtyři vstupní fotografie: zepředu, pravý bok, zezadu a levý bok.')
+        if target == 'completed' and not progress['after_complete']:
+            raise HTTPException(409, 'Před dokončením přidejte alespoň jednu fotografii vozidla po opravě.')
+        if job.status == 'received' and target == 'in_progress':
+            job.title = payload.message.strip()[:200]
+            job.description = payload.message.strip()
     now = datetime.utcnow()
     job.status, job.updated_at, job.version = target, now, job.version + 1
     if payload.mileage is not None:
@@ -456,15 +495,26 @@ def upload_service_job_photo(
     digest = hashlib.sha256(payload.content_base64.encode('utf-8')).hexdigest()
     previous = db.query(ServiceJobPhoto).filter_by(job_id=job.id, client_id=str(payload.client_id)).first()
     if previous:
-        if previous.sha256 != digest:
+        if previous.sha256 != digest or previous.stage != payload.stage:
             raise HTTPException(409, "Stejné ID fotografie bylo použito pro jiný snímek.")
         return {"photo": _photo_payload(previous), "job": _serialize(db, job)}
     # Re-selecting the same image after a lost response must not duplicate evidence.
     matching_photo = db.query(ServiceJobPhoto).filter_by(job_id=job.id, sha256=digest).first()
+    if matching_photo and matching_photo.stage != payload.stage:
+        raise HTTPException(409, "Tento snímek už je uložený v jiné fázi. Pro každý pohled pořiďte vlastní fotografii.")
     if matching_photo:
         return {"photo": _photo_payload(matching_photo), "job": _serialize(db, job)}
     if job.status in ("handed_over", "cancelled"):
         raise HTTPException(409, "K předané nebo zrušené zakázce nelze přidat další fotografie.")
+    if job.workflow_version == 1:
+        if payload.stage is None:
+            raise HTTPException(422, "Vyberte, zda jde o příjem, poškození, práci nebo stav po opravě.")
+        if payload.stage.startswith('intake_') and job.status != 'received':
+            raise HTTPException(409, "Příjem je uzavřený. Další fotografie přidejte k průběhu práce nebo po opravě.")
+        if not payload.stage.startswith('intake_') and not _workflow(db, job)['intake_complete']:
+            raise HTTPException(409, "Nejprve dokončete čtyři vstupní fotografie.")
+        if payload.stage == 'after' and job.status not in ('in_progress', 'completed'):
+            raise HTTPException(409, "Fotografii po opravě přidejte až po zadání požadované práce.")
     try:
         content = base64.b64decode(payload.content_base64, validate=True)
     except (ValueError, binascii.Error):
@@ -486,7 +536,7 @@ def upload_service_job_photo(
     photo = ServiceJobPhoto(
         job_id=job.id, actor_id=current_user.id, client_id=str(payload.client_id),
         sha256=digest, storage_key=stored["storage_key"], mime_type="image/jpeg",
-        file_size=len(sanitized), caption=payload.caption.strip() or "Foto vozidla",
+        file_size=len(sanitized), caption=payload.caption.strip() or "Foto vozidla", stage=payload.stage,
     )
     db.add(photo)
     job.updated_at = datetime.utcnow()
