@@ -63,6 +63,28 @@ def _photo_payload(photo):
     }
 
 
+def _compressed_job_image(content: bytes, *, thumbnail: bool = False) -> bytes:
+    """Bound stored evidence to 1 MB, previews to 480px; never retain EXIF/GPS.
+
+    Preview bytes are generated on demand from the stored image, not stored as a
+    second attachment. Authorization must run before requesting a preview.
+    """
+    from PIL import Image, ImageOps
+    with Image.open(BytesIO(content)) as source:
+        if source.width * source.height > 28_000_000:
+            raise HTTPException(413, "Fotografie má příliš vysoké rozlišení.")
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        image.thumbnail((480, 480) if thumbnail else (2048, 2048), Image.Resampling.LANCZOS)
+        limit = 100_000 if thumbnail else 1_000_000
+        while True:
+            for quality in ([72, 64] if thumbnail else [82, 76, 70]):
+                output = BytesIO()
+                image.save(output, "JPEG", quality=quality, optimize=True)
+                if output.tell() <= limit:
+                    return output.getvalue()
+            image.thumbnail((max(1, int(image.width * .85)), max(1, int(image.height * .85))), Image.Resampling.LANCZOS)
+
+
 def _digest(data):
     return sha256(json.dumps(data, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
@@ -452,14 +474,7 @@ def upload_service_job_photo(
     try:
         with Image.open(BytesIO(content)) as img:
             img.verify()
-        with Image.open(BytesIO(content)) as img:
-            if img.width * img.height > 28_000_000:
-                raise HTTPException(413, "Fotografie má příliš vysoké rozlišení.")
-            img.thumbnail((2048, 2048))
-            rgb = img.convert("RGB")
-            output = BytesIO()
-            rgb.save(output, "JPEG", quality=82, optimize=True)
-            sanitized = output.getvalue()
+        sanitized = _compressed_job_image(content)
     except (UnidentifiedImageError, OSError, ValueError):
         raise HTTPException(422, "Soubor není platný obrázek.")
     vehicle = db.get(Vehicle, job.vehicle_id)
@@ -545,6 +560,7 @@ def hand_over_job(
 def view_job_photo(
     job_id: int, photo_id: int,
     current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db),
+    thumbnail: bool = False,
 ):
     """Authenticated image read, restricted to the same ownership period and service."""
     from fastapi.responses import Response
@@ -560,8 +576,11 @@ def view_job_photo(
     path = _resolve_attachment_file(photo.storage_key, vehicle_id=job.vehicle_id, db=db)
     if not path or not path.is_file():
         raise HTTPException(404, "Fotografie není v úložišti.")
+    content = path.read_bytes()
+    if thumbnail:
+        content = _compressed_job_image(content, thumbnail=True)
     return Response(
-        content=path.read_bytes(),
+        content=content,
         media_type=photo.mime_type,
         headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )

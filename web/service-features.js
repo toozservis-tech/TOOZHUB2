@@ -169,20 +169,57 @@
         body.innerHTML=`<h3>${h(job.title)}</h3><p>${h(statusTitle(job.status))} · ${h(consentTitle(job.consent_status))}</p><p>Snímky a PDF se ukládají k této zakázce. Před souhlasem je vidí pouze servis; po souhlasu také majitel.</p>`;
         const list=document.createElement('section');body.append(list);
         const urls=[];const dialog=body.closest('dialog');dialog.addEventListener('close',()=>urls.forEach(URL.revokeObjectURL),{once:true});
+        const style=document.createElement('style');style.textContent=`
+            .job-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:12px;margin:12px 0}
+            .job-photo-tile{display:flex!important;flex-direction:column;text-align:left!important;gap:6px;padding:8px!important;border-radius:14px!important;overflow:hidden;min-width:0}
+            .job-photo-tile img{width:100%;height:110px;object-fit:cover;border-radius:10px;background:#303d55}
+            .job-photo-caption{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em;line-height:1.3}
+            .job-photo-tile small{opacity:.7}.job-photo-lightbox{max-width:90vw;max-height:94vh;border:0;border-radius:18px;padding:18px;background:#263148;color:white}
+            .job-photo-lightbox img{display:block;max-width:85vw;max-height:72vh;object-fit:contain}.job-photo-lightbox::backdrop{background:#000b}
+        `;body.append(style);
+        let galleryVersion=0;
+        async function preview(photo) {
+            session().assertCurrent(captured);
+            const r=await session().request(`/api/v1/service-jobs/${jobId}/photos/${photo.id}`);
+            if(!r.ok)throw new Error('Fotografie není pro tento účet dostupná.');
+            const blob=await r.blob();session().assertCurrent(captured);if(!body.isConnected)return;
+            const url=URL.createObjectURL(blob),viewer=document.createElement('dialog');viewer.className='job-photo-lightbox';
+            const title=document.createElement('h3');title.textContent=photo.caption||'Fotografie práce';
+            const image=document.createElement('img');image.src=url;image.alt=title.textContent;
+            const close=action('Zavřít fotografii',()=>viewer.close());viewer.append(title,close,image);document.body.append(viewer);
+            viewer.addEventListener('close',()=>{URL.revokeObjectURL(url);viewer.remove();},{once:true});
+            dialog.addEventListener('close',()=>{if(viewer.open)viewer.close();},{once:true});viewer.showModal();
+        }
         function files(value) {
-            list.innerHTML=`<h3>Fotografie (${value.photos.length})</h3>`;
-            value.photos.forEach((photo,index)=>{
-                const row=document.createElement('div');
-                row.append(action(`${index+1}. ${photo.caption||'Fotografie práce'}`,async()=>{
-                    session().assertCurrent(captured);
-                    const r=await session().request(`/api/v1/service-jobs/${jobId}/photos/${photo.id}`);
-                    if(!r.ok)throw new Error('Fotografie není pro tento účet dostupná.');
-                    const blob=await r.blob();session().assertCurrent(captured);if(!body.isConnected)return;
-                    const url=URL.createObjectURL(blob);urls.push(url);
-                    const image=document.createElement('img');image.src=url;image.alt=`Fotografie zakázky ${photo.id}`;image.className='service-photo-preview';
-                    row.querySelector('img')?.remove();row.append(image);
-                }));list.append(row);
-            });
+            const version=++galleryVersion;urls.splice(0).forEach(URL.revokeObjectURL);
+            list.innerHTML=`<h3>Fotografie (${value.photos.length})</h3><p>Klepnutím na náhled otevřete celou fotografii.</p>`;
+            const grid=document.createElement('div');grid.className='job-photo-grid';list.append(grid);
+            let shown=0;
+            const more=action('Zobrazit další fotografie',()=>next());
+            function next() {
+                const batch=value.photos.slice(shown,shown+12),offset=shown;shown+=batch.length;
+                const pending=batch.map((photo,index)=>{
+                    const tile=action('',()=>preview(photo));tile.className+=' job-photo-tile';tile.setAttribute('aria-label',`Fotografie ${offset+index+1}: ${photo.caption||'Fotografie práce'}`);
+                    const image=document.createElement('img');image.alt='Načítám náhled…';
+                    const caption=document.createElement('span');caption.className='job-photo-caption';caption.textContent=photo.caption||'Fotografie práce';
+                    const info=document.createElement('small');info.textContent=`${offset+index+1} · ${Math.ceil(photo.file_size/1000)} kB`;
+                    tile.append(image,caption,info);grid.append(tile);return {photo,image};
+                });
+                more.hidden=shown>=value.photos.length;more.style.setProperty('display',more.hidden?'none':'inline-flex','important');more.textContent=`Zobrazit další fotografie (${value.photos.length-shown})`;
+                async function worker() {while(pending.length) {
+                    const {photo,image}=pending.shift();
+                    try {
+                        session().assertCurrent(captured);if(!body.isConnected||version!==galleryVersion)return;
+                        const r=await session().request(`/api/v1/service-jobs/${jobId}/photos/${photo.id}?thumbnail=true`);
+                        if(!r.ok)throw new Error('Náhled nedostupný');
+                        const blob=await r.blob();session().assertCurrent(captured);if(!body.isConnected||version!==galleryVersion)return;
+                        const url=URL.createObjectURL(blob);urls.push(url);image.src=url;image.alt=photo.caption||'Fotografie práce';
+                    }catch(e){if(e.name==='AbortError')return;image.alt='Náhled nelze načíst. Klepněte pro otevření.';}
+                }}
+                for(let i=0;i<3;i++)void worker();
+            }
+            next();list.append(more);
+            if(!value.photos.length)list.append(document.createTextNode('Zatím nejsou přiložené fotografie.'));
             const title=document.createElement('h3');title.textContent='Faktury a dokumenty PDF';list.append(title);
             for(const doc of value.documents)list.append(action(doc.file_name,()=>download(`/api/v1/service-jobs/${jobId}/documents/${doc.id}`,doc.file_name)));
         }
@@ -238,8 +275,8 @@
                 if(!selected.length)return;
                 batch={done:0,caption:'',started:false,items:selected.map(file=>({file,id:crypto.randomUUID(),selected:true}))};photoBatches.set(key,batch);chosen();
             });
-            const info=document.createElement('p');info.textContent='Fotografie můžete doplnit i po dokončení. Zakázka zůstane dokončená; doplnění se zapíše do historie.';
-            body.append(info,caption,picker,selections,button,result);chosen();
+            const info=document.createElement('p');info.textContent='Fotografie můžete doplnit i po dokončení. Automaticky je zmenšíme; originály ve vašem zařízení zůstanou beze změny.';
+            const upload=document.createElement('section');upload.className='customer-feature-card';upload.append(info,caption,picker,selections,button,result);body.insertBefore(upload,list);chosen();
         }
         const timeline=document.createElement('details');timeline.innerHTML='<summary>Historie zakázky</summary>';
         for(const event of job.events||[]) {const p=document.createElement('p');p.textContent=`${new Date(event.created_at).toLocaleString('cs-CZ')} · ${statusTitle(event.status)} · ${event.message||''}`;timeline.append(p);}

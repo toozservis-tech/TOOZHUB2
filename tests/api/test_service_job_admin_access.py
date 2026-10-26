@@ -77,6 +77,7 @@ def test_admin_can_open_job_photos_and_pdf_but_disabled_accounts_cannot(pending,
     document = jobs.upload_job_document(job['id'], jobs.JobDocumentUpload(client_id=uuid4(),
         file_name='Evidence.pdf', content_base64=base64.b64encode(data.getvalue()).decode()), service, db)['documents'][0]
     assert jobs.view_job_photo(job['id'], photo['id'], admin, db).media_type == 'image/jpeg'
+    assert jobs.view_job_photo(job['id'], photo['id'], admin, db, thumbnail=True).media_type == 'image/jpeg'
     response = jobs.view_job_document(job['id'], document['id'], admin, db)
     assert response.media_type == 'application/pdf'
     assert Path(response.path).read_bytes() == data.getvalue()
@@ -86,6 +87,7 @@ def test_admin_can_open_job_photos_and_pdf_but_disabled_accounts_cannot(pending,
         for read in (lambda: jobs.list_jobs(vehicle.id, admin, db),
                      lambda: jobs.get_job(job['id'], admin, db),
                      lambda: jobs.view_job_photo(job['id'], photo['id'], admin, db),
+                     lambda: jobs.view_job_photo(job['id'], photo['id'], admin, db, thumbnail=True),
                      lambda: jobs.view_job_document(job['id'], document['id'], admin, db)):
             with pytest.raises(HTTPException) as error: read()
             assert error.value.status_code == 403
