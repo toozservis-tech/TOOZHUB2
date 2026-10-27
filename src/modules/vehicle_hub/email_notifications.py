@@ -7,7 +7,8 @@ Obsahuje funkce pro odesílání e-mail notifikací:
 """
 
 from typing import Optional, Tuple
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from src.core.branding import APP_DISPLAY_NAME
@@ -23,6 +24,32 @@ from src.modules.vehicle_hub.models import (
     EmailNotificationLog
 )
 from src.modules.vehicle_hub.service_accounts import is_active_service_account
+
+
+_RESERVATION_TIMEZONE = ZoneInfo("Europe/Prague")
+
+
+def _reservation_local_time(value: datetime) -> datetime:
+    """Stored naive reservation timestamps are UTC, as in the mobile clients."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(_RESERVATION_TIMEZONE)
+
+
+def _format_reservation_time(start: Optional[datetime], end: Optional[datetime] = None) -> str:
+    if start is None:
+        return "Neuvedeno"
+    local_start = _reservation_local_time(start)
+    label = local_start.strftime("%d.%m.%Y %H:%M")
+    if end is not None:
+        local_end = _reservation_local_time(end)
+        pattern = "%H:%M" if local_start.date() == local_end.date() else "%d.%m.%Y %H:%M"
+        # During the autumn clock change, equal wall-clock times can differ by an hour.
+        if local_start.utcoffset() != local_end.utcoffset():
+            label += local_start.strftime(" %Z")
+            pattern += " %Z"
+        label += " - " + local_end.strftime(pattern)
+    return label + " (český čas)"
 
 
 def _resolve_tenant_id(*candidates: Optional[int]) -> int:
@@ -408,7 +435,7 @@ def send_reservation_created_email(
         return False, False
     
     vehicle_name = vehicle.nickname or f"{vehicle.brand} {vehicle.model}" or vehicle.plate or "Neznámé vozidlo"
-    start_datetime_str = reservation.start_datetime.strftime("%d.%m.%Y %H:%M")
+    start_datetime_str = _format_reservation_time(reservation.start_datetime, reservation.end_datetime)
     tenant_id = _resolve_tenant_id(
         getattr(reservation, "tenant_id", None),
         getattr(customer, "tenant_id", None),
@@ -670,7 +697,7 @@ def send_reservation_status_email(
         return False
     
     vehicle_name = vehicle.nickname or f"{vehicle.brand} {vehicle.model}" or vehicle.plate or "Neznámé vozidlo"
-    start_datetime_str = reservation.start_datetime.strftime("%d.%m.%Y %H:%M")
+    start_datetime_str = _format_reservation_time(reservation.start_datetime, reservation.end_datetime)
     
     if reservation.status == "CONFIRMED":
         subject = f"✅ Rezervace potvrzena - {vehicle_name}"
@@ -818,17 +845,9 @@ def send_reservation_rescheduled_email(
     if not customer or not customer.notify_email or not service or not vehicle:
         return False
 
-    def _format_range(start_dt: Optional[datetime], end_dt: Optional[datetime]) -> str:
-        if not start_dt:
-            return "Neuvedeno"
-        start_str = start_dt.strftime("%d.%m.%Y %H:%M")
-        if end_dt:
-            return f"{start_str} - {end_dt.strftime('%H:%M')}"
-        return start_str
-
     vehicle_name = vehicle.nickname or f"{vehicle.brand} {vehicle.model}" or vehicle.plate or "Neznámé vozidlo"
-    old_range = _format_range(old_start_datetime, old_end_datetime)
-    new_range = _format_range(reservation.start_datetime, reservation.end_datetime)
+    old_range = _format_reservation_time(old_start_datetime, old_end_datetime)
+    new_range = _format_reservation_time(reservation.start_datetime, reservation.end_datetime)
     role_key = str(changed_by_role or "").strip().lower()
     actor_label = "servis"
     if role_key in {"admin", "developer_admin"}:

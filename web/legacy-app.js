@@ -12638,8 +12638,18 @@
                 .replace(/'/g, '&#39;');
         }
 
+        // API reservation timestamps without an offset are UTC (same contract as iOS/Android).
+        // Calendar date keys and form inputs stay local and must not pass through this parser.
+        function parseReservationInstant(rawValue) {
+            if (rawValue instanceof Date) return new Date(rawValue.getTime());
+            const value = String(rawValue ?? '').trim();
+            if (!value) return new Date(NaN);
+            const naiveIso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
+            return new Date(naiveIso.test(value) ? value + 'Z' : value);
+        }
+
         function getReservationTimestamp(rawValue) {
-            const parsed = new Date(rawValue);
+            const parsed = parseReservationInstant(rawValue);
             if (Number.isNaN(parsed.getTime())) return 0;
             return parsed.getTime();
         }
@@ -12667,7 +12677,7 @@
         }
 
         function getReservationDateKey(rawValue) {
-            const parsed = rawValue instanceof Date ? rawValue : new Date(rawValue);
+            const parsed = rawValue instanceof Date ? rawValue : parseReservationInstant(rawValue);
             if (Number.isNaN(parsed.getTime())) {
                 return '';
             }
@@ -12675,7 +12685,7 @@
         }
 
         function formatReservationDateTime(rawValue) {
-            const parsed = new Date(rawValue);
+            const parsed = parseReservationInstant(rawValue);
             if (Number.isNaN(parsed.getTime())) {
                 return '-';
             }
@@ -13030,7 +13040,7 @@
                     className: 'pending'
                 };
 
-                const endDate = reservation.end_datetime ? new Date(reservation.end_datetime) : null;
+                const endDate = reservation.end_datetime ? parseReservationInstant(reservation.end_datetime) : null;
                 const startLabel = formatReservationDateTime(reservation.start_datetime);
                 const endLabel = (endDate && !Number.isNaN(endDate.getTime()))
                     ? endDate.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })
@@ -13119,10 +13129,10 @@
         }
 
         function formatReservationTimeRange(reservation) {
-            const start = new Date(reservation?.start_datetime);
+            const start = parseReservationInstant(reservation?.start_datetime);
             if (Number.isNaN(start.getTime())) return '--:--';
             const startLabel = start.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' });
-            const end = reservation?.end_datetime ? new Date(reservation.end_datetime) : null;
+            const end = reservation?.end_datetime ? parseReservationInstant(reservation.end_datetime) : null;
             if (!end || Number.isNaN(end.getTime())) return `${startLabel}`;
             return `${startLabel} - ${end.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}`;
         }
@@ -13301,7 +13311,7 @@
 
             for (let hour = hourStart; hour <= hourEnd; hour += 1) {
                 const hourItems = dayReservations.filter((item) => {
-                    const start = new Date(item?.start_datetime);
+                    const start = parseReservationInstant(item?.start_datetime);
                     return !Number.isNaN(start.getTime()) && start.getHours() === hour;
                 });
                 const hourLabel = `${padReservationDatePart(hour)}:00`;
@@ -13365,13 +13375,13 @@
         }
 
         function formatReservationLocalDateInput(rawValue) {
-            const parsed = new Date(rawValue);
+            const parsed = parseReservationInstant(rawValue);
             if (Number.isNaN(parsed.getTime())) return '';
             return `${parsed.getFullYear()}-${padReservationDatePart(parsed.getMonth() + 1)}-${padReservationDatePart(parsed.getDate())}`;
         }
 
         function formatReservationLocalTimeInput(rawValue) {
-            const parsed = new Date(rawValue);
+            const parsed = parseReservationInstant(rawValue);
             if (Number.isNaN(parsed.getTime())) return '';
             return `${padReservationDatePart(parsed.getHours())}:${padReservationDatePart(parsed.getMinutes())}`;
         }
@@ -13563,7 +13573,7 @@
             const customerLabel = reservation?.customer_name || reservation?.customer_email || `Klient #${reservation?.customer_id || ''}`;
             const serviceLabel = reservation?.service_name || reservation?.service_email || `Servis #${reservation?.service_id || ''}`;
             const vehicleLabel = reservation?.vehicle_name || reservation?.vehicle_plate || `Vozidlo #${reservation?.vehicle_id || ''}`;
-            const endDate = reservation?.end_datetime ? new Date(reservation.end_datetime) : null;
+            const endDate = reservation?.end_datetime ? parseReservationInstant(reservation.end_datetime) : null;
             const endTimeLabel = endDate && !Number.isNaN(endDate.getTime())
                 ? ` - ${endDate.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}`
                 : '';
@@ -13644,8 +13654,8 @@
 
             const header = ['ID', 'Datum', 'Čas od', 'Čas do', 'Stav', 'Typ služby', 'Klient', 'Email klienta', 'Vozidlo', 'SPZ', 'Poznámka'];
             const rows = dayReservations.map((item) => {
-                const start = new Date(item?.start_datetime);
-                const end = item?.end_datetime ? new Date(item.end_datetime) : null;
+                const start = parseReservationInstant(item?.start_datetime);
+                const end = item?.end_datetime ? parseReservationInstant(item.end_datetime) : null;
                 const dateLabel = Number.isNaN(start.getTime()) ? '' : start.toLocaleDateString('cs-CZ');
                 const startLabel = Number.isNaN(start.getTime()) ? '' : start.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' });
                 const endLabel = end && !Number.isNaN(end.getTime())
@@ -13695,9 +13705,9 @@
                     return status !== 'CANCELLED';
                 })
                 .map((item) => {
-                    const start = new Date(item?.start_datetime);
+                    const start = parseReservationInstant(item?.start_datetime);
                     if (Number.isNaN(start.getTime())) return null;
-                    const end = item?.end_datetime ? new Date(item.end_datetime) : new Date(start.getTime() + durationMinutes * 60000);
+                    const end = item?.end_datetime ? parseReservationInstant(item.end_datetime) : new Date(start.getTime() + durationMinutes * 60000);
                     if (Number.isNaN(end.getTime())) return null;
                     return { start, end };
                 })
