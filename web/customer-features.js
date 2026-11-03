@@ -13,7 +13,32 @@
         vehicleModel: v.model, vehicleYear: v.production_year ?? v.year, vehicleEngine: v.engine ?? v.fuel,
         vehicleEngineCode: v.engine_code, vehicleMaxPower: v.engine_power_kw, vehicleType: v.type_label,
         vehicleStkDate: v.stk_valid_until, vehicleTyres: v.tyres_info});
-    if (typeof module !== 'undefined') module.exports = {documentNumber, registryPayload, registryFields};
+    function archiveProfileSection(doc, profile) {
+        const section=doc.createElement('section');section.className='customer-feature-card';section.setAttribute('data-ownership-archive-profile','');
+        const heading=doc.createElement('h4');heading.textContent='Původní údaje · pouze ke čtení';section.append(heading);
+        for(const [field,label] of [['notes',null],['insurance_provider','Pojišťovna'],['tyres_info','Pneumatiky'],['orv_number','Číslo ORV']]) {
+            const value=profile?.[field];if(typeof value!=='string')continue;
+            const row=doc.createElement(label?'dl':'p');row.setAttribute('data-archive-profile-field',field);
+            if(label){const name=doc.createElement('dt'),text=doc.createElement('dd');name.textContent=label;text.textContent=value;row.append(name,text);}
+            else{row.textContent=value;row.style.whiteSpace='pre-wrap';}
+            section.append(row);
+        }
+        return section;
+    }
+    function archiveAttachments(value) {
+        let items=value;try{if(typeof items==='string')items=JSON.parse(items);}catch{return [];}
+        if(!Array.isArray(items))return [];
+        const unique=new Map();
+        for(const item of items){
+            if(!item||typeof item!=='object')continue;
+            const key=item.storage_key??item.path??item.key;
+            if(typeof key!=='string'||!key||unique.has(key))continue;
+            const name=typeof item.file_name==='string'&&item.file_name?item.file_name:key.split('/').pop()||'priloha';
+            unique.set(key,{key,name});
+        }
+        return [...unique.keys()].sort().map(key=>unique.get(key));
+    }
+    if (typeof module !== 'undefined') module.exports = {documentNumber, registryPayload, registryFields, archiveProfileSection, archiveAttachments};
     if (!global.document || !global.CustomerWeb) return;
     const $ = id => document.getElementById(id);
     const session = () => global.AdminBrowserSession;
@@ -103,9 +128,9 @@
     async function archiveDetail(id) {
         const body=panel('Archiv vlastnictví'), item=await request(`/api/v1/vehicle-archives/${id}`);if(!body.isConnected)return;
         body.innerHTML=`<h3>${h(item.nickname)}</h3><p>${h(item.plate)} · ${h(item.vin)}</p>`;
+        body.append(archiveProfileSection(document,item.profile));
         for(const record of item.records){const el=document.createElement('article');el.className='customer-feature-card';el.innerHTML=`<h4>${h(record.description)}</h4><p>${h(date(record.performed_at))} · ${h(record.mileage??'—')} km · ${h(money(record.price))}</p><p>${h(record.note)}</p>`;
-            let attachments=[];try{attachments=typeof record.attachments==='string'?JSON.parse(record.attachments):record.attachments||[];}catch{}
-            for(const att of Array.isArray(attachments)?attachments:[]){const key=att.storage_key||att.key; if(key)el.append(action(att.file_name||'Stáhnout přílohu',()=>download(`/api/v1/vehicle-archives/${id}/attachment?key=${encodeURIComponent(key)}`,att.file_name||'priloha')));}
+            for(const att of archiveAttachments(record.attachments))el.append(action(att.name,()=>download(`/api/v1/vehicle-archives/${id}/attachment?key=${encodeURIComponent(att.key)}`,att.name)));
             body.append(el);
         }
         if(!item.records.length)body.append(document.createTextNode('V archivu nejsou servisní záznamy.'));

@@ -1,0 +1,20 @@
+name: Ownership archive web contract
+on:
+  push:
+    paths: ['web/customer-features.js', 'tests/security/test_customer_features.cjs', 'tests/security/test_ownership_archive_renderer.cjs', '.github/workflows/ownership-archive-web-contract.yml']
+  pull_request:
+    paths: ['web/customer-features.js', 'tests/security/test_customer_features.cjs', 'tests/security/test_ownership_archive_renderer.cjs', '.github/workflows/ownership-archive-web-contract.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  readonly-renderer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node --check web/customer-features.js
+      - run: node --test tests/security/test_customer_features.cjs tests/security/test_ownership_archive_renderer.cjs
