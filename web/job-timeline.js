@@ -11,7 +11,7 @@
 
     // Unzoned backend timestamps mean UTC, independent of the browser time zone.
     // Validate calendar values before Date can roll an invalid date into next month.
-    function timestamp(raw) {
+    function parsedTimestamp(raw) {
         if (typeof raw !== 'string') return null;
         const match = timestampPattern.exec(raw);
         if (!match || match[0] !== raw) return null;
@@ -28,8 +28,19 @@
             if (hours > 23 || minutes > 59) return null;
             offset = (zone[0] === '-' ? -1 : 1) * (hours * 3600 + minutes * 60);
         }
-        return date.getTime() / 1000 + (fraction ? Number('0.' + fraction) : 0) - offset;
+        // Keep seconds and the padded fraction separate: adding 1ns to a modern
+        // epoch Number would round it away before the audit-order/window checks.
+        return {seconds: date.getTime() / 1000 - offset, nanoseconds: Number((fraction || '').padEnd(9, '0'))};
     }
+    function timestamp(raw) {
+        const value = parsedTimestamp(raw);
+        return value === null ? null : value.seconds + value.nanoseconds / 1e9;
+    }
+    const compareTimestamps = (left, right) => left.seconds - right.seconds || left.nanoseconds - right.nanoseconds;
+    const withinPhotoWindow = (first, next) => {
+        const seconds = next.seconds - first.seconds;
+        return compareTimestamps(next, first) >= 0 && (seconds < 300 || seconds === 300 && next.nanoseconds <= first.nanoseconds);
+    };
     const statusTitle = status => Object.prototype.hasOwnProperty.call(statusTitles, status) ? statusTitles[status] : 'Záznam zakázky';
     const isPhoto = event => typeof event.message === 'string' && photoPrefixes.some(prefix => event.message.startsWith(prefix));
     function rows(events) {
@@ -38,8 +49,8 @@
         events.forEach((event, index) => {
             const photo = isPhoto(event), last = result[result.length - 1];
             const first = last && last.events[0];
-            const start = first && timestamp(first.created_at), previous = last && timestamp(last.events[last.events.length - 1].created_at), current = timestamp(event.created_at);
-            if (photo && last && last.kind === 'photo' && Number.isSafeInteger(event.actor_id) && event.actor_id > 0 && event.actor_id === first.actor_id && typeof event.status === 'string' && event.status.length > 0 && event.status === first.status && start !== null && previous !== null && current !== null && current >= previous && current - start >= 0 && current - start <= 300 && Math.floor(current / 86400) === Math.floor(start / 86400)) {
+            const start = first && parsedTimestamp(first.created_at), previous = last && parsedTimestamp(last.events[last.events.length - 1].created_at), current = parsedTimestamp(event.created_at);
+            if (photo && last && last.kind === 'photo' && Number.isSafeInteger(event.actor_id) && event.actor_id > 0 && event.actor_id === first.actor_id && typeof event.status === 'string' && event.status.length > 0 && event.status === first.status && start !== null && previous !== null && current !== null && compareTimestamps(current, previous) >= 0 && withinPhotoWindow(start, current) && Math.floor(current.seconds / 86400) === Math.floor(start.seconds / 86400)) {
                 last.events.push(event);
             } else {
                 const sameStatus = typeof event.status === 'string' && event.status.length > 0 && index > 0 && events[index - 1].status === event.status;

@@ -1,9 +1,9 @@
 name: Service photo permissions
 on:
   push:
-    paths: ['web/service-features.js', 'web/job-timeline.js', 'src/server/web_access.py', 'tests/web/job-evidence-policy.cjs', 'tests/web/service-job-timeline.cjs', 'tests/fixtures/service-job-timeline-v1.json', '.github/workflows/service-photo-contract.yml']
+    paths: ['web/service-features.js', 'web/job-timeline.js', 'src/server/web_access.py', 'tests/web/job-evidence-policy.cjs', 'tests/web/service-job-timeline.cjs', 'tests/fixtures/service-job-timeline*.json', '.github/workflows/service-photo-contract.yml']
   pull_request:
-    paths: ['web/service-features.js', 'web/job-timeline.js', 'src/server/web_access.py', 'tests/web/job-evidence-policy.cjs', 'tests/web/service-job-timeline.cjs', 'tests/fixtures/service-job-timeline-v1.json', '.github/workflows/service-photo-contract.yml']
+    paths: ['web/service-features.js', 'web/job-timeline.js', 'src/server/web_access.py', 'tests/web/job-evidence-policy.cjs', 'tests/web/service-job-timeline.cjs', 'tests/fixtures/service-job-timeline*.json', '.github/workflows/service-photo-contract.yml']
   workflow_dispatch:
 jobs:
   permissions:

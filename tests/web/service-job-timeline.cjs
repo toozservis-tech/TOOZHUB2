@@ -6,17 +6,21 @@ const path = require('node:path');
 const vm = require('node:vm');
 const timeline = require('../../web/job-timeline.js');
 const vectors = require('../fixtures/service-job-timeline-v1.json');
+const precisionVectors = require('../fixtures/service-job-timeline-precision-extra.json');
 const root = path.resolve(__dirname, '../..');
 const event = (id, extra = {}) => ({id, actor_id: 1, status: 'completed', created_at: '2026-11-03T09:00:00', message: 'Fotografie: Práce', ...extra});
 const freeze = value => { if (value && typeof value === 'object') { Object.freeze(value); Object.values(value).forEach(freeze); } return value; };
 
-for (const fixture of vectors.cases) test('shared vector: ' + fixture.name, () => {
+function verifyVector(fixture) {
     const input = freeze(structuredClone(fixture.events)), before = JSON.stringify(input), actual = timeline.rows(input);
     assert.deepEqual(actual.map(row => ({kind: row.kind, title: timeline.rowTitle(row), ids: row.events.map(value => value.id)})), fixture.expected);
     assert.equal(JSON.stringify(input), before);
     assert.deepEqual(actual.flatMap(row => row.events), input);
     actual.flatMap(row => row.events).forEach((value, index) => assert.equal(value, input[index], 'retain original events, including duplicates'));
-});
+    assert.doesNotThrow(() => JSON.stringify(actual), 'No precision representation may leak into audit/JSON values');
+}
+for (const fixture of vectors.cases) test('shared vector: ' + fixture.name, () => verifyVector(fixture));
+for (const fixture of precisionVectors.cases) test('shared precision vector: ' + fixture.name, () => verifyVector(fixture));
 
 test('a positive integer actor and a nonempty status are required; malformed actors never merge', () => {
     for (const actor_id of [null, undefined, 0, -1, 1.5, '1', Number.MAX_SAFE_INTEGER + 1]) assert.equal(timeline.rows([event('a', {actor_id}), event('b', {actor_id})]).length, 2);
@@ -32,6 +36,15 @@ test('timestamps validate leap days, fractions and offsets; naive values are UTC
 test('the 300-second window is measured from the first event, including fractional boundaries', () => {
     const result = timeline.rows([event('a', {created_at: '2026-11-03T09:00:00.500Z'}), event('b', {created_at: '2026-11-03T09:05:00.500Z'}), event('c', {created_at: '2026-11-03T09:05:00.501Z'})]);
     assert.deepEqual(result.map(row => row.events.map(value => value.id)), [['a', 'b'], ['c']]);
+});
+test('the exact window retains a nonzero fractional origin, second carries and equivalent offset fractions', () => {
+    for (const [first, last, count] of [
+        ['2026-11-03T09:00:00.500000001Z', '2026-11-03T09:05:00.500000001Z', 1],
+        ['2026-11-03T09:00:00.500000001Z', '2026-11-03T09:05:00.500000002Z', 2],
+        ['2026-11-03T09:00:00.999999999Z', '2026-11-03T09:05:01.000000000Z', 2],
+        ['2026-11-03T09:00:00.1Z', '2026-11-03T10:00:00.100000000+01:00', 1],
+        ['2026-11-03T23:59:59.999999999Z', '2026-11-04T00:00:00.000000000Z', 2],
+    ]) assert.equal(timeline.rows([event('first', {created_at: first}), event('last', {created_at: last})]).length, count, first + ' → ' + last);
 });
 test('duplicate IDs and equal original messages are preserved without sorting or deduplication', () => {
     const input = [event('same'), event('same'), event('0', {created_at: '2026-11-03T08:00:00'})];
