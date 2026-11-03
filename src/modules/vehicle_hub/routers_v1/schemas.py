@@ -283,6 +283,7 @@ class ServiceRecordUpdateV1(BaseModel):
 
 
 class ServiceRecordOutV1(BaseModel):
+    display_summary: Optional[str] = None
     is_historical_summary: bool = False
     id: int
     vehicle_id: int

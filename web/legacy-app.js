@@ -8661,7 +8661,7 @@
 
                 const formatTile = (record, isAi = false) => {
                     const category = record.category || 'JINE';
-                    const categoryInfo = SERVICE_CATEGORIES.find(c => c.value === category) || SERVICE_CATEGORIES.find(c => c.value === 'JINE');
+                    const categoryInfo = SERVICE_CATEGORIES.find(c => c.value === category);
                     const categoryIcon = categoryInfo ? categoryInfo.icon : '📋';
                     const categoryLabel = categoryInfo ? categoryInfo.label : category;
 
@@ -8678,14 +8678,15 @@
                         : '—';
 
                     const dateLabel = formatDateCZ(record.performed_at);
-                    const description = escapeHtml(record.description || 'Bez popisu');
+                    const description = escapeHtml(record.display_summary || record.description || 'Bez popisu');
                     const categoryText = escapeHtml(`${categoryIcon} ${categoryLabel}`);
 
                     return `
                         <div class="service-record-tile ${isAi ? 'ai-tile' : ''}" ${legacyActionAttributes("click", "showServiceRecordDetail_941afdd3", record.id, vehicleId)} title="Klikněte pro detail">
                             ${isAi ? '<span class="tile-ai-badge">🤖</span>' : ''}
                             <div class="tile-category">${categoryText}</div>
-                            <div class="tile-description">${description}</div>
+                            <div class="tile-description" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">${description}</div>
+                            ${recordPhotoHTML(vehicleId, record.attachments, 2)}
                             <div class="tile-metrics">
                                 <div class="tile-metric">
                                     <span class="tile-metric-label">Datum</span>
@@ -8695,11 +8696,12 @@
                                     <span class="tile-metric-label">Km</span>
                                     <span class="tile-metric-value">${escapeHtml(mileageLabel)}</span>
                                 </div>
-                                <div class="tile-metric tile-metric-price">
+                                ${!record.is_historical_summary ? `<div class="tile-metric tile-metric-price">
                                     <span class="tile-metric-label">Cena</span>
                                     <span class="tile-metric-value">${escapeHtml(priceLabel)}</span>
-                                </div>
+                                </div>` : ''}
                             </div>
+                            <button type="button" class="btn btn-secondary" ${legacyActionAttributes("click", "showServiceRecordDetail_941afdd3", record.id, vehicleId)}>Otevřít záznam</button>
                         </div>
                     `;
                 };
@@ -8725,6 +8727,8 @@
                         html += formatTile(record);
                     });
                     container.innerHTML = html;
+                    loadRecordThumbnails(container);
+                    if(aiContainer) loadRecordThumbnails(aiContainer);
                 } else {
                     // Pokud jsou jen AI záznamy, zobrazit prázdnou zprávu
                     if (aiRecords.length > 0) {
@@ -8909,6 +8913,44 @@
         }
 
         // Zobrazení detailu servisního záznamu
+        function recordWorkNote(note) {
+            return String(note || '').split('\n').map(line => {
+                const event = line.match(/^\d{4}-\d{2}-\d{2}T\S+\s+\[(received|in_progress|completed|cancelled)\]\s*(.*)$/);
+                if (!event) return line;
+                return /^(Fotografie:|Fotografie doplněná po dokončení:|Dokument:|Dokument doplněný po dokončení:)/.test(event[2]) ? '' : event[2];
+            }).filter(Boolean).join('\n');
+        }
+        function recordPhotoHTML(vehicleId, raw, limit = 2) {
+            const photos = parseServiceRecordAttachments(vehicleId, raw).filter(att =>
+                att.can_preview && att.download_url && (/^image\//.test(att.mime_type || '') || /\.(jpe?g|png|webp|heic)$/i.test(att.file_name || '')));
+            if (!photos.length) return '';
+            return `<div class="record-photo-grid">${photos.slice(0, limit).map((att, index) => `<button type="button" class="record-photo-tile" ${legacyActionAttributes("click", "openServiceRecordAttachmentPreview_641bbe9b", encodeURIComponent(att.download_url), encodeURIComponent(att.file_name || 'Fotografie opravy'))}>
+                <img alt="Fotografie ${index+1}" loading="lazy" data-record-thumbnail="${escapeHtml(att.download_url)}"><span>Otevřít fotografii</span></button>`).join('')}</div>` +
+                (photos.length > limit ? `<div class="record-photo-more">+ ${photos.length-limit} dalších fotografií po otevření záznamu</div>` : '');
+        }
+        async function loadRecordThumbnails(root) {
+            const token = AdminBrowserSession.token();
+            const images = Array.from(root.querySelectorAll('img[data-record-thumbnail]'));
+            let cursor=0;
+            async function worker() {
+                while(cursor<images.length) {
+                    const image=images[cursor++];
+                    if(!image.isConnected || token!==AdminBrowserSession.token()) return;
+                    const path=image.getAttribute('data-record-thumbnail');
+                    try {
+                        // Only vehicle-bound local API paths built by our attachment parser.
+                        if(!/^\/api\/v1\/vehicles\/\d+\/records\/attachments\/download\?key=/.test(path)) continue;
+                        const blob=await fetchServiceRecordAttachmentBlob(path+'&thumbnail=true');
+                        if(!image.isConnected || token!==AdminBrowserSession.token()) continue;
+                        const url=URL.createObjectURL(blob);
+                        image.onload=image.onerror=()=>URL.revokeObjectURL(url);
+                        image.src=url;
+                    } catch (_) { image.alt='Náhled není dostupný – otevřít fotografii'; }
+                }
+            }
+            await Promise.all([worker(),worker(),worker()]);
+        }
+
         async function showServiceRecordDetail(recordId, vehicleId) {
             const modal = document.getElementById('serviceRecordDetailModal');
             const modalBody = document.getElementById('serviceRecordDetailModalBody');
@@ -8922,30 +8964,26 @@
             modalBody.innerHTML = '<div class="loading">Načítám...</div>';
 
             try {
-                const record = await apiCall(`/api/v1/vehicles/${vehicleId}/records/${recordId}`, 'GET');
+                const records = await apiCall(`/api/v1/vehicles/${vehicleId}/records`, 'GET');
+                const record = records.find(row => Number(row.id)===Number(recordId));
+                if(!record) throw new Error('Záznam není dostupný. Obnovte historii vozidla.');
                 const date = new Date(record.performed_at);
 
                 // Najít kategorii
                 const category = record.category || 'JINE';
-                const categoryInfo = SERVICE_CATEGORIES.find(c => c.value === category) || SERVICE_CATEGORIES.find(c => c.value === 'JINE');
+                const categoryInfo = SERVICE_CATEGORIES.find(c => c.value === category);
                 const categoryIcon = categoryInfo ? categoryInfo.icon : '📋';
                 const categoryLabel = categoryInfo ? categoryInfo.label : category;
                 const recordAttachments = parseServiceRecordAttachments(vehicleId, record.attachments);
                 const mileageValue = Number(record.mileage);
-                const hasMileage = Number.isFinite(mileageValue) && mileageValue >= 0;
+                const hasMileage = record.mileage != null && Number.isFinite(mileageValue) && mileageValue >= 0;
                 const priceValue = Number(record.price);
-                const hasPrice = Number.isFinite(priceValue) && priceValue >= 0;
+                const hasPrice = !record.is_historical_summary && record.price != null && Number.isFinite(priceValue) && priceValue >= 0;
                 let parsedSummary = (recordAttachments.find(att => att.parsed_summary)?.parsed_summary) || null;
                 if (parsedSummary && typeof parsedSummary === 'object') {
                     parsedSummary = sanitizeServiceReportPayload(parsedSummary);
                 }
-                if (!parsedSummary || isParsedSummaryLikelyInvalid(parsedSummary)) {
-                    const attachmentForRebuild = recordAttachments.find(att => att.can_preview && att.download_url) || recordAttachments[0];
-                    const recalculatedSummary = await tryBuildParsedSummaryFromAttachment(vehicleId, attachmentForRebuild);
-                    if (recalculatedSummary) {
-                        parsedSummary = sanitizeServiceReportPayload(recalculatedSummary);
-                    }
-                }
+                if(record.is_historical_summary) parsedSummary=null;
                 const parsedSummaryItems = Array.isArray(parsedSummary?.items) ? parsedSummary.items : [];
                 const parsedSummaryCurrency = String(parsedSummary?.currency || 'CZK').toUpperCase();
                 const parsedSummaryRowsHtml = parsedSummaryItems.length > 0
@@ -9024,12 +9062,12 @@
                     : '';
                 const noteText = String(record.note || '').trim();
                 const generatedReportNote = /^(servisn[ií]\s+zpr[aá]va|zdroj\s*:)/i.test(noteText);
-                let noteToRender = noteText;
+                let noteToRender = recordWorkNote(noteText);
                 if (parsedSummary && generatedReportNote) {
                     const manualNoteMatch = noteText.match(/(?:^|\n)Pozn[aá]mka:\s*(.+)$/i);
                     noteToRender = manualNoteMatch ? manualNoteMatch[1].trim() : '';
                 }
-                const previewAttachments = recordAttachments.filter((att) => att.can_preview && att.download_url);
+                const previewAttachments = recordAttachments.filter((att) => !record.is_historical_summary && att.can_preview && att.download_url && !/^image\//.test(att.mime_type || '') && !/\.(jpe?g|png|webp|heic)$/i.test(att.file_name || ''));
                 const attachmentsHtml = previewAttachments.length > 0
                     ? `
                         <div class="record-attachments-block">
@@ -9051,7 +9089,7 @@
                     : '';
 
                 let detailHtml = `
-                    <div style="padding: 20px;">
+                    <div style="padding: 20px; color: #e2e8f0;">
                         <h3 style="margin: 0 0 20px 0; color: #e2e8f0; font-size: 18px; display: flex; align-items: center; gap: 8px;">
                             ${escapeHtml(categoryIcon)} ${escapeHtml(categoryLabel)}
                         </h3>
@@ -9062,16 +9100,13 @@
                             </div>
                             <div>
                                 <div style="color: #94a3b8; font-size: 12px; margin-bottom: 4px;">Datum</div>
-                                <div style="color: #e2e8f0; font-size: 14px;">${escapeHtml(date.toLocaleDateString('cs-CZ'))} ${escapeHtml(date.toLocaleTimeString('cs-CZ', {hour: '2-digit', minute: '2-digit'}))}</div>
+                                <div style="color: #e2e8f0; font-size: 14px;">${escapeHtml(formatDateCZ(record.performed_at))}</div>
                             </div>
                             <div>
                                 <div style="color: #94a3b8; font-size: 12px; margin-bottom: 4px;">Nájezd</div>
                                 <div style="color: #e2e8f0; font-size: 14px;">${escapeHtml(hasMileage ? `${mileageValue.toLocaleString('cs-CZ')} km` : 'Neuvedeno')}</div>
                             </div>
-                            <div>
-                                <div style="color: #94a3b8; font-size: 12px; margin-bottom: 4px;">Cena</div>
-                                <div style="color: #6366f1; font-size: 16px; font-weight: 600;">${escapeHtml(hasPrice ? `${priceValue.toLocaleString('cs-CZ')} Kč` : 'Neuvedeno')}</div>
-                            </div>
+                            ${!record.is_historical_summary ? `<div><strong>Cena</strong><div>${escapeHtml(hasPrice ? `${priceValue.toLocaleString('cs-CZ')} Kč` : 'Neuvedeno')}</div></div>` : '<p>Ceny a soukromé doklady předchozího vlastníka se nezobrazují.</p>'}
                             ${noteToRender ? `
                             <div>
                                 <div style="color: #94a3b8; font-size: 12px; margin-bottom: 4px;">Poznámka</div>
@@ -9079,7 +9114,9 @@
                             </div>
                             ` : ''}
                             ${parsedSummaryHtml}
+                            ${recordPhotoHTML(vehicleId, record.attachments, Number.MAX_SAFE_INTEGER)}
                             ${attachmentsHtml}
+                            ${noteText !== noteToRender && !record.is_historical_summary ? `<details><summary>Úplná historie změn</summary><p style="white-space:pre-wrap">${escapeHtml(noteText)}</p></details>` : ''}
                             ${record.created_by_ai ? `
                             <div style="margin-top: 12px; padding: 12px; background: rgba(99, 102, 241, 0.15); border-radius: 8px; border-left: 3px solid #6366f1;">
                                 <div style="color: #94a3b8; font-size: 11px; font-style: italic;">🤖 Záznam vytvořený AI asistentem</div>
@@ -9087,8 +9124,8 @@
                             ` : ''}
                         </div>
                         <div style="display: flex; gap: 10px; margin-top: 20px; flex-direction: column;">
-                            <button ${legacyActionAttributes("click", "openEditServiceRecordModal_544ccd45", recordId, vehicleId)} class="btn" style="width: 100%; padding: 10px; background: #6366f1; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">✏️ Upravit</button>
-                            <button ${legacyActionAttributes("click", "deleteServiceRecordFromDetail_4ad93f83", recordId, vehicleId)} class="btn" style="width: 100%; padding: 10px; background: #dc3545; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">🗑️ Smazat</button>
+                            ${!record.is_historical_summary ? `<button ${legacyActionAttributes("click", "openEditServiceRecordModal_544ccd45", recordId, vehicleId)} class="btn" style="width: 100%; padding: 10px; background: #6366f1; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">✏️ Upravit</button>
+                            <button ${legacyActionAttributes("click", "deleteServiceRecordFromDetail_4ad93f83", recordId, vehicleId)} class="btn" style="width: 100%; padding: 10px; background: #dc3545; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">🗑️ Smazat</button>` : ''}
                             <button ${legacyActionAttributes("click", "closeServiceRecordDetailModal_f01a2a03")} class="btn" style="width: 100%; padding: 10px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Zavřít</button>
                         </div>
                     </div>
@@ -9100,6 +9137,7 @@
                     modal.setAttribute('data-record-id', recordId);
                     modal.classList.add('active');
                     modalBody.innerHTML = detailHtml;
+                    loadRecordThumbnails(modalBody);
                 }
             } catch (error) {
                 console.error("Error loading service record detail:");
@@ -9320,7 +9358,7 @@
 
                 // Najít kategorii
                 const category = record.category || 'JINE';
-                const categoryInfo = SERVICE_CATEGORIES.find(c => c.value === category) || SERVICE_CATEGORIES.find(c => c.value === 'JINE');
+                const categoryInfo = SERVICE_CATEGORIES.find(c => c.value === category);
                 const categoryIcon = categoryInfo ? categoryInfo.icon : '📋';
                 const categoryLabel = categoryInfo ? categoryInfo.label : category;
                 const recordAttachments = parseServiceRecordAttachments(vehicleId, record.attachments);
@@ -9816,7 +9854,7 @@
                     html += `
                         <div class="service-record-item" style="margin-bottom: 12px; padding: 12px; background: rgba(15, 23, 42, 0.4); border-radius: 8px; border-left: 3px solid #6366f1;">
                             <h5 style="margin: 0 0 8px 0; color: #e2e8f0; font-size: 15px;">${escapeHtml(record.description)}</h5>
-                            <div style="color: #94a3b8; font-size: 13px; margin-bottom: 8px;">${escapeHtml(date.toLocaleDateString('cs-CZ'))} ${escapeHtml(date.toLocaleTimeString('cs-CZ', {hour: '2-digit', minute: '2-digit'}))}</div>
+                            <div style="color: #94a3b8; font-size: 13px; margin-bottom: 8px;">${escapeHtml(formatDateCZ(record.performed_at))}</div>
                             <div style="color: #cbd5e1; font-size: 13px;">
                                 ${record.mileage ? `<div><strong>Nájezd:</strong> ${escapeHtml(record.mileage.toLocaleString('cs-CZ'))} km</div>` : ''}
                                 ${record.note ? `<div><strong>Kategorie:</strong> ${escapeHtml(record.note)}</div>` : ''}
@@ -9960,7 +9998,7 @@
                     html += `
                         <div class="service-record-item">
                             <h4>${escapeHtml(record.description)}</h4>
-                            <div class="record-date">${escapeHtml(date.toLocaleDateString('cs-CZ'))} ${escapeHtml(date.toLocaleTimeString('cs-CZ', {hour: '2-digit', minute: '2-digit'}))}</div>
+                            <div class="record-date">${escapeHtml(formatDateCZ(record.performed_at))}</div>
                             <div class="record-details">
                                 ${record.mileage ? `<p><strong>Nájezd:</strong> ${escapeHtml(record.mileage.toLocaleString('cs-CZ'))} km</p>` : ''}
                                 ${record.note ? `<p><strong>Kategorie:</strong> ${escapeHtml(record.note)}</p>` : ''}

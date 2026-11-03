@@ -65,6 +65,12 @@ def test_completed_photo_persists_once_and_preserves_completion(pending, consent
     with pytest.raises(HTTPException):
         jobs.view_job_photo(job['id'], result['photo']['id'], other, db)
     if consent == 'approved':
+        from src.modules.vehicle_hub.vehicle_privacy import record_for_actor
+        import json
+        original = db.query(ServiceRecord).one()
+        shown = record_for_actor(db, original, owner)
+        assert any(file['file_name'] == f"foto_{result['photo']['id']}.jpg"
+                   for file in json.loads(shown.attachments))
         assert jobs.view_job_photo(job['id'], result['photo']['id'], owner, db).media_type == 'image/jpeg'
     else:
         with pytest.raises(HTTPException):

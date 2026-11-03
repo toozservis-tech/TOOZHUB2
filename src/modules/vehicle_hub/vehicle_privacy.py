@@ -93,10 +93,56 @@ def technical_record(record):
     return view
 
 
+def published_record_photos(db, record):
+    """Only published workshop photos, never arbitrary images of private invoices."""
+    from .service_job_models import ServiceJob, ServiceJobPhoto
+    if record.is_deleted:
+        return []
+    rows = (db.query(ServiceJobPhoto).join(ServiceJob, ServiceJob.id == ServiceJobPhoto.job_id)
+        .filter(ServiceJob.vehicle_id == record.vehicle_id, ServiceJob.final_record_id == record.id,
+            ServiceJob.status.in_(('completed', 'handed_over')), or_(ServiceJob.access_request_id.is_(None),
+                ServiceJob.consent_published_at.is_not(None)))
+        .order_by(ServiceJobPhoto.id).all())
+    return [{'storage_key': row.storage_key, 'file_name': f'foto_{row.id}.jpg',
+             'mime_type': 'image/jpeg', 'caption': 'Fotografie opravy', 'stage': row.stage}
+            for row in rows]
+
+
+def _is_published_record_photo(db, vehicle_id, key):
+    from .service_job_models import ServiceJob, ServiceJobPhoto
+    record = (db.query(ServiceRecord).join(ServiceJob, ServiceJob.final_record_id == ServiceRecord.id)
+        .join(ServiceJobPhoto, ServiceJobPhoto.job_id == ServiceJob.id)
+        .filter(ServiceRecord.vehicle_id == vehicle_id, ServiceRecord.is_deleted.is_(False),
+            ServiceJob.vehicle_id == vehicle_id, ServiceJob.status.in_(('completed', 'handed_over')),
+            ServiceJobPhoto.storage_key == key,
+            or_(ServiceJob.access_request_id.is_(None), ServiceJob.consent_published_at.is_not(None))).first())
+    return record is not None
+
+
 def record_for_actor(db, record, actor):
-    if can_read_record_private(db, record, actor): return record
+    from .record_presentation import display_summary
+    if can_read_record_private(db, record, actor):
+        # Attachments added after completion are append-only job evidence.
+        # Merge them into a transient read model; never rewrite the signed record.
+        from sqlalchemy import inspect
+        view = ServiceRecord(**{column.key: getattr(record, column.key)
+                                for column in inspect(ServiceRecord).column_attrs})
+        try:
+            files = json.loads(record.attachments or '[]')
+            if not isinstance(files, list): files = []
+        except (TypeError, ValueError):
+            files = []
+        keys = {item.get('storage_key') for item in files if isinstance(item, dict)}
+        files += [photo for photo in published_record_photos(db, record) if photo['storage_key'] not in keys]
+        view.attachments = json.dumps(files, ensure_ascii=False) if files else record.attachments
+        view.display_summary = display_summary(record)
+        return view
     if record.is_deleted: raise HTTPException(404, 'Servisní záznam nebyl nalezen.')
-    return technical_record(record)
+    view = technical_record(record)
+    photos = published_record_photos(db, record)
+    view.attachments = json.dumps(photos, ensure_ascii=False) if photos else None
+    view.display_summary = view.description
+    return view
 
 
 def require_private_record(db, record, actor):
@@ -114,6 +160,9 @@ def register_attachment(db, *, vehicle_id, key, actor, private_to_author=False):
 
 def require_attachment_private(db, *, vehicle_id, key, actor):
     if is_admin(actor.role): return
+    # Current vehicle access is checked by the caller. This read-only exception
+    # never permits reattaching an old owner's evidence to a new record.
+    if _is_published_record_photo(db, vehicle_id, key): return
     row = db.get(VehicleAttachmentPrivacy, key)
     if row is not None:
         if row.vehicle_id == vehicle_id and actor.id in (row.owner_customer_id, row.author_customer_id): return

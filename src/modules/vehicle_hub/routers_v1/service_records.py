@@ -1169,6 +1169,7 @@ def download_service_record_attachment(
     key: str = Query(..., min_length=3, max_length=500),
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
+    thumbnail: bool = False,
 ):
     """Bezpečné stažení přílohy servisního záznamu."""
     lock_vehicle_access(db, vehicle_id)
@@ -1186,6 +1187,18 @@ def download_service_record_attachment(
     attachment_file = _resolve_attachment_file(key, vehicle_id=vehicle_id, db=db)
     if not attachment_file or not attachment_file.is_file():
         raise HTTPException(status_code=404, detail="Příloha nebyla nalezena.")
+
+    if thumbnail:
+        from fastapi.responses import Response
+        from .service_jobs import _compressed_job_image
+        try:
+            if attachment_file.stat().st_size > 15_000_000:
+                raise HTTPException(413, 'Fotografie je pro náhled příliš velká.')
+            content = _compressed_job_image(attachment_file.read_bytes(), thumbnail=True)
+        except (ValueError, OSError) as error:
+            raise HTTPException(415, 'Náhled je dostupný pouze pro fotografie.') from error
+        return Response(content, media_type='image/jpeg', headers={'Cache-Control': 'private, no-store',
+            'X-Content-Type-Options': 'nosniff'})
 
     media_type = mimetypes.guess_type(str(attachment_file.name))[0] or "application/octet-stream"
     safe_filename_ascii = attachment_file.name.encode("ascii", "ignore").decode("ascii") or "doklad"
@@ -1234,7 +1247,28 @@ def generate_service_records_pdf(
         records = [record_for_actor(db, record, current_user) for record in records]
         mileage_timeline_points = collect_vehicle_mileage_timeline_points(db, vehicle_id, actor=current_user)
         from ..vehicle_history_report import build_vehicle_history_report
-        pdf_content = build_vehicle_history_report(vehicle, records, mileage_timeline_points)
+        # Pre-resolve only authorized local images; no customer file/network lookup in renderer.
+        photo_previews = {}
+        photo_budget = 8_000_000
+        for record in records:
+            photos = [item for item in _parse_attachments_payload(record.attachments)
+                if str(item.get('mime_type', '')).startswith('image/') or
+                str(item.get('file_name') or item.get('storage_key') or '').lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
+            seen = set(); unique = []
+            for item in photos:
+                key = item.get('storage_key') or item.get('path')
+                if key and key not in seen:
+                    seen.add(key); unique.append(key)
+            previews = []
+            for key in unique[:4]:
+                if photo_budget < 100_000: break
+                try:
+                    response = download_service_record_attachment(vehicle_id, key, current_user, db, thumbnail=True)
+                    previews.append(response.body); photo_budget -= len(response.body)
+                except (HTTPException, OSError, ValueError):
+                    continue  # An unavailable image must not erase the service history.
+            photo_previews[record.id] = {'images': previews, 'total': len(unique)}
+        pdf_content = build_vehicle_history_report(vehicle, records, mileage_timeline_points, photo_previews=photo_previews)
 
         # User-supplied names cannot inject response headers or create files.
         import unicodedata

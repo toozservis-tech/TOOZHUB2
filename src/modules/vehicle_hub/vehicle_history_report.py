@@ -15,6 +15,9 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
+from .record_presentation import work_note
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -159,6 +162,22 @@ class MileageChart(Flowable):
         c.drawString(right-64, 5, 'Odchylka')
 
 
+class PhotoStrip(Flowable):
+    """A print-size contact strip, at most four 22 x 16.5 mm previews."""
+    def __init__(self, images):
+        super().__init__()
+        self.images = images[:4]
+        self.width, self.height = WIDTH, 19 * mm
+
+    def draw(self):
+        for index, data in enumerate(self.images):
+            x = index * 25 * mm
+            self.canv.setFillColor(PAPER)
+            self.canv.roundRect(x, 2 * mm, 22 * mm, 16.5 * mm, 2, stroke=0, fill=1)
+            self.canv.drawImage(ImageReader(BytesIO(data)), x, 2 * mm,
+                width=22 * mm, height=16.5 * mm, preserveAspectRatio=True, anchor='c')
+
+
 CATEGORIES = {'OLEJ':'Olej a maziva', 'BRZDY':'Brzdy', 'PNEU':'Pneumatiky', 'ROZVODY':'Rozvody',
     'STK':'STK', 'DIAGNOSTIKA':'Diagnostika', 'FILTRY':'Filtry', 'CHLADICI':'Chladicí systém',
     'VYFUK':'Výfuk', 'OSVETLENI':'Osvětlení', 'KAROSERIE':'Karoserie', 'INTERIER':'Interiér',
@@ -166,16 +185,16 @@ CATEGORIES = {'OLEJ':'Olej a maziva', 'BRZDY':'Brzdy', 'PNEU':'Pneumatiky', 'ROZ
     'OPRAVA':'Oprava', 'JINE':'Ostatní'}
 
 
-def build_vehicle_history_report(vehicle, records, points, *, generated_at=None):
+def build_vehicle_history_report(vehicle, records, points, *, generated_at=None, photo_previews=None):
     if not _REPORT_SLOTS.acquire(blocking=False):
         raise HTTPException(503, 'Právě připravujeme další přehledy. Zkuste to za chvíli.', headers={'Retry-After':'5'})
     try:
-        return _build(vehicle, records, points, generated_at=generated_at)
+        return _build(vehicle, records, points, generated_at=generated_at, photo_previews=photo_previews)
     finally:
         _REPORT_SLOTS.release()
 
 
-def _build(vehicle, records, points, *, generated_at=None):
+def _build(vehicle, records, points, *, generated_at=None, photo_previews=None):
     _register_fonts()
     generated_at = generated_at or datetime.now(ZoneInfo('Europe/Prague'))
     styles = {
@@ -214,8 +233,9 @@ def _build(vehicle, records, points, *, generated_at=None):
                 value=Decimal(str(r.price))
                 if value.is_finite():amounts.append(value)
             except InvalidOperation: pass
+    all_historical = bool(records) and all(getattr(r, 'is_historical_summary', False) for r in records)
     latest=summary['last_point']
-    metrics=table([[field('ZÁZNAMŮ V HISTORII',str(len(records))),field('POSLEDNÍ EVIDOVANÝ STAV',number(latest.mileage_km)+' km' if latest else 'Neuvedeno'),field('ZADANÉ NÁKLADY',money(sum(amounts)) if amounts else 'Neuvedeno')]], [WIDTH*.28,WIDTH*.39,WIDTH*.33])
+    metrics=table([[field('ZÁZNAMŮ V HISTORII',str(len(records))),field('POSLEDNÍ EVIDOVANÝ STAV',number(latest.mileage_km)+' km' if latest else 'Neuvedeno'),field('ROZSAH', 'Technická historie') if all_historical else field('ZADANÉ NÁKLADY',money(sum(amounts)) if amounts else 'Neuvedeno')]], [WIDTH*.28,WIDTH*.39,WIDTH*.33])
     metrics.setStyle(TableStyle([('LINEBELOW',(0,0),(-1,-1),.6,LINE)]));story.append(metrics)
     chart_heading=p('Vývoj stavu kilometrů','heading')
     if points:
@@ -225,16 +245,29 @@ def _build(vehicle, records, points, *, generated_at=None):
             story.append(p(f"U {summary['anomaly_point_count']} bodů byla zjištěna odchylka. Označení upozorňuje na potřebu ověření, samo neprokazuje manipulaci s tachometrem.",'small'))
         else: story.append(p('Graf zachycuje evidované hodnoty; nepotvrzuje skutečný aktuální nájezd.','small'))
     else: story.extend([chart_heading,p('Zatím chybí záznam s datem a stavem kilometrů. Po jeho doplnění se zde zobrazí graf.','body')])
-    story.append(p('Servisní historie','heading'))
-    if not records: story.append(p('Dosud nejsou evidovány servisní záznamy.','body'))
+    if not records: story.extend([p('Servisní historie','heading'), p('Dosud nejsou evidovány servisní záznamy.','body')])
     for index,record in enumerate(records,1):
         category=CATEGORIES.get(record.category,record.category or 'Ostatní')
         title=p(f'{index:02d}  |  {date_text(record.performed_at)}  /  {category}','record')
-        meta=p('  |  '.join([f"Stav: {number(record.mileage)} km" if record.mileage is not None else 'Stav km neuveden',f"Částka: {money(record.price)}" if record.price is not None else 'Částka neuvedena']),'small')
+        meta=p('  |  '.join([f"Stav: {number(record.mileage)} km" if record.mileage is not None else 'Stav km neuveden',('Technická historie' if getattr(record, 'is_historical_summary', False) else f"Částka: {money(record.price)}" if record.price is not None else 'Částka neuvedena')]),'small')
         # Keep only the heading/meta/first paragraph together; long notes may split safely.
         title.keepWithNext=True; meta.keepWithNext=True
-        story.extend([title,meta,p(record.description or 'Bez popisu')])
-        if record.note: story.append(p('Poznámka: '+str(record.note),'body'))
+        block = ([p('Servisní historie','heading')] if index == 1 else []) + [title,meta,p(record.description or 'Bez popisu')]
+        note = work_note(record.note)
+        if note: block.append(p('Provedená práce: '+note if note != record.note else 'Poznámka: '+note,'body'))
+        preview = (photo_previews or {}).get(getattr(record, 'id', None), {})
+        images = preview.get('images', [])[:4]
+        total = preview.get('total', len(images))
+        if images or total:
+            strip = PhotoStrip(images)
+            strip.keepWithNext = True
+            block.extend([strip, p(
+                f'… Další fotografie v aplikaci Evidence Vozidel ({max(0, total-len(images))} dalších).'
+                if total > len(images) else f'Fotodokumentace · {len(images)} fotografií. Plné rozlišení v aplikaci Evidence Vozidel.', 'small')])
+
+        # Keep normal-sized repairs and their contact strip on the same page.
+        # Long work descriptions may still flow naturally across pages.
+        story.extend([KeepTogether(block)] if len(note or '') < 1200 else block)
         story.extend([Spacer(1,4),HRFlowable(width='100%',thickness=.5,color=LINE),Spacer(1,10)])
     if points:
         evidence_intro = p('Přehled bodů použitých v grafu. Údaje se mohou vztahovat k téže návštěvě servisu.','small')

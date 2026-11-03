@@ -3299,3 +3299,10 @@ body.modal-open {
     padding: 20px;
   }
 }
+
+/* Compact service evidence: photos are previews, never full-height document rows. */
+.record-photo-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0;}
+.record-photo-tile {min-width:0;border:1px solid #526079;border-radius:12px;padding:6px;background:#2e3b52;color:#e2e8f0;cursor:pointer;overflow:hidden;}
+.record-photo-tile img {display:block;width:100%;height:100px;object-fit:contain;border-radius:8px;}
+.record-photo-tile span,.record-photo-more {display:block;font-size:12px;margin:5px 0;}
+@media(min-width:760px){#serviceRecordDetailModal .record-photo-grid{grid-template-columns:repeat(4,minmax(0,1fr));}}
