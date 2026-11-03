@@ -62,17 +62,17 @@
     }
     function createRepairPhotoPreview(env, actorSession, photo, host) {
         const doc=env.document,figure=doc.createElement('figure'),image=doc.createElement('img'),status=doc.createElement('p'),retry=doc.createElement('button');
-        figure.setAttribute('data-repair-photo-preview',String(photo.id));figure.style.margin='12px 0';image.alt='Fotografie opravy';image.style.cssText='max-width:100%;max-height:480px;object-fit:contain;display:none';status.setAttribute('role','status');retry.type='button';retry.className='btn-secondary';retry.textContent='Zkusit znovu';retry.hidden=true;figure.append(image,status,retry);host.append(figure);
+        figure.setAttribute('data-repair-photo-preview',String(photo.id));figure.style.margin='12px 0';image.alt='Fotografie opravy';image.style.cssText='max-width:100%;max-height:480px;object-fit:contain;display:none';status.setAttribute('role','status');retry.type='button';retry.className='btn-secondary';retry.textContent='Zkusit znovu';retry.hidden=true;retry.style.display='none';figure.append(image,status,retry);host.append(figure);
         const bound=actorSession.snapshot(),dialog=figure.closest('dialog');let disposed=false,version=0,objectURL=null,controller=null,activePromise;
         const isCurrent=()=>{if(disposed||!figure.isConnected)return false;try{actorSession.assertCurrent(bound);return true;}catch{return false;}};
         const clearImage=()=>{image.onload=image.onerror=null;image.removeAttribute('src');image.style.display='none';for(const key of ['data-natural-width','data-natural-height','data-verified-sha256'])figure.removeAttribute(key);if(objectURL){const old=objectURL;objectURL=null;env.URL.revokeObjectURL(old);}};
         const setState=(state,message)=>{figure.setAttribute('data-preview-state',state);status.textContent=message;};
         const cleanup=()=>{if(disposed)return;disposed=true;version++;controller?.abort();clearImage();observer.disconnect();dialog?.removeEventListener('close',cleanup);env.removeEventListener('admin-session-ended',cleanup);setState('disposed','');};
         const observer=new env.MutationObserver(()=>{if(!figure.isConnected)cleanup();});observer.observe(doc.body,{childList:true,subtree:true});dialog?.addEventListener('close',cleanup);env.addEventListener('admin-session-ended',cleanup);
-        const fail=()=>{controller?.abort();clearImage();if(isCurrent()){setState('error','Fotografii se nepodařilo načíst.');retry.hidden=false;}else cleanup();};
+        const fail=()=>{controller?.abort();clearImage();if(isCurrent()){setState('error','Fotografii se nepodařilo načíst.');retry.hidden=false;retry.style.display='inline-block';}else cleanup();};
         async function load(){
             if(!isCurrent()){cleanup();return;}
-            const attempt=++version;controller?.abort();controller=new env.AbortController();clearImage();retry.hidden=true;setState('loading','Načítám fotografii…');
+            const attempt=++version;controller?.abort();controller=new env.AbortController();clearImage();retry.hidden=true;retry.style.display='none';setState('loading','Načítám fotografii…');
             const current=()=>attempt===version&&isCurrent();
             try{
                 if(!Number.isSafeInteger(photo.id)||photo.id<=0||!/^[0-9a-f]{64}$/i.test(photo.sha256||''))throw Error('Invalid private photo reference');

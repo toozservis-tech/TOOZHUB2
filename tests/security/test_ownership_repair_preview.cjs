@@ -60,7 +60,7 @@ function fixture({phase,ok=true,mime='image/jpeg',hash,connected=true,large=fals
 }
 test('private preview verifies protected bytes before exposing one blob image and decoded dimensions',async()=>{
  const f=fixture();await f.preview.ready;assert.equal(f.requests(),1);assert.equal(f.created.length,1);assert.equal(f.preview.image.src,'blob:unit-private-1');assert.equal(f.state(),'loading');
- f.decode();assert.equal(f.state(),'loaded');assert.equal(f.preview.element.getAttribute('data-natural-width'),'640');assert.equal(f.preview.element.getAttribute('data-verified-sha256'),f.photo.sha256);f.preview.cleanup();
+ f.decode();assert.equal(f.state(),'loaded');assert.equal(f.preview.element.getAttribute('data-natural-width'),'640');assert.equal(f.preview.element.getAttribute('data-verified-sha256'),f.photo.sha256);assert.equal(f.preview.element.children[2].style.display,'none');f.preview.cleanup();
 });
 test('account switch after private bytes arrive but before image decode revokes the URL without publishing dimensions',async()=>{
  const f=fixture();await f.preview.ready;f.switchAccount();f.decode();assert.equal(f.state(),'disposed');assert.equal(f.preview.image.src,null);assert.deepEqual(f.revoked,['blob:unit-private-1']);assert.equal(f.preview.element.getAttribute('data-natural-width'),null);
@@ -82,7 +82,7 @@ test('detached screen performs no private request',async()=>{
 });
 test('decode failure does not cause an automatic image request loop',async()=>{
  const f=fixture();await f.preview.ready;f.decode(0,0);await tick();assert.equal(f.state(),'error');assert.equal(f.requests(),1);assert.equal(f.created.length,1);assert.equal(f.revoked.length,1);
- const retry=f.preview.element.children[2];retry.emit('click');await f.preview.ready;assert.equal(f.requests(),2);f.preview.cleanup();
+ const retry=f.preview.element.children[2];assert.equal(retry.style.display,'inline-block');retry.emit('click');await f.preview.ready;assert.equal(retry.style.display,'none');assert.equal(f.requests(),2);f.preview.cleanup();
 });
 
 function reportFixture({phase,mime='application/pdf',payload='%PDF-1.4\nunit report\n%%EOF',ok=true}={}){

@@ -13,6 +13,7 @@ Run `launch.py --go-file <run>/web-ownership-ui/runtime-go.json --output <run>/w
 - `harness_sha256`: exact `archive-detail.cjs` bytes.
 - `repair_metadata_file`, `repair_metadata_sha256`: read-only expected metadata from the same frozen fixture; no invented values.
 - `business_snapshot_helper`, `business_snapshot_helper_sha256`: frozen fixture read-only snapshot helper.
+- `trace_path`: current fixture trace. Only scoped method/path/status/sequence metadata is saved; no tokens.
 - `frozen_business_baseline`, `frozen_business_baseline_sha256`: approved epoch2 baseline; the pre-browser snapshot must equal it.
 - `allowed_ambient_safety_abort_paths`: exactly `['/api/v1/reminders/check-and-send-notifications']`; this POST remains blocked and unverified.
 - `node_binary`, `playwright_module`, `chrome_binary` as needed on the current host.
@@ -39,5 +40,10 @@ all failures remain evidence. Business data/files and product source hashes must
 match before/after. Repair preview object URLs are cleaned on close/remove/logout/error,
 with delayed-account/response tests in `test_ownership_repair_preview.cjs`; the browser
 journey checks actual image.onload dimensions, visible image and removed-image state.
+It checks that retry is visually hidden in a successful preview. Normal logout must
+show the login UI without private content and receive a real DELETE200 or logout
+ticket POST204 confirmation; the corresponding server trace interval is retained.
+The following new-owner login must be observed as actor4 from `/user/me`. These
+scoped checks do not certify broader revocation or MFA flows.
 Native PDF preview, physical devices, production and
 hosted CI are outside this browser scope.
