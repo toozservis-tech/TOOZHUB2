@@ -542,8 +542,8 @@
         }
 
         function captureClientGeolocation(force = false) {
+            if (!AdminBrowserSession.token()) return;
             const session = AdminBrowserSession.snapshot();
-            if (!session.token) return;
             try { AdminBrowserSession.assertCurrent(session); } catch { return; }
             if (typeof navigator === 'undefined' || !navigator.geolocation) return;
 
@@ -8929,19 +8929,20 @@
                 (photos.length > limit ? `<div class="record-photo-more">+ ${photos.length-limit} dalších fotografií po otevření záznamu</div>` : '');
         }
         async function loadRecordThumbnails(root) {
-            const token = AdminBrowserSession.token();
+            const session = AdminBrowserSession.snapshot();
+            const isCurrentSession = () => { try { AdminBrowserSession.assertCurrent(session); return true; } catch { return false; } };
             const images = Array.from(root.querySelectorAll('img[data-record-thumbnail]'));
             let cursor=0;
             async function worker() {
                 while(cursor<images.length) {
                     const image=images[cursor++];
-                    if(!image.isConnected || token!==AdminBrowserSession.token()) return;
+                    if(!image.isConnected || !isCurrentSession()) return;
                     const path=image.getAttribute('data-record-thumbnail');
                     try {
                         // Only vehicle-bound local API paths built by our attachment parser.
                         if(!/^\/api\/v1\/vehicles\/\d+\/records\/attachments\/download\?key=/.test(path)) continue;
                         const blob=await fetchServiceRecordAttachmentBlob(path+'&thumbnail=true');
-                        if(!image.isConnected || token!==AdminBrowserSession.token()) continue;
+                        if(!image.isConnected || !isCurrentSession()) continue;
                         const url=URL.createObjectURL(blob);
                         image.onload=image.onerror=()=>URL.revokeObjectURL(url);
                         image.src=url;

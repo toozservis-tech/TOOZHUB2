@@ -3,6 +3,7 @@
 (function (global) {
     'use strict';
     const TOKEN_KEY = 'customerWebAccessToken';
+    const SESSION_ORIGIN = location.origin;
     const ROLE_KEY = 'customerWebRole';
     const SIGNOUT_KEY = 'evidence_customer_session_changed';
     const LOGOUT_PREFIX = 'sprava_vozidel_logout_receipt:';
@@ -13,6 +14,13 @@
     const pending = new Set();
     let generation = 0, deadline = 0, expiryTimer = null, ended = false, suspended = false;
     let protectedPage = false, cleanup = () => {};
+    // Forms belong to the account generation; a transport uses one credential revision.
+    let credentialRevision = 0, renewal = null, retryRenewalAt = 0, renewalTimer = null;
+    let serverPrincipal = null, verificationContext = null, licenceContext = null;
+    let acceptedToken = sessionStorage.getItem(TOKEN_KEY), acceptedRole = sessionStorage.getItem(ROLE_KEY);
+    const RENEW_WINDOW = 7 * 86400, RENEW_AGE = 86400, RENEW_RETRY_MS = 30000;
+    const allowedRoles = ['user', 'customer', 'service'];
+    const publicPaths = ['/user/login', '/user/login/2fa', '/user/register', '/user/register/service-request', '/user/forgot-password'];
 
     function removeLegacyCredentials() {
         for (const key of [TOKEN_KEY, ROLE_KEY, ...legacyKeys]) localStorage.removeItem(key);
@@ -21,13 +29,23 @@
     removeLegacyCredentials();
 
     function token() { return sessionStorage.getItem(TOKEN_KEY); }
-    function snapshot() { return {generation, token: token()}; }
+    function snapshot() { return {generation}; }
+    function transportSnapshot() { return {generation, credentialRevision, token: token()}; }
     function stale() { return new DOMException('Přihlášení se změnilo. Zopakujte akci po ověření.', 'AbortError'); }
     function assertCurrent(value) {
-        if (value.generation !== generation || value.token !== token() || ended || suspended) throw stale();
+        if (location.origin !== SESSION_ORIGIN) { end('environment', false); throw stale(); }
+        if (!value || value.generation !== generation || ended || suspended) throw stale();
+        if (token() !== acceptedToken || sessionStorage.getItem(ROLE_KEY) !== acceptedRole) {
+            end('account-changed'); throw stale();
+        }
+    }
+    function assertTransport(value) {
+        assertCurrent(value);
+        if (value.credentialRevision !== credentialRevision || value.token !== token()) throw stale();
     }
     function cancelPending() {
         clearTimeout(expiryTimer); expiryTimer = null; deadline = 0;
+        clearTimeout(renewalTimer); renewalTimer = null;
         for (const controller of pending) controller.abort();
         pending.clear();
     }
@@ -53,17 +71,22 @@
     }
     function end(reason = 'expired', broadcast = true) {
         const wasEnded = ended;
-        ended = true; generation++; cancelPending();
+        ended = true; generation++; credentialRevision++; serverPrincipal = null; verificationContext = null; licenceContext = null;
+        acceptedToken = null; acceptedRole = null; cancelPending();
         removeLegacyCredentials(); sessionStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(ROLE_KEY);
         if (broadcast && !wasEnded) notifyOtherTabs();
         global.dispatchEvent(new CustomEvent('admin-session-ended', {detail: {reason}}));
         if (!wasEnded) lockPage();
     }
     function set(nextToken, role) {
-        if (!nextToken || !['user', 'customer', 'service'].includes(role)) throw new Error('Administrátoři používají samostatné přihlášení administrace.');
-        generation++; cancelPending(); removeLegacyCredentials(); ended = false; suspended = false;
+        if (!nextToken || !allowedRoles.includes(role)) throw new Error('Administrátoři používají samostatné přihlášení administrace.');
+        // A duplicate login callback is not an account change or a cross-tab logout.
+        if (!ended && !suspended && nextToken === acceptedToken && role === acceptedRole && nextToken === token() && role === sessionStorage.getItem(ROLE_KEY)) return;
+        generation++; credentialRevision++; serverPrincipal = null; verificationContext = null; licenceContext = null; retryRenewalAt = 0;
+        cancelPending(); removeLegacyCredentials(); ended = false; suspended = false;
         sessionStorage.setItem(TOKEN_KEY, nextToken); sessionStorage.setItem(ROLE_KEY, role);
-        notifyOtherTabs();
+        acceptedToken = nextToken; acceptedRole = role;
+        notifyOtherTabs(); scheduleRenewal();
     }
     function sameOriginURL(value) {
         const url = new URL(value, location.origin);
@@ -72,13 +95,81 @@
         }
         return url.href;
     }
+    function profileIdentity(profile) {
+        if (!profile || !Number.isSafeInteger(profile.id) || profile.id <= 0 ||
+            typeof profile.email !== 'string' || !profile.email ||
+            !allowedRoles.includes(profile.role)) throw new Error('Server nevrátil platný zákaznický účet.');
+        return JSON.stringify([profile.id, profile.email.toLowerCase(), profile.role]);
+    }
+    function observeProfile(profile) {
+        if (!allowedRoles.includes(profile?.role)) { end('role'); throw stale(); }
+        const identity = profileIdentity(profile);
+        if (profile.role !== sessionStorage.getItem(ROLE_KEY) ||
+            (serverPrincipal !== null && serverPrincipal !== identity)) {
+            end('account-changed'); throw stale();
+        }
+        serverPrincipal = identity;
+        return identity;
+    }
+    function verificationIdentity(value) {
+        if (!value || typeof value.required !== 'boolean') throw new Error('Server nevrátil platné ověření účtu.');
+        return value.required;
+    }
+    function licenceIdentity(value) {
+        const data = value?.data || value;
+        const flags = ['is_unlimited','vin_decode_enabled','ares_enabled','reminders_enabled','vehicle_history_enabled',
+            'documents_enabled','costs_tracking_enabled','statistics_enabled','sharing_with_service_enabled','manual_service_records_enabled'];
+        if (!data || typeof data.tenant_id !== 'string' || !data.tenant_id ||
+            typeof data.plan !== 'string' || !data.plan || typeof data.status !== 'string' || !data.status ||
+            !Number.isSafeInteger(data.vehicles_limit) || flags.some(key => typeof data[key] !== 'boolean') ||
+            (data.manual_service_records_limit !== null && !Number.isSafeInteger(data.manual_service_records_limit))) {
+            throw new Error('Server nevrátil platná oprávnění účtu.');
+        }
+        // Usage counters, contact fields, subscription dates and last-seen data are not account boundaries.
+        return JSON.stringify([data.tenant_id, data.plan, data.status, data.vehicles_limit,
+            data.manual_service_records_limit, ...flags.map(key => data[key])]);
+    }
+    function refreshPrivateContext() {
+        // Keep the server-issued credential; normal bootstrap reapplies current verification and access gates.
+        generation++; credentialRevision++; suspended = true;
+        serverPrincipal = null; verificationContext = null; licenceContext = null; cancelPending();
+        global.dispatchEvent(new CustomEvent('admin-session-ended', {detail: {reason:'access-changed'}}));
+        try { cleanup(); } catch {}
+        if (document.body) {
+            const main = document.createElement('main'), message = document.createElement('p');
+            message.textContent = 'Oprávnění účtu se změnila. Načítám aktuální přístup…';
+            main.append(message); document.body.replaceChildren(main);
+        }
+        location.replace(loginTarget());
+        throw stale();
+    }
+    function observeVerification(value) {
+        const next = verificationIdentity(value);
+        if (verificationContext !== null && verificationContext !== next) refreshPrivateContext();
+        verificationContext = next;
+        return next;
+    }
+    function observeLicence(value) {
+        const next = licenceIdentity(value);
+        if (licenceContext !== null && licenceContext !== next) refreshPrivateContext();
+        licenceContext = next;
+        return next;
+    }
     async function request(input, init = {}, expected = snapshot()) {
         assertCurrent(expected);
-        if (!expected.token) {
-            const path = new URL(input, location.origin).pathname;
-            const publicPaths = ['/user/login', '/user/login/2fa', '/user/register', '/user/register/service-request', '/user/forgot-password'];
-            if (!publicPaths.includes(path)) throw new Error('Nejprve se přihlaste.');
+        // Reject foreign origins before renewal can initiate any authenticated request.
+        const url = sameOriginURL(input), path = new URL(url).pathname;
+        if (!token() && !publicPaths.includes(path)) throw new Error('Nejprve se přihlaste.');
+        if (token() && renewalDue(token()) && Date.now() >= retryRenewalAt &&
+            !publicPaths.includes(path) && !['/user/session/renew', '/user/logout'].includes(path)) {
+            await renewIfNeeded();
         }
+        assertCurrent(expected);
+        // Never reuse a bearer captured by a long-lived form.
+        return transportRequest(url, init, transportSnapshot());
+    }
+    async function transportRequest(input, init = {}, expected = transportSnapshot(), bearer = expected.token, inspectProfile = true) {
+        assertTransport(expected);
         const url = sameOriginURL(input);
         const {timeoutMs = 30000, signal: externalSignal, ...options} = init;
         const controller = new AbortController(); pending.add(controller);
@@ -95,11 +186,13 @@
         controller.signal.addEventListener('abort', release, {once:true});
         if (controller.signal.aborted) release();
         const headers = new Headers(options.headers);
-        headers.delete('X-User-Email'); if (expected.token) headers.set('Authorization', 'Bearer ' + expected.token); else headers.delete('Authorization');
+        headers.delete('X-User-Email'); if (bearer) headers.set('Authorization', 'Bearer ' + bearer); else headers.delete('Authorization');
         try {
             const response = await fetch(url, {...options, headers, signal:controller.signal, credentials:'same-origin', cache:'no-store', redirect:'error'});
             assertCurrent(expected); controller.signal.throwIfAborted();
-            if ((expected.token && response.status === 401) || response.headers.get('X-Admin-Verification') === 'required') {
+            if ((bearer && response.status === 401) || response.headers.get('X-Admin-Verification') === 'required') {
+                // A late401 for a replaced bearer must not end the renewed session.
+                if (expected.credentialRevision !== credentialRevision || expected.token !== token()) { release(); throw stale(); }
                 release(); end('expired'); throw stale();
             }
             function guardBody(body) {
@@ -107,8 +200,16 @@
                     if (key === 'clone') return () => { assertCurrent(expected); return guardBody(target.clone()); };
                     if (['json','text','blob','arrayBuffer','formData','bytes'].includes(key)) return async () => {
                         assertCurrent(expected);
-                        try { const result = await target[key](); assertCurrent(expected); controller.signal.throwIfAborted(); return result; }
-                        finally { release(); }
+                        try {
+                            const result = await target[key](); assertCurrent(expected); controller.signal.throwIfAborted();
+                            if (key === 'json' && target.ok && inspectProfile && (options.method || 'GET').toUpperCase() === 'GET') {
+                                const path = new URL(url).pathname;
+                                if (path === '/user/me') observeProfile(result);
+                                if (path === '/user/email-verification') observeVerification(result);
+                                if (path === '/api/v1/license/status') observeLicence(result);
+                            }
+                            return result;
+                        } finally { release(); }
                     };
                     if (key === 'body') throw new Error('Použijte ověřené načtení obsahu odpovědi.');
                     const value = Reflect.get(target, key, target);
@@ -119,13 +220,90 @@
             return guardBody(response);
         } catch (error) { release(); throw error; }
     }
+    function renewalDue(value) {
+        // Unsigned claims only schedule an attempt; all authority comes from the server.
+        const claims = jwtClaims(value || ''), now = Date.now() / 1000;
+        return claims && Number.isFinite(claims.exp) && Number.isFinite(claims.iat) &&
+            (claims.exp - now < RENEW_WINDOW || now - claims.iat > RENEW_AGE);
+    }
+    function sessionIdentity(value) {
+        const claims = jwtClaims(value || '');
+        if (!claims || typeof claims.sub !== 'string' || !claims.sub ||
+            typeof claims.jti !== 'string' || !claims.jti ||
+            !['number', 'string'].includes(typeof claims.sv)) throw new Error('Obnovu přihlášení nelze bezpečně ověřit.');
+        return JSON.stringify([claims.sub, claims.jti, claims.sv, claims.amr ?? null, claims.mfa_at ?? null]);
+    }
+    function scheduleRenewal() {
+        clearTimeout(renewalTimer); renewalTimer = null;
+        if (!token() || ended || suspended) return;
+        renewalTimer = setTimeout(() => {
+            renewalTimer = null;
+            if (!document.hidden) void renewIfNeeded().catch(() => {}).finally(scheduleRenewal);
+            else scheduleRenewal();
+        }, 3600000);
+        // Only relevant to host-side contract tests; browsers return a number.
+        renewalTimer?.unref?.();
+    }
+    async function securitySnapshot(expected, bearer, inspect) {
+        async function read(path) {
+            const response = await transportRequest(path, {}, expected, bearer, inspect);
+            if (!response.ok) { await response.text(); throw new Error('Oprávnění účtu se nepodařilo ověřit.'); }
+            return response.json();
+        }
+        const profile = await read('/user/me');
+        if (!allowedRoles.includes(profile?.role)) { end('role'); throw stale(); }
+        const principal = profileIdentity(profile);
+        const required = verificationIdentity(await read('/user/email-verification'));
+        // Pending e-mail verification intentionally denies the licence endpoint on the server.
+        const licence = required ? null : licenceIdentity(await read('/api/v1/license/status'));
+        return {profile, principal, required, licence};
+    }
+    async function renewIfNeeded() {
+        if (ended || suspended || !token()) return false;
+        if (renewal && renewal.generation === generation && renewal.token === token()) return renewal.promise;
+        // Background polls must not keep an otherwise inactive account alive.
+        if (document.hidden || !renewalDue(token()) || Date.now() < retryRenewalAt) return false;
+        const expected = transportSnapshot();
+        const operation = {generation: expected.generation, token: expected.token, promise: null};
+        operation.promise = (async () => {
+            try {
+                // All authority comes from real server checks, never from decoded JWT roles.
+                const before = await securitySnapshot(expected, expected.token, true);
+                const response = await transportRequest('/user/session/renew', {method:'POST'}, expected);
+                if (!response.ok) { await response.text(); throw new Error('Obnovení přihlášení není dostupné.'); }
+                const result = await response.json(), nextToken = result?.access_token;
+                if (typeof nextToken !== 'string' || !nextToken || nextToken === expected.token || renewalDue(nextToken)) throw new Error('Server nevrátil obnovené přihlášení.');
+                const after = await securitySnapshot(expected, nextToken, false);
+                assertTransport(expected);
+                if (after.principal !== before.principal || after.profile.role !== sessionStorage.getItem(ROLE_KEY) ||
+                    sessionIdentity(nextToken) !== sessionIdentity(expected.token)) {
+                    end('account-changed'); throw stale();
+                }
+                sessionStorage.setItem(TOKEN_KEY, nextToken); acceptedToken = nextToken;
+                credentialRevision++; retryRenewalAt = 0;
+                verificationContext = after.required; licenceContext = after.licence;
+                if (before.required !== after.required || before.licence !== after.licence) refreshPrivateContext();
+                // Same-account in-flight responses, including committed writes, remain usable.
+                // Real logout/account/security changes still cancel every pending operation.
+                return true;
+            } catch (error) {
+                assertCurrent(expected);
+                // A service/network failure retains the current valid account and draft.
+                retryRenewalAt = Date.now() + RENEW_RETRY_MS;
+                return false;
+            } finally {
+                if (renewal === operation) renewal = null;
+                scheduleRenewal();
+            }
+        })();
+        renewal = operation;
+        return operation.promise;
+    }
     async function verify() {
         const response = await request('/user/me');
         if (!response.ok) throw new Error('Přihlášení se nepodařilo ověřit.');
         const profile = await response.json();
-        if (!['user', 'customer', 'service'].includes(profile.role)) {
-            end('role'); throw new Error('Použijte přihlášení administrace.');
-        }
+        observeProfile(profile);
         return profile;
     }
     function jwtClaims(value) {
@@ -202,6 +380,7 @@
     global.addEventListener('online', () => { void retryLogouts(); });
     global.addEventListener('pageshow', event => {
         if (protectedPage && event.persisted) { end('restore', false); }
+        else if (!document.hidden) void renewIfNeeded().catch(() => {});
     });
     global.addEventListener('pagehide', () => {
         if (protectedPage) {
@@ -212,10 +391,12 @@
     });
     document.addEventListener('visibilitychange', () => {
         if (protectedPage && !document.hidden && deadline && Date.now() >= deadline) end('expired');
+        else if (!document.hidden) void renewIfNeeded().catch(() => {});
     });
     global.CustomerWeb = true;
     global.AdminBrowserSession = Object.freeze({token, snapshot, assertCurrent, set, end, request, verify, logout, protect, sameOriginURL, retryLogouts, logoutNotice, hasPendingLogouts});
     void retryLogouts();
+    scheduleRenewal();
 })(window);
 
 // Verification screen avoids showing failed private-data loads to new accounts.

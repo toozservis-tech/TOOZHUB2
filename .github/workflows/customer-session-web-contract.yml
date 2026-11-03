@@ -1,0 +1,23 @@
+name: Customer session web contract
+on:
+  push:
+    paths: ['web/customer-session.js', 'web/legacy-app.js', 'tests/security/test_customer_session.cjs', 'tests/security/test_customer_session_renewal.cjs', 'tests/security/test_record_thumbnail_session.cjs', 'tests/security/test_client_geolocation_session.cjs', '.github/workflows/customer-session-web-contract.yml']
+  pull_request:
+    paths: ['web/customer-session.js', 'web/legacy-app.js', 'tests/security/test_customer_session.cjs', 'tests/security/test_customer_session_renewal.cjs', 'tests/security/test_record_thumbnail_session.cjs', 'tests/security/test_client_geolocation_session.cjs', '.github/workflows/customer-session-web-contract.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  account-generation-and-renewal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node --check web/customer-session.js
+      - run: node --check web/legacy-app.js
+      - run: node --test tests/security/test_customer_session.cjs tests/security/test_customer_session_renewal.cjs
+      - run: node --test tests/security/test_record_thumbnail_session.cjs
+      - run: node --test tests/security/test_client_geolocation_session.cjs
