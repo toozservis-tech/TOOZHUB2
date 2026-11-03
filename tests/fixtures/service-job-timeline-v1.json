@@ -1,0 +1,782 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "completion_then_six_photos",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "in_progress",
+          "message": "Oprava zahájena"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Servis dokončen"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:01:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie doplněna po dokončení: Fotografie práce"
+        },
+        {
+          "id": "4",
+          "created_at": "2026-11-03T09:01:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie doplněna po dokončení: Fotografie práce"
+        },
+        {
+          "id": "5",
+          "created_at": "2026-11-03T09:01:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie doplněna po dokončení: Fotografie práce"
+        },
+        {
+          "id": "6",
+          "created_at": "2026-11-03T09:01:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie doplněna po dokončení: Fotografie práce"
+        },
+        {
+          "id": "7",
+          "created_at": "2026-11-03T09:01:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie doplněna po dokončení: Fotografie práce"
+        },
+        {
+          "id": "8",
+          "created_at": "2026-11-03T09:01:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie doplněna po dokončení: Fotografie práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "event",
+          "title": "Probíhá oprava",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "event",
+          "title": "Servis dokončen",
+          "ids": [
+            "2"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidány fotografie · 6",
+          "ids": [
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "all_legacy_prefixes",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie doplněná po dokončení: Kolo"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie doplněna po dokončení: Motor"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidány fotografie · 3",
+          "ids": [
+            "1",
+            "2",
+            "3"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "note_interrupts",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Zkontrolováno"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "event",
+          "title": "Doplněna informace",
+          "ids": [
+            "2"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "3"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "document_interrupts",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Dokument: Faktura.pdf"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "event",
+          "title": "Přidán dokument",
+          "ids": [
+            "2"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "3"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "actor_boundary",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 2,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 2,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidány fotografie · 2",
+          "ids": [
+            "2",
+            "3"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "status_boundary",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "in_progress",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidány fotografie · 2",
+          "ids": [
+            "2",
+            "3"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "inclusive_window_not_chained",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:05:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:05:01",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "4",
+          "created_at": "2026-11-03T09:10:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidány fotografie · 2",
+          "ids": [
+            "1",
+            "2"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidány fotografie · 2",
+          "ids": [
+            "3",
+            "4"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "utc_day_boundary",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T23:59:59Z",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-04T00:00:00Z",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "2"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "offset_same_instant",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T10:00:00+01:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00Z",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:00:00.500",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidány fotografie · 3",
+          "ids": [
+            "1",
+            "2",
+            "3"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "out_of_order",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:02:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:01:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:03:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidány fotografie · 2",
+          "ids": [
+            "2",
+            "3"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unknown_actor",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": null,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": null,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 0,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "4",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "2"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "3"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "4"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "invalid_dates",
+      "events": [
+        {
+          "id": "1",
+          "created_at": null,
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-02-30T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "3",
+          "created_at": "invalid",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "4",
+          "created_at": "2026-11-03T25:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "5",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "2"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "3"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "4"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "5"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "exact_prefix_only",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Poznámka: Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "event",
+          "title": "Servis dokončen",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "event",
+          "title": "Doplněna informace",
+          "ids": [
+            "2"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "3"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lifecycle_notes_handover",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "received",
+          "message": "Příjem"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "in_progress",
+          "message": "Zahájeno"
+        },
+        {
+          "id": "3",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Hotovo"
+        },
+        {
+          "id": "4",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "completed",
+          "message": "Poznámka"
+        },
+        {
+          "id": "5",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "handed_over",
+          "message": "Předáno"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "event",
+          "title": "Přijato do servisu",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "event",
+          "title": "Probíhá oprava",
+          "ids": [
+            "2"
+          ]
+        },
+        {
+          "kind": "event",
+          "title": "Servis dokončen",
+          "ids": [
+            "3"
+          ]
+        },
+        {
+          "kind": "event",
+          "title": "Doplněna informace",
+          "ids": [
+            "4"
+          ]
+        },
+        {
+          "kind": "event",
+          "title": "Vozidlo předáno zákazníkovi",
+          "ids": [
+            "5"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "empty_status_not_grouped",
+      "events": [
+        {
+          "id": "1",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "",
+          "message": "Fotografie: Práce"
+        },
+        {
+          "id": "2",
+          "created_at": "2026-11-03T09:00:00",
+          "actor_id": 1,
+          "status": "",
+          "message": "Fotografie: Práce"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "1"
+          ]
+        },
+        {
+          "kind": "photo",
+          "title": "Přidána fotografie · 1",
+          "ids": [
+            "2"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -213,7 +213,9 @@
             body.append(message,action('Ověřit předchozí uložení PDF',async()=>{await guidedCommand(`pdf:${jobId}`,pendingPDF.path,pendingPDF.body);await jobEvidence(jobId,initialStage);}));
         }
 
-        const list=document.createElement('section');body.append(list);
+        const timeline=document.createElement('div');
+        timeline.setAttribute('data-job-timeline-container','');
+        const list=document.createElement('section');body.append(timeline,list);
         const urls=[];const dialog=body.closest('dialog');dialog.addEventListener('close',()=>urls.forEach(URL.revokeObjectURL),{once:true});
         const style=document.createElement('style');style.textContent=`
             .job-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:12px;margin:12px 0}
@@ -238,6 +240,7 @@
         }
         function files(value) {
             const version=++galleryVersion;urls.splice(0).forEach(URL.revokeObjectURL);
+            timeline.replaceChildren(global.ServiceJobTimeline.render(document,value.events||[]));
             list.innerHTML=`<h3>Fotografie (${value.photos.length})</h3><p>Klepnutím na náhled otevřete celou fotografii.</p>`;
             const grid=document.createElement('div');grid.className='job-photo-grid';list.append(grid);
             let shown=0;
@@ -337,9 +340,6 @@
                 await guidedCommand(`pdf:${jobId}`,`/api/v1/service-jobs/${jobId}/documents`,{file_name:file.name,content_base64:content});await jobEvidence(jobId,initialStage);
             }));
         }
-        const timeline=document.createElement('details');timeline.innerHTML='<summary>Historie zakázky</summary>';
-        for(const event of job.events||[]) {const p=document.createElement('p');p.textContent=`${new Date(event.created_at).toLocaleString('cs-CZ')} · ${statusTitle(event.status)} · ${event.message||''}`;timeline.append(p);}
-        body.append(timeline);
     }
 
     const intakeStages=['intake_front','intake_right','intake_rear','intake_left'];
@@ -371,6 +371,7 @@
         const body=panel('Zakázka krok za krokem'),captured=session().snapshot();body.textContent='Načítám postup…';
         const [job,actor]=await Promise.all([request(`/api/v1/service-jobs/${jobId}`),request('/user/me')]);session().assertCurrent(captured);if(!body.isConnected)return;
         body.innerHTML=`<h3>${h(job.title)}</h3><p>${h(consentTitle(job.consent_status))}</p><p>Uložené kroky zůstávají u zakázky. Majitel je uvidí až po schválení přístupu.</p>`;
+        body.append(global.ServiceJobTimeline.render(document,job.events||[]));
         const uncertain=await commandStore('get',`service.guided:${location.origin}:${actor.id}:update:${jobId}`);
         session().assertCurrent(captured);if(!body.isConnected)return;
         if(uncertain&&evidenceWritable(job,actor)) {
