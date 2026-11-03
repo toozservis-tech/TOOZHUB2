@@ -28,6 +28,7 @@ from . import (
     capabilities,
     vehicle_updates,
     service_jobs,
+    referrals,
 )
 
 # Hlavní router pro v1 API
@@ -49,6 +50,7 @@ api_router.include_router(booking_requests.router)
 api_router.include_router(reminder_settings.router)  # Nastavení připomínek
 api_router.include_router(reminders.router)
 api_router.include_router(services.router)
+api_router.include_router(referrals.router)
 api_router.include_router(service_workspace.router)  # Servisní centrum (klienti + doklady)
 api_router.include_router(ai.router)
 api_router.include_router(bot.router)  # AI Asistent Bot

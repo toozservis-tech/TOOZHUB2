@@ -309,19 +309,29 @@ def transfer_vehicle_to_new_owner(
     from .vehicle_privacy import prepare_owner_change
     prepare_owner_change(db, vehicle, new_owner.id)
     previous = get_primary_vehicle_owner_assignment(db, int(vehicle.id))
+    # Only the verified initial claim may bind work prepared for an invitation.
+    # Later ownership changes must never pick up another person's private work.
+    initial_claim = (ownership_origin == 'verified_profile_restore' and previous is None
+        and not db.query(VehicleOwnership.id).filter_by(vehicle_id=vehicle.id).first())
+    preparing_services = [row.service_customer_id for row in db.query(VehicleServiceLink).filter_by(
+        vehicle_id=vehicle.id, source_type='pending_owner_registration', status='approved')]
     if previous is None or previous.customer_id != new_owner.id:
         revoke_vehicle_sharing_for_owner_change(db, vehicle_id=int(vehicle.id),
             actor_id=assigned_by_customer_id or new_owner.id, reason="Převod vozidla. Nový vlastník musí přístup servisu schválit znovu.")
     vehicle.tenant_id = new_owner.tenant_id
     vehicle.user_email = new_owner.email
     db.flush()
-    return ensure_vehicle_owner_assignment(
+    assignment = ensure_vehicle_owner_assignment(
         db,
         vehicle=vehicle,
         owner=new_owner,
         assigned_by_customer_id=assigned_by_customer_id or new_owner.id,
         ownership_origin=ownership_origin,
     )
+    if initial_claim:
+        from .routers_v1.service_jobs import bind_preregistered_work
+        bind_preregistered_work(db, vehicle, assignment, preparing_services)
+    return assignment
 
 
 def get_current_owner_since(db: Session, vehicle: Vehicle) -> Optional[datetime]:

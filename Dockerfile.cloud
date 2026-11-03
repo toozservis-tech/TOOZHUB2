@@ -15,6 +15,9 @@ COPY scripts/migrate_workshops_vehicle_identity.py ./scripts/migrate_workshops_v
 COPY scripts/migrate_service_updates.py ./scripts/migrate_service_updates.py
 COPY scripts/migrate_vehicle_lifecycle.py ./scripts/migrate_vehicle_lifecycle.py
 COPY scripts/migrate_mobile_release.py ./scripts/migrate_mobile_release.py
+COPY scripts/migrate_service_job_preregistration.py ./scripts/migrate_service_job_preregistration.py
+COPY scripts/migrate_home_garages.py ./scripts/migrate_home_garages.py
+COPY scripts/migrate_referrals.py ./scripts/migrate_referrals.py
 COPY scripts/migrate_google_billing.py ./scripts/migrate_google_billing.py
 COPY scripts/migrate_service_job_photos.py ./scripts/migrate_service_job_photos.py
 COPY scripts/migrate_service_job_consent.py ./scripts/migrate_service_job_consent.py

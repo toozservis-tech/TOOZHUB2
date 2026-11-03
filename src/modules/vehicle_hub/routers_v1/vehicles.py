@@ -1964,7 +1964,7 @@ def create_vehicle(
 
             # A restored profile already belongs to this tenant and already
             # counts towards its quota; do not count the same car twice.
-            assert_vehicle_quota(db, tenant_id, restoring_vehicle_id=existing_global_vehicle.id)
+            assert_vehicle_quota(db, tenant_id, restoring_vehicle_id=existing_global_vehicle.id, customer=current_user)
             _apply_vehicle_claim_payload(existing_global_vehicle, vehicle_data)
             apply_orv_scan_to_vehicle(
                 db=db,
@@ -1983,6 +1983,8 @@ def create_vehicle(
                 assigned_by_customer_id=current_user.id,
                 ownership_origin="verified_profile_restore",
             )
+            from ..referrals import evaluate_for_customer
+            evaluate_for_customer(db, current_user.id)
             db.commit()
             db.refresh(existing_global_vehicle)
             logger.info(f"[VEHICLE_CREATE] claimed existing vehicle by VIN: id={existing_global_vehicle.id}")
@@ -2006,7 +2008,7 @@ def create_vehicle(
                 },
             )
 
-        assert_vehicle_quota(db, tenant_id)
+        assert_vehicle_quota(db, tenant_id, customer=current_user)
 
         # KROK 2: Vytvořit vozidlo
         vehicle = VehicleModel(
@@ -2051,6 +2053,8 @@ def create_vehicle(
             owner=current_user,
             assigned_by_customer_id=current_user.id,
         )
+        from ..referrals import evaluate_for_customer
+        evaluate_for_customer(db, current_user.id)
         db.commit()
         db.refresh(vehicle)
         

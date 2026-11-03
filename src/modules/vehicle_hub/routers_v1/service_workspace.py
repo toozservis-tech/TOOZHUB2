@@ -2219,7 +2219,8 @@ def list_approved_service_vehicles(
     db: Session = Depends(get_db),
 ):
     """
-    Vrátí vozidla, ke kterým má servis schválený přístup.
+    Vrátí dostupná vozidla v péči servisu včetně jeho soukromé přípravy.
+    Historický název endpointu nemění stav souhlasu vlastníka.
     """
     _require_service_workspace_role(current_user)
     _ensure_service_workspace_schema(db)
@@ -2239,7 +2240,7 @@ def list_approved_service_vehicles(
         "items": [
             {
                 "id": int(vehicle.id),
-                "customer_id": int(owner.id) if owner else None,
+                "customer_id": int(owner.id) if owner and link.source_type != "pending_owner_registration" else None,
                 "customer_name": (
                     owner.name or owner.email
                     if owner and owner.id != current_user.id
@@ -2251,7 +2252,9 @@ def list_approved_service_vehicles(
                 ),
                 "vehicle_name": vehicle_label(vehicle),
                 "vehicle_plate": vehicle.plate,
-                "last_shared_at": link.updated_at.isoformat() if link.updated_at else None,
+                "last_shared_at": link.updated_at.isoformat() if link.updated_at and link.source_type != "pending_owner_registration" else None,
+                "access_status": "awaiting_registration" if link.source_type == "pending_owner_registration" else "approved",
+                "source_type": link.source_type,
             }
             for link, vehicle, owner in rows
             if link.scope_vehicle_history_read and get_active_vehicle_service_link(
@@ -3010,37 +3013,28 @@ def create_pending_vehicle_registration(
                 "message": "Existující účet byl propojen a vozidlo bylo založeno přímo do profilu zákazníka.",
             }
 
-        (
-            db.query(ServiceCustomerInvite)
-            .filter(
-                ServiceCustomerInvite.service_customer_id == current_user.id,
-                func.lower(ServiceCustomerInvite.invite_email) == invite_email,
-                ServiceCustomerInvite.status == "pending",
+        # One pending invitation covers all cars prepared by this service for
+        # this recipient. Adding a car must not invalidate a delivered link.
+        now = datetime.utcnow()
+        invite = (db.query(ServiceCustomerInvite).filter(
+            ServiceCustomerInvite.service_customer_id == current_user.id,
+            func.lower(ServiceCustomerInvite.invite_email) == invite_email,
+            ServiceCustomerInvite.status == "pending",
+            ServiceCustomerInvite.expires_at > now,
+        ).order_by(ServiceCustomerInvite.id.desc()).first())
+        if invite is None:
+            invite = ServiceCustomerInvite(
+                service_tenant_id=current_user.tenant_id,
+                service_customer_id=current_user.id,
+                invite_email=invite_email,
+                invite_name=(payload.invite_name or "").strip() or None,
+                invite_message=(payload.invite_message or "").strip() or None,
+                token=secrets.token_urlsafe(32), status="pending",
+                sent_at=now, expires_at=now + timedelta(days=30),
             )
-            .update(
-                {
-                    ServiceCustomerInvite.status: "cancelled",
-                    ServiceCustomerInvite.updated_at: datetime.utcnow(),
-                },
-                synchronize_session=False,
-            )
-        )
-
-        token = secrets.token_urlsafe(32)
-        invitation_url = _build_invitation_url(token)
-        invite = ServiceCustomerInvite(
-            service_tenant_id=current_user.tenant_id,
-            service_customer_id=current_user.id,
-            invite_email=invite_email,
-            invite_name=(payload.invite_name or "").strip() or None,
-            invite_message=(payload.invite_message or "").strip() or None,
-            token=token,
-            status="pending",
-            sent_at=datetime.utcnow(),
-            expires_at=datetime.utcnow() + timedelta(days=30),
-        )
-        db.add(invite)
-        db.flush()
+            db.add(invite)
+            db.flush()
+        invitation_url = _build_invitation_url(invite.token)
 
         vehicle = _build_workspace_vehicle_row(
             tenant_id=int(current_user.tenant_id or 1),

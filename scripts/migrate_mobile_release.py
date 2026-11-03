@@ -11,6 +11,9 @@ from scripts.migrate_google_billing import migrate as migrate_google
 from scripts.migrate_service_job_photos import migrate as migrate_job_photos
 from scripts.migrate_service_job_consent import migrate as migrate_job_consent
 from scripts.migrate_service_job_workflow import migrate as migrate_job_workflow
+from scripts.migrate_service_job_preregistration import migrate as migrate_job_preregistration
+from scripts.migrate_home_garages import migrate as migrate_home_garages
+from scripts.migrate_referrals import migrate as migrate_referrals
 
 
 def migrate(bind=None):
@@ -22,6 +25,9 @@ def migrate(bind=None):
     migrate_job_photos(bind)
     migrate_job_consent(bind)
     migrate_job_workflow(bind)
+    migrate_job_preregistration(bind)
+    migrate_home_garages(bind)
+    migrate_referrals(bind)
 
 
 if __name__ == '__main__':

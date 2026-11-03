@@ -14,6 +14,7 @@ from src.modules.vehicle_hub.database import Base
 from src.modules.vehicle_hub import models as m
 from src.modules.vehicle_hub.account_erasure import erase_account
 from src.modules.vehicle_hub.email_verification import EmailVerification
+from src.modules.vehicle_hub import referrals as referrals
 from src.modules.licensing.apple_models import AppleBillingIdentity, AppleSubscription
 
 
@@ -299,3 +300,24 @@ def test_missing_cloud_object_is_idempotent_but_permission_denial_is_not(fixture
         file_erasure.erase_private_file('vehicle_photos/missing.jpg')
         file_erasure.erase_private_file('vehicle_photos/missing.jpg')
     assert not path.exists()
+
+
+def test_erasure_scrubs_referral_identity_and_admin_reason_keeps_anonymous_count(fixture):
+    from src.modules.vehicle_hub.routers_v1 import referrals as api
+    db,_,add,_,owner,other,service,_,_,_=fixture
+    other.role='admin';db.commit()
+    referrals.code_for(db,owner)
+    invite=add(referrals.Referral,referrer_id=service.id,customer_id=owner.id,kind='user',qualified_at=datetime.utcnow(),reason='qualified')
+    payload=api.GrantInput(request_id=uuid4(),kind='month',reason='Odměna pro '+owner.email)
+    grant=api.admin_reward(owner.id,payload,other,db)
+    api.revoke_reward(owner.id,grant['id'],api.RevokeInput(reason='Oprava pro '+owner.email),other,db)
+    owner_id=owner.id
+    erase_account(db,owner);db.commit()
+    db.expire_all()
+    assert db.get(referrals.ReferralCode,owner_id) is None
+    assert db.query(referrals.ReferralReward).filter_by(customer_id=owner_id).count()==0
+    kept=db.get(referrals.Referral,invite.id)
+    assert kept.customer_id is None and kept.qualified_at is not None
+    audits=db.query(m.DeveloperActionAuditLog).filter(m.DeveloperActionAuditLog.action_type.in_(['referral.reward.grant','referral.reward.revoke'])).all()
+    assert len(audits)==2
+    assert all(json.loads(row.parameters_json)=={'private_payload_erased':True} for row in audits)

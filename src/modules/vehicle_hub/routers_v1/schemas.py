@@ -250,6 +250,8 @@ class ServiceApprovedVehicleOutV1(BaseModel):
     vehicle_name: Optional[str] = None
     vehicle_plate: Optional[str] = None
     last_shared_at: Optional[datetime] = None
+    access_status: str = "approved"
+    source_type: Optional[str] = None
 
 
 class ServiceApprovedVehicleListOutV1(BaseModel):

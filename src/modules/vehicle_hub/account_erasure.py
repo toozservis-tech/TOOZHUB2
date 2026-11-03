@@ -286,6 +286,20 @@ def erase_account(db, customer) -> dict[str, int]:
                                  m.CustomerCommand.vehicle_id.in_(vehicle_ids)))
     for model in [m.PushSubscription, m.CustomerSecuritySettings, EmailVerification, MFAState, MFALoginChallenge, MFAAttemptBudget]:
         remove(model, model.customer_id == account_id)
+    from .referrals import Referral, ReferralCode, ReferralReward
+    available_tables = set(inspect(db.connection()).get_table_names())
+    if Referral.__tablename__ in available_tables:
+        # Preserve anonymous qualification counts for another inviter, never a
+        # deleted account's address, identity or personal invitation link.
+        remove(Referral, Referral.referrer_id == account_id)
+        request_ids = db.query(m.ServiceRegistrationRequest.id).filter(func.lower(m.ServiceRegistrationRequest.email) == email)
+        db.query(Referral).filter(or_(Referral.customer_id == account_id, Referral.service_request_id.in_(request_ids))).update(
+            {"customer_id": None, "service_request_id": None}, synchronize_session=False)
+    if ReferralCode.__tablename__ in available_tables:
+        remove(ReferralCode, ReferralCode.customer_id == account_id)
+    if ReferralReward.__tablename__ in available_tables:
+        remove(ReferralReward, ReferralReward.customer_id == account_id)
+        detach(ReferralReward, ReferralReward.granted_by)
     remove(m.ServiceRegistrationRequest, func.lower(m.ServiceRegistrationRequest.email) == email)
     for column in [m.ServiceRegistrationRequest.reviewed_by_customer_id, m.ServiceRegistrationRequest.approved_customer_id]:
         detach(m.ServiceRegistrationRequest, column)
@@ -295,7 +309,7 @@ def erase_account(db, customer) -> dict[str, int]:
     # private payload from the new edit/merge audit records too.
     for audit in db.query(m.DeveloperActionAuditLog).filter(m.DeveloperActionAuditLog.action_type.in_(
         ['vehicle.merge', 'vehicle.update', 'vehicle.delete', 'reminder.admin_update', 'reservation.admin_update',
-         'service_intake.update', 'service.workshop.update'])):
+         'service_intake.update', 'service.workshop.update', 'referral.reward.grant', 'referral.reward.revoke'])):
         payload = json.loads(audit.parameters_json or '{}')
         if account_id in payload.get('affected_customer_ids', []):
             audit.parameters_json = json.dumps({'private_payload_erased': True})

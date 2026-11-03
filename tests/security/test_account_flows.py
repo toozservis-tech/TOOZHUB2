@@ -22,9 +22,12 @@ from src.core.auth import get_current_user_email
 from src.core.rate_limiter import rate_limiter
 from src.modules.vehicle_hub.database import Base, get_db
 from src.modules.vehicle_hub.models import Customer
+from src.modules.vehicle_hub.account_erasure import ErasedTenant  # Include erasure tables in the isolated schema.
 from src.modules.email_client.service import EmailService
 
 PASSWORD = 'Long-test-password-428!'
+REGISTRATION_CONTACT = {'name': 'Security Test', 'phone': '+420 777 123 456',
+                        'street': 'Testovací', 'street_number': '12', 'city': 'Praha', 'zip': '110 00'}
 
 class AccountFlows(unittest.TestCase):
     def setUp(self):
@@ -62,7 +65,7 @@ class AccountFlows(unittest.TestCase):
         for p in reversed(self.patches): p.stop()
         self.engine.dispose()
     def register(self, email='user@example.com', **extra):
-        response = self.client.post('/user/register', json={'email':email,'password':PASSWORD,'name':'Security Test',**extra})
+        response = self.client.post('/user/register', json={'email':email,'password':PASSWORD,**REGISTRATION_CONTACT,**extra})
         if response.status_code == 200:
             from src.modules.vehicle_hub.email_verification import EmailVerification
             with self.Session() as db:
@@ -177,7 +180,7 @@ class AccountFlows(unittest.TestCase):
 
     def test_email_verification_gates_access_and_is_one_use(self):
         from src.modules.vehicle_hub.email_verification import EmailVerification
-        r=self.client.post('/user/register',json={'email':'pending@example.com','password':PASSWORD})
+        r=self.client.post('/user/register',json={'email':'pending@example.com','password':PASSWORD,**REGISTRATION_CONTACT})
         self.assertEqual(r.status_code,200,r.text)
         headers={'Authorization':'Bearer '+r.json()['access_token']}
         self.assertEqual(self.client.get('/test/protected',headers=headers).status_code,403)

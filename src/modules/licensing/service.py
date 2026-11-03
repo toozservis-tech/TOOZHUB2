@@ -256,7 +256,7 @@ def is_unlimited(license_obj: License) -> bool:
     return license_obj.vehicles_limit == 0
 
 
-def assert_vehicle_quota(db: Session, tenant_id: int, *, restoring_vehicle_id: int | None = None) -> None:
+def assert_vehicle_quota(db: Session, tenant_id: int, *, restoring_vehicle_id: int | None = None, customer=None) -> None:
     """
     Zkontroluje, zda tenant může přidat další vozidlo.
     Pokud ne, vyhodí LicenseError.
@@ -274,6 +274,9 @@ def assert_vehicle_quota(db: Session, tenant_id: int, *, restoring_vehicle_id: i
     # serializing quota checks. FOR UPDATE would deadlock with the VIN lock.
     db.query(Tenant.id).filter_by(id=tenant_id).with_for_update(key_share=True).one()
     license_obj = get_or_create_license(db, tenant_id, commit_changes=False)
+    if customer is not None and customer.tenant_id == tenant_id:
+        from src.modules.vehicle_hub.referrals import effective_license
+        license_obj = effective_license(db, customer, license_obj)
     
     # Legacy admin bypass - aktivní jen při explicitním zapnutí.
     if ADMIN_FORCE_PREMIUM and is_admin_tenant(tenant_id):
@@ -350,6 +353,8 @@ def has_customer_feature(db: Session, customer, feature_name: str) -> bool:
     if not customer.tenant_id:
         return False
     license_obj = get_or_create_license(db, customer.tenant_id, commit_changes=False)
+    from src.modules.vehicle_hub.referrals import effective_license
+    license_obj = effective_license(db, customer, license_obj)
     return _license_active(license_obj) and bool(
         PLAN_FEATURES.get(license_obj.plan, PLAN_FEATURES["free"]).get(FEATURE_COLUMNS[feature_name]))
 
@@ -388,8 +393,16 @@ def get_license_status(db: Session, tenant_id: int, user_email: Optional[str] = 
         dict s informacemi o licenci včetně feature flags
     """
     license_obj = get_or_create_license(db, tenant_id)
+    customer = get_customer_by_email(db, user_email) if user_email else None
     tenant_vehicle_count = get_vehicle_count(db, tenant_id)
+    # Counting can safely backfill legacy ownership. Include that write in the
+    # reconciliation transaction before middleware logs activity on another connection.
     user_vehicle_count = get_vehicle_count_for_user(db, tenant_id, user_email)
+    if customer is not None and customer.tenant_id == tenant_id:
+        from src.modules.vehicle_hub.referrals import evaluate, effective_license
+        evaluate(db, customer)
+        db.commit()
+        license_obj = effective_license(db, customer, license_obj)
     is_unl = is_unlimited(license_obj)
     
     vehicles_remaining = None if is_unl else max(0, license_obj.vehicles_limit - tenant_vehicle_count)

@@ -16,7 +16,9 @@ from src.modules.vehicle_hub.account_state import customer_is_deleted, customer_
 from src.modules.vehicle_hub.email_verification import pending_verification
 
 PUBLIC_WEB_PAGES = {
-    "customer-session.js", "customer.css", "customer-features.js", "service-features.js", "job-timeline.js", "vendor/jsQR-1.4.0.js", "assets/auth-seq-step1-vehicles.png", "assets/auth-seq-step2-add-vehicle.png", "assets/auth-seq-step4-reservations.png", "legacy-actions.js", "legacy-app.js", "legacy-lookups.js",
+    "job-timeline.js",
+    "referral-registration.js", "referral-features.js", "referral-features.css", "vendor/referral-qr.js",
+    "customer-session.js", "customer.css", "customer-features.js", "service-features.js", "vendor/jsQR-1.4.0.js", "assets/auth-seq-step1-vehicles.png", "assets/auth-seq-step2-add-vehicle.png", "assets/auth-seq-step4-reservations.png", "legacy-actions.js", "legacy-app.js", "legacy-lookups.js",
     "storage_migration.js", "ai-features.js", "theme.css", "app.css", "inline-styles.css",
     "service-invitation.html",
     "reservations.html",
@@ -64,7 +66,7 @@ def customer_web():
     source = Path(__file__).resolve().parents[2] / 'web' / 'index.html'
     html = source.read_text().replace('<title>Evidence Vozidel</title>', '<title>Evidence Vozidel – webová aplikace</title>').replace('/admin-session.js', '/web/customer-session.js')
     html = html.replace('</head>', '<link rel="stylesheet" href="customer.css"></head>')
-    html = html.replace('</body>', '<script src="vendor/jsQR-1.4.0.js"></script><script src="customer-features.js"></script><script src="job-timeline.js"></script><script src="service-features.js"></script></body>')
+    html = html.replace('</body>', '<script src="vendor/jsQR-1.4.0.js"></script><script src="job-timeline.js"></script><script src="customer-features.js"></script><script src="service-features.js"></script></body>')
     html = html.replace('Po zadání 8 číslic se automaticky načtou údaje z ARES.', 'Firemní údaje nyní vyplňte ručně. Načítání z ARES je dostupné po přihlášení.')
     html = html.replace('Ověřuji přihlášení administrátora…', 'Načítám Evidence Vozidel…')
     return HTMLResponse(html, headers={'Cache-Control': 'no-store', 'Content-Security-Policy': LEGACY_ADMIN_CONTENT_SECURITY_POLICY, 'X-Frame-Options': 'DENY'})
@@ -107,7 +109,7 @@ class AdminStaticFiles(StaticFiles):
         self.public_pages = set(public_pages)
 
     async def get_response(self, path, scope):
-        # Explicit exceptions are only standalone account-recovery pages.
+        # Exact public shell/recovery assets; all other paths retain the admin gate.
         if path not in self.public_pages:
             request = Request(scope)
             token = request.cookies.get(COOKIE)

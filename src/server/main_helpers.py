@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import unicodedata
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import HTTPException
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import func, or_
 
 from src.core.branding import APP_DISPLAY_NAME, APP_EXPORT_DISPLAY_NAME
@@ -60,22 +61,46 @@ except ImportError:
 
 
 class UserRegister(BaseModel):
+    referral_code: Optional[str] = Field(default=None, min_length=16, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
     email: EmailStr
     password: str = Field(min_length=1, max_length=256)
-    name: Optional[str] = None
+    name: str = Field(min_length=3, max_length=200)
     ico: Optional[str] = None
     dic: Optional[str] = None
-    street: Optional[str] = None
-    street_number: Optional[str] = None
-    city: Optional[str] = None
-    zip: Optional[str] = None
-    phone: Optional[str] = None
+    street: str = Field(min_length=1, max_length=200)
+    street_number: str = Field(min_length=1, max_length=64)
+    city: str = Field(min_length=1, max_length=120)
+    zip: str = Field(min_length=3, max_length=16)
+    phone: str = Field(min_length=7, max_length=32)
+
+    @field_validator('name', 'street', 'street_number', 'city', 'zip', 'phone', mode='before')
+    @classmethod
+    def clean_required_contact(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError('Vyplňte povinný kontaktní údaj.')
+        return ' '.join(value.split())
+
+    @field_validator('name')
+    @classmethod
+    def full_person_name(cls, value):
+        if len(value.split()) < 2 or not all(any(c.isalpha() for c in part) for part in value.split()):
+            raise ValueError('Vyplňte jméno i příjmení.')
+        return value
+
+    @field_validator('phone')
+    @classmethod
+    def valid_phone(cls, value):
+        compact = re.sub(r'[\s()\-]', '', value)
+        if not re.fullmatch(r'\+?[0-9]{7,15}', compact):
+            raise ValueError('Zadejte platný telefon, například +420 777 123 456.')
+        return compact
 
 
 from src.modules.vehicle_hub.workshop_address import WorkshopAddressInput
 
 
 class ServiceRegisterRequest(WorkshopAddressInput):
+    referral_code: Optional[str] = Field(default=None, min_length=16, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
     email: EmailStr
     password: str = Field(min_length=1, max_length=256)
     ico: str = Field(min_length=8, max_length=16)

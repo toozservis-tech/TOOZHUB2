@@ -57,6 +57,13 @@ def lookup_ares(
             logger.warning(f"[ARES_LOOKUP] ARES disabled for tenant_id={tenant_id}")
             raise
     
+    return fetch_public_company(ico)
+
+
+def fetch_public_company(ico: str) -> AresLookupResponse:
+    """Only public company fields; callers enforce their own auth or rate limit."""
+    import logging
+    logger = logging.getLogger(__name__)
     ico_clean = ico.strip().replace(' ', '')
     
     # Validace IČO

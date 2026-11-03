@@ -5,7 +5,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import Depends
-from test_account_flows import AccountFlows, PASSWORD
+from test_account_flows import AccountFlows, PASSWORD, REGISTRATION_CONTACT
 from src.modules.vehicle_hub.email_verification import EmailVerification
 from src.modules.vehicle_hub.models import Customer
 from src.modules.vehicle_hub.routers_v1.auth import get_current_user, get_current_user_optional
@@ -28,7 +28,7 @@ class EmailVerificationFlows(AccountFlows):
 
     def pending_account(self):
         self.mocks[-1].reset_mock()
-        response = self.client.post('/user/register', json={'email':'pending@example.com','password':PASSWORD})
+        response = self.client.post('/user/register', json={'email':'pending@example.com','password':PASSWORD,**REGISTRATION_CONTACT})
         self.assertEqual(response.status_code, 200, response.text)
         calls = self.mocks[-1].call_args_list
         self.assertEqual(len(calls), 1, 'Send one verification email, not a contradictory welcome email')
@@ -80,7 +80,7 @@ class EmailVerificationFlows(AccountFlows):
 
     def test_failed_delivery_keeps_gate_and_revokes_undelivered_token(self):
         self.mocks[-1].side_effect=RuntimeError('provider-private-diagnostic')
-        response=self.client.post('/user/register',json={'email':'pending@example.com','password':PASSWORD})
+        response=self.client.post('/user/register',json={'email':'pending@example.com','password':PASSWORD,**REGISTRATION_CONTACT})
         self.assertEqual(response.status_code,200,response.text)
         self.assertFalse(response.json()['email_sent'])
         self.assertNotIn('provider-private', response.text)
@@ -140,6 +140,6 @@ class EmailVerificationFlows(AccountFlows):
     def test_failure_of_pending_record_creation_does_not_commit_account(self):
         with patch.object(user_auth,'prepare_verification',side_effect=RuntimeError('fixture DB failure')):
             with self.assertRaises(RuntimeError):
-                self.client.post('/user/register',json={'email':'not-created@example.com','password':PASSWORD})
+                self.client.post('/user/register',json={'email':'not-created@example.com','password':PASSWORD,**REGISTRATION_CONTACT})
         with self.Session() as db:
             self.assertIsNone(db.query(Customer).filter_by(email='not-created@example.com').first())

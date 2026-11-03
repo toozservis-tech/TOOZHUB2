@@ -30,6 +30,7 @@ from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.models import Customer, CustomerSecuritySettings, ServiceRegistrationRequest
 from src.modules.vehicle_hub.routers_v1.auth import get_current_user as get_v1_current_user
 from src.modules.vehicle_hub.routers_v1.ares_lookup import lookup_ares as lookup_ares_v1
+from src.modules.vehicle_hub.routers_v1.ares_lookup import AresLookupResponse, fetch_public_company
 from src.modules.vehicle_hub.tenant_provisioning import create_dedicated_tenant, ensure_default_license_for_tenant
 from src.server.main_helpers import (
     ForgotPasswordRequest,
@@ -128,6 +129,8 @@ def register_user(user_data: UserRegister, request: Request, db=Depends(get_db))
     db.add(customer)
     db.flush()
     prepare_verification(db, customer)
+    from src.modules.vehicle_hub.referrals import attach
+    attach(db, user_data.referral_code, customer=customer)
     db.commit()
     db.refresh(customer)
 
@@ -251,6 +254,8 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
         existing_request.approved_tenant_id = None
         existing_request.updated_at = now
         apply_workshop_address(existing_request, payload)
+        from src.modules.vehicle_hub.referrals import attach
+        attach(db, payload.referral_code, service_request=existing_request)
         db.commit()
         db.refresh(existing_request)
 
@@ -299,6 +304,9 @@ def register_service_request(payload: ServiceRegisterRequest, request: Request, 
 
     apply_workshop_address(new_request, payload)
     db.add(new_request)
+    db.flush()
+    from src.modules.vehicle_hub.referrals import attach
+    attach(db, payload.referral_code, service_request=new_request)
     db.commit()
     db.refresh(new_request)
 
@@ -592,6 +600,21 @@ def verify_login_two_factor(
     )
 
 
+@router.get("/user/registration-company", response_model=AresLookupResponse)
+def registration_company(ico: str, request: Request):
+    """Bounded anonymous company autofill; never account or vehicle data."""
+    _limit_auth(request, "registration-company", calls=5)
+    cleaned = ico.strip().replace(' ', '')
+    if len(cleaned) != 8 or any(ch not in '0123456789' for ch in cleaned):
+        raise HTTPException(422, "IČO musí obsahovat přesně 8 číslic.")
+    try:
+        return fetch_public_company(cleaned)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(404, "IČO nebylo nalezeno v ARES.") from exc
+        raise HTTPException(503, "Údaje firmy se nepodařilo načíst z ARES. Zkuste to prosím znovu.") from exc
+
+
 @router.get("/user/ares")
 def get_ares_data(
     ico: str,
@@ -713,5 +736,7 @@ def confirm_email_verification(payload: EmailVerificationRequest, request: Reque
     row.verified_at = datetime.utcnow()
     row.token_digest = None
     row.expires_at = None
+    from src.modules.vehicle_hub.referrals import evaluate_for_customer
+    evaluate_for_customer(db, customer.id)
     db.commit()
     return {"message": "E-mail je ověřený. Vraťte se do aplikace a klepněte na Zkontrolovat ověření."}

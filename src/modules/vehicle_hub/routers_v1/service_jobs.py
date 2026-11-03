@@ -109,7 +109,7 @@ def _service(user):
 
 
 def _private(job):
-    return job.access_request_id is not None and job.consent_published_at is None
+    return job.owner_id is None or (job.access_request_id is not None and job.consent_published_at is None)
 
 
 def _same_ownership(db, job):
@@ -127,7 +127,20 @@ def _request_for_service(db, request_id, user, vehicle_id=None):
     return request
 
 
+def _unclaimed_link(db, user, vehicle_id):
+    if _role(user) != 'service':
+        return None
+    link = get_active_vehicle_service_link(db, service_customer_id=user.id, vehicle_id=vehicle_id)
+    if (link and link.source_type == 'pending_owner_registration'
+            and link.owner_customer_id == user.id
+            and not get_primary_vehicle_owner_assignment(db, vehicle_id)):
+        return link
+    return None
+
+
 def _consent_state(db, job):
+    if job.owner_id is None:
+        return 'awaiting_registration' if not get_primary_vehicle_owner_assignment(db, job.vehicle_id) else 'ownership_changed'
     if not _private(job):
         return 'approved'
     if not _same_ownership(db, job):
@@ -152,6 +165,12 @@ def _authorize(db, job, user, write=False):
         _service(user)
         if user.id != job.service_id:
             raise HTTPException(404, 'Zakázka nebyla nalezena.')
+        if job.owner_id is None:
+            if write:
+                link = _unclaimed_link(db, user, job.vehicle_id)
+                if not link or not link.scope_create_service_record:
+                    raise HTTPException(409, 'Vozidlo již bylo převzato nebo byl přístup odvolán. Historie práce zůstává uložená.')
+            return None
         if write and (_consent_state(db, job) not in ('pending', 'rejected')):
             raise HTTPException(409, 'Souhlas nebo vlastník se změnil. Historie práce zůstává uložená.')
         return None
@@ -233,6 +252,9 @@ def list_jobs(vehicle_id: int, current_user: Customer = Depends(get_current_user
             _authorize(db, job, current_user)
             result.append(_serialize(db, job))
         return {'items': result}
+    if _unclaimed_link(db, current_user, vehicle_id):
+        query = db.query(ServiceJob).filter_by(vehicle_id=vehicle_id, service_id=current_user.id, owner_id=None)
+        return {'items': [_serialize(db, job) for job in query.order_by(ServiceJob.id.desc()).all()]}
     owner_id = _owner_id(db, vehicle_id)
     assignment = get_primary_vehicle_owner_assignment(db, vehicle_id)
     query = db.query(ServiceJob).filter_by(vehicle_id=vehicle_id, owner_id=owner_id, ownership_id=assignment.id,
@@ -341,7 +363,8 @@ def create_job(vehicle_id: int, payload: JobCreate, current_user: Customer = Dep
             raise HTTPException(409, 'U této žádosti již nelze založit novou zakázku.')
     if request is None or request.status == 'approved':
         require_service_vehicle_link(db, current_user=current_user, vehicle_id=vehicle_id, require_create_record=True)
-    owner_id = _owner_id(db, vehicle_id)
+    unclaimed = _unclaimed_link(db, current_user, vehicle_id) if request is None else None
+    owner_id = None if unclaimed else _owner_id(db, vehicle_id)
     creation = payload.model_dump()
     if not payload.workflow_version:
         creation.pop('workflow_version')  # Old persisted requests keep their original hash.
@@ -359,7 +382,9 @@ def create_job(vehicle_id: int, payload: JobCreate, current_user: Customer = Dep
     vehicle = db.get(Vehicle, vehicle_id)
     assignment = get_primary_vehicle_owner_assignment(db, vehicle_id)
     job = ServiceJob(tenant_id=vehicle.tenant_id, vehicle_id=vehicle_id, service_id=current_user.id,
-        owner_id=owner_id, ownership_id=assignment.id, ownership_started_at=assignment.owned_from or assignment.assigned_at, vin_snapshot=vehicle.vin, client_id=str(payload.client_id), creation_hash=digest,
+        owner_id=owner_id, ownership_id=assignment.id if assignment else None,
+        ownership_started_at=(assignment.owned_from or assignment.assigned_at) if assignment else None,
+        vin_snapshot=vehicle.vin, client_id=str(payload.client_id), creation_hash=digest,
         title=payload.title.strip(), description=payload.description, mileage=payload.mileage,
         workflow_version=payload.workflow_version,
         access_request_id=request.id if request else None,
@@ -381,6 +406,30 @@ def create_job(vehicle_id: int, payload: JobCreate, current_user: Customer = Dep
             dedupe_key=f'service-job:{job.id}:created', service_job_id=job.id)
     db.commit()
     return _serialize(db, job)
+
+
+def bind_preregistered_work(db, vehicle, assignment, preparing_services):
+    """Called only inside a verified initial vehicle claim; no implicit consent."""
+    for service_id in set(preparing_services):
+        jobs = db.query(ServiceJob).filter_by(vehicle_id=vehicle.id, service_id=service_id,
+            owner_id=None).all()
+        if not jobs:
+            continue
+        request = ServiceAccessRequest(tenant_id=vehicle.tenant_id, vehicle_id=vehicle.id,
+            service_customer_id=service_id, owner_customer_id=assignment.customer_id,
+            status='pending', requested_at=datetime.utcnow(),
+            request_message='Servis má k tomuto vozidlu uloženou práci. Schválením ji zpřístupníte ve své historii.')
+        db.add(request)
+        db.flush()
+        for job in jobs:
+            job.tenant_id = vehicle.tenant_id
+            job.owner_id = assignment.customer_id
+            job.ownership_id = assignment.id
+            job.ownership_started_at = assignment.owned_from or assignment.assigned_at
+            job.access_request_id = request.id
+            job.updated_at = datetime.utcnow()
+            job.version += 1
+        db.flush()
 
 
 def _publish_final_record(db, job, service, link, completion_message):
@@ -470,6 +519,9 @@ def update_job(job_id: int, payload: JobUpdate, current_user: Customer = Depends
             title=titles[target] if payload.status else 'Nová informace ze servisu',
             message=payload.message.strip(), source_type='service_job', source_id=job.id,
             dedupe_key=f'service-job:{job.id}:update:{payload.client_id}', service_job_id=job.id)
+    if target == 'completed':
+        from ..referrals import evaluate_for_customer
+        evaluate_for_customer(db, current_user.id)
     db.commit()
     return _serialize(db, job)
 

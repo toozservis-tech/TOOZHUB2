@@ -1022,3 +1022,51 @@ def get_area_directory(city: str, current_user: Customer = Depends(get_current_u
     entries.sort(key=lambda row: (_area_key(row["name"]), row["id"]))
     return {"city": city, "kind": "customers" if service_mode else "services", "count": len(entries),
             "missing_city_count": sum(not ((item.city if service_mode else workshop_fields(item)["city"]) or "").strip() for item in candidates), "entries": entries}
+
+
+class HomeGarageSelection(BaseModel):
+    apple_place_id: Optional[str] = Field(default=None, min_length=1, max_length=128, pattern=r'^[A-Za-z0-9._:-]+$')
+    # Native MapKit resolves public place data on the device. Persist only its
+    # opaque bookmark, never treat it as a registered service or permission.
+    resolve_place: bool = True
+
+
+@router.get('/map-search')
+def search_map_garages(city: str, query: str = 'autoservis',
+    current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    from src.core.mfa import limit_attempt
+    from ..apple_garages import search
+    if not city.strip() or len(city) > 160 or len(query) > 160:
+        raise HTTPException(422, 'Zadejte město a kratší hledaný název servisu.')
+    limit_attempt(db, current_user.id, 'map-garage-search', limit=30)
+    return search(city.strip(), query.strip())
+
+
+@router.get('/home-garage')
+def read_home_garage(current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db), resolve_place: bool = True):
+    from ..apple_garages import HomeGarage, detail
+    from src.core.mfa import limit_attempt
+    assert_module_ready(db, 'home_garages', detail_prefix='Domovský servis není připraven')
+    limit_attempt(db, current_user.id, 'map-garage-read', limit=60)
+    row=db.get(HomeGarage,current_user.id)
+    return {'apple_place_id': row.apple_place_id if row else None,
+            'place': detail(row.apple_place_id) if row and resolve_place else None}
+
+
+@router.put('/home-garage')
+def save_home_garage(payload: HomeGarageSelection, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
+    from ..apple_garages import HomeGarage, detail
+    from src.core.mfa import limit_attempt
+    assert_module_ready(db, 'home_garages', detail_prefix='Domovský servis není připraven')
+    limit_attempt(db, current_user.id, 'map-garage-save', limit=20)
+    place=detail(payload.apple_place_id) if payload.apple_place_id and payload.resolve_place else None
+    # Serialize first selection too; lock the existing account, not a missing preference.
+    db.query(Customer.id).filter(Customer.id == current_user.id).with_for_update().one()
+    # Preference only. No contact link, vehicle access or booking is created.
+    row=db.get(HomeGarage,current_user.id)
+    if payload.apple_place_id:
+        if row: row.apple_place_id=payload.apple_place_id
+        else: db.add(HomeGarage(customer_id=current_user.id,apple_place_id=payload.apple_place_id))
+    elif row: db.delete(row)
+    db.commit()
+    return {'apple_place_id': payload.apple_place_id, 'place':place}
