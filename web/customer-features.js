@@ -38,7 +38,61 @@
         }
         return [...unique.keys()].sort().map(key=>unique.get(key));
     }
-    if (typeof module !== 'undefined') module.exports = {documentNumber, registryPayload, registryFields, archiveProfileSection, archiveAttachments};
+    function repairPhotoMoment(value) {
+        if(typeof value!=='string'||!value.trim())return null;
+        const raw=value.trim(), naive=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/.test(raw);
+        const instant=new Date(naive?raw+'Z':raw);if(!Number.isFinite(instant.getTime()))return null;
+        return {iso:instant.toISOString(),text:instant.toLocaleString('cs-CZ',{dateStyle:'medium',timeStyle:'medium'})};
+    }
+    function repairPhotoMetadataSection(doc, photo) {
+        const section=doc.createElement('section');section.setAttribute('data-repair-photo-metadata',String(photo.id));
+        const append=(field,label,value,moment)=>{
+            if(typeof value!=='string')return;
+            const row=doc.createElement('dl'),name=doc.createElement('dt'),valueNode=doc.createElement('dd'),text=moment?doc.createElement('time'):valueNode;row.setAttribute('data-repair-photo-field',field);name.textContent=label;text.textContent=value;
+            if(moment){text.setAttribute('datetime',moment.iso);valueNode.append(text);}row.append(name,valueNode);section.append(row);
+        };
+        const uploaded=repairPhotoMoment(photo.uploaded_at),captured=repairPhotoMoment(photo.captured_at);
+        if(uploaded)append('uploaded_at','Nahráno na server',uploaded.text,uploaded);
+        const author=typeof photo.author_name==='string'?photo.author_name:Number.isSafeInteger(photo.author_id)?'Účet '+photo.author_id:null;
+        append('author_name','Autor',author);
+        append('source','Zdroj',photo.source==='camera'?'Fotoaparát':photo.source==='library'?'Fotogalerie':typeof photo.source==='string'?photo.source:null);
+        if(captured)append('captured_at','Čas podle telefonu',captured.text,captured);
+        if(typeof photo.sha256==='string'&&photo.sha256){const details=doc.createElement('details'),summary=doc.createElement('summary'),hash=doc.createElement('code');summary.textContent='Kontrolní otisk uloženého souboru';hash.textContent=photo.sha256;hash.setAttribute('data-repair-photo-field','sha256');hash.style.overflowWrap='anywhere';details.append(summary,hash);section.append(details);}
+        return section;
+    }
+    function createRepairPhotoPreview(env, actorSession, photo, host) {
+        const doc=env.document,figure=doc.createElement('figure'),image=doc.createElement('img'),status=doc.createElement('p'),retry=doc.createElement('button');
+        figure.setAttribute('data-repair-photo-preview',String(photo.id));figure.style.margin='12px 0';image.alt='Fotografie opravy';image.style.cssText='max-width:100%;max-height:480px;object-fit:contain;display:none';status.setAttribute('role','status');retry.type='button';retry.className='btn-secondary';retry.textContent='Zkusit znovu';retry.hidden=true;figure.append(image,status,retry);host.append(figure);
+        const bound=actorSession.snapshot(),dialog=figure.closest('dialog');let disposed=false,version=0,objectURL=null,controller=null,activePromise;
+        const isCurrent=()=>{if(disposed||!figure.isConnected)return false;try{actorSession.assertCurrent(bound);return true;}catch{return false;}};
+        const clearImage=()=>{image.onload=image.onerror=null;image.removeAttribute('src');image.style.display='none';for(const key of ['data-natural-width','data-natural-height','data-verified-sha256'])figure.removeAttribute(key);if(objectURL){const old=objectURL;objectURL=null;env.URL.revokeObjectURL(old);}};
+        const setState=(state,message)=>{figure.setAttribute('data-preview-state',state);status.textContent=message;};
+        const cleanup=()=>{if(disposed)return;disposed=true;version++;controller?.abort();clearImage();observer.disconnect();dialog?.removeEventListener('close',cleanup);env.removeEventListener('admin-session-ended',cleanup);setState('disposed','');};
+        const observer=new env.MutationObserver(()=>{if(!figure.isConnected)cleanup();});observer.observe(doc.body,{childList:true,subtree:true});dialog?.addEventListener('close',cleanup);env.addEventListener('admin-session-ended',cleanup);
+        const fail=()=>{controller?.abort();clearImage();if(isCurrent()){setState('error','Fotografii se nepodařilo načíst.');retry.hidden=false;}else cleanup();};
+        async function load(){
+            if(!isCurrent()){cleanup();return;}
+            const attempt=++version;controller?.abort();controller=new env.AbortController();clearImage();retry.hidden=true;setState('loading','Načítám fotografii…');
+            const current=()=>attempt===version&&isCurrent();
+            try{
+                if(!Number.isSafeInteger(photo.id)||photo.id<=0||!/^[0-9a-f]{64}$/i.test(photo.sha256||''))throw Error('Invalid private photo reference');
+                actorSession.assertCurrent(bound);
+                const response=await actorSession.request(`/api/v1/repair-documentation/photos/${photo.id}/file`,{signal:controller.signal});
+                if(!current()){cleanup();return;}
+                const mime=(response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();if(!response.ok||!['image/jpeg','image/png'].includes(mime))throw Error('Unsupported private image');
+                const blob=await response.blob();if(!current()){cleanup();return;}
+                if(!blob.size||blob.size>12*1024*1024||blob.type!==mime||(Number.isSafeInteger(photo.size_bytes)&&photo.size_bytes!==blob.size))throw Error('Invalid private image size/type');
+                const bytes=await blob.arrayBuffer();if(!current()){cleanup();return;}
+                const digest=await env.crypto.subtle.digest('SHA-256',bytes);if(!current()){cleanup();return;}
+                const hash=Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join('');if(hash!==photo.sha256.toLowerCase())throw Error('Private image integrity mismatch');
+                objectURL=env.URL.createObjectURL(blob);
+                image.onload=()=>{if(!current()){cleanup();return;}if(image.naturalWidth<=0||image.naturalHeight<=0||image.naturalWidth*image.naturalHeight>32000000){fail();return;}figure.setAttribute('data-natural-width',String(image.naturalWidth));figure.setAttribute('data-natural-height',String(image.naturalHeight));figure.setAttribute('data-verified-sha256',hash);image.style.display='block';setState('loaded','');};
+                image.onerror=()=>{if(current())fail();else cleanup();};image.src=objectURL;
+            }catch{if(current())fail();else cleanup();}
+        }
+        retry.addEventListener('click',()=>{activePromise=load();});activePromise=load();return {element:figure,image,cleanup,get ready(){return activePromise;}};
+    }
+    if (typeof module !== 'undefined') module.exports = {documentNumber, registryPayload, registryFields, archiveProfileSection, archiveAttachments, repairPhotoMoment, repairPhotoMetadataSection, createRepairPhotoPreview};
     if (!global.document || !global.CustomerWeb) return;
     const $ = id => document.getElementById(id);
     const session = () => global.AdminBrowserSession;
@@ -193,7 +247,7 @@
     async function repairPhotos(repair) {
         const body=panel(repair.title||'Fotografie opravy'), rows=await request(`/api/v1/repair-documentation/sessions/${repair.id}/photos`);if(!body.isConnected)return;
         if(!rows.length)body.textContent='K opravě nejsou přiloženy fotografie.';
-        for(const row of rows){const el=document.createElement('article');el.className='customer-feature-card';const phase={before:'Před opravou',during:'Průběh opravy',after:'Po opravě'}[row.phase]||'Fotografie';el.innerHTML=`<h3>${h(phase)}</h3><p>${h(row.note)}</p><p>${h(row.author_name)} · ${h(date(row.captured_at||row.uploaded_at))}</p>`;el.append(action('Stáhnout fotografii',()=>download(`/api/v1/repair-documentation/photos/${row.id}/file`,'oprava-'+row.id+'.jpg')));body.append(el);}
+        for(const row of rows){const el=document.createElement('article');el.className='customer-feature-card';const phase={before:'Před opravou',during:'Průběh opravy',after:'Po opravě'}[row.phase]||'Fotografie';el.innerHTML=`<h3>${h(phase)}</h3><p>${h(row.note)}</p>`;body.append(el);createRepairPhotoPreview(global,session(),row,el);el.append(repairPhotoMetadataSection(document,row),action('Stáhnout fotografii',()=>download(`/api/v1/repair-documentation/photos/${row.id}/file`,'oprava-'+row.id+'.jpg')));}
     }
     async function readImage(file) {
         if(!file||file.size>20*1024*1024)throw new Error('Vyberte fotografii do 20 MB.');
