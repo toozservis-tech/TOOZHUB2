@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto');
-const {repairPhotoMoment,repairPhotoMetadataSection,createRepairPhotoPreview}=require('../../web/customer-features.js');
+const {repairPhotoMoment,repairPhotoMetadataSection,createRepairPhotoPreview,downloadRepairReport}=require('../../web/customer-features.js');
 class Node {
  constructor(tag){this.tag=tag;this.children=[];this.attributes={};this.style={};this.listeners=new Map();this.parent=null;this.connected=true;this._text='';}
  set innerHTML(_){throw Error('Private repair metadata must remain literal text');}
@@ -18,6 +18,7 @@ class Node {
  emit(type){for(const fn of [...(this.listeners.get(type)||[])])fn();}
  closest(tag){for(let n=this;n;n=n.parent)if(n.tag===tag)return n;return null;}
  remove(){if(this.parent)this.parent.children=this.parent.children.filter(n=>n!==this);this.parent=null;this.connected=false;}
+ click(){this.emit('click');}
 }
 const doc=()=>({body:new Node('body'),createElement:tag=>new Node(tag)});
 const descendants=n=>[n,...n.children.flatMap(descendants)];
@@ -82,4 +83,26 @@ test('detached screen performs no private request',async()=>{
 test('decode failure does not cause an automatic image request loop',async()=>{
  const f=fixture();await f.preview.ready;f.decode(0,0);await tick();assert.equal(f.state(),'error');assert.equal(f.requests(),1);assert.equal(f.created.length,1);assert.equal(f.revoked.length,1);
  const retry=f.preview.element.children[2];retry.emit('click');await f.preview.ready;assert.equal(f.requests(),2);f.preview.cleanup();
+});
+
+function reportFixture({phase,mime='application/pdf',payload='%PDF-1.4\nunit report\n%%EOF',ok=true}={}){
+ const document=doc(),dialog=new Node('dialog'),host=new Node('section'),events=new Node('window');document.body.append(dialog);dialog.append(host);
+ const gate=deferred(),blob=new Blob([payload],{type:mime}),created=[],revoked=[],clicked=[];let generation=1,observer,signal,timer;
+ const originalCreate=document.createElement;document.createElement=tag=>{const node=originalCreate(tag);if(tag==='a')node.addEventListener('click',()=>clicked.push({href:node.href,name:node.download}));return node;};
+ const env={document,AbortController,URL:{createObjectURL(value){created.push(value);return 'blob:unit-report';},revokeObjectURL(value){revoked.push(value);}},setTimeout(fn){timer=fn;return 1;},clearTimeout(){timer=null;},MutationObserver:class{constructor(fn){this.callback=fn;observer=this;}observe(){}disconnect(){this.disconnected=true;}},addEventListener:(...a)=>events.addEventListener(...a),removeEventListener:(...a)=>events.removeEventListener(...a)};
+ const response={ok,headers:new Headers({'content-type':mime}),blob:async()=>phase==='body'?gate.promise:blob};
+ const session={snapshot:()=>({generation}),assertCurrent(scope){if(scope.generation!==generation)throw new DOMException('Changed account','AbortError');},async request(path,init){assert.equal(path,'/api/v1/repair-documentation/sessions/17/report.pdf');signal=init.signal;return phase==='headers'?gate.promise:response;}};
+ return {env,session,host,dialog,events,created,revoked,clicked,run:()=>downloadRepairReport(env,session,17,host),resolve:()=>gate.resolve(phase==='headers'?response:blob),switchAccount(){generation++;},remove(){host.remove();observer.callback();},finish:()=>timer?.(),signal:()=>signal,observer:()=>observer};
+}
+test('repair report uses its private session route and downloads validated PDF bytes with bounded URL cleanup',async()=>{
+ const f=reportFixture();await f.run();assert.equal(f.clicked.length,1);assert.deepEqual(f.clicked[0],{href:'blob:unit-report',name:'fotodokumentace-opravy.pdf'});assert.equal(f.created.length,1);assert.equal(f.revoked.length,0);f.finish();assert.deepEqual(f.revoked,['blob:unit-report']);assert.equal(f.observer().disconnected,true);
+});
+for(const phase of ['headers','body'])for(const event of ['logout','account-change'])test('delayed PDF '+phase+' after '+event+' cannot download another account private report',async()=>{
+ const f=reportFixture({phase}),pending=f.run();await tick();f.switchAccount();if(event==='logout')f.events.emit('admin-session-ended');f.resolve();await assert.rejects(pending,{name:'AbortError'});assert.equal(f.clicked.length,0);assert.equal(f.created.length,0);assert.equal(f.signal().aborted,true);assert.equal(f.observer().disconnected,true);
+});
+for(const event of ['close','remove','logout'])test('repair PDF URL is revoked once on '+event,async()=>{
+ const f=reportFixture();await f.run();if(event==='close')f.dialog.emit('close');else if(event==='remove')f.remove();else f.events.emit('admin-session-ended');f.finish();assert.deepEqual(f.revoked,['blob:unit-report']);assert.equal(f.observer().disconnected,true);
+});
+for(const [label,options]of [['denied response',{ok:false}],['HTML response',{mime:'text/html'}],['invalid PDF bytes',{payload:'private error page'}]])test('repair report rejects '+label+' before creating a download',async()=>{
+ const f=reportFixture(options);await assert.rejects(f.run());assert.equal(f.clicked.length,0);assert.equal(f.created.length,0);assert.equal(f.observer().disconnected,true);
 });

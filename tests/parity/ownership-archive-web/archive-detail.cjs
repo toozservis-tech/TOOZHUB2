@@ -74,7 +74,7 @@ async function contextFor(role){
     if(url.pathname==='/api/v1/vehicle-archives')row.archive_ids=(await response.json()).map(x=>x.id);
     if(url.pathname===`/api/v1/repair-documentation/sessions/${oracle.repair.session_id}/photos`)row.repair_photos=(await response.json()).map(p=>({id:p.id,author_name:p.author_name,source:p.source,captured_at:p.captured_at,uploaded_at:p.uploaded_at,sha256:p.sha256}));
     if(url.pathname===`/api/v1/vehicle-archives/${oracle.archive_id}`){const data=await response.json();row.archive={id:data.id,profile:data.profile,record_ids:data.records.map(x=>x.id)};}
-    if(url.pathname===`/api/v1/vehicle-archives/${oracle.archive_id}/attachment`||url.pathname.startsWith(`/api/v1/vehicle-archives/${oracle.archive_id}/image/`)||url.pathname===`/api/v1/repair-documentation/photos/${oracle.repair.photo_id}/file`){
+    if(url.pathname===`/api/v1/vehicle-archives/${oracle.archive_id}/attachment`||url.pathname.startsWith(`/api/v1/vehicle-archives/${oracle.archive_id}/image/`)||url.pathname===`/api/v1/repair-documentation/photos/${oracle.repair.photo_id}/file`||url.pathname===`/api/v1/repair-documentation/sessions/${oracle.repair.session_id}/report.pdf`){
      row.file={key:url.searchParams.get('key'),content_type:response.headers()['content-type'],cache_control:response.headers()['cache-control'],nosniff:response.headers()['x-content-type-options']};
      try{const bytes=await response.body();row.file.body_observer={bytes:bytes.length,sha256:sha(bytes),status:bytes.length?'AVAILABLE_CDP_OBSERVATION':'EMPTY_CDP_OBSERVATION_NOT_DOWNLOAD_BYTES'};}catch(e){row.file.body_observer={status:'UNAVAILABLE_CDP_OBSERVATION',error:scrub(e.message)};}
     }
@@ -115,10 +115,11 @@ async function verifyFields(page,label){
 }
 async function download(page,button,expected,file,requestPath,key=null){
  const event=page.waitForEvent('download');await button.scrollIntoViewIfNeeded();await button.click();const d=await event;const destination=path.join(out,'downloads',file);await d.saveAs(destination);
- const bytes=fs.readFileSync(destination);assert.equal(bytes.length,expected.bytes);assert.equal(sha(bytes),expected.sha256);
+ const bytes=fs.readFileSync(destination);if(expected.generated_pdf===true){assert.equal(bytes.subarray(0,5).toString(),'%PDF-');assert(bytes.length>500);assert(bytes.subarray(-1024).includes(Buffer.from('%%EOF')));}else{assert.equal(bytes.length,expected.bytes);assert.equal(sha(bytes),expected.sha256);}
  await until(()=>proof.requests.some(x=>x.path===requestPath&&x.status===200&&x.file&&(key===null||x.file.key===key)));await settle();
  const observed=proof.requests.findLast(x=>x.path===requestPath&&x.status===200&&x.file&&(key===null||x.file.key===key));assert.equal(observed.status,200);assert(/(?:^|,)\s*no-store(?:\s*(?:,|$))/i.test(observed.file.cache_control||''));assert(!/(?:^|,)\s*public(?:\s*(?:,|$))/i.test(observed.file.cache_control||''));assert.equal(observed.file.nosniff,'nosniff');assert(observed.file.content_type.startsWith(expected.mime_type));
  if(expected.name)assert.equal(d.suggestedFilename(),expected.name);
+ if(expected.generated_pdf===true&&observed.file.body_observer?.status==='AVAILABLE_CDP_OBSERVATION')assert.equal(observed.file.body_observer.sha256,sha(bytes));
  proof.downloads.push({file:destination,suggested_filename:d.suggestedFilename(),bytes:bytes.length,sha256:sha(bytes),bytes_authority:'actual native UI download artifact',api_path:requestPath,key,response_status:observed.status,response_metadata:observed.file});save();
 }
 async function verifyRepair(page,label,requestsBefore){
@@ -157,6 +158,7 @@ async function logout(page,label){
  const initialPhotoReads=proof.requests.filter(x=>x.path===`/api/v1/repair-documentation/photos/${oracle.repair.photo_id}/file`).length;
  await archiveDialog(owner.page).getByRole('button',{name:'Fotodokumentace: '+oracle.repair.title,exact:true}).click();await archiveDialog(owner.page).getByRole('heading',{name:oracle.repair.title,exact:true}).waitFor();await archiveDialog(owner.page).getByText(oracle.repair.note,{exact:true}).waitFor();
  const desktopRepair=await verifyRepair(owner.page,'desktop',initialPhotoReads);await screenshot(owner.page,'02-desktop-private-repair-preview-metadata');
+ await download(owner.page,archiveDialog(owner.page).getByRole('button',{name:'PDF opravy',exact:true}),{generated_pdf:true,mime_type:'application/pdf',name:'fotodokumentace-opravy.pdf'},'repair-report.pdf',`/api/v1/repair-documentation/sessions/${oracle.repair.session_id}/report.pdf`);assert.equal(await desktopRepair.element.getAttribute('data-preview-state'),'loaded');assert(Number(await desktopRepair.element.getAttribute('data-natural-width'))>0);assert.equal(await desktopRepair.element.getAttribute('data-verified-sha256'),oracle.repair.sha256);pass('former-owner archive repair PDF native UI download is valid and private; decoded photo remains loaded');
  await download(owner.page,archiveDialog(owner.page).getByRole('button',{name:'Stáhnout fotografii',exact:true}),oracle.repair,'repair.jpg',`/api/v1/repair-documentation/photos/${oracle.repair.photo_id}/file`);pass('original repair photo native download preserves exact bytes');
  await closeRepair(owner.page,desktopRepair,'desktop');await openDetail(owner.page);await verifyFields(owner.page,'close/reopen');
  await owner.page.reload({waitUntil:'domcontentloaded'});await owner.page.locator('#dashboard').waitFor({state:'visible',timeout:45000});await openArchives(owner.page);await openDetail(owner.page);await verifyFields(owner.page,'reload');

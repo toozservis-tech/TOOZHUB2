@@ -21,7 +21,8 @@ The password comes only from the oracle's mode0600 fixture file through stdin.
 The harness uses normal login forms and UI buttons, observes actual response and
 download bytes, checks literal private values/HTML, both PDF variants with dedupe,
 three private images, an actual decoded repair-photo preview with verified SHA and
-source/author/separate UTC capture/upload metadata, reopen/reload, 390px layout, logout and
+source/author/separate UTC capture/upload metadata, a private repair-report PDF
+download directly from the former-owner archive, reopen/reload, 390px layout, logout and
 a new-owner login. Services retain their currently hidden archive UI. Real JWT
 API denial proof remains separate; UI absence alone is insufficient.
 

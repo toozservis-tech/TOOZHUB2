@@ -92,7 +92,21 @@
         }
         retry.addEventListener('click',()=>{activePromise=load();});activePromise=load();return {element:figure,image,cleanup,get ready(){return activePromise;}};
     }
-    if (typeof module !== 'undefined') module.exports = {documentNumber, registryPayload, registryFields, archiveProfileSection, archiveAttachments, repairPhotoMoment, repairPhotoMetadataSection, createRepairPhotoPreview};
+    async function downloadRepairReport(env, actorSession, repairId, host) {
+        if(!Number.isSafeInteger(repairId)||repairId<=0)throw Error('Neplatná oprava.');
+        const bound=actorSession.snapshot(),dialog=host.closest('dialog'),controller=new env.AbortController();let disposed=false,objectURL=null,timer=null,anchor=null;
+        const cleanup=()=>{if(disposed)return;disposed=true;controller.abort();observer.disconnect();dialog?.removeEventListener('close',cleanup);env.removeEventListener('admin-session-ended',cleanup);if(timer!==null)env.clearTimeout(timer);anchor?.remove();if(objectURL){env.URL.revokeObjectURL(objectURL);objectURL=null;}};
+        const ensureCurrent=()=>{if(disposed||!host.isConnected)throw new DOMException('Obrazovka byla zavřena.','AbortError');actorSession.assertCurrent(bound);};
+        const observer=new env.MutationObserver(()=>{if(!host.isConnected)cleanup();});observer.observe(env.document.body,{childList:true,subtree:true});dialog?.addEventListener('close',cleanup);env.addEventListener('admin-session-ended',cleanup);
+        try{
+            ensureCurrent();const response=await actorSession.request(`/api/v1/repair-documentation/sessions/${repairId}/report.pdf`,{signal:controller.signal});ensureCurrent();
+            if(!response.ok||(response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase()!=='application/pdf')throw Error('PDF opravy není pro tento účet dostupné.');
+            const blob=await response.blob();ensureCurrent();if(!blob.size||blob.type!=='application/pdf')throw Error('Neplatný PDF soubor opravy.');
+            const header=await blob.slice(0,5).arrayBuffer();ensureCurrent();if(new TextDecoder().decode(header)!=='%PDF-')throw Error('Neplatný PDF soubor opravy.');
+            objectURL=env.URL.createObjectURL(blob);anchor=env.document.createElement('a');anchor.href=objectURL;anchor.download='fotodokumentace-opravy.pdf';anchor.hidden=true;env.document.body.append(anchor);ensureCurrent();anchor.click();anchor.remove();anchor=null;timer=env.setTimeout(cleanup,1000);
+        }catch(error){cleanup();throw error;}
+    }
+    if (typeof module !== 'undefined') module.exports = {documentNumber, registryPayload, registryFields, archiveProfileSection, archiveAttachments, repairPhotoMoment, repairPhotoMetadataSection, createRepairPhotoPreview, downloadRepairReport};
     if (!global.document || !global.CustomerWeb) return;
     const $ = id => document.getElementById(id);
     const session = () => global.AdminBrowserSession;
@@ -247,6 +261,7 @@
     async function repairPhotos(repair) {
         const body=panel(repair.title||'Fotografie opravy'), rows=await request(`/api/v1/repair-documentation/sessions/${repair.id}/photos`);if(!body.isConnected)return;
         if(!rows.length)body.textContent='K opravě nejsou přiloženy fotografie.';
+        body.append(action('PDF opravy',()=>downloadRepairReport(global,session(),repair.id,body)));
         for(const row of rows){const el=document.createElement('article');el.className='customer-feature-card';const phase={before:'Před opravou',during:'Průběh opravy',after:'Po opravě'}[row.phase]||'Fotografie';el.innerHTML=`<h3>${h(phase)}</h3><p>${h(row.note)}</p>`;body.append(el);createRepairPhotoPreview(global,session(),row,el);el.append(repairPhotoMetadataSection(document,row),action('Stáhnout fotografii',()=>download(`/api/v1/repair-documentation/photos/${row.id}/file`,'oprava-'+row.id+'.jpg')));}
     }
     async function readImage(file) {
