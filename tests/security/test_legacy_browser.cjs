@@ -159,11 +159,14 @@ test('capabilities are obtained through the existing authenticated API client',a
 
 test('record detail to editor keeps text, attachment names and values intact',async()=>{
  const f=await fixture({policy:false});try{const {page}=f;
- await page.evaluate(async p=>{
+ const detailCalls=await page.evaluate(async p=>{
+  const calls=[];
   const record={id:41,category:'JINE',description:p,note:p,mileage:125000,price:1234,performed_at:'2026-10-01T12:00:00',attachments:[]};
-  apiCall=async url=>url==='/api/v1/vehicles/21/records/41'?record:[];
+  apiCall=async url=>{calls.push(url);return url==='/api/v1/vehicles/21/records'?[record]:url==='/api/v1/vehicles/21/records/41'?record:[];};
   await showServiceRecordDetail(41,21);
+  return calls;
  },poison);
+ assert.deepEqual(detailCalls,['/api/v1/vehicles/21/records']);
  assert.ok((await page.locator('#serviceRecordDetailModalBody').textContent()).includes(poison));await inert(page);
  await page.locator('#serviceRecordDetailModalBody [data-legacy-click^="openEditServiceRecordModal_"]').dispatchEvent('click');
  await page.waitForFunction(()=>document.getElementById('serviceDescription-edit-41'));
