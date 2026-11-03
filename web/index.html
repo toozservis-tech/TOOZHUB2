@@ -2202,6 +2202,24 @@
             box-shadow: 0 8px 20px rgba(239, 68, 68, 0.4);
         }
 
+        /* Feedback stays visible after login and above nested record dialogs. */
+        #alertContainer {
+            position: fixed;
+            top: calc(env(safe-area-inset-top, 0px) + 12px);
+            left: 50%;
+            transform: translateX(-50%);
+            width: min(560px, calc(100% - 24px));
+            max-height: min(40vh, 320px);
+            overflow: auto;
+            z-index: 2147483646;
+            border-radius: 12px;
+            background: #101c2b;
+            box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+            overflow-wrap: anywhere;
+        }
+        #alertContainer:empty { display: none; }
+        #alertContainer .alert { margin-bottom: 0; }
+
         .alert {
             padding: 15px;
             border-radius: 12px;
@@ -8665,6 +8683,7 @@
     <!-- <script src="security_protection.js"></script> -->
 </head>
 <body>
+    <div id="alertContainer" data-testid="alert-container" role="status" aria-live="polite" aria-atomic="true"></div>
     <div class="container">
         <!-- Navbar (pouze když je uživatel přihlášen) -->
         <nav class="navbar hidden" id="mainNavbar">
@@ -8976,7 +8995,6 @@
             <div id="authSection" class="auth-shell hidden">
                 <div class="auth-layout">
                     <div class="auth-section">
-                        <div id="alertContainer" data-testid="alert-container"></div>
                         
                         <form id="loginForm" data-testid="login-form" data-legacy-submit="handleLogin_be924de6" data-legacy-submit-args="[]">
                             <h2 id="loginTitle">Přihlášení</h2>

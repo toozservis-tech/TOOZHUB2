@@ -1,9 +1,9 @@
 name: Ownership archive web contract
 on:
   push:
-    paths: ['web/customer-features.js', 'tests/security/test_customer_features.cjs', 'tests/security/test_ownership_archive_renderer.cjs', '.github/workflows/ownership-archive-web-contract.yml']
+    paths: ['web/customer-features.js', 'web/index.html', 'src/server/web_access.py', 'tests/security/test_customer_features.cjs', 'tests/security/test_ownership_archive_renderer.cjs', 'tests/security/check_archive_feedback_layout.py', '.github/workflows/ownership-archive-web-contract.yml']
   pull_request:
-    paths: ['web/customer-features.js', 'tests/security/test_customer_features.cjs', 'tests/security/test_ownership_archive_renderer.cjs', '.github/workflows/ownership-archive-web-contract.yml']
+    paths: ['web/customer-features.js', 'web/index.html', 'src/server/web_access.py', 'tests/security/test_customer_features.cjs', 'tests/security/test_ownership_archive_renderer.cjs', 'tests/security/check_archive_feedback_layout.py', '.github/workflows/ownership-archive-web-contract.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,3 +18,7 @@ jobs:
           node-version: '20'
       - run: node --check web/customer-features.js
       - run: node --test tests/security/test_customer_features.cjs tests/security/test_ownership_archive_renderer.cjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tests/security/check_archive_feedback_layout.py
