@@ -1,11 +1,116 @@
 /* Service browser flows share the mobile APIs and their consent boundaries. */
 (function (global) {
     'use strict';
+    const foldServiceText = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+    function matchesRegisteredService(service, query) {
+        const needle=foldServiceText(query);
+        return !needle || foldServiceText([service.name,service.city,service.street,service.zip,service.ico].filter(Boolean).join(' ')).includes(needle);
+    }
+    function safePlaceUrl(value) {
+        try { const url=new URL(String(value));return url.protocol==='https:'&&url.hostname==='maps.apple.com'&&!url.username&&!url.password?url.href:null; }
+        catch { return null; }
+    }
+    const usablePlaceId=value=>typeof value==='string'&&/^[A-Za-z0-9._:-]{1,128}$/.test(value);
+    const consentTitle=value=>({awaiting_registration:'Čeká na registraci majitele · pouze u servisu',pending:'Čeká na souhlas · pouze u servisu',rejected:'Souhlas odmítnut · historie u servisu',revoked:'Souhlas byl odvolán',ownership_changed:'Změnil se majitel',approved:'Sdíleno s majitelem'}[value]||'Stav souhlasu není dostupný');
+    const publicServiceError=(error,subject)=>error?.status===503?(subject==='home'?'Domovský servis je nyní nedostupný. Zkuste to prosím později.':'Vyhledávání v mapách je nyní nedostupné. Registrované servisy můžete dál používat.'):String(error?.message||'Požadavek se nepodařilo dokončit.');
+    function intakeVehiclePayload(values,{invite=false}={}) {
+        const text=key=>String(values[key]??'').trim();
+        if(text('nickname').length<2||text('nickname').length>120)throw new Error('Vyplňte název vozidla (2–120 znaků).');
+        const integer=key=>{const raw=text(key);if(!raw)return null;if(!/^\d+$/.test(raw)||!Number.isSafeInteger(Number(raw)))throw new Error('Rok a tachometr zadejte jako nezáporná celá čísla.');return Number(raw);};
+        const year=integer('year'),km=integer('current_mileage_km'),last=integer('last_stk_mileage_km');
+        if(year!==null&&(year<1900||year>2100))throw new Error('Rok musí být mezi 1900 a 2100.');
+        if(km!==null&&last!==null&&km<last)throw new Error('Aktuální stav km musí být alespoň poslední údaj ze STK.');
+        const vin=text('vin').toUpperCase();
+        if(invite&&!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin))throw new Error('Pro pozvání majitele zadejte platný 17znakový VIN.');
+        return {nickname:text('nickname'),plate:text('plate')||null,vin:vin||null,brand:text('brand')||null,model:text('model')||null,
+            year,current_mileage_km:km,last_stk_mileage_km:last,stk_valid_until:text('stk_valid_until')||null};
+    }
+    if(typeof module!=='undefined')module.exports={matchesRegisteredService,safePlaceUrl,usablePlaceId,intakeVehiclePayload,consentTitle,publicServiceError};
     if (!global.CustomerWeb || !global.CustomerFeatures) return;
     const ui = global.CustomerFeatures.ui;
     const {request, action, panel, input, h, showError, confirmAction, readImage, photoButton, download} = ui;
     const session = () => global.AdminBrowserSession;
     const serviceRole = () => Boolean(global.isServiceWorkspaceRole?.());
+    let directoryVersion=0,directoryPanels=new WeakMap();
+
+    function directoryLoaded(container,payload) {
+        if(!container?.isConnected)return;
+        const previous=directoryPanels.get(container);
+        if(previous?.active()){previous.update(payload);return;}
+        previous?.section.remove();
+        const version=++directoryVersion,captured=session().snapshot();
+        const current=()=>{try{session().assertCurrent(captured);return version===directoryVersion&&container.isConnected&&section.isConnected;}catch{return false;}};
+        const section=document.createElement('section');section.className='customer-feature-card';section.dataset.serviceSearch='1';
+        const heading=document.createElement('h3');heading.textContent='Najít servis';
+        const query=input('Název, město nebo IČO registrovaného servisu','serviceDirectorySearch');query.lastChild.maxLength=160;
+        query.lastChild.setAttribute('type','search');
+        const count=document.createElement('p');count.setAttribute('aria-live','polite');
+        let cards=[],loading=false;
+        const filter=()=>{let shown=0;for(const {row,card} of cards)if(card){card.hidden=!matchesRegisteredService(row,query.lastChild.value);card.style.display=card.hidden?'none':'';if(!card.hidden)shown++;}count.textContent=`Registrované servisy: ${shown} z ${cards.length}.`;};
+        function update(data){
+            loading=data?.loading===true;
+            const rows=Array.isArray(data?.services)?data.services:[];cards=rows.map(row=>({row,card:container.querySelector('#service-directory-card-'+Number(row.id))}));
+            for(const {card} of cards)if(card&&!card.dataset.registeredService){
+                card.dataset.registeredService='1';card.style.borderColor='#32945b';
+                const badge=document.createElement('p');badge.textContent='✓ Registrován v Evidenci Vozidel';badge.style.cssText='color:#14532d;background:#dcfce7;padding:6px 10px;border-radius:10px;display:inline-block;font-weight:700';card.prepend(badge);
+            }
+            filter();if(loading)count.textContent='Načítám registrované servisy…';
+        }
+        query.lastChild.addEventListener('input',()=>{filter();if(loading)count.textContent='Načítám registrované servisy…';});
+        const city=input('Město pro hledání v mapách','serviceMapCity');city.lastChild.maxLength=160;
+        const name=input('Hledaný název nebo druh servisu','serviceMapQuery','text','autoservis');name.lastChild.maxLength=160;
+        const results=document.createElement('div');results.setAttribute('aria-live','polite');results.dataset.serviceMapResults='1';
+        const home=document.createElement('section');home.setAttribute('aria-live','polite');home.dataset.homeGarage='1';
+        const note=document.createElement('p');note.textContent='Domovský servis je vaše osobní záložka. Uložení nesdílí vozidla ani nezadává objednávku. Výsledky map se nespojují s registrovanými účty podle názvu.';
+        let searchVersion=0,homeId=null,homeVersion=0,homeBusy=false;
+        const changed=()=>{searchVersion++;results.replaceChildren();};city.lastChild.addEventListener('input',changed);name.lastChild.addEventListener('input',changed);
+        async function saveHome(id,place) {
+            if(!current())return;
+            if(homeBusy)throw new Error('Počkejte prosím na dokončení předchozího uložení.');
+            homeBusy=true;const operation=++homeVersion;
+            try {const saved=await request('/api/v1/services/home-garage','PUT',{apple_place_id:id,resolve_place:false});if(current()&&operation===homeVersion)renderHome(place?{...saved,place}:saved);}
+            finally {homeBusy=false;}
+        }
+        function renderHome(value) {
+            home.replaceChildren();homeId=value?.apple_place_id||null;
+            const title=document.createElement('h4');title.textContent='Domovský servis';home.append(title);
+            const text=document.createElement('p');text.textContent=homeId?(value.place?.name||'Domovský servis je uložený.'):'Zatím nemáte vybraný domovský servis.';home.append(text);
+            if(value?.place?.address){const address=document.createElement('p');address.textContent=value.place.address;home.append(address);}
+            const navigation=safePlaceUrl(value?.place?.navigation_url);if(navigation)home.append(mapLink('Navigovat',navigation));
+            if(homeId)home.append(action('Odebrat domovský servis',()=>saveHome(null)));
+        }
+        const search=action('Vyhledat v mapách',async()=>{
+            if(!current())return;
+            const cityValue=city.lastChild.value.trim(),queryValue=name.lastChild.value.trim()||'autoservis';
+            if(!cityValue)throw new Error('Vyplňte město pro hledání v mapách.');
+            const operation=++searchVersion;results.textContent='Vyhledávám v mapách…';
+            try {
+                const data=await request('/api/v1/services/map-search?city='+encodeURIComponent(cityValue)+'&query='+encodeURIComponent(queryValue));
+                if(!current()||operation!==searchVersion)return;
+                results.replaceChildren();const notice=document.createElement('p');notice.textContent=data.notice||'Veřejné výsledky z Apple Map. Zapojení v Evidenci Vozidel není ověřeno.';results.append(notice);
+                if(!data.items?.length)results.append(document.createTextNode('Pro toto hledání nebyl nalezen žádný servis.'));
+                for(const place of data.items||[]){
+                    const card=document.createElement('article');card.className='customer-feature-card';card.style.border='1px solid #bc731c';card.dataset.unverifiedMapPlace='1';
+                    const title=document.createElement('h4');title.textContent=place.name||'Autoservis';
+                    const status=document.createElement('p');status.textContent='● Zapojení neověřeno';status.style.cssText='color:#854507;background:#ffedd5;padding:6px 10px;border-radius:10px;display:inline-block;font-weight:700';
+                    const address=document.createElement('p');address.textContent=place.address||'Adresa není dostupná.';card.append(title,status,address);
+                    const navigation=safePlaceUrl(place.navigation_url);if(navigation)card.append(mapLink('Navigovat',navigation));
+                    if(usablePlaceId(place.id))card.append(action('Nastavit jako domovský servis',()=>saveHome(place.id,place)));
+                    if(global.ReferralFeatures?.openPersonal)card.append(action('Pozvat servis',()=>global.ReferralFeatures.openPersonal('service')));
+                    results.append(card);
+                }
+            }catch(e){if(e.name!=='AbortError'&&current()&&operation===searchVersion)results.textContent=publicServiceError(e,'map');}
+        });
+        section.append(heading,query,count,home,city,name,search,note,results);container.before(section);
+        directoryPanels.set(container,{section,active:()=>{try{return section.isConnected&&current();}catch{return false;}},update});update(payload);
+        const initialHomeVersion=homeVersion;
+        void request('/api/v1/services/home-garage').then(value=>{if(current()&&initialHomeVersion===homeVersion)renderHome(value);}).catch(async e=>{
+            if(e.name==='AbortError'||!current())return;
+            if(e.status===503){try{const value=await request('/api/v1/services/home-garage?resolve_place=false');if(current()&&initialHomeVersion===homeVersion){renderHome(value);const p=document.createElement('p');p.textContent=publicServiceError(e,'home');home.append(p);}return;}catch(fallback){e=fallback;}}
+            if(current()&&initialHomeVersion===homeVersion){home.textContent=publicServiceError(e,'home');}
+        });
+    }
+    function mapLink(label,url){const link=document.createElement('a');link.className='btn-secondary';link.textContent=label;link.href=url;link.target='_blank';link.rel='noopener noreferrer';return link;}
 
     async function sentInvitations(notice='') {
         if(!serviceRole())throw new Error('Tato část je určená servisu.');
@@ -69,7 +174,7 @@
                 }
             } catch (e) { if (e.name !== 'AbortError' && section.isConnected) results.textContent=e.message; }
         }), results, approved);
-        section.prepend(action('Odeslané pozvánky',()=>sentInvitations()),action('Práce a souhlas majitele',()=>workBeforeConsent()));
+        section.prepend(action('Připravit vozidlo a zahájit zakázku',()=>intake()),action('Odeslané pozvánky',()=>sentInvitations()),action('Práce a souhlas majitele',()=>workBeforeConsent()));
         container.prepend(section);
         async function loadApproved() {
             approved.innerHTML='<h4>Schválená vozidla</h4><p>Načítám…</p>';
@@ -88,6 +193,70 @@
             } catch(e){if(e.name!=='AbortError'&&section.isConnected)approved.textContent=e.message;}
         }
         await loadApproved();
+    }
+    async function intake(initialCustomerId=null) {
+        if(!serviceRole())throw new Error('Příjem vozidla je dostupný pouze servisnímu účtu.');
+        const captured=session().snapshot(),body=panel('Příjem vozidla');body.textContent='Načítám klienty…';
+        let customers=[],customerLoadError='';
+        try{customers=await request('/api/v1/services/workspace/customers');}
+        catch(e){session().assertCurrent(captured);if([401,403].includes(e.status)||e.name==='AbortError')throw e;customerLoadError='Seznam klientů se nepodařilo načíst. Můžete připravit vozidlo a pozvat majitele; uložení ověří server.';}
+        session().assertCurrent(captured);if(!body.isConnected)return;
+        const selected=(customers||[]).find(item=>Number(item.customer_id)===Number(initialCustomerId));
+        const contact={mode:customers?.length?'linked':'invite',customer_id:selected?String(selected.customer_id):'',invite_email:'',invite_name:'',invite_message:''};
+        const current=()=>{session().assertCurrent(captured);return body.isConnected;};
+        function form() {
+            if(!current())return;body.replaceChildren();
+            if(customerLoadError){const notice=document.createElement('p');notice.setAttribute('role','status');notice.textContent=customerLoadError;body.append(notice);}
+            const modeWrap=document.createElement('label');modeWrap.className='customer-field';modeWrap.textContent='Komu vozidlo patří';
+            const mode=document.createElement('select');mode.id='serviceIntakeMode';
+            for(const [value,label] of [['linked','Existující klient'],['invite','Pozvat majitele']]){const option=document.createElement('option');option.value=value;option.textContent=label;mode.append(option);}mode.value=contact.mode;modeWrap.append(mode);
+            const linked=document.createElement('label');linked.className='customer-field';linked.textContent='Vyberte klienta';
+            const customer=document.createElement('select');customer.id='serviceIntakeCustomer';const empty=document.createElement('option');empty.value='';empty.textContent='Vyberte klienta…';customer.append(empty);
+            for(const item of customers||[]){const option=document.createElement('option');option.value=String(item.customer_id);option.textContent=[item.name,item.email].filter(Boolean).join(' · ');customer.append(option);}customer.value=contact.customer_id;linked.append(customer);
+            const email=input('E-mail budoucího vlastníka','serviceIntakeEmail','email',contact.invite_email);email.lastChild.maxLength=254;
+            const ownerName=input('Jméno majitele (nepovinné)','serviceIntakeOwnerName','text',contact.invite_name);ownerName.lastChild.maxLength=120;
+            const message=input('Zpráva do pozvánky (nepovinné)','serviceIntakeInviteMessage','text',contact.invite_message);message.lastChild.maxLength=2000;
+            const explanation=document.createElement('p');explanation.textContent='Majiteli připravíme pozvánku. Práci můžete začít hned; její sdílení vyžaduje připojení vozidla a souhlas majitele. Každé vozidlo má vlastní zakázky a fotografie.';
+            const fields={};
+            for(const [key,label,type,max] of [['nickname','Název vozidla','text',120],['plate','SPZ (pokud ji znáte)','text',32],['vin','VIN','text',17],['brand','Značka (nepovinné)','text',64],['model','Model (nepovinné)','text',120],['year','Rok (nepovinné)','number',null],['current_mileage_km','Aktuální tachometr km (nepovinné)','number',null],['last_stk_mileage_km','Poslední tachometr STK km (nepovinné)','number',null],['stk_valid_until','Platnost STK (pokud ji znáte)','date',null]]){
+                const wrap=input(label,'serviceIntake-'+key,type);fields[key]=wrap.lastChild;if(max)fields[key].maxLength=max;if(type==='number'){fields[key].min=key==='year'?'1900':'0';fields[key].step='1';if(key==='year')fields[key].max='2100';}if(key==='nickname'){fields[key].required=true;fields[key].minLength=2;}
+            }
+            const controls=[modeWrap,linked,email,ownerName,message,explanation,...Object.values(fields).map(el=>el.parentElement)];
+            const status=document.createElement('p');status.setAttribute('role','status');
+            const sync=()=>{contact.mode=mode.value;linked.hidden=mode.value!=='linked';for(const wrap of [email,ownerName,message])wrap.hidden=mode.value!=='invite';email.lastChild.required=mode.value==='invite';fields.vin.required=mode.value==='invite';fields.vin.maxLength=mode.value==='invite'?17:64;};mode.addEventListener('change',sync);sync();
+            let uncertain=false;
+            const save=action('Uložit vozidlo',async()=>{
+                if(uncertain)throw new Error('Nejprve ověřte předchozí uložení v zakázkách.');
+                if(!current())return;
+                for(const el of Object.values(fields))if(!el.reportValidity())return;
+                if(mode.value==='invite'&&!email.lastChild.reportValidity())return;
+                const vehicle=intakeVehiclePayload(Object.fromEntries(Object.entries(fields).map(([key,el])=>[key,el.value])),{invite:mode.value==='invite'});
+                if(mode.value==='invite'&&!vehicle.vin)throw new Error('Pro pozvání majitele vyplňte VIN vozidla.');
+                if(mode.value==='linked'&&!Number.isSafeInteger(Number(customer.value)))throw new Error('Vyberte klienta.');
+                if(mode.value==='linked'&&Number(customer.value)<=0)throw new Error('Vyberte klienta.');
+                contact.customer_id=customer.value;contact.invite_email=email.lastChild.value.trim();contact.invite_name=ownerName.lastChild.value.trim();contact.invite_message=message.lastChild.value.trim();
+                status.textContent='Ukládám vozidlo…';
+                try {
+                    const result=mode.value==='invite'
+                        ? await request('/api/v1/services/workspace/pending-vehicles','POST',{invite_email:contact.invite_email,invite_name:contact.invite_name||null,invite_message:contact.invite_message||null,vehicle})
+                        : await request('/api/v1/services/workspace/customers/'+Number(customer.value)+'/vehicles','POST',vehicle);
+                    if(!current())return;const vehicleId=Number(result.vehicle_id||result.id);
+                    if(!Number.isSafeInteger(vehicleId)||vehicleId<=0)throw new Error('Vozidlo mohlo být uloženo, ale server nevrátil jeho identifikátor. Ověřte seznam vozidel.');
+                    body.replaceChildren();const title=document.createElement('h3');title.textContent='Vozidlo je uložené';
+                    const info=document.createElement('p');info.textContent=[vehicle.nickname,vehicle.plate].filter(Boolean).join(' · ');
+                    const detail=document.createElement('p');detail.textContent=result.message||'Vozidlo bylo přidáno klientovi.';
+                    const privacy=document.createElement('p');privacy.textContent=contact.mode==='invite'?'Zakázka, fotografie a doklady zůstávají u vašeho servisu. Majitel je uvidí až po registraci, připojení vozidla a udělení souhlasu.':'Pokračujte příjmem vozidla, fotografiemi a zakázkou. Každé vozidlo má vlastní průběh.';
+                    body.append(title,info,detail,privacy,action('Zahájit zakázku',()=>jobs(vehicleId),false),action('Přidat další vozidlo stejnému zákazníkovi',form),action('Hotovo',()=>body.closest('dialog')?.close()));
+                }catch(e){
+                    if(e.name==='AbortError')throw e;
+                    if(!e.status||e.status>=500){uncertain=true;status.textContent='Uložení se nepodařilo potvrdit. Neopakujte jej naslepo; ověřte vozidlo a zakázky u servisu.';body.append(action('Ověřit vozidla a práci servisu',()=>workBeforeConsent()));}
+                    else status.textContent=e.message;
+                    throw e;
+                }
+            },false);
+            body.append(...controls,status,save);
+        }
+        form();
     }
     function accessRequest(candidate, lookupQuery) {
         const body=panel('Žádost o přístup k vozidlu');
@@ -165,7 +334,6 @@
         }catch(e){if(e.name!=='AbortError'&&block.isConnected)ui.tierError(block,e);}
     }
     const photoBatches=new Map(),guidedDrafts=new Map();
-    const consentTitle=value=>({pending:'Čeká na souhlas · pouze u servisu',rejected:'Souhlas odmítnut · historie u servisu',revoked:'Souhlas byl odvolán',ownership_changed:'Změnil se majitel',approved:'Sdíleno s majitelem'}[value]||'Sdíleno s majitelem');
     const statusTitle=value=>({received:'Přijato do servisu',in_progress:'Probíhá oprava',completed:'Dokončeno',handed_over:'Předáno',cancelled:'Zrušeno'}[value]||value);
     const evidenceWritable=(job,actor)=>actor.role==='service' && Number(actor.id)===Number(job.service_id) && !['handed_over','cancelled'].includes(job.status) && !['revoked','ownership_changed'].includes(job.consent_status);
     async function workBeforeConsent(offset=0) {
@@ -408,7 +576,7 @@
         }
         const details=document.createElement('details');details.innerHTML='<summary>Zrušit zakázku</summary>';details.append(document.createTextNode('Do popisu práce napište důvod. Historie zůstane uložená.'),action('Zrušit s uvedeným důvodem',async()=>{if(await confirmAction('Zrušit tuto zakázku?'))await save('cancelled');}));body.append(details);
     }
-    global.addEventListener('admin-session-ended',()=>{photoBatches.clear();guidedDrafts.clear();});
+    global.addEventListener('admin-session-ended',()=>{photoBatches.clear();guidedDrafts.clear();directoryVersion++;directoryPanels=new WeakMap();for(const section of document.querySelectorAll('[data-service-search]'))section.remove();});
 
-    global.ServiceFeatures={workspaceLoaded:container=>{void workspaceLoaded(container).catch(e=>{if(e.name!=='AbortError')showError(e.message);});},repairs,customerRequests,jobs,jobEvidence};
-})(window);
+    global.ServiceFeatures={workspaceLoaded:container=>{void workspaceLoaded(container).catch(e=>{if(e.name!=='AbortError')showError(e.message);});},directoryLoaded,directoryLoading:container=>directoryLoaded(container,{loading:true}),intake,repairs,customerRequests,jobs,jobEvidence};
+})(typeof window==='undefined'?globalThis:window);

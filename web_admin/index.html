@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="admin.css?v=20260929" />
   <link rel="stylesheet" href="workspace.css?v=20261003" />
   <link rel="stylesheet" href="activity.css?v=20261016" />
+  <link rel="stylesheet" href="/web/referral-features.css" />
 </head>
 <body>
   <!-- Přihlašovací obrazovka -->
@@ -711,6 +712,15 @@
               </details>
             </article>
 
+            <article id="cc-module-referrals" class="cc-module-card">
+              <div class="cc-module-head"><div>
+                <h3>Pozvánky a odměny</h3>
+                <p>Ověřené registrace, průběh doporučení a historie Premium odměn konkrétního účtu.</p>
+              </div></div>
+              <button id="operator-open-referrals" class="btn-secondary" type="button">Otevřít pozvánky a odměny</button>
+              <p class="operator-hint">Ruční odměna i její odebrání vyžadují důvod a potvrzení. Placené předplatné se tím nemění.</p>
+            </article>
+
             <article id="cc-module-jobs" class="cc-module-card">
               <div class="cc-module-head">
                 <div>
@@ -1121,6 +1131,8 @@
     </div>
   </div>
 
+  <script src="/web/vendor/referral-qr.js"></script>
+  <script src="/web/referral-features.js"></script>
   <script src="/admin-session.js"></script>
   <script src="admin.js?v=demo20261016-20261016"></script>
   <script src="activity.js?v=20261016"></script>

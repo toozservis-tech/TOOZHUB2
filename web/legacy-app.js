@@ -1236,7 +1236,10 @@
                     } catch (e) {
                         errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                     }
-                    throw new Error(errorMessage);
+                    const apiError = new Error(errorMessage);
+                    apiError.status = response.status;
+                    apiError.detail = errorData?.detail;
+                    throw apiError;
                 }
             } catch (error) {
                 console.error("Klientskou operaci se nepodařilo dokončit.");
@@ -2067,6 +2070,7 @@
 
         function setRegistrationMode(mode = 'user') {
             const normalizedMode = String(mode || 'user').toLowerCase() === 'service' ? 'service' : 'user';
+            if (registrationMode !== normalizedMode) clearRegistrationCompanyLookup(true);
             registrationMode = normalizedMode;
 
             const userBtn = document.getElementById('registerModeUserBtn');
@@ -2090,7 +2094,7 @@
             if (nameLabel) {
                 nameLabel.textContent = normalizedMode === 'service'
                     ? 'Název servisu *:'
-                    : 'Jméno / název:';
+                    : 'Jméno a příjmení *:';
             }
 
             const icoInput = document.getElementById('regIco');
@@ -2098,10 +2102,30 @@
                 icoInput.required = normalizedMode === 'service';
             }
 
+            // These are required registration contacts, independently of optional ARES prefill.
+            const contactFields = document.getElementById('registrationContactFields');
+            if (contactFields) {
+                contactFields.hidden = false;
+                contactFields.classList.remove('hidden');
+                contactFields.style.display = 'block';
+            }
+
             const extraFields = document.getElementById('serviceRegistrationExtraFields');
             if (extraFields) {
                 extraFields.classList.toggle('hidden', normalizedMode !== 'service');
             }
+
+            const numberInput = document.getElementById('regStreetNumber');
+            if (numberInput) numberInput.required = normalizedMode !== 'service';
+            const numberLabel = document.getElementById('regStreetNumberLabel');
+            if (numberLabel) numberLabel.textContent = normalizedMode === 'service' ? 'Číslo domu (volitelně):' : 'Číslo domu *:';
+            const phoneInput = document.getElementById('regPhone');
+            if (phoneInput) phoneInput.maxLength = normalizedMode === 'service' ? 64 : 32;
+            const zipInput = document.getElementById('regZip');
+            if (zipInput) zipInput.maxLength = normalizedMode === 'service' ? 32 : 16;
+            const nameInput = document.getElementById('regName');
+            if (nameInput) nameInput.placeholder = normalizedMode === 'service' ? 'Název servisu' : 'Jméno a příjmení';
+            syncReferralRegistrationDraft();
 
             const registerBtn = document.getElementById('registerSubmitBtn');
             if (registerBtn) {
@@ -2153,6 +2177,7 @@
                     return;
                 }
                 saveAuthSession(response.access_token, response.user);
+                window.ReferralRegistration?.clear();
                 updateRememberedLoginPreferences();
                 location.reload();
             } catch (error) { showFormError('loginErrorContainer', error.message); }
@@ -2199,6 +2224,7 @@
 
                 const staySignedIn = document.getElementById('staySignedInCheckbox')?.checked === true;
                 saveAuthSession(response.access_token, response.user, staySignedIn);
+                window.ReferralRegistration?.clear();
                 if (window.CustomerWeb) { location.reload(); return; }
                 if ((!currentUser || !currentUser.email) && accessToken) {
                     await ensureCurrentUserProfileLoaded({ force: true });
@@ -2476,6 +2502,9 @@
         // ARES lookup s AbortController pro zrušení předchozích requestů
         let aresAbortController = null;
         let aresDebounceTimeout = null;
+        let registrationCompanyVersion = 0;
+        const registrationCompanyAutofill = new Map();
+        const registrationCompanyEdits = new Map();
         let profileAresAbortController = null;
         let profileAresDebounceTimeout = null;
 
@@ -2792,98 +2821,99 @@
             });
         }
 
-        // Načtení dat z ARES (nová verze s GET endpointem)
+        function clearRegistrationCompanyLookup(discardAutofill = false) {
+            registrationCompanyVersion++;
+            if (aresDebounceTimeout) { clearTimeout(aresDebounceTimeout); aresDebounceTimeout = null; }
+            aresAbortController?.abort(); aresAbortController = null;
+            const ico = document.getElementById('regIco');
+            if (ico) delete ico.dataset.companyVerifiedIco;
+            if (discardAutofill) {
+                for (const [id, value] of registrationCompanyAutofill) {
+                    const input = document.getElementById(id);
+                    if (input?.value === value) input.value = '';
+                }
+                registrationCompanyAutofill.clear();
+            }
+            const status = document.getElementById('regCompanyStatus');
+            if (status) status.textContent = '';
+            const button = document.getElementById('regCompanyLookupBtn');
+            if (button) button.disabled = !/^[0-9]{8}$/.test(ico?.value || '');
+        }
+
+        function initRegistrationCompanyLookup() {
+            const ico = document.getElementById('regIco');
+            if (!ico || ico.dataset.companyLookupBound) return;
+            // Prevent the old generic lookup script from attaching the protected /api/v1/ares flow.
+            ico.dataset.aresListenerAttached = 'true';
+            ico.dataset.companyLookupBound = 'true';
+            ico.addEventListener('input', () => {
+                ico.value = ico.value.replace(/[^0-9]/g, '').slice(0, 8);
+                clearRegistrationCompanyLookup(true);
+                if (/^[0-9]{8}$/.test(ico.value)) aresDebounceTimeout = setTimeout(() => {
+                    aresDebounceTimeout = null; void loadAresData(ico.value);
+                }, 500);
+            });
+            for (const id of ['regName','regDic','regStreet','regStreetNumber','regCity','regZip']) {
+                document.getElementById(id)?.addEventListener('input', () => {
+                    registrationCompanyEdits.set(id, (registrationCompanyEdits.get(id) || 0) + 1);
+                    registrationCompanyAutofill.delete(id);
+                });
+            }
+            document.getElementById('regCompanyLookupBtn')?.addEventListener('click', () => { void loadAresData(ico.value); });
+        }
+
+        // Registration uses only the public, bounded company-field projection.
         async function loadAresData(ico) {
-            if (window.__licenseFlags && window.__licenseFlags.aresEnabled === false) {
-                showAlert('ARES lookup je dostupný od plánu BASIC.', 'info');
+            const icoClean = String(ico || '').trim(), icoInput = document.getElementById('regIco');
+            const form = document.getElementById('registerForm'), status = document.getElementById('regCompanyStatus');
+            const button = document.getElementById('regCompanyLookupBtn'), mode = getSelectedRegistrationMode();
+            if (!window.CustomerWeb || AdminBrowserSession.token() || !form || form.classList.contains('hidden')) return;
+            if (!/^[0-9]{8}$/.test(icoClean) || icoInput?.value !== icoClean) {
+                if (status) status.textContent = 'IČO musí obsahovat přesně 8 číslic. Kontakty můžete vyplnit ručně.';
                 return;
             }
-            if (!ico) {
-                return;
-            }
-
-            const icoClean = ico.trim().replace(/[\s-]/g, '');
-
-            // Validace IČO
-            if (icoClean.length !== 8 || !/^\d+$/.test(icoClean)) {
-                return; // Nezobrazovat chybu, jen neprovádět lookup
-            }
-
-            // Zrušit předchozí request
-            if (aresAbortController) {
-                aresAbortController.abort();
-            }
-            aresAbortController = new AbortController();
-
-            // Odstranit předchozí chybu
-            const icoInput = document.getElementById('regIco');
-            if (icoInput) {
-                const existingError = icoInput.parentElement.querySelector('.ares-error');
-                if (existingError) {
-                    existingError.remove();
-                }
-            }
-
+            clearRegistrationCompanyLookup();
+            const operation = registrationCompanyVersion, controller = new AbortController(), session = AdminBrowserSession, captured = session.snapshot();
+            aresAbortController = controller;
+            const mapping = {regDic:'dic',regStreet:'street',regStreetNumber:'house_number',regCity:'city',regZip:'zip',...(mode === 'service' ? {regName:'company_name'} : {})};
+            const baseline = new Map(Object.keys(mapping).map(id => [id, {value:document.getElementById(id)?.value || '', edits:registrationCompanyEdits.get(id) || 0}]));
+            const current = () => {
+                try { session.assertCurrent(captured); }
+                catch { return false; }
+                return window.AdminBrowserSession === session && !session.token() && !controller.signal.aborted && operation === registrationCompanyVersion &&
+                    icoInput.value === icoClean && getSelectedRegistrationMode() === mode && !form.classList.contains('hidden');
+            };
+            if (status) status.textContent = 'Načítám údaje firmy z ARES…';
+            if (button) button.disabled = true;
             try {
-                // Volat ARES bez vynuceného odhlášení (registrace běží i bez autentizace)
-                const data = await fetchAresDataNoForcedLogout(
-                    icoClean,
-                    aresAbortController.signal,
-                    { logoutOnAuthError: false }
-                );
-
-
-                // Nový endpoint vrací přímo AresLookupResponse: {ico, company_name, dic, street, house_number, city, zip, source}
-
-                // Vyplnění polí podle nového formátu
-                if (data.company_name) {
-                    document.getElementById('regName').value = data.company_name;
+                const response = await session.request('/user/registration-company?ico=' + encodeURIComponent(icoClean), {method:'GET',signal:controller.signal,timeoutMs:15000}, captured);
+                if (!current()) return;
+                if (!response.ok) {
+                    // Consume the guarded body so the session transport releases its timeout/controller.
+                    await response.text();
+                    if (!current()) return;
+                    const failure = new Error('Company lookup unavailable'); failure.status = response.status; throw failure;
                 }
-                if (data.dic) {
-                    document.getElementById('regDic').value = data.dic;
+                const data = await response.json();
+                if (!current()) return;
+                if (!data || data.ico !== icoClean) throw new Error('Company identity mismatch');
+                for (const [id, key] of Object.entries(mapping)) {
+                    const input = document.getElementById(id), before = baseline.get(id), value = data[key];
+                    if (!input || typeof value !== 'string' || !value.trim() || input.value !== before.value || (registrationCompanyEdits.get(id) || 0) !== before.edits) continue;
+                    if (input.value.trim() && registrationCompanyAutofill.get(id) !== input.value) continue;
+                    input.value = value.trim(); registrationCompanyAutofill.set(id, input.value);
                 }
-                if (data.street) {
-                    document.getElementById('regStreet').value = data.street;
-                }
-                if (data.house_number) {
-                    document.getElementById('regStreetNumber').value = data.house_number;
-                }
-                if (data.city) {
-                    document.getElementById('regCity').value = data.city;
-                }
-                if (data.zip) {
-                    document.getElementById('regZip').value = data.zip;
-                }
-
-                // Zobrazit pole s ARES daty po úspěšném načtení
-                const aresFields = document.getElementById('aresDataFields');
-                if (aresFields) {
-                    aresFields.style.display = 'block';
-                }
-
-                showAlert('Data z ARES byla úspěšně načtena', 'success');
+                icoInput.dataset.companyVerifiedIco = icoClean;
+                if (status) status.textContent = mode === 'service'
+                    ? 'Údaje firmy byly načteny pro IČO ' + icoClean + '. Ručně vyplněné údaje zůstaly zachovány; zkontrolujte je před odesláním.'
+                    : 'Adresa a daňové údaje z ARES byly načteny. Jméno a příjmení vyplňte samostatně. Ručně vyplněné údaje zůstaly zachovány.';
             } catch (error) {
-                console.error("[ARES] Error:");
-                let errorMessage = 'Nepodařilo se načíst data z ARES';
-
-                if (error.name === 'AbortError') {
-                    // Request byl zrušen, neukazovat chybu
-                    return;
-                } else if (error.message) {
-                    if (error.message.includes('404') || error.message.includes('nenalezeno')) {
-                        errorMessage = 'IČO nebylo nalezeno v ARES. Zkontrolujte správnost IČO.';
-                    } else if (error.message.includes('503') || error.message.includes('unavailable')) {
-                        errorMessage = 'ARES nedostupný. Zkuste to prosím později.';
-                    } else if (error.message.includes('422') || error.message.includes('Neplatné')) {
-                        errorMessage = 'Neplatné IČO - musí obsahovat přesně 8 číslic.';
-                    } else if (error.message.includes('Timeout') || error.message.includes('časový limit')) {
-                        errorMessage = 'Timeout při načítání z ARES. Zkuste to prosím znovu.';
-                    } else {
-                        errorMessage = error.message;
-                    }
-                }
-
-                showAresError(errorMessage);
+                if (!current()) return;
+                delete icoInput.dataset.companyVerifiedIco;
+                const messages = {404:'IČO nebylo nalezeno v ARES.',422:'IČO musí obsahovat přesně 8 číslic.',429:'Bylo odesláno příliš mnoho dotazů. Zkuste to později.',503:'Údaje firmy nyní nelze načíst z ARES.'};
+                if (status) status.textContent = (messages[error.status] || 'Údaje firmy se nepodařilo načíst.') + ' Kontakty zůstaly zachovány a můžete je vyplnit ručně.';
+            } finally {
+                if (current() && button) button.disabled = false;
             }
         }
 
@@ -2940,6 +2970,17 @@
             const phone = document.getElementById('regPhone').value.trim();
             const responsiblePerson = (document.getElementById('regResponsiblePerson')?.value || '').trim();
             const registrationPurpose = (document.getElementById('regRegistrationPurpose')?.value || '').trim();
+            const referral = window.ReferralRegistration;
+            let referralPayload, contactPayload = null;
+            try {
+                if (!referral) throw new Error('Registrační formulář se nepodařilo načíst. Obnovte stránku.');
+                const code = referral.update(document.getElementById('regReferralCode')?.value || '', selectedRegistrationMode);
+                referralPayload = referral.payload(code);
+                if (selectedRegistrationMode === 'user') contactPayload = referral.userContact({name, phone, street, street_number:streetNumber, city, zip});
+            } catch (error) {
+                showFormError('registerErrorContainer', error.message);
+                return;
+            }
 
             if (!email || !password) {
                 showFormError('registerErrorContainer', 'Vyplňte prosím email a heslo');
@@ -3008,8 +3049,10 @@
                         city,
                         zip,
                         dic: dic || null,
-                        registration_purpose: registrationPurpose
+                        registration_purpose: registrationPurpose,
+                        ...referralPayload
                     });
+                    clearReferralRegistrationDraft();
 
                     if (errorContainer) {
                         errorContainer.innerHTML = '';
@@ -3033,14 +3076,12 @@
                     email,
                     password,
                     ico: ico || null,
-                    name: name || null,
+                    name: contactPayload.name,
                     dic: dic || null,
-                    street: street || null,
-                    street_number: streetNumber || null,
-                    city: city || null,
-                    zip: zip || null,
-                    phone: phone || null
+                    ...contactPayload,
+                    ...referralPayload
                 });
+                clearReferralRegistrationDraft();
                 if (window.CustomerWeb) { showLogin(); showAlert(response.email_sent ? 'Účet byl vytvořen. Potvrďte e-mail a přihlaste se.' : 'Účet byl vytvořen, potvrzovací e-mail se nepodařilo odeslat. Přihlaste se a požádejte o nový.', 'info'); return; }
                 if (response.access_token) {
                     saveAuthSession(response.access_token, response.user, getStaySignedInPreference());
@@ -3066,7 +3107,7 @@
                 showAlert(registrationMessage, registrationAlertType);
             } catch (error) {
                 console.error("Registration error:");
-                const errorMessage = error.message || 'Neznámá chyba';
+                const errorMessage = referral.errorMessage(error);
                 // Zpracovat specifické chybové zprávy z API
                 let displayMessage = 'Nepodařilo se zaregistrovat';
                 if (errorMessage.includes('již existuje') || errorMessage.includes('already exists')) {
@@ -3403,6 +3444,7 @@
         // Zobrazení přihlášení (skrýt dashboard)
         function showLogin() {
             if (!window.CustomerWeb) { AdminBrowserSession.end('verification'); return; }
+            clearRegistrationCompanyLookup();
             document.getElementById('adminSessionLoading')?.remove();
             const auth = document.getElementById('authSection');
             auth.classList.remove('hidden'); auth.style.display = '';
@@ -6326,10 +6368,15 @@
                 section.classList.remove('hidden');
                 defaultChildren.forEach((child) => child.classList.add('hidden'));
                 if (forceRender || !serviceAddVehicleState.initialized) {
-                    section.innerHTML = buildServiceAddVehicleSectionHtml();
+                    section.innerHTML = '<div class="card"><h3>Příjem vozidla do servisu</h3><p>Vyberte klienta nebo zadejte nový kontakt, doplňte vozidlo a zahajte zakázku. Souhlas vlastníka a oprávnění zůstávají samostatné.</p><button type="button" class="btn" data-service-intake-open>Připravit vozidlo a zahájit zakázku</button></div>';
+                    section.querySelector('[data-service-intake-open]')?.addEventListener('click', async () => {
+                        if (!isServiceWorkspaceRole()) return;
+                        if (!window.ServiceFeatures?.intake) { showAlert('Příjem vozidla se nepodařilo načíst. Obnovte stránku.', 'error'); return; }
+                        try { await window.ServiceFeatures.intake(); }
+                        catch { showAlert('Příjem vozidla se nepodařilo otevřít. Zkuste to znovu.', 'error'); }
+                    });
                     serviceAddVehicleState.initialized = true;
                 }
-                await loadServiceAddVehicleCustomers();
                 return;
             }
 
@@ -6338,18 +6385,13 @@
         }
 
         async function openServiceAddVehicleForCustomer(customerId) {
+            if (!isServiceWorkspaceRole()) return;
             const customerIdNum = Number(customerId || 0);
-            if (!customerIdNum) {
-                switchTab('addVehicle');
-                return;
-            }
-            serviceWorkspaceState.selectedCustomerId = customerIdNum;
-            switchTab('addVehicle');
-            await ensureServiceAddVehicleSection(true);
-            const customerSelect = document.getElementById('serviceAddVehicleCustomer');
-            if (customerSelect) {
-                customerSelect.value = String(customerIdNum);
-            }
+            if (!window.ServiceFeatures?.intake) { showAlert('Příjem vozidla se nepodařilo načíst. Obnovte stránku.', 'error'); return; }
+            const selectedId = Number.isSafeInteger(customerIdNum) && customerIdNum > 0 ? customerIdNum : undefined;
+            if (selectedId) serviceWorkspaceState.selectedCustomerId = selectedId;
+            try { await window.ServiceFeatures.intake(selectedId); }
+            catch { showAlert('Příjem vozidla se nepodařilo otevřít. Zkuste to znovu.', 'error'); }
         }
 
         async function handleServiceAddVehicleSubmit() {
@@ -10397,10 +10439,74 @@
         }
 
         // Zobrazení registrace
-        function showRegister() {
+        function syncReferralRegistrationDraft() {
+            const input = document.getElementById('regReferralCode');
+            if (!input?.dataset.referralReady || !window.ReferralRegistration) return;
+            const status = document.getElementById('regReferralStatus');
+            const remove = document.getElementById('regReferralRemove');
+            try {
+                const code = window.ReferralRegistration.update(input.value, getSelectedRegistrationMode());
+                if (status) status.textContent = code ? 'Kód bude ověřen při odeslání registrace.' : 'Registrace bude pokračovat bez kódu pozvánky.';
+                input.removeAttribute('aria-invalid');
+            } catch (error) {
+                window.ReferralRegistration.clear();
+                if (status) status.textContent = error.message;
+                input.setAttribute('aria-invalid', 'true');
+            }
+            if (remove) remove.hidden = !input.value;
+        }
+
+        function clearReferralRegistrationDraft() {
+            window.ReferralRegistration?.clear();
+            const input = document.getElementById('regReferralCode');
+            if (input) { input.value = ''; input.removeAttribute('aria-invalid'); }
+            const status = document.getElementById('regReferralStatus');
+            if (status) status.textContent = '';
+            const remove = document.getElementById('regReferralRemove');
+            if (remove) remove.hidden = true;
+        }
+
+        function initReferralRegistrationForm() {
+            const input = document.getElementById('regReferralCode');
+            if (!input || input.dataset.referralBound) return;
+            input.dataset.referralBound = 'true';
+            input.addEventListener('input', syncReferralRegistrationDraft);
+            document.getElementById('regReferralRemove')?.addEventListener('click', () => {
+                clearReferralRegistrationDraft();
+                const status = document.getElementById('regReferralStatus');
+                if (status) status.textContent = 'Kód byl odebrán. Můžete pokračovat bez pozvánky.';
+                input.focus();
+            });
+        }
+
+        async function openReferralFeature(event) {
+            const button = event.target?.closest?.('[data-referral-open]');
+            if (!button || !isAuthenticated()) return;
+            const role = String(currentUser?.role || '');
+            const admin = button.dataset.referralOpen === 'admin';
+            if (admin ? !['admin', 'developer_admin'].includes(role) : !['user', 'customer', 'service'].includes(role)) return;
+            event.preventDefault();
+            const action = admin ? window.ReferralFeatures?.openAdmin : window.ReferralFeatures?.openPersonal;
+            if (!action) { showAlert('Pozvánky se nepodařilo načíst. Obnovte stránku.', 'error'); return; }
+            try { await action(); }
+            catch { showAlert('Pozvánky se nepodařilo načíst. Zkuste to znovu.', 'error'); }
+        }
+
+        document.addEventListener('click', openReferralFeature);
+        window.addEventListener('admin-session-ended', clearReferralRegistrationDraft);
+        window.addEventListener('admin-session-ended', () => clearRegistrationCompanyLookup(true));
+
+        function showRegister(mode = null) {
+            if (!window.CustomerWeb || AdminBrowserSession.token()) return;
+            const draft = window.ReferralRegistration?.registrationDraft();
+            const input = document.getElementById('regReferralCode');
+            if (input && !input.dataset.referralReady) {
+                input.value = draft?.code || '';
+                input.dataset.referralReady = 'true';
+            }
             document.getElementById('loginForm').classList.add('hidden');
             document.getElementById('registerForm').classList.remove('hidden');
-            setRegistrationMode(getSelectedLoginMode());
+            setRegistrationMode(mode || draft?.kind || getSelectedLoginMode());
             // Vyčistit chyby při přepnutí
             clearFormError('loginErrorContainer');
             clearFormError('registerErrorContainer');
@@ -10412,7 +10518,17 @@
             API_URL = getApiBaseUrl();
             document.getElementById('configButton')?.classList.add('hidden');
             accessToken = AdminBrowserSession.token();
-            if (!accessToken && window.CustomerWeb) { showLogin(); initLoginModeFromState(); initRememberedLoginPreferences(); return; }
+            const referralStart = window.ReferralRegistration?.begin(Boolean(accessToken));
+            initReferralRegistrationForm();
+            initRegistrationCompanyLookup();
+            if (!accessToken && window.CustomerWeb) {
+                showLogin(); initLoginModeFromState(); initRememberedLoginPreferences();
+                if (referralStart?.open) {
+                    showRegister(referralStart.kind);
+                    if (referralStart.error) showFormError('registerErrorContainer', referralStart.error);
+                }
+                return;
+            }
             if (!accessToken) return;
             try {
                 await AdminBrowserSession.verify();
@@ -10540,37 +10656,7 @@
                 staySignedInCheckbox.addEventListener('change', updateRememberedLoginPreferences);
             }
 
-            // Automatické načtení ARES při zadání 8 číslic IČO (s debounce)
-            const icoInput = document.getElementById('regIco');
-            if (icoInput) {
-                icoInput.addEventListener('input', (e) => {
-                    const rawValue = String(e.target.value || '');
-                    const ico = rawValue.replace(/[^\d]/g, '').slice(0, 8);
-                    if (rawValue !== ico) {
-                        e.target.value = ico;
-                    }
-
-                    // Zrušit předchozí debounce
-                    if (aresDebounceTimeout) {
-                        clearTimeout(aresDebounceTimeout);
-                        aresDebounceTimeout = null;
-                    }
-
-                    // Odstranit předchozí chybu
-                    const existingError = icoInput.parentElement.querySelector('.ares-error');
-                    if (existingError) {
-                        existingError.remove();
-                    }
-
-                    // Spustit lookup pouze když je 8 číslic
-                    if (ico.length === 8 && /^\d+$/.test(ico)) {
-                        aresDebounceTimeout = setTimeout(() => {
-                            loadAresData(ico);
-                            aresDebounceTimeout = null;
-                        }, 500);
-                    }
-                });
-            }
+            // Registration company listeners are installed before the anonymous early return.
 
             // Automatické dekódování VIN při zadání 17 znaků (s debounce)
             const vinInput = document.getElementById('vehicleVin');
@@ -14309,6 +14395,7 @@
             html += '</div>';
             container.innerHTML = html;
 
+            window.ServiceFeatures?.directoryLoaded(container, payload);
             const focusServiceId = Number(pendingServicesDirectoryFocusServiceId || 0);
             if (focusServiceId > 0) {
                 pendingServicesDirectoryFocusServiceId = null;
@@ -14350,6 +14437,7 @@
 
             container.classList.add('loading');
             container.innerHTML = '<div class="loading">Načítám seznam servisů...</div>';
+            if (window.CustomerWeb) window.ServiceFeatures?.directoryLoading(container);
 
             try {
                 captureClientGeolocation(true);
@@ -16246,6 +16334,8 @@
                             <button type="button" class="settings-nav-item" data-settings-panel-btn="data" ${legacyActionAttributes("click", "setSettingsPanel_efbbe57d")}>
                                 Data a účet
                             </button>
+                            ${['user', 'customer', 'service'].includes(profile.role) ? '<button type="button" class="settings-nav-item" data-referral-open="personal">Pozvat a získat odměny</button>' : ''}
+                            ${['admin', 'developer_admin'].includes(profile.role) ? '<button type="button" class="settings-nav-item" data-referral-open="admin">Pozvánky a odměny</button>' : ''}
                         </aside>
 
                         <div class="settings-main">
@@ -17229,7 +17319,7 @@
                     message: message,
                     phone: phone,
                     include_diagnostics: includeDiagnostics,
-                    page_url: window.location.href,
+                    page_url: window.ReferralRegistration?.safePageURL(window.location.href) || '',
                     user_agent: navigator.userAgent
                 });
 
@@ -17712,7 +17802,7 @@
 
         function updateDebugPanel() {
             // Location info
-            document.getElementById('debug-location-href').textContent = window.location.href;
+            document.getElementById('debug-location-href').textContent = window.ReferralRegistration?.safePageURL(window.location.href) || '';
             document.getElementById('debug-location-origin').textContent = window.location.origin;
             document.getElementById('debug-location-hostname').textContent = window.location.hostname;
             document.getElementById('debug-api-base-url').textContent = getApiBaseUrl();

@@ -1,0 +1,37 @@
+name: Referrals web contract
+on:
+  push:
+    paths: ['web/referral-*', 'web/vendor/referral-qr.js', 'web/index.html', 'web/legacy-app.js', 'web/service-features.js', 'web/customer-session.js', 'web_admin/index.html', 'web_admin/operator-panel.js', 'tests/web/referral-*', 'tests/web/registration-company-ready-20261103.cjs', 'tests/web/service-directory-intake*.cjs', '.github/workflows/referrals-web-contract.yml']
+  pull_request:
+    paths: ['web/referral-*', 'web/vendor/referral-qr.js', 'web/index.html', 'web/legacy-app.js', 'web/service-features.js', 'web/customer-session.js', 'web_admin/index.html', 'web_admin/operator-panel.js', 'tests/web/referral-*', 'tests/web/registration-company-ready-20261103.cjs', 'tests/web/service-directory-intake*.cjs', '.github/workflows/referrals-web-contract.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  referral-ui-and-registration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check client syntax and offline contracts
+        run: |
+          node --check web/referral-registration.js
+          node --check web/referral-features.js
+          node --check web/legacy-app.js
+          node --check web/service-features.js
+          node --check web/customer-session.js
+          node --test tests/security/test_customer_session.cjs tests/security/test_customer_session_renewal.cjs
+          node --check web_admin/operator-panel.js
+          node --test tests/web/referral-registration-ready-20261103.cjs tests/web/referral-features-20261103.cjs tests/web/registration-company-ready-20261103.cjs tests/web/service-directory-intake*.cjs
+      - name: Install pinned browser test runtime
+        run: |
+          npm install --no-save --prefix "$RUNNER_TEMP/referral-check" playwright@1.62.1
+          "$RUNNER_TEMP/referral-check/node_modules/.bin/playwright" install --with-deps chrome
+      - name: Check responsive dialogs, QR and account boundaries
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/referral-check/node_modules/playwright
+          TEST_BROWSER_CHANNEL: chrome
+        run: node --test tests/web/referral-features-browser-20261103.cjs

@@ -159,9 +159,12 @@
         assertCurrent(expected);
         // Reject foreign origins before renewal can initiate any authenticated request.
         const url = sameOriginURL(input), path = new URL(url).pathname;
-        if (!token() && !publicPaths.includes(path)) throw new Error('Nejprve se přihlaste.');
+        // Only the bounded company lookup is a new public operation; legacy ARES stays protected.
+        const publicCompanyLookup = path === '/user/registration-company' && String(init.method || 'GET').toUpperCase() === 'GET';
+        const publicRequest = publicPaths.includes(path) || publicCompanyLookup;
+        if (!token() && !publicRequest) throw new Error('Nejprve se přihlaste.');
         if (token() && renewalDue(token()) && Date.now() >= retryRenewalAt &&
-            !publicPaths.includes(path) && !['/user/session/renew', '/user/logout'].includes(path)) {
+            !publicRequest && !['/user/session/renew', '/user/logout'].includes(path)) {
             await renewIfNeeded();
         }
         assertCurrent(expected);

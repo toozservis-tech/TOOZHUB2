@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="theme.css" />
     <link rel="stylesheet" href="app.css" />
     <link rel="stylesheet" href="inline-styles.css" />
+    <link rel="stylesheet" href="referral-features.css" />
     <style>
         * {
             margin: 0;
@@ -9069,37 +9070,39 @@
                                     <button type="button" id="registerModeUserBtn" class="auth-login-mode-btn active" data-legacy-click="setRegistrationMode_91a1b4b9" data-legacy-click-args="[]">Uživatel</button>
                                     <button type="button" id="registerModeServiceBtn" class="auth-login-mode-btn" data-legacy-click="setRegistrationMode_046f27e7" data-legacy-click-args="[]">Servis</button>
                                 </div>
-                                <p id="registerModeHint" class="auth-login-mode-hint">Standardní registrace uživatele s okamžitou aktivací.</p>
+                                <p id="registerModeHint" class="auth-login-mode-hint">Registrace uživatele s potvrzením e-mailové adresy.</p>
                             </div>
                             <div class="form-group">
                                 <label for="regIco"><span id="regIcoLabel">IČO (volitelně):</span></label>
                                 <input type="text" id="regIco" data-testid="input-reg-ico" placeholder="12345678" maxlength="8">
-                                <small class="ares-info-text">Po zadání 8 číslic se automaticky načtou údaje z ARES.</small>
+                                <small class="ares-info-text">IČO má 8 číslic. Údaje firmy a adresu lze předvyplnit z ARES; kontakty můžete vyplnit ručně.</small>
+                                <button type="button" id="regCompanyLookupBtn" class="btn btn-secondary" disabled>Načíst údaje firmy</button>
+                                <p id="regCompanyStatus" role="status" aria-live="polite"></p>
                             </div>
-                            <div id="aresDataFields">
+                            <div id="registrationContactFields">
                                 <div class="form-group">
-                                    <label for="regName"><span id="regNameLabel">Jméno / název:</span></label>
-                                    <input type="text" id="regName" placeholder="Načte se z ARES nebo doplňte ručně">
+                                    <label for="regName"><span id="regNameLabel">Jméno a příjmení *:</span></label>
+                                    <input type="text" id="regName" autocomplete="name" maxlength="200" placeholder="Jméno a příjmení" required>
                                 </div>
                                 <div class="form-group">
                                     <label for="regDic">DIČ:</label>
                                     <input type="text" id="regDic" placeholder="Načte se z ARES nebo doplňte ručně">
                                 </div>
                                 <div class="form-group">
-                                    <label for="regStreet">Ulice:</label>
-                                    <input type="text" id="regStreet" placeholder="Načte se z ARES nebo doplňte ručně">
+                                    <label for="regStreet">Ulice *:</label>
+                                    <input type="text" id="regStreet" maxlength="200" placeholder="Ulice" required>
                                 </div>
                                 <div class="form-group">
-                                    <label for="regStreetNumber">Číslo popisné:</label>
-                                    <input type="text" id="regStreetNumber" placeholder="Načte se z ARES nebo doplňte ručně">
+                                    <label for="regStreetNumber"><span id="regStreetNumberLabel">Číslo domu *:</span></label>
+                                    <input type="text" id="regStreetNumber" maxlength="64" placeholder="Číslo domu" required>
                                 </div>
                                 <div class="form-group">
-                                    <label for="regCity">Město:</label>
-                                    <input type="text" id="regCity" placeholder="Načte se z ARES nebo doplňte ručně">
+                                    <label for="regCity">Město *:</label>
+                                    <input type="text" id="regCity" maxlength="120" placeholder="Město" required>
                                 </div>
                                 <div class="form-group">
-                                    <label for="regZip">PSČ:</label>
-                                    <input type="text" id="regZip" placeholder="Načte se z ARES nebo doplňte ručně">
+                                    <label for="regZip">PSČ *:</label>
+                                    <input type="text" id="regZip" maxlength="32" placeholder="PSČ" required>
                                 </div>
                             </div>
                             <div id="serviceRegistrationExtraFields" class="hidden">
@@ -9118,7 +9121,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="regPhone">Telefon *:</label>
-                                <input type="text" id="regPhone" data-testid="input-reg-phone" placeholder="+420 123 456 789" required>
+                                <input type="tel" id="regPhone" data-testid="input-reg-phone" autocomplete="tel" maxlength="64" placeholder="+420 123 456 789" required>
                             </div>
                             <div class="form-group">
                                 <label for="regPassword">Heslo *:</label>
@@ -9127,6 +9130,13 @@
                             <div class="form-group">
                                 <label for="regPasswordConfirm">Potvrzení hesla *:</label>
                                 <input type="password" id="regPasswordConfirm" data-testid="input-reg-password-confirm" placeholder="Potvrzení hesla" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="regReferralCode">Kód pozvánky (nepovinný):</label>
+                                <input type="text" id="regReferralCode" data-testid="input-reg-referral-code" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="40" aria-describedby="regReferralHint regReferralStatus">
+                                <small id="regReferralHint">Pozvánka nepovoluje přístup k vozidlům ani sdílení údajů. Kód můžete opravit nebo odebrat.</small>
+                                <p id="regReferralStatus" role="status" aria-live="polite"></p>
+                                <button type="button" id="regReferralRemove" class="btn btn-secondary" hidden>Pokračovat bez kódu</button>
                             </div>
                             <div class="form-button-group">
                                 <button class="btn" id="registerSubmitBtn" data-legacy-click="handleRegister_2fc00a67" data-legacy-click-args="[]" data-testid="btn-register">Registrovat</button>
@@ -9582,6 +9592,9 @@
     </div>
     -->
 
+    <script src="referral-registration.js"></script>
+    <script src="vendor/referral-qr.js"></script>
+    <script src="referral-features.js"></script>
     <script src="storage_migration.js"></script>
     <script src="/admin-session.js"></script>
     <script src="legacy-actions.js"></script>

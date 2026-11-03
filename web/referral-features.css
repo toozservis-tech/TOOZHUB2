@@ -1,0 +1,23 @@
+.referral-dialog{box-sizing:border-box;width:min(720px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:calc(100dvh - 32px);margin:auto;padding:0;border:1px solid #526279;border-radius:20px;background:#202b40;color:#f2f5fa;box-shadow:0 20px 80px #0008;font:16px/1.5 system-ui,sans-serif;overflow:auto}
+.referral-dialog::backdrop{background:#0a1222b8;backdrop-filter:blur(3px)}
+.referral-dialog *{box-sizing:border-box}
+.referral-header{position:sticky;top:0;z-index:1;display:flex;gap:12px;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid #526279;background:#202b40}
+.referral-header h2{font-size:1.3rem;line-height:1.25;margin:0}
+.referral-body{padding:20px;display:grid;gap:20px;overflow-wrap:anywhere}
+.referral-body h3{font-size:1.1rem;margin:0 0 12px}.referral-body h4{font-size:1rem;margin:0 0 6px}.referral-body p{margin:6px 0}
+.referral-section{background:#2d3b52;border:1px solid #526279;border-radius:14px;padding:18px;min-width:0}
+.referral-card{border-top:1px solid #526279;padding:14px 0}.referral-card:first-of-type{border-top:0}.referral-card:last-of-type{padding-bottom:0}
+.referral-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.referral-button{cursor:pointer;border:1px solid transparent;border-radius:10px;background:#ffa136;color:#172238;min-height:44px;padding:10px 16px;font:600 1rem/1.3 system-ui,sans-serif;white-space:normal;margin:4px 4px 4px 0}
+.referral-button.referral-secondary{background:#435672;color:#fff;border-color:#71829c}.referral-button.referral-danger{background:#713636;color:#fff;border-color:#e39c9c}
+.referral-button:disabled{opacity:.55;cursor:default}.referral-button:focus-visible,.referral-dialog input:focus-visible,.referral-dialog select:focus-visible,.referral-dialog textarea:focus-visible{outline:3px solid #ffb65e;outline-offset:3px}
+.referral-field{display:grid;gap:6px;margin:12px 0;font-weight:600}
+.referral-dialog input,.referral-dialog select,.referral-dialog textarea{display:block;width:100%;max-width:100%;border:1px solid #8594ac;background:#172238;color:#fff;border-radius:9px;min-height:44px;padding:10px 12px;font:1rem/1.4 system-ui,sans-serif}
+.referral-dialog textarea{resize:vertical}.referral-dialog input[readonly]{font-size:.85rem}.referral-dialog select option{background:#172238}
+.referral-share{display:grid;justify-items:center;gap:10px}.referral-share input,.referral-share .referral-actions{justify-self:stretch}
+.referral-qr{display:block;width:min(240px,100%);height:auto;image-rendering:pixelated;border:12px solid white;border-radius:12px;margin:8px auto}
+.referral-code{display:block;word-break:break-all;font-size:1.1rem;color:#ffe2bd;user-select:all}
+.referral-counts{display:grid;grid-template-columns:1fr auto;gap:8px 12px;margin:8px 0 16px}.referral-counts dt{margin:0}.referral-counts dd{margin:0;font-size:1.15rem;font-weight:700}
+.referral-muted{font-size:.88rem;color:#c4d0e2}.referral-state{font-weight:600;color:#c4d0e2}.referral-state-active{color:#9de4b1}.referral-state-waiting,.referral-state-queued{color:#ffd199}.referral-state-revoked{color:#f3b9b9}
+.referral-notice{margin:16px 20px 0;padding:12px 14px;border:1px solid #c49356;border-radius:10px;background:#453c31;white-space:pre-wrap}.referral-notice[hidden]{display:none}.referral-error{color:#ffc9bf}.referral-confirm{max-width:540px}
+@media(max-width:480px){.referral-dialog{width:calc(100vw - 12px);max-width:calc(100vw - 12px);max-height:calc(100dvh - 12px);border-radius:14px}.referral-header,.referral-body{padding:14px}.referral-section{padding:14px}.referral-actions .referral-button{flex:1 1 140px}.referral-header h2{font-size:1.1rem}.referral-header .referral-button{font-size:.9rem;padding:8px 12px}.referral-counts{font-size:.94rem}.referral-notice{margin:12px 14px 0}}
