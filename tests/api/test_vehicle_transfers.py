@@ -180,3 +180,37 @@ def test_erasure_covers_transfer_contact_and_foreign_keys(sale):
     erase_account(db, seller); db.commit()
     assert db.query(Invite).count() == 0
     assert db.query(VehicleOwnership).filter_by(customer_id=buyer.id,is_active=True).count() == 1
+
+
+def test_new_recipient_can_register_later_then_accept(ctx, monkeypatch):
+    db, seller, _, _, vehicle, *_ = ctx
+    recipient = 'future-owner@example.com'
+    assert not db.query(Customer).filter_by(email=recipient).first()
+    mail = []
+    def capture(self, *args, **kwargs): mail.append(args); return True
+    monkeypatch.setattr('src.modules.email_client.service.EmailService.send_simple_email', capture)
+    result = apply(ctx, payload(ctx, 'sold', sale={'mode': 'new_owner', 'buyer_email': recipient}))
+    invite = db.get(Invite, result['transfer_invitation_id'])
+    assert invite.status == 'pending' and len(mail) == 1
+    # Registration creates an account; the normal email-verification guard still applies.
+    tenant = Tenant(name='Future owner', license_key='future-owner-qa'); db.add(tenant); db.flush()
+    user = Customer(tenant_id=tenant.id, email=recipient, name='Future owner', role='user', password_hash='qa-unused')
+    db.add(user); db.flush(); verification = EmailVerification(customer_id=user.id); db.add(verification); db.commit()
+    code = re.search(r'Jednorázový kód: ([0-9a-f]+)', mail[0][2]).group(1)
+    with pytest.raises(HTTPException) as error:
+        routes.decide_transfer(invite.id, routes.Decision(accept=True, code=code), user, db)
+    assert error.value.status_code == 403
+    verification.verified_at = datetime.utcnow(); db.commit()
+    assert domain.list_for(db, user)['items'][0]['status'] == 'pending'
+    assert routes.decide_transfer(invite.id, routes.Decision(accept=True, code=code), user, db)['status'] == 'accepted'
+    assert vehicle.user_email == recipient
+
+
+def test_repeated_acceptance_after_resale_is_receipt_only(sale):
+    ctx, row, code, _, _ = sale
+    db, seller, _, buyer, vehicle, *_ = ctx
+    routes.decide_transfer(row.id, routes.Decision(accept=True, code=code), buyer, db)
+    transfer_vehicle_to_new_owner(db, vehicle=vehicle, new_owner=seller); db.commit()
+    assert routes.decide_transfer(row.id, routes.Decision(accept=True, code=code), buyer, db)['status'] == 'accepted'
+    assert db.query(VehicleOwnership).filter_by(vehicle_id=vehicle.id, customer_id=seller.id, is_active=True).count() == 1
+    assert db.query(VehicleOwnership).filter_by(vehicle_id=vehicle.id, customer_id=buyer.id, is_active=True).count() == 0
