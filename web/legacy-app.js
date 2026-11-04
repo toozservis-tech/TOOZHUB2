@@ -16514,16 +16514,16 @@
                                             </article>
 
                                             <article class="profile-security-feature">
-                                                <h4>Biometrické přihlášení</h4>
-                                                <p>Face ID / Touch ID / Windows Hello (Passkeys) pro rychlé ověření na podporovaném zařízení.</p>
+                                                <h4>Biometrické preference</h4>
+                                                <p>Uložení preference nepotvrzuje nastavené biometrické ověření v prohlížeči.</p>
                                                 <div class="profile-security-chips">
                                                     <span id="securityBiometricSupportChip" class="profile-security-chip is-muted">Kontroluji zařízení...</span>
-                                                    <span id="securityBiometricStateChip" class="profile-security-chip is-muted">Biometrie vypnuta</span>
+                                                    <span id="securityBiometricStateChip" class="profile-security-chip is-muted">Biometrická preference vypnuta</span>
                                                 </div>
                                                 <div class="profile-security-actions">
-                                                    <button type="button" class="btn" id="securityBiometricToggleBtn" ${legacyActionAttributes("click", "toggleBiometricPreference_7337fd8f")}>Zapnout biometriku</button>
+                                                    <button type="button" class="btn" id="securityBiometricToggleBtn" ${legacyActionAttributes("click", "toggleBiometricPreference_7337fd8f")}>Zapnout preferenci</button>
                                                 </div>
-                                                <small class="form-hint">Doporučení: biometriku používejte spolu s 2FA. Na iOS Safari funguje nejspolehlivěji po přidání aplikace na plochu.</small>
+                                                <small class="form-hint">Tato volba sama nezapíná biometrické přihlášení ani místní zámek aplikace.</small>
                                                 <div id="securityBiometricMessage" class="profile-form-status"></div>
                                             </article>
                                         </div>
@@ -16915,7 +16915,7 @@
             if (!hasPublicKeyCredential) {
                 return {
                     supported: false,
-                    label: 'Zařízení nepodporuje Passkey',
+                    label: 'WebAuthn API není dostupné',
                     reason: 'V tomto prohlížeči není dostupné WebAuthn API.'
                 };
             }
@@ -16923,13 +16923,13 @@
                 return {
                     supported: false,
                     label: 'Vyžaduje HTTPS',
-                    reason: 'Biometrika funguje pouze na HTTPS nebo localhost.'
+                    reason: 'WebAuthn API vyžaduje HTTPS nebo localhost.'
                 };
             }
             return {
                 supported: true,
-                label: 'Zařízení podporuje Passkey',
-                reason: 'Můžete použít Face ID/Touch ID/Windows Hello.'
+                label: 'WebAuthn API dostupné',
+                reason: 'Dostupnost API sama nepotvrzuje nastavené biometrické ověření ani lokální zámek aplikace.'
             };
         }
 
@@ -16961,7 +16961,7 @@
             );
             setSecurityChipState(
                 'securityBiometricStateChip',
-                settings.biometric_enabled ? 'Biometrie aktivní' : 'Biometrie vypnuta',
+                settings.biometric_enabled ? 'Biometrická preference zapnuta' : 'Biometrická preference vypnuta',
                 !!settings.biometric_enabled
             );
 
@@ -16978,7 +16978,7 @@
             const biometricToggleBtn = document.getElementById('securityBiometricToggleBtn');
             if (biometricToggleBtn) {
                 biometricToggleBtn.disabled = !support.supported;
-                biometricToggleBtn.textContent = settings.biometric_enabled ? 'Vypnout biometriku' : 'Zapnout biometriku';
+                biometricToggleBtn.textContent = settings.biometric_enabled ? 'Vypnout preferenci' : 'Zapnout preferenci';
             }
 
             if (!settings.two_factor_enabled && (userRole === 'service' || userRole === 'admin' || userRole === 'developer_admin')) {
@@ -17182,7 +17182,7 @@
                 setSecurityInlineMessage(
                     'securityBiometricMessage',
                     nextState
-                        ? 'Biometrická preference je aktivní. Přihlášení musí probíhat přes podporovaný prohlížeč/zařízení.'
+                        ? 'Biometrická preference byla uložena. Sama nezapíná lokální zámek aplikace ani biometrické přihlášení.'
                         : 'Biometrická preference byla vypnuta.',
                     'success'
                 );
