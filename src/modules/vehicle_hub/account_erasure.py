@@ -157,6 +157,14 @@ def erase_account(db, customer) -> dict[str, int]:
                            m.ServiceRecord.id.in_(archived_records))
     record_ids = [row.id for row in db.query(m.ServiceRecord).filter(record_condition)]
 
+    from .vehicle_transfer_models import VehicleTransferInvitation
+    if inspect(db.connection()).has_table(VehicleTransferInvitation.__tablename__):
+        remove(VehicleTransferInvitation, or_(VehicleTransferInvitation.seller_id == account_id,
+            VehicleTransferInvitation.accepted_by == account_id,
+            func.lower(VehicleTransferInvitation.buyer_email) == email,
+            VehicleTransferInvitation.vehicle_id.in_(vehicle_ids),
+            VehicleTransferInvitation.archive_id.in_(archive_ids)))
+
     from .vehicle_lifecycle_models import VehicleLifecycleEvent
     if inspect(db.connection()).has_table(VehicleLifecycleEvent.__tablename__):
         remove(VehicleLifecycleEvent, or_(VehicleLifecycleEvent.owner_id == account_id,

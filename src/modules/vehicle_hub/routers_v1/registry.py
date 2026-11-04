@@ -8,6 +8,7 @@ from . import (
     vehicles,
     vehicle_archives,
     vehicle_lifecycle,
+    vehicle_transfers,
     service_records,
     analytics,
     service_intake,
@@ -37,6 +38,7 @@ api_router = APIRouter(prefix="/api/v1", tags=["api-v1"])
 # Zahrnout všechny sub-routery
 api_router.include_router(vehicles.router)
 api_router.include_router(vehicle_lifecycle.router)
+api_router.include_router(vehicle_transfers.router)
 api_router.include_router(vehicle_updates.router)
 api_router.include_router(service_jobs.router)
 api_router.include_router(vehicle_archives.router)

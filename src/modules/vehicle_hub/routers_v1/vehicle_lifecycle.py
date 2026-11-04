@@ -54,9 +54,11 @@ def get_lifecycle(vehicle_id: int, current_user: Customer = Depends(get_current_
     lifecycle.ready(db)
     assignment = lifecycle.current_owner(db, vehicle_id, current_user)
     state, version = lifecycle.current_state(db, assignment)
+    from ..schema_management import module_schema_report
+    sale_version = 2 if module_schema_report(db, 'vehicle_transfers')['available'] else 1
     return {'vehicle_id': vehicle_id, 'ownership_id': assignment.id,
         'ownership_token': lifecycle.ownership_token(vehicle_id, assignment), 'version': version,
-        'state': state, 'actions': lifecycle.actions_for(state), 'sale_details_version': 1}
+        'state': state, 'actions': lifecycle.actions_for(state), 'sale_details_version': sale_version}
 
 
 @router.post('/vehicles/{vehicle_id}/lifecycle')
@@ -65,6 +67,13 @@ def update_lifecycle(vehicle_id: int, payload: VehicleLifecycleAction,
     try:
         result = lifecycle.apply_action(db, vehicle_id=vehicle_id, actor=current_user, payload=payload)
         db.commit()
+        if result.get('transfer_invitation_id'):
+            from ..vehicle_transfers import send_invitation
+            # Transport failure is recorded independently; a sale is already committed.
+            try:
+                send_invitation(db, result['transfer_invitation_id'], current_user)
+            except Exception:
+                db.rollback()
         return result
     except IntegrityError:
         db.rollback()

@@ -14,7 +14,13 @@ from src.modules.vehicle_hub.routers_v1.service_jobs import create_job, JobCreat
 from src.modules.vehicle_hub import vehicle_lifecycle as domain
 from src.modules.vehicle_hub.ownership import may_restore_vehicle_profile, transfer_vehicle_to_new_owner
 from src.modules.vehicle_hub.account_erasure import erase_account
-from test_service_jobs import ctx
+from test_service_jobs import ctx as service_ctx
+
+@pytest.fixture
+def ctx(tmp_path, monkeypatch):
+    # No real email is ever sent by lifecycle tests.
+    monkeypatch.setattr('src.modules.email_client.service.EmailService.send_simple_email', lambda *args, **kwargs: True)
+    yield from service_ctx.__wrapped__(tmp_path)
 
 
 def payload(ctx, action, version=0, **kwargs):

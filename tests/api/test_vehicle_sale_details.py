@@ -46,6 +46,9 @@ def test_buyer_is_durable_in_seller_archive_but_not_assigned_or_exposed(ctx):
     assert archive['profile']['lifecycle']['sale'] == {'mode': 'new_owner', 'buyer_email': buyer.email.lower()}
     assert db.query(VehicleOwnership).filter_by(vehicle_id=vehicle.id, customer_id=buyer.id, is_active=True).count() == 0
     assert vehicle_archives.list_archives(buyer, db) == []
+    with pytest.raises(HTTPException) as denied:
+        vehicle_archives.archive_detail(receipt['archive_id'], buyer, db)
+    assert denied.value.status_code == 404
     with pytest.raises(HTTPException): vehicle_archives.archive_detail(receipt['archive_id'], service, db)
     assert db.query(VehicleLifecycleEvent).count() == 1
     changed = request.model_copy(update={'sale': routes.VehicleSaleDetails(mode='new_owner', buyer_email='another@example.com')})
@@ -98,7 +101,7 @@ def test_http_contract_advertises_support_and_persists_validated_sale(ctx):
     app.dependency_overrides[get_current_user] = lambda: ctx[1]
     path = f'/api/v1/vehicles/{ctx[4].id}/lifecycle'
     with TestClient(app) as client:
-        assert client.get(path).json()['sale_details_version'] == 1
+        assert client.get(path).json()['sale_details_version'] == 2
         body = payload(ctx, 'sold', sale=None).model_dump(mode='json')
         assert client.post(path, json=body).status_code == 422
         body['sale'] = {'mode': 'outside_app', 'reason': 'export'}

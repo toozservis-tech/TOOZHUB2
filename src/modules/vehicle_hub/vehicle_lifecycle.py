@@ -95,7 +95,7 @@ def archive_and_release(db, *, vehicle, assignment, actor_id, action, note, effe
         'reported_at': datetime.utcnow().isoformat(), 'reported_by': actor_id,
         'owner_reported': actor_id == assignment.customer_id, 'official_registry_change': False}
     if sale is not None:
-        # Seller-only archive metadata; this is not an ownership grant or public
+        # Private archive metadata (seller and existing privileged archive readers); this is not an ownership grant or public
         # vehicle field, and must never populate vehicle.user_email.
         profile['lifecycle']['sale'] = sale.model_dump(exclude_none=True)
     archive.profile_json = json.dumps(profile, ensure_ascii=False)
@@ -142,6 +142,9 @@ def apply_action(db, *, vehicle_id, actor, payload, legacy_assignment=None):
         raise HTTPException(409, 'Vlastnictví vozidla se změnilo. Obnovte jeho stav.')
     sale = getattr(payload, 'sale', None)
     if payload.action == 'sold':
+        if sale is not None and sale.mode == 'new_owner':
+            from .vehicle_transfers import ready as transfers_ready
+            transfers_ready(db)
         if sale is None:
             raise HTTPException(422, 'Před prodejem vyplňte e-mail nového majitele nebo vyberte prodej mimo aplikaci. Pokud volby nevidíte, aktualizujte aplikaci.')
         if sale.mode == 'new_owner' and sale.buyer_email == (actor.email or '').strip().lower():
@@ -171,6 +174,12 @@ def apply_action(db, *, vehicle_id, actor, payload, legacy_assignment=None):
         new_state = 'deposited' if payload.action == 'deposited' else 'active'
     result = {'vehicle_id': vehicle_id, 'action': payload.action, 'state': new_state,
         'version': version + 1, 'archive_id': archive.id if archive else None, 'message': MESSAGES[payload.action]}
+    if payload.action == 'sold' and sale.mode == 'new_owner':
+        from .vehicle_transfers import create
+        invitation = create(db, vehicle=vehicle, archive=archive, assignment=assignment,
+            seller=actor, buyer_email=sale.buyer_email)
+        result['transfer_invitation_id'] = invitation.id
+        result['message'] = 'Prodej byl zaznamenán a pozvánka připravena. Nový majitel převezme vozidlo až po potvrzení. Stav odeslání najdete v Převzetí vozidla.'
     db.add(VehicleLifecycleEvent(vehicle_id=vehicle_id, ownership_id=assignment.id,
         ownership_started_at=period_start(assignment), owner_id=assignment.customer_id,
         actor_id=actor.id, client_id=str(payload.client_id), payload_hash=digest,

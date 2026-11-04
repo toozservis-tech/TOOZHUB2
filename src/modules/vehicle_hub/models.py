@@ -1079,3 +1079,5 @@ class VehicleVINClaim(Base):
 from . import service_job_models  # noqa: E402,F401
 
 from . import vehicle_lifecycle_models  # noqa: E402,F401
+
+from . import vehicle_transfer_models  # noqa: E402,F401

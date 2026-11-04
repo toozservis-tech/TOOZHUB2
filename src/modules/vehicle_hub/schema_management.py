@@ -24,6 +24,8 @@ _ready_lock = Lock()
 MODULE_REQUIREMENTS: Dict[str, Dict[str, object]] = {
     "home_garages": {"tables": {"customer_home_garages"}, "columns": {"customer_home_garages": {"customer_id", "apple_place_id"}}},
     "referrals": {"tables": {"referral_codes", "referrals", "referral_rewards"}, "columns": {"referral_rewards": {"waiting_for_paid"}}},
+    "vehicle_transfers": {"tables": {"vehicle_transfer_invitations", "email_verifications"},
+        "columns": {"vehicle_transfer_invitations": {"archive_id", "seller_id", "buyer_email", "ownership_started_at", "released_at", "code_digest", "delivery_status", "accepted_by"}}},
     "vehicle_lifecycle": {
         "tables": {"vehicle_lifecycle_events", "vehicle_ownerships", "vehicle_ownership_archives",
                    "vehicle_record_privacy", "vehicle_repair_privacy", "vehicle_attachment_privacy",

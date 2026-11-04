@@ -20,7 +20,7 @@ PUBLIC_WEB_PAGES = {
     "referral-registration.js", "referral-features.js", "referral-features.css", "vendor/referral-qr.js",
     "customer-session.js", "customer.css", "customer-features.js", "service-features.js", "vendor/jsQR-1.4.0.js", "assets/auth-seq-step1-vehicles.png", "assets/auth-seq-step2-add-vehicle.png", "assets/auth-seq-step4-reservations.png", "legacy-actions.js", "legacy-app.js", "legacy-lookups.js",
     "storage_migration.js", "ai-features.js", "theme.css", "app.css", "inline-styles.css",
-    "service-invitation.html",
+    "service-invitation.html", "vehicle-transfer.html",
     "reservations.html",
     "open-app.html", "payment-return.html", "assets/mastercard-mark.svg", "chatbot/widget.js", "chatbot/robot-logo.png",
     "reset-password.html", "verify-email.html", "cookies.html", "obchodni-podminky.html",
