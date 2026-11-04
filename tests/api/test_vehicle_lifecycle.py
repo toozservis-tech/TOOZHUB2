@@ -18,6 +18,8 @@ from test_service_jobs import ctx
 
 
 def payload(ctx, action, version=0, **kwargs):
+    if action == 'sold' and 'sale' not in kwargs:
+        kwargs['sale'] = {'mode': 'new_owner', 'buyer_email': 'buyer@example.com'}
     return routes.VehicleLifecycleAction(client_id=uuid4(), ownership_id=ctx[5].id,
         ownership_token=domain.ownership_token(ctx[4].id, ctx[5]), expected_version=version, action=action, **kwargs)
 
@@ -78,6 +80,7 @@ def test_end_archives_immediately_preserves_identity_and_retries_after_release(c
 @pytest.mark.parametrize('action', ['sold', 'removed', 'scrapped', 'deposited', 'reactivated'])
 def test_nonowners_including_admin_or_service_cannot_change_lifecycle(ctx, action):
     db, _, service, admin, vehicle, _, _ = ctx
+    admin.role = 'admin'; db.commit()
     request = payload(ctx, action)
     for actor in (service, admin):
         with pytest.raises(HTTPException) as error:
@@ -143,6 +146,7 @@ def test_failed_release_rolls_back_archive_private_fields_and_event(ctx, monkeyp
 
 def test_legacy_delete_now_archives_immediately_and_keeps_admin_policy(ctx, monkeypatch):
     db, owner, _, admin, vehicle, assignment, link = ctx
+    admin.role = 'admin'; db.commit()
     monkeypatch.setattr(vehicles, '_ensure_vehicle_photo_column', lambda db: None)
     vehicle.notes = 'Original private profile'; db.commit()
     result = vehicles.delete_vehicle(vehicle.id, admin, db)

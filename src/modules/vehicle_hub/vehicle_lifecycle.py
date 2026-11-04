@@ -83,7 +83,7 @@ def ensure_no_open_work(db, vehicle_id, assignment):
         raise HTTPException(409, 'Vozidlo má budoucí rezervaci. Nejdříve ji zrušte nebo vyřešte se servisem.')
 
 
-def archive_and_release(db, *, vehicle, assignment, actor_id, action, note, effective_date):
+def archive_and_release(db, *, vehicle, assignment, actor_id, action, note, effective_date, sale=None):
     """Caller holds vehicle lock. Keep this before release, never after."""
     ensure_no_open_work(db, vehicle.id, assignment)
     key = f'{vehicle.id}:{assignment.id}:{period_start(assignment).isoformat()}'
@@ -94,6 +94,10 @@ def archive_and_release(db, *, vehicle, assignment, actor_id, action, note, effe
     profile['lifecycle'] = {'action': action, 'note': note, 'effective_date': effective_date.isoformat(),
         'reported_at': datetime.utcnow().isoformat(), 'reported_by': actor_id,
         'owner_reported': actor_id == assignment.customer_id, 'official_registry_change': False}
+    if sale is not None:
+        # Seller-only archive metadata; this is not an ownership grant or public
+        # vehicle field, and must never populate vehicle.user_email.
+        profile['lifecycle']['sale'] = sale.model_dump(exclude_none=True)
     archive.profile_json = json.dumps(profile, ensure_ascii=False)
     # Release helper derives the same owner and revokes both generations of grants.
     from .models import Customer
@@ -116,6 +120,10 @@ def apply_action(db, *, vehicle_id, actor, payload, legacy_assignment=None):
             raise HTTPException(403, 'Nemáte aktuální vlastnické oprávnění k tomuto vozidlu.')
         raise
     request_data = {'vehicle_id': vehicle_id, **payload.model_dump()}
+    if request_data.get('sale') is None:
+        # Keep hashes of pre-feature commands identical, including retries after
+        # a sold vehicle has already left its owner's garage.
+        request_data.pop('sale', None)
     digest = sha256(json.dumps(request_data, sort_keys=True, default=str, ensure_ascii=False).encode()).hexdigest()
     previous = db.query(VehicleLifecycleEvent).filter_by(actor_id=actor.id,
         client_id=str(payload.client_id)).first()
@@ -132,6 +140,14 @@ def apply_action(db, *, vehicle_id, actor, payload, legacy_assignment=None):
     assignment = current
     if payload.ownership_id != assignment.id:
         raise HTTPException(409, 'Vlastnictví vozidla se změnilo. Obnovte jeho stav.')
+    sale = getattr(payload, 'sale', None)
+    if payload.action == 'sold':
+        if sale is None:
+            raise HTTPException(422, 'Před prodejem vyplňte e-mail nového majitele nebo vyberte prodej mimo aplikaci. Pokud volby nevidíte, aktualizujte aplikaci.')
+        if sale.mode == 'new_owner' and sale.buyer_email == (actor.email or '').strip().lower():
+            raise HTTPException(422, 'Zadejte e-mail nového majitele, nikoli svého účtu.')
+    elif sale is not None:
+        raise HTTPException(422, 'Údaje nového majitele lze zadat pouze při prodeji vozidla.')
     if not compare_digest(payload.ownership_token, ownership_token(vehicle_id, assignment)):
         raise HTTPException(409, 'Vlastnické období vozidla se změnilo. Obnovte jeho stav.')
     state, version = current_state(db, assignment)
@@ -149,7 +165,7 @@ def apply_action(db, *, vehicle_id, actor, payload, legacy_assignment=None):
     archive = None
     if payload.action in END_ACTIONS:
         archive = archive_and_release(db, vehicle=vehicle, assignment=assignment, actor_id=actor.id,
-            action=payload.action, note=payload.note, effective_date=effective_date)
+            action=payload.action, note=payload.note, effective_date=effective_date, sale=sale)
         new_state = 'archived'
     else:
         new_state = 'deposited' if payload.action == 'deposited' else 'active'
