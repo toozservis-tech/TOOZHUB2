@@ -6,6 +6,17 @@ const path=require('node:path');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE || '../e2e/node_modules/playwright');
 const decode=require('../../web/vendor/jsQR-1.4.0.js');
 const root=path.resolve(__dirname,'../..'),origin='https://referral.example.test',code='Abcdef_0123456789-xyz7890';
+const invitationTitle='Pozvánka do Evidence Vozidel';
+const invitationMessages={
+ user:'Vyzkoušejte Evidence Vozidel a mějte svá auta, servisní historii a důležité termíny na jednom místě. Zaregistrujte se přes mou pozvánku. Vaše vozidla zůstávají soukromá; za splnění podmínek pozvání mohu získat bonus Premium.',
+ service:'Zveme váš servis do aplikace Evidence Vozidel. Spravujte klienty, zakázky, fotografie a servisní historii na jednom místě. Zaregistrujte servis přes tuto pozvánku; přístup k vozidlům schvalují jejich majitelé. Za splnění podmínek pozvání mohu získat bonus Premium.'
+};
+const invitationSteps=[
+ 'Vyberte, koho zvete, a pošlete svůj odkaz nebo ukažte QR kód.',
+ 'Pozvaný se přes odkaz nově zaregistruje a ověří e-mail. Uživatel přidá první vozidlo; schválený servis dokončí první zakázku.',
+ 'Za každé 3 takové uživatele nebo 1 takový servis získáte měsíc Premium. Splnění podmínek uvidíte níže.'
+];
+const invitationPrivacy='Samotné odeslání pozvánky odměnu nepřidá. Pozvánka nikomu nezpřístupní vaše vozidla ani soukromé údaje.';
 let browser;
 before(async()=>{browser=await chromium.launch({channel:process.env.TEST_BROWSER_CHANNEL || 'chrome',headless:true});});
 after(async()=>{await browser?.close();});
@@ -32,6 +43,21 @@ async function fixture({role='user',respond,viewport={width:390,height:844}}={})
  const page=await context.newPage();await page.goto(origin+'/fixture');return {page,context,requests};
 }
 async function qrText(page){const rgba=await page.locator('canvas.referral-qr').evaluate(c=>({width:c.width,height:c.height,data:Array.from(c.getContext('2d').getImageData(0,0,c.width,c.height).data)}));return decode(new Uint8ClampedArray(rgba.data),rgba.width,rgba.height)?.data;}
+async function shareProbe(page,mode='success'){
+ await page.evaluate(mode=>{
+  window.sharedInvitations=[];window.copiedInvitations=[];window.clipboardAttempts=[];
+  Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{
+   window.clipboardAttempts.push(text);
+   if(mode==='clipboard-denied')throw new DOMException('Clipboard permission denied','NotAllowedError');
+   window.copiedInvitations.push(text);
+  }}});
+  Object.defineProperty(navigator,'share',{configurable:true,value:['unavailable','clipboard-denied'].includes(mode)?undefined:async payload=>{
+   window.sharedInvitations.push({payload,activeUserGesture:navigator.userActivation.isActive});
+   if(mode==='cancel')throw new DOMException('User cancelled sharing','AbortError');
+   if(mode==='error')throw new TypeError('Synthetic sharing unavailable');
+  }});
+ },mode);
+}
 
 test('no startup request; personal service/user QR is real, details anonymous and narrow layout fits',async()=>{
  const f=await fixture();try{
@@ -52,6 +78,120 @@ test('no startup request; personal service/user QR is real, details anonymous an
   assert.equal(await f.page.locator('dialog').evaluate(el=>Math.abs(el.getBoundingClientRect().left-(innerWidth-el.getBoundingClientRect().width)/2)<=1),true);
   assert.equal(f.requests.some(r=>r.method!=='GET'),false);
  }finally{await f.context.close();}
+});
+test('personal user and service views show the approved three-step guide and share kind-specific copy only after a click',async()=>{
+ for(const role of ['user','service']){
+  const f=await fixture({role});try{
+   await shareProbe(f.page);
+   assert.equal(f.requests.length,0);
+   assert.deepEqual(await f.page.evaluate(()=>window.sharedInvitations),[]);
+   await f.page.evaluate(()=>ReferralFeatures.openPersonal('user'));
+   const guide=f.page.locator('section').filter({has:f.page.getByRole('heading',{name:'Tři kroky k bonusu Premium',exact:true})});
+   assert.equal(await guide.count(),1);
+   assert.deepEqual(await guide.getByRole('listitem').allTextContents(),invitationSteps);
+   assert.match(await guide.innerText(),/Samotné odeslání pozvánky odměnu nepřidá/);
+   assert.equal(await guide.getByText(invitationPrivacy,{exact:true}).count(),1);
+   assert.deepEqual(await f.page.evaluate(()=>window.sharedInvitations),[]);
+   assert.deepEqual(await f.page.evaluate(()=>window.copiedInvitations),[]);
+   for(const kind of ['user','service']){
+    if(kind==='service')await f.page.locator('select').selectOption('service');
+    assert.equal(await f.page.evaluate(()=>window.sharedInvitations.length),kind==='user'?0:1);
+    await f.page.getByRole('button',{name:'Sdílet pozvánku',exact:true}).click();
+    const calls=await f.page.evaluate(()=>window.sharedInvitations);
+    assert.equal(calls.length,kind==='user'?1:2);
+    assert.deepEqual(calls.at(-1),{payload:{title:invitationTitle,text:invitationMessages[kind],url:`${origin}/api/v1/referrals/join/${code}?kind=${kind}`},activeUserGesture:true});
+   }
+   assert.deepEqual(await f.page.evaluate(()=>window.copiedInvitations),[]);
+   assert.equal(f.requests.some(r=>r.method!=='GET'),false);
+  }finally{await f.context.close();}
+ }
+});
+test('cancelled sharing does not copy or submit anything; unavailable or failed sharing copies the invitation text and link',async()=>{
+ for(const mode of ['cancel','unavailable','error']){
+  const f=await fixture();try{
+   await shareProbe(f.page,mode);
+   await f.page.evaluate(()=>ReferralFeatures.openPersonal('service'));
+   const before=f.requests.length;
+   await f.page.getByRole('button',{name:'Sdílet pozvánku',exact:true}).click();
+   const calls=await f.page.evaluate(()=>({shared:window.sharedInvitations,copied:window.copiedInvitations,clipboardAttempts:window.clipboardAttempts}));
+   if(mode==='cancel'){
+    assert.equal(calls.shared.length,1);assert.deepEqual(calls.copied,[]);assert.deepEqual(calls.clipboardAttempts,[]);
+    assert.equal(calls.shared[0].payload.text,invitationMessages.service);
+   }else{
+    assert.equal(calls.shared.length,mode==='error'?1:0);
+    assert.deepEqual(calls.copied,[invitationMessages.service+'\n\n'+`${origin}/api/v1/referrals/join/${code}?kind=service`]);
+   }
+   assert.equal(f.requests.length,before);
+   assert.equal(f.requests.some(r=>r.method!=='GET'),false);
+  }finally{await f.context.close();}
+ }
+});
+test('plain-link copying stays separate and denied invitation clipboard reveals a selected readonly text fallback',async()=>{
+ for(const denied of [false,true]){
+  const f=await fixture();try{
+   await shareProbe(f.page,denied?'clipboard-denied':'unavailable');
+   await f.page.evaluate(()=>ReferralFeatures.openPersonal('service'));
+   const url=`${origin}/api/v1/referrals/join/${code}?kind=service`;
+   const invitationText=invitationMessages.service+'\n\n'+url;
+   const urlField=f.page.getByRole('textbox',{name:'Odkaz pozvánky',exact:true});
+   const textField=f.page.getByLabel('Text pozvánky s odkazem',{exact:true});
+   assert.equal(await urlField.inputValue(),url);
+   assert.equal(await textField.count(),1);assert.equal(await textField.isVisible(),false);
+   if(!denied){
+    await f.page.getByRole('button',{name:'Kopírovat odkaz',exact:true}).click();
+    assert.deepEqual(await f.page.evaluate(()=>window.copiedInvitations),[url]);
+    assert.equal(await textField.isVisible(),false);
+    assert.deepEqual(await f.page.evaluate(()=>window.sharedInvitations),[]);
+   }else{
+    await f.page.getByRole('button',{name:'Sdílet pozvánku',exact:true}).click();
+    assert.deepEqual(await f.page.evaluate(()=>window.copiedInvitations),[]);
+    assert.deepEqual(await f.page.evaluate(()=>window.clipboardAttempts),[invitationText]);
+    assert.equal(await textField.isVisible(),true);assert.equal(await textField.inputValue(),invitationText);
+    assert.equal(await textField.evaluate(el=>el.readOnly),true);
+    assert.equal(await textField.evaluate(el=>el.selectionEnd-el.selectionStart),invitationText.length);
+    assert.match(await f.page.locator('.referral-notice').innerText(),/ručně/);
+   }
+   assert.equal(await urlField.inputValue(),url);
+   assert.equal(f.requests.some(r=>r.method!=='GET'),false);
+  }finally{await f.context.close();}
+ }
+});
+test('a late clipboard result after changing invite kind never claims the new invitation was copied or selected',async()=>{
+ for(const outcome of ['resolve','reject']){
+  const f=await fixture();try{
+   await f.page.evaluate(()=>{
+    window.clipboardAttempts=[];
+    Object.defineProperty(navigator,'share',{configurable:true,value:undefined});
+    Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:text=>{
+     window.clipboardAttempts.push(text);
+     return new Promise((resolve,reject)=>{window.pendingClipboard={resolve,reject};});
+    }}});
+   });
+   await f.page.evaluate(()=>ReferralFeatures.openPersonal('user'));
+   const oldField=await f.page.getByLabel('Text pozvánky s odkazem',{exact:true}).elementHandle();
+   assert.equal(await oldField.evaluate(el=>el.hidden),true);
+   await f.page.getByRole('button',{name:'Sdílet pozvánku',exact:true}).click();
+   await f.page.waitForFunction(()=>Boolean(window.pendingClipboard));
+   const before=f.requests.length;
+   await f.page.locator('select').selectOption('service');
+   assert.equal(await oldField.evaluate(el=>el.isConnected),false);
+   await f.page.evaluate(async outcome=>{
+    if(outcome==='resolve')window.pendingClipboard.resolve();
+    else window.pendingClipboard.reject(new DOMException('Clipboard permission denied','NotAllowedError'));
+    await new Promise(resolve=>setTimeout(resolve,0));
+   },outcome);
+   const currentField=f.page.getByLabel('Text pozvánky s odkazem',{exact:true});
+   assert.equal(await currentField.isVisible(),false);
+   assert.equal(await oldField.evaluate(el=>el.hidden),true);
+   assert.equal(await f.page.locator('.referral-notice').isVisible(),false);
+   assert.equal(await f.page.locator('.referral-notice').textContent(),'');
+   assert.equal(await f.page.getByRole('textbox',{name:'Odkaz pozvánky',exact:true}).inputValue(),`${origin}/api/v1/referrals/join/${code}?kind=service`);
+   assert.equal(await currentField.inputValue(),invitationMessages.service+'\n\n'+`${origin}/api/v1/referrals/join/${code}?kind=service`);
+   assert.deepEqual(await f.page.evaluate(()=>window.clipboardAttempts),[invitationMessages.user+'\n\n'+`${origin}/api/v1/referrals/join/${code}?kind=user`]);
+   assert.equal(f.requests.length,before);
+   assert.equal(f.requests.some(r=>r.method!=='GET'),false);
+  }finally{await f.context.close();}
+ }
 });
 test('server-confirmed user role cannot open admin controls or fetch the admin list',async()=>{
  const f=await fixture();try{
@@ -115,6 +255,8 @@ test('admin search pagination, explicit confirmation, stable retry UUID, and rev
   await f.page.getByRole('button',{name:'Otevřít přehled účtu'}).click();
   await f.page.waitForSelector('[data-referral-reason="grant"]');
   assert.match(await f.page.locator('dialog').innerText(),/SECRET PERSON|private@example.invalid/);
+  assert.equal(await f.page.getByRole('heading',{name:'Tři kroky k bonusu Premium',exact:true}).count(),0);
+  assert.equal(await f.page.getByRole('button',{name:'Sdílet pozvánku',exact:true}).count(),0);
   await f.page.getByRole('button',{name:'Přidělit odměnu',exact:true}).click();
   assert.match(await f.page.locator('.referral-notice').innerText(),/5 až 500/);assert.equal(attempts,0);
   await f.page.locator('[data-referral-reason="grant"]').fill('Schválená testovací odměna');

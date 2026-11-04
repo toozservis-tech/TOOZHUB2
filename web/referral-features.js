@@ -2,6 +2,17 @@
 (function (global) {
     'use strict';
     const BASE = '/api/v1/referrals';
+    const INVITATION_TITLE = 'Pozvánka do Evidence Vozidel';
+    const INVITATION_STEPS = Object.freeze([
+        'Vyberte, koho zvete, a pošlete svůj odkaz nebo ukažte QR kód.',
+        'Pozvaný se přes odkaz nově zaregistruje a ověří e-mail. Uživatel přidá první vozidlo; schválený servis dokončí první zakázku.',
+        'Za každé 3 takové uživatele nebo 1 takový servis získáte měsíc Premium. Splnění podmínek uvidíte níže.'
+    ]);
+    function invitationMessage(kind) {
+        return kind === 'service'
+            ? 'Zveme váš servis do aplikace Evidence Vozidel. Spravujte klienty, zakázky, fotografie a servisní historii na jednom místě. Zaregistrujte servis přes tuto pozvánku; přístup k vozidlům schvalují jejich majitelé. Za splnění podmínek pozvání mohu získat bonus Premium.'
+            : 'Vyzkoušejte Evidence Vozidel a mějte svá auta, servisní historii a důležité termíny na jednom místě. Zaregistrujte se přes mou pozvánku. Vaše vozidla zůstávají soukromá; za splnění podmínek pozvání mohu získat bonus Premium.';
+    }
     const statuses = Object.freeze({waiting_verification:'Čeká na ověření e-mailu', waiting_vehicle:'Čeká na první vlastní vozidlo', waiting_job:'Čeká na první dokončenou zakázku', waiting_service_approval:'Čeká na schválení servisu', qualified:'Podmínky splněny', ineligible:'Nesplňuje podmínky', unavailable:'Účet není dostupný'});
     function parseUTC(raw) {
         if (typeof raw !== 'string' || !raw) return null;
@@ -146,13 +157,23 @@
             canvas.className = 'referral-qr'; canvas.setAttribute('role','img'); canvas.setAttribute('aria-label','QR pozvánky pro ' + (kind === 'service' ? 'servis' : 'uživatele'));
             return canvas;
         }
-        async function copy(ctx, value, fallback) {
-            ensure(ctx);
-            try { if (!env.navigator.clipboard?.writeText) throw Error('unavailable'); await env.navigator.clipboard.writeText(value); ensure(ctx); notice(ctx,'Odkaz byl zkopírován.'); }
+        async function copy(ctx, value, fallback, fullInvitation = false) {
+            const current = () => {
+                ensure(ctx);
+                if (!fallback.isConnected || !ctx.dialog.contains(fallback)) throw stale();
+            };
+            current();
+            try { if (!env.navigator.clipboard?.writeText) throw Error('unavailable'); await env.navigator.clipboard.writeText(value); current(); notice(ctx,fullInvitation ? 'Text pozvánky s odkazem byl zkopírován.' : 'Odkaz byl zkopírován.'); }
             catch (e) {
-                ensure(ctx); fallback.focus(); fallback.select();
-                notice(ctx,'Automatické kopírování není dostupné. Odkaz je vybraný; zkopírujte jej ručně.');
+                current(); fallback.hidden = false; fallback.focus(); fallback.select();
+                notice(ctx,fullInvitation ? 'Automatické kopírování není dostupné. Text pozvánky s odkazem je vybraný; zkopírujte jej ručně.' : 'Automatické kopírování není dostupné. Odkaz je vybraný; zkopírujte jej ručně.');
             }
+        }
+        function invitationGuide() {
+            const area = section('Tři kroky k bonusu Premium'), steps = text('ol','', 'referral-steps');
+            for (const step of INVITATION_STEPS) steps.append(text('li',step));
+            area.append(steps,text('p','Samotné odeslání pozvánky odměnu nepřidá. Pozvánka nikomu nezpřístupní vaše vozidla ani soukromé údaje.','referral-muted'));
+            return area;
         }
         function invitation(ctx, summary, initialKind) {
             const area = section('Vaše pozvánka'), select = doc.createElement('select'), shareArea = text('div','', 'referral-share');
@@ -164,14 +185,17 @@
                 try {
                     const url = invitationURL(select.value === 'service' ? summary.service_url : summary.user_url,env.location.origin,summary.code,select.value);
                     const input = doc.createElement('input'); input.type='text'; input.readOnly=true; input.value=url; input.setAttribute('aria-label','Odkaz pozvánky');
+                    const payload = {title:INVITATION_TITLE,text:invitationMessage(select.value),url};
+                    const shareText = payload.text + '\n\n' + url;
+                    const manual = doc.createElement('textarea'); manual.readOnly=true; manual.rows=6; manual.value=shareText; manual.hidden=true; manual.setAttribute('aria-label','Text pozvánky s odkazem');
                     const actions = text('div','', 'referral-actions');
                     actions.append(button(ctx,'Kopírovat odkaz',()=>copy(ctx,url,input),'referral-secondary'));
                     actions.append(button(ctx,'Sdílet pozvánku',async()=>{
-                        if (typeof env.navigator.share !== 'function') return copy(ctx,url,input);
-                        try { await env.navigator.share({title:'Pozvánka do Evidence Vozidel',url}); ensure(ctx); }
-                        catch(e) { if(e.name !== 'AbortError') await copy(ctx,url,input); }
+                        if (typeof env.navigator.share !== 'function') return copy(ctx,shareText,manual,true);
+                        try { await env.navigator.share(payload); ensure(ctx); }
+                        catch(e) { if(e.name !== 'AbortError') await copy(ctx,shareText,manual,true); }
                     }));
-                    shareArea.append(qr(ctx,url,select.value),input,actions);
+                    shareArea.append(qr(ctx,url,select.value),input,actions,manual);
                 } catch(e) { shareArea.append(text('p',e.message,'referral-error')); }
             }
             select.addEventListener('change',render); render(); return area;
@@ -211,7 +235,7 @@
             const identity=section(ctx.admin ? 'Přehled účtu' : 'Váš účet'); identity.append(text('p',summary.name));
             if (ctx.admin && summary.email) identity.append(text('p',summary.email));
             body.append(identity);
-            if (!ctx.admin) body.append(invitation(ctx,summary,initialKind));
+            if (!ctx.admin) body.append(invitation(ctx,summary,initialKind),invitationGuide());
             const progress=section('Cesta k další odměně'), counts=text('dl','', 'referral-counts');
             for (const [label,value] of [['Registrací',summary.registrations],['Uživatelů splňujících podmínky',summary.qualified_users],['Servisů splňujících podmínky',summary.qualified_services]]) counts.append(text('dt',label),text('dd',count(value)));
             const remaining=count(summary.users_to_next_reward), people=remaining===1?'zbývá 1 uživatel':remaining>=2&&remaining<=4?`zbývají ${remaining} uživatelé`:`zbývá ${remaining} uživatelů`;
