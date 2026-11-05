@@ -14,6 +14,9 @@ from scripts.migrate_service_job_workflow import migrate as migrate_job_workflow
 from scripts.migrate_service_job_preregistration import migrate as migrate_job_preregistration
 from scripts.migrate_home_garages import migrate as migrate_home_garages
 from scripts.migrate_referrals import migrate as migrate_referrals
+from scripts.migrate_vehicle_transfers import migrate as migrate_transfers
+from scripts.migrate_transfer_reinvites import migrate as migrate_transfer_reinvites
+from scripts.migrate_admin_incidents import migrate as migrate_admin_incidents
 
 
 def migrate(bind=None):
@@ -28,8 +31,11 @@ def migrate(bind=None):
     migrate_job_preregistration(bind)
     migrate_home_garages(bind)
     migrate_referrals(bind)
+    migrate_transfers(bind)
+    migrate_transfer_reinvites(bind)
+    migrate_admin_incidents(bind)
 
 
 if __name__ == '__main__':
     migrate()
-    print('Mobile release schema ready: service jobs, vehicle updates, inbox folders, owner lifecycle, booking requests and Google billing. Existing data retained.')
+    print('Mobile release schema ready: service jobs, vehicle updates, inbox folders, owner lifecycle, booking requests, Google billing, transfer invitations and admin support cases. Existing data retained.')

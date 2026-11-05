@@ -4950,10 +4950,17 @@ def get_access_accounts(
         query = query.filter(Customer.role.in_(["admin", "developer_admin"]) if role == "admin" else Customer.role == role)
     total = query.count()
     rows = query.order_by(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc()).offset(offset).limit(limit).all()
-    return {"total": total, "items": [{**_access_row(item), "actor": actor_name,
+    from src.server.admin_incidents import enrich_events, ready as incidents_ready, Case as Incident, ACTIVE as ACTIVE_INCIDENTS
+    items = [{**_access_row(item), "actor": actor_name,
         "event_count": count, "name": name, "role": account_role, "problem_count": problem_count,
         "error_count": error_count, "severity": "error" if error_count else "warning" if problem_count else "success"}
-        for item, actor_name, count, name, account_role, problem_count, error_count in rows]}
+        for item, actor_name, count, name, account_role, problem_count, error_count in rows]
+    if items and incidents_ready(db):
+        counts = dict(db.query(Incident.actor_key, func.count(Incident.id)).filter(
+            Incident.actor_key.in_([item['actor'] for item in items]), Incident.status.in_(ACTIVE_INCIDENTS)
+        ).group_by(Incident.actor_key).all())
+        for item in items: item['unresolved_incident_count'] = counts.get(item['actor'], 0)
+    return {"total": total, "items": enrich_events(db, items)}
 
 
 @router.get("/control-center/demo-access")
@@ -5007,8 +5014,9 @@ def get_access_history(
                              SecurityAccessLog.ip_address.ilike(term, escape="\\"))
     total = query.count()
     rows = query.order_by(SecurityAccessLog.created_at.desc(), SecurityAccessLog.id.desc()).offset(offset).limit(limit).all()
+    from src.server.admin_incidents import enrich_events
     return {"total": total, "offset": offset, "limit": limit, "snapshot_id": snapshot_id,
-            "items": [_access_row(item) for item in rows]}
+            "items": enrich_events(db, [_access_row(item) for item in rows])}
 
 
 @router.get("/control-center/security-monitor")
@@ -6326,3 +6334,7 @@ def update_intake_admin(intake_id: int, payload: IntakeAdminUpdate,
         target_resource=f'intake:{row.id}', parameters_json=json.dumps({'before':before, 'after':snapshot(row), 'affected_customer_ids': [row.customer_id, row.service_id]}, default=str, ensure_ascii=False), result='success', status_code=200))
     db.commit()
     return {'message':'Příjem zakázky byl upraven. Původní údaje zůstávají v historii změn.'}
+
+# Support cases are additive to security history and retain the same assurance gate.
+from src.server.admin_incidents import create_router as _incident_router
+router.include_router(_incident_router(require_control_center_admin))

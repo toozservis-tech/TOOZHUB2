@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="admin.css?v=20260929" />
   <link rel="stylesheet" href="workspace.css?v=20261003" />
   <link rel="stylesheet" href="activity.css?v=20261016" />
+  <link rel="stylesheet" href="incidents.css?v=20261105" />
   <link rel="stylesheet" href="/web/referral-features.css" />
 </head>
 <body>
@@ -76,6 +77,7 @@
           <button data-section="activity" class="nav-item">
             <span class="nav-icon">🕘</span><span class="nav-text">Aktivita uživatelů</span>
           </button>
+          <button data-section="incidents" class="nav-item"><span class="nav-icon" aria-hidden="true">🛠</span><span class="nav-text">Případy k řešení</span></button>
           <button data-section="demo-access" class="nav-item"><span class="nav-icon">✉️</span><span class="nav-text">Vstupy do dema</span></button>
           <button data-section="vehicles" class="nav-item">
             <span class="nav-icon">🚗</span>
@@ -134,7 +136,8 @@
 
         <section id="section-activity" class="content-section">
           <div class="section-header"><h1>Aktivita uživatelů</h1></div>
-          <p>Nejnovější aktivní účty jsou nahoře. Otevřete účet a projděte jeho kroky, výsledky a případné chyby.</p>
+          <p>Nejnovější aktivní účty jsou nahoře. Otevřete účet a projděte jeho kroky, výsledky a případné chyby. U problematické události zvolte „Řešit problém“.</p>
+          <p class="incident-history-note">Červený záznam popisuje chybu v minulosti a zůstává v historii. Aktuální práci a výsledek ověření najdete v „Případy k řešení“.</p>
           <form id="activity-filters" class="activity-filters">
             <label>Jméno nebo e-mail<input id="activity-search" type="search" maxlength="200" placeholder="Vyhledat účet"></label>
             <label>Role<select id="activity-role"><option value="all">Všichni</option><option value="user">Zákazníci</option><option value="service">Servisy</option><option value="admin">Administrátoři</option></select></label>
@@ -154,6 +157,28 @@
             <div id="activity-timeline"></div><div id="activity-detail-pages" class="activity-pages"></div>
           </section>
           <p class="activity-help">Zelená: bez zaznamenané chyby. Žlutá: upozornění při přístupu. Červená: chyba požadavku. Kroky a kliknutí se zobrazují až z verze aplikace, která je zaznamenává; starší kroky nelze zpětně doplnit. Historie není záznamem každého dotyku nebo práce bez připojení.</p>
+        </section>
+
+        <section id="section-incidents" class="content-section">
+          <div class="section-header"><h1>Případy k řešení</h1></div>
+          <p>Jasný postup od nahlášené chyby k ověřenému výsledku. Původní události zůstávají v historii.</p>
+          <details class="incident-guide"><summary>Jak problém vyřešit — postup a příklady</summary>
+            <ol><li><strong>Otevřete případ.</strong> Zkontrolujte, komu a při jaké akci chyba vznikla. Nový případ založíte tlačítkem „Řešit problém“ v Aktivitě.</li>
+              <li><strong>Překontrolujte stav.</strong> Kontrola čte aktuální údaje. Sama nic neopravuje, nemění tarif, neposílá e-mail a nepřevádí vozidlo.</li>
+              <li><strong>Proveďte vhodný krok.</strong> Otevřete související správu účtu či vozidla, nebo připravte diagnostiku pro technickou pomoc. Zapište, co jste provedli.</li>
+              <li><strong>Ověřte výsledek.</strong> Po úspěšné kontrole nebo potvrzení zákazníkem označte případ jako vyřešený a popište výsledek. Při opakování potíží jej znovu otevřete.</li></ol>
+            <p><strong>Příklad:</strong> zákazníkovi nešlo převzít vozidlo. Zkontrolujete stav pozvánky a správný účet. Po jeho potvrzeném převzetí případ uzavřete s poznámkou „Vozidlo je v garáži nového majitele, zákazník potvrdil.“ Historická chyba se tím nesmaže.</p>
+          </details>
+          <form id="incident-filters" class="activity-filters">
+            <label>Hledat případ<input id="incident-search" type="search" maxlength="120" placeholder="Jméno, e-mail nebo popis"></label>
+            <label>Stav<select id="incident-filter-state"><option value="active">K řešení a rozpracované</option><option value="open">K řešení</option><option value="in_progress">Řeší se</option><option value="resolved">Vyřešené</option><option value="dismissed">Uzavřené bez zásahu</option><option value="all">Všechny včetně historie</option></select></label>
+            <button type="submit" class="btn-primary">Zobrazit případy</button>
+            <button type="button" id="incident-find-event" class="btn-secondary">Najít událost v Aktivitě</button>
+          </form>
+          <p id="incident-list-status" role="status" aria-live="polite"></p>
+          <div id="incident-list" class="incident-grid"></div>
+          <div id="incident-pages" class="activity-pages"></div>
+          <p class="activity-help">Červená = případ čeká na řešení. Žlutá = případ se řeší. Zelená = administrátor označil případ za vyřešený a uvedl důvod. Stav případu není automatickou zárukou bezchybnosti celé aplikace.</p>
         </section>
 
         <section id="section-demo-access" class="content-section">
@@ -1137,6 +1162,7 @@
   <script src="/admin-session.js"></script>
   <script src="admin.js?v=demo20261016-20261016"></script>
   <script src="activity.js?v=20261016"></script>
+  <script src="incidents.js?v=20261105"></script>
   <script src="demo-access.js?v=20261016"></script>
   <script src="entity-management.js?v=20261002"></script>
   <script src="workspace.js?v=20261003"></script>

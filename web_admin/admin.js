@@ -649,6 +649,9 @@ function loadSectionData(section) {
     case 'activity':
       loadActivityAccounts();
       break;
+    case 'incidents':
+      window.AdminIncidents?.load();
+      break;
     case 'system':
       // Systémové nástroje se načítají při kliknutí
       break;
@@ -4766,6 +4769,7 @@ async function handleAdminLogout() { await AdminBrowserSession.logout(); }
 function showLoginScreen() { AdminBrowserSession.end('verification'); }
 
 function showDashboard() {
+  const initial = location.hash.slice(1);
   closeAllControlCenterDetails();
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('dashboard-screen').classList.remove('hidden');
@@ -4782,8 +4786,7 @@ function showDashboard() {
   loadSystemCapabilitiesAdmin();
   
   // Načíst přehled jako výchozí
-  const initial = location.hash.slice(1);
-  switchSection(['overview','users','activity','demo-access','vehicles','services','records','audit','settings','system','control-center'].includes(initial) ? initial : 'overview');
+  switchSection(['overview','users','activity','incidents','demo-access','vehicles','services','records','audit','settings','system','control-center'].includes(initial) ? initial : 'overview');
 }
 
 // ============================================

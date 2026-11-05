@@ -106,7 +106,18 @@
             objectURL=env.URL.createObjectURL(blob);anchor=env.document.createElement('a');anchor.href=objectURL;anchor.download='fotodokumentace-opravy.pdf';anchor.hidden=true;env.document.body.append(anchor);ensureCurrent();anchor.click();anchor.remove();anchor=null;timer=env.setTimeout(cleanup,1000);
         }catch(error){cleanup();throw error;}
     }
-    if (typeof module !== 'undefined') module.exports = {documentNumber, registryPayload, registryFields, archiveProfileSection, archiveAttachments, repairPhotoMoment, repairPhotoMetadataSection, createRepairPhotoPreview, downloadRepairReport};
+    // Fresh authenticated role and capability response; never infer an entitlement from plan name alone.
+    function analyticsEntitlements(profile, payload, now=Date.now()) {
+        if(!profile || !['user','service','admin','developer_admin'].includes(profile.role))throw Error('Nepodařilo se ověřit roli účtu. Obnovte přehled.');
+        if(['service','admin','developer_admin'].includes(profile.role))return {statistics:true,costs:true,active:true};
+        const license=payload?.data ?? payload;
+        if(!license || typeof license.status!=='string' || typeof license.statistics_enabled!=='boolean' || typeof license.costs_tracking_enabled!=='boolean')throw Error('Nepodařilo se ověřit oprávnění tarifu. Obnovte přehled.');
+        let valid=true;
+        if(license.valid_to!=null){const raw=String(license.valid_to),expires=Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)?raw:raw+'Z');if(!Number.isFinite(expires))throw Error('Server vrátil neplatnou platnost tarifu. Obnovte přehled.');valid=expires>now;}
+        const active=license.status==='active'&&valid;
+        return {statistics:active&&license.statistics_enabled,costs:active&&license.costs_tracking_enabled,active};
+    }
+    if (typeof module !== 'undefined') module.exports = {analyticsEntitlements, documentNumber, registryPayload, registryFields, archiveProfileSection, archiveAttachments, repairPhotoMoment, repairPhotoMetadataSection, createRepairPhotoPreview, downloadRepairReport};
     if (!global.document || !global.CustomerWeb) return;
     const $ = id => document.getElementById(id);
     const session = () => global.AdminBrowserSession;
@@ -182,10 +193,26 @@
     async function analytics(container, vehicleId) {
         const captured=session().snapshot(), q=vehicleId?`?vehicle_id=${Number(vehicleId)}`:'';
         try {
-            const [summary,monthly,categories]=await Promise.all([request('/api/v1/analytics/summary'+q),request('/api/v1/analytics/monthly-costs'+(q?q+'&':'?')+'months=12'),request('/api/v1/analytics/categories'+q)]);
+            const profile=await request('/user/me');
+            const license=profile.role==='user'?await request('/api/v1/license/status'):null;
             session().assertCurrent(captured);if(!container.isConnected)return;
-            container.innerHTML='<div class="customer-feature-grid">'+card('Celkové náklady',`<strong>${h(money(summary.total_cost_czk))}</strong><p>${summary.priced_records} oceněných záznamů z ${summary.total_records}</p>`)+card('Průměr za záznam',`<strong>${h(money(summary.average_cost_czk))}</strong>`)+ '</div><h4>Posledních 12 měsíců</h4><div class="customer-table"><table><thead><tr><th>Měsíc</th><th>Záznamy</th><th>Náklady</th></tr></thead><tbody>'+monthly.entries.map(x=>`<tr><td>${h(x.label)}</td><td>${x.records_count}</td><td>${h(money(x.total_cost_czk))}</td></tr>`).join('')+'</tbody></table></div><h4>Podle kategorie</h4>'+categories.categories.map(x=>card(x.category,`${x.records_count} záznamů · ${h(money(x.total_cost_czk))}`)).join('');
-        } catch(e){if(e.name!=='AbortError'&&container.isConnected)tierError(container,e);}
+            const access=analyticsEntitlements(profile,license);
+            if(!access.statistics&&!access.costs){
+                const message=document.createElement('p');message.textContent=access.active?'Náklady a statistiky jsou součástí Premium. Váš aktuální tarif je neobsahuje.':'Tarif není aktivní. Zkontrolujte jej v sekci Tarify a předplatné.';
+                container.replaceChildren(message,action('Zobrazit tarify',()=>global.openLicensePlans()));return;
+            }
+            const [summary,monthly,categories]=await Promise.all([
+                access.statistics?request('/api/v1/analytics/summary'+q):null,
+                access.costs?request('/api/v1/analytics/monthly-costs'+(q?q+'&':'?')+'months=12'):null,
+                access.statistics?request('/api/v1/analytics/categories'+q):null
+            ]);
+            session().assertCurrent(captured);if(!container.isConnected)return;
+            const summaryHTML=summary?'<div class="customer-feature-grid">'+card('Celkové náklady',`<strong>${h(money(summary.total_cost_czk))}</strong><p>${summary.priced_records} oceněných záznamů z ${summary.total_records}</p>`)+card('Průměr za záznam',`<strong>${h(money(summary.average_cost_czk))}</strong>`)+ '</div>':'';
+            const monthlyHTML=monthly?'<h4>Posledních 12 měsíců</h4><div class="customer-table"><table><thead><tr><th>Měsíc</th><th>Záznamy</th><th>Náklady</th></tr></thead><tbody>'+monthly.entries.map(x=>`<tr><td>${h(x.label)}</td><td>${x.records_count}</td><td>${h(money(x.total_cost_czk))}</td></tr>`).join('')+'</tbody></table></div>':'';
+            const categoryHTML=categories?'<h4>Podle kategorie</h4>'+categories.categories.map(x=>card(x.category,`${x.records_count} záznamů · ${h(money(x.total_cost_czk))}`)).join(''):'';
+            container.innerHTML=summaryHTML+monthlyHTML+categoryHTML;
+            if(!access.statistics||!access.costs){const message=document.createElement('p');message.textContent='Část přehledu není součástí aktuálního tarifu.';container.append(message,action('Zobrazit tarify',()=>global.openLicensePlans()));}
+        } catch(e){try{session().assertCurrent(captured);}catch{return;}if(e.name!=='AbortError'&&container.isConnected)tierError(container,e);}
     }
     async function archives() {
         const target=$('customerArchivesTab');target.innerHTML='<h2>Archiv vlastnictví</h2><p>Původní záznamy a soukromé přílohy z období, kdy vozidlo patřilo vám.</p>';

@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 
 from .database import Base
+from . import admin_incident_models  # register additive support tables
 
 # Import additive models and register transactional service-change publication
 # for all ORM writers, including legacy endpoints and imports.

@@ -23,3 +23,21 @@ def migrate_connection(connection):
             operations.drop_constraint(constraint['name'], table, type_='unique')
     if not any(i['column_names'] == ['archive_id'] for i in inspect(connection).get_indexes(table)):
         operations.create_index('ix_vehicle_transfer_invitations_archive_id', table, ['archive_id'])
+
+
+def migrate(bind=None):
+    from sqlalchemy import text
+    if bind is None:
+        from src.modules.vehicle_hub.database import engine
+        bind = engine
+    with bind.begin() as connection:
+        if connection.dialect.name == 'postgresql':
+            connection.execute(text("SET LOCAL lock_timeout = '10s'"))
+            connection.execute(text("SET LOCAL statement_timeout = '60s'"))
+            connection.execute(text("SELECT pg_advisory_xact_lock(hashtextextended('sv:schema:vehicle-transfers', 0))"))
+        migrate_connection(connection)
+
+
+if __name__ == '__main__':
+    migrate()
+    print('Replacement transfer invitations ready; original decisions retained.')

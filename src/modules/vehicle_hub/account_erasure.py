@@ -57,6 +57,10 @@ def erase_account(db, customer) -> dict[str, int]:
         if value:
             files.add((directory, value))
 
+    # Support evidence follows the same explicit erasure scope as access logs.
+    from .admin_incident_models import erase_account_diagnostics
+    erase_account_diagnostics(db, customer)
+
     # Lock the identity first; all writes keep their FK to this identity until commit.
     db.query(m.Customer).filter_by(id=account_id).with_for_update().one()
     get_owned_vehicle_ids(db, customer, tenant_id=tenant_id)  # Backfill safe legacy rows only.

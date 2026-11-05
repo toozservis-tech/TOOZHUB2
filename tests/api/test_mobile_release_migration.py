@@ -13,14 +13,25 @@ def test_mobile_release_upgrades_existing_baseline_and_is_repeatable(tmp_path):
              'vehicle_lifecycle_events', 'service_booking_requests', 'service_booking_request_events',
              'vehicle_update_inbox_states', 'vehicle_update_inbox_actions',
              'google_billing_identities', 'google_subscriptions', 'service_job_photos',
-             'customer_home_garages', 'referral_codes', 'referrals', 'referral_rewards'}
+             'customer_home_garages', 'referral_codes', 'referrals', 'referral_rewards',
+             'vehicle_transfer_invitations', 'admin_incidents', 'admin_incident_events', 'admin_incident_history'}
     try:
         Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
         with engine.begin() as connection:
             connection.execute(models.Tenant.__table__.insert().values(id=901, name='Retained tenant', license_key='synthetic-retained'))
         assert not added.intersection(inspect(engine).get_table_names())
         release.migrate(engine)
+        from src.modules.vehicle_hub.admin_incident_models import AdminIncident, AdminIncidentEvent, AdminIncidentHistory
+        with sessionmaker(bind=engine)() as db:
+            admin=models.Customer(tenant_id=901,email='migration-admin@example.com',role='admin');db.add(admin);db.flush()
+            event=models.SecurityAccessLog(user_email='migration-user@example.com',event_type='request_failed');db.add(event);db.flush()
+            case=AdminIncident(source_event_id=event.id,actor_key=event.user_email,fingerprint='a'*64,created_by=admin.id);db.add(case);db.flush()
+            db.add(AdminIncidentEvent(incident_id=case.id,event_id=event.id))
+            db.add(AdminIncidentHistory(incident_id=case.id,admin_id=admin.id,action='note',status='open',version=1,note='Retained original support note'));db.commit()
         release.migrate(engine)
+        with sessionmaker(bind=engine)() as db:
+            assert db.query(models.SecurityAccessLog).count()==1
+            assert db.query(AdminIncidentHistory).one().note=='Retained original support note'
         assert added.issubset(inspect(engine).get_table_names())
         with sessionmaker(bind=engine)() as db:
             assert db.get(models.Tenant, 901).name == 'Retained tenant'
@@ -75,7 +86,8 @@ def test_packaged_module_succeeds_in_fresh_python_process(tmp_path):
     added = {'service_jobs', 'service_job_events', 'vehicle_updates', 'vehicle_update_receipts', 'vehicle_lifecycle_events',
              'vehicle_update_inbox_states', 'vehicle_update_inbox_actions',
              'google_billing_identities', 'google_subscriptions', 'service_job_photos',
-             'customer_home_garages', 'referral_codes', 'referrals', 'referral_rewards'}
+             'customer_home_garages', 'referral_codes', 'referrals', 'referral_rewards',
+             'vehicle_transfer_invitations', 'admin_incidents', 'admin_incident_events', 'admin_incident_history'}
     Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
     engine.dispose()
     env = os.environ.copy()
@@ -86,6 +98,10 @@ def test_packaged_module_succeeds_in_fresh_python_process(tmp_path):
             cwd=image, env=env, capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, f'Fresh packaged process {attempt}: {result.stdout}\n{result.stderr}'
         assert 'Mobile release schema ready' in result.stdout
+    with sessionmaker(bind=create_engine(f'sqlite:///{database_path}'))() as db:
+        from src.server.admin_incidents import ready
+        assert ready(db)
+        assert inspect(db.connection()).has_table('vehicle_transfer_invitations')
     # Verify 0015 also compiles its own FKs when invoked independently rather
     # than inheriting metadata loaded by 0014 in the orchestrator process.
     import sqlite3

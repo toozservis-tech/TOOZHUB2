@@ -1,0 +1,28 @@
+#section-incidents{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+.incident-guide,.incident-history-note{background:#eff6ff;border:1px solid #bed3eb;color:#233a53;border-radius:14px;padding:16px 20px;margin:16px 0;line-height:1.6}
+.incident-guide summary{cursor:pointer;font-weight:700}.incident-guide li{margin:10px 0}
+.incident-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}
+.incident-card{padding:22px;border:1px solid #cbd5e1;border-radius:18px;background:#fff;color:#172033;overflow-wrap:anywhere}
+.incident-card h2,.incident-card h3{margin:10px 0;font-size:19px}.incident-card p{margin:10px 0;line-height:1.5}
+.incident-state{display:inline-flex;align-items:center;gap:8px;padding:6px 11px;border-radius:9px;font-size:14px;font-weight:700}
+.incident-state.open,.incident-state.error{color:#991b1b;background:#fee2e2}.incident-state.in_progress,.incident-state.warning,.incident-state.unknown{color:#854d0e;background:#fef9c3}.incident-state.resolved,.incident-state.success{color:#166534;background:#dcfce7}.incident-state.dismissed{color:#475569;background:#e2e8f0}
+.incident-muted{color:#526176;font-size:14px}.incident-actions{display:flex;gap:10px;flex-wrap:wrap;margin:15px 0}
+.incident-actions button,.incident-dialog button{min-height:44px;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.incident-dialog{box-sizing:border-box;position:fixed;inset:0;margin:auto;padding:0;width:min(800px,calc(100vw - 24px));max-height:calc(100dvh - 32px);border:1px solid #64748b;border-radius:20px;background:#f8fafc;color:#172033;overflow:auto;overscroll-behavior:contain;box-shadow:0 20px 80px #0005}
+.incident-dialog::backdrop{background:#0f172ab3;backdrop-filter:blur(3px)}
+.incident-dialog header{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:18px 22px;border-bottom:1px solid #cbd5e1;background:#fff;position:sticky;top:0;z-index:1}
+.incident-dialog h2{font-size:22px;margin:0}.incident-dialog h3{font-size:18px;margin:0 0 12px}.incident-dialog section{margin:16px 0}
+.incident-body{padding:5px 22px calc(24px + env(safe-area-inset-bottom,0px));overflow-wrap:anywhere}
+.incident-notice{padding:10px 22px;white-space:pre-wrap}.incident-notice[role=alert]{color:#991b1b;background:#fee2e2}.incident-notice:empty{display:none}
+.incident-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:10px}.incident-field{display:flex;flex-direction:column;gap:6px;font-weight:600;margin:12px 0}
+.incident-dialog textarea,.incident-dialog select,.incident-dialog input{box-sizing:border-box;max-width:100%;width:100%;background:#fff;color:#172033;border:1px solid #94a3b8;border-radius:9px;padding:11px;font:inherit}
+.incident-dialog textarea{min-height:96px;resize:vertical}.incident-dialog input[type=checkbox]{width:22px;height:22px;min-height:22px;flex:0 0 22px;margin:0;accent-color:#ea8b22}
+.incident-check{display:flex;align-items:flex-start;gap:10px;line-height:1.5;margin:16px 0}.incident-check input{margin-top:2px}
+.incident-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;background:#172033;color:#f1f5f9;border-radius:12px;padding:16px;font:13px/1.55 ui-monospace,monospace;max-height:50vh;overflow:auto}
+.incident-timeline{list-style:none;padding:0;margin:0}.incident-timeline li{border-left:3px solid #cbd5e1;padding:0 0 20px 16px;margin-left:8px;white-space:pre-wrap}.incident-timeline strong{display:block}.incident-timeline small{display:block;color:#526176;margin:4px 0}
+.incident-outcome{border-top:1px solid #cbd5e1;padding-top:18px}.incident-context{border:1px solid #cbd5e1;border-radius:12px;padding:14px;background:#fff}
+@media(max-width:600px){.incident-body{padding-left:14px;padding-right:14px}.incident-dialog header{padding:14px}.incident-dialog h2{font-size:20px}.incident-actions>*{flex:1 1 160px}.incident-card{padding:16px}.incident-dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 16px)}}
+
+.incident-dialog [hidden]{display:none!important}
+
+.incident-notice{scroll-margin-top:100px}

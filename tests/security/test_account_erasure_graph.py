@@ -321,3 +321,22 @@ def test_erasure_scrubs_referral_identity_and_admin_reason_keeps_anonymous_count
     audits=db.query(m.DeveloperActionAuditLog).filter(m.DeveloperActionAuditLog.action_type.in_(['referral.reward.grant','referral.reward.revoke'])).all()
     assert len(audits)==2
     assert all(json.loads(row.parameters_json)=={'private_payload_erased':True} for row in audits)
+
+def test_support_cases_follow_explicit_account_erasure_without_fk_or_private_note_leak(fixture):
+    from src.modules.vehicle_hub.admin_incident_models import AdminIncident,AdminIncidentEvent,AdminIncidentHistory
+    db,_,add,_,owner,other,service,*_=fixture
+    own_event=add(m.SecurityAccessLog,customer_id=owner.id,user_email=owner.email,event_type='request_failed')
+    keep_event=add(m.SecurityAccessLog,customer_id=other.id,user_email=other.email,event_type='request_failed')
+    own=add(AdminIncident,source_event_id=own_event.id,customer_id=owner.id,actor_key=owner.email,fingerprint='1'*64,created_by=other.id,status='open',version=1)
+    keep=add(AdminIncident,source_event_id=keep_event.id,customer_id=other.id,actor_key=other.email,fingerprint='2'*64,created_by=owner.id,status='in_progress',version=2)
+    add(AdminIncidentEvent,incident_id=own.id,event_id=own_event.id);add(AdminIncidentEvent,incident_id=keep.id,event_id=keep_event.id)
+    add(AdminIncidentHistory,incident_id=own.id,admin_id=other.id,action='note',status='open',note='Private erased subject',version=1)
+    keep_history=add(AdminIncidentHistory,incident_id=keep.id,admin_id=owner.id,action='note',status='in_progress',note='Private erased author',version=2)
+    own_id=own.id;keep_id=keep.id;history_id=keep_history.id;keep_event_id=keep_event.id
+    db.commit();erase_account(db,owner);db.commit();db.expire_all()
+    assert db.get(AdminIncident,own_id) is None
+    assert db.get(AdminIncident,keep_id).created_by is None
+    assert db.get(AdminIncident,keep_id).status=='in_progress'
+    assert db.get(AdminIncidentHistory,history_id).admin_id is None
+    assert 'Private' not in db.get(AdminIncidentHistory,history_id).note
+    assert db.get(m.SecurityAccessLog,keep_event_id) is not None

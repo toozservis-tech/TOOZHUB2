@@ -1,0 +1,8 @@
+const test=require('node:test'),assert=require('node:assert/strict');
+const {analyticsEntitlements:entitlements}=require('../../web/customer-features.js');
+const user={role:'user'},base={status:'active',statistics_enabled:false,costs_tracking_enabled:false};
+test('Free and Basic capabilities deny preloading regardless of claimed plan',()=>{for(const plan of ['free','basic','premium'])assert.deepEqual(entitlements(user,{...base,plan}),{statistics:false,costs:false,active:true});});
+test('capabilities stay independent and response envelope is supported',()=>{assert.deepEqual(entitlements(user,{data:{...base,statistics_enabled:true}}),{statistics:true,costs:false,active:true});assert.deepEqual(entitlements(user,{...base,costs_tracking_enabled:true}),{statistics:false,costs:true,active:true});});
+test('inactive or expired premium never preloads despite stale true flags',()=>{const flags={...base,statistics_enabled:true,costs_tracking_enabled:true};assert.deepEqual(entitlements(user,{...flags,status:'expired'}),{statistics:false,costs:false,active:false});assert.deepEqual(entitlements(user,{...flags,valid_to:'2026-11-05T12:00:00'},Date.parse('2026-11-05T12:00:00Z')),{statistics:false,costs:false,active:false});});
+test('malformed capability/role responses fail visibly, not as an expected lock',()=>{for(const payload of [null,{}, {...base,statistics_enabled:'true'},{...base,valid_to:'invalid'}])assert.throws(()=>entitlements(user,payload));assert.throws(()=>entitlements({role:'unknown'},base));});
+test('actual service/admin authority is independent from customer plan',()=>{for(const role of ['admin','developer_admin','service'])assert.deepEqual(entitlements({role},null),{statistics:true,costs:true,active:true});});
