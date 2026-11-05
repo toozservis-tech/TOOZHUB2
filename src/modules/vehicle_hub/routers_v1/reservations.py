@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List, Dict, Optional
 from datetime import datetime
+from uuid import uuid4
 
 from src.core.rbac import is_admin, is_service_or_admin, normalize_role
 from ..database import get_db
@@ -52,6 +53,32 @@ def _normalize_status(status: str) -> str:
 
 def _ensure_reservations_schema(db: Session) -> None:
     assert_module_ready(db, "reservations", detail_prefix="Rezervace nejsou připravené")
+
+
+def _publish_service_booking_change(db, row, actor, *, event_type, title):
+    """Publish only to this booking's original, still-current owner.
+
+    A booking is permission to discuss that booking, not access to history.
+    The body is generic; no notes or contact data are copied. Ownership is
+    locked before checking so a sale cannot redirect an old booking update.
+    """
+    if normalize_role(actor.role) != "service" or row.service_id != actor.id:
+        return
+    from ..ownership import lock_vehicle_access
+    from ..vehicle_updates import publish_vehicle_update
+    lock_vehicle_access(db, row.vehicle_id)
+    owner = db.query(VehicleOwnership).filter_by(vehicle_id=row.vehicle_id,
+        is_active=True, is_primary=True).order_by(VehicleOwnership.id).first()
+    if owner is None or owner.customer_id != row.customer_id:
+        return
+    ownership_started = owner.owned_from or owner.assigned_at
+    if ownership_started and (row.created_at is None or row.created_at < ownership_started):
+        return
+    publish_vehicle_update(db, vehicle_id=row.vehicle_id, actor_id=actor.id,
+        event_type=event_type, title=title,
+        message="Otevřete Rezervace a zkontrolujte informace od servisu.",
+        source_type="reservations", source_id=row.id,
+        dedupe_key=f"reservation:{row.id}:{uuid4()}")
 
 
 def _is_admin_role(role: Optional[str]) -> bool:
@@ -338,6 +365,8 @@ def create_reservation(
     
     db.add(reservation)
     db.flush()
+    _publish_service_booking_change(db, reservation, current_user,
+        event_type="booking.created", title="Servis vytvořil rezervaci")
     print(
         "[RESERVATION] create",
         {
@@ -549,6 +578,7 @@ def update_reservation(
     old_start_datetime = reservation.start_datetime
     old_end_datetime = reservation.end_datetime
     old_status = reservation.status
+    old_service_type, old_note = reservation.service_type, reservation.note
     status_changed = False
     schedule_changed = False
 
@@ -621,6 +651,17 @@ def update_reservation(
         reservation.status = requested_status
         status_changed = old_status != reservation.status
     
+    content_changed = reservation.service_type != old_service_type or reservation.note != old_note
+    if schedule_changed or status_changed or content_changed:
+        title = "Servis upravil rezervaci"
+        event_type = "booking.updated"
+        if schedule_changed:
+            title, event_type = "Servis upravil termín rezervace", "booking.rescheduled"
+        elif status_changed:
+            title = {"CONFIRMED": "Servis potvrdil rezervaci", "CANCELLED": "Servis zrušil rezervaci",
+                     "COMPLETED": "Servis dokončil rezervaci"}.get(reservation.status, title)
+            event_type = "booking." + str(reservation.status).lower()
+        _publish_service_booking_change(db, reservation, current_user, event_type=event_type, title=title)
     db.commit()
     db.refresh(reservation)
 

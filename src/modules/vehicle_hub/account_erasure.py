@@ -63,6 +63,8 @@ def erase_account(db, customer) -> dict[str, int]:
 
     # Lock the identity first; all writes keep their FK to this identity until commit.
     db.query(m.Customer).filter_by(id=account_id).with_for_update().one()
+    from .notification_delivery_models import erase_account_notifications
+    erase_account_notifications(db, customer)
     from .admin_message_models import erase_account_messages
     erase_account_messages(db, customer)
     get_owned_vehicle_ids(db, customer, tenant_id=tenant_id)  # Backfill safe legacy rows only.

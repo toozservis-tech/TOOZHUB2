@@ -92,6 +92,12 @@ def get_push_status(
         .count()
     )
 
+    from ..notification_delivery_models import PushDevice
+    from ..notification_inbox import ready
+    from ..push_delivery import eligible_device
+    if ready(db):
+        active_count+=sum(eligible_device(db,row,current_user) for row in db.query(PushDevice).filter_by(recipient_id=current_user.id,platform='webpush',active=True))
+
     return PushStatusOut(
         enabled=bool(infra["enabled"]),
         library_available=bool(infra["library_available"]),
@@ -173,10 +179,17 @@ def subscribe_push(
         raise HTTPException(status_code=503, detail="Chybí VAPID klíče pro Web Push.")
 
     endpoint = payload.endpoint.strip()
+    from ..push_delivery import valid_web_endpoint
+    from src.server.admin_messages import origin_guard
+    from fastapi import Response
+    origin_guard(request, Response())
+    if not valid_web_endpoint(endpoint):raise HTTPException(422, "Neplatný poskytovatel push upozornění.")
     existing = db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).first()
     now = datetime.utcnow()
     user_agent = request.headers.get("user-agent")
 
+    if existing and (existing.tenant_id != tenant_id or existing.customer_id != current_user.id):
+        raise HTTPException(409, "Prohlížeč je přihlášen k jinému účtu. Obnovte povolení oznámení.")
     if existing:
         existing.tenant_id = tenant_id
         existing.customer_id = current_user.id
@@ -224,6 +237,7 @@ def subscribe_push(
 
 @router.post("/unsubscribe")
 def unsubscribe_push(
+    request: Request,
     payload: Optional[PushUnsubscribeIn] = None,
     current_user: Customer = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -232,6 +246,9 @@ def unsubscribe_push(
     tenant_id = _require_tenant_id(current_user)
     _ensure_push_schema(db)
     endpoint = payload.endpoint.strip() if payload and payload.endpoint else None
+    from src.server.admin_messages import origin_guard
+    from fastapi import Response
+    origin_guard(request, Response())
 
     query = db.query(PushSubscription).filter(
         PushSubscription.tenant_id == tenant_id,

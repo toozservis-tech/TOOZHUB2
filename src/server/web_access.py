@@ -16,7 +16,7 @@ from src.modules.vehicle_hub.account_state import customer_is_deleted, customer_
 from src.modules.vehicle_hub.email_verification import pending_verification
 
 PUBLIC_WEB_PAGES = {
-    "job-timeline.js", "admin-messages.js", "admin-messages.css",
+    "job-timeline.js", "admin-messages.js", "admin-messages.css", "notification-center.js", "notification-center.css",
     "referral-registration.js", "referral-features.js", "referral-features.css", "vendor/referral-qr.js", "vehicle-transfers.js",
     "customer-session.js", "customer.css", "customer-features.js", "service-features.js", "vendor/jsQR-1.4.0.js", "assets/auth-seq-step1-vehicles.png", "assets/auth-seq-step2-add-vehicle.png", "assets/auth-seq-step4-reservations.png", "legacy-actions.js", "legacy-app.js", "legacy-lookups.js",
     "storage_migration.js", "ai-features.js", "theme.css", "app.css", "inline-styles.css",

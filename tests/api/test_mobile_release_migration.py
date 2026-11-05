@@ -15,7 +15,8 @@ def test_mobile_release_upgrades_existing_baseline_and_is_repeatable(tmp_path):
              'google_billing_identities', 'google_subscriptions', 'service_job_photos',
              'customer_home_garages', 'referral_codes', 'referrals', 'referral_rewards',
              'vehicle_transfer_invitations', 'admin_incidents', 'admin_incident_events', 'admin_incident_history',
-             'admin_messages', 'admin_message_commands'}
+             'admin_messages', 'admin_message_commands', 'notification_items', 'notification_commands',
+             'notification_announcement_policies', 'notification_devices', 'notification_push_outbox', 'notification_cursors'}
     try:
         Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
         with engine.begin() as connection:
@@ -95,7 +96,8 @@ def test_packaged_module_succeeds_in_fresh_python_process(tmp_path):
              'google_billing_identities', 'google_subscriptions', 'service_job_photos',
              'customer_home_garages', 'referral_codes', 'referrals', 'referral_rewards',
              'vehicle_transfer_invitations', 'admin_incidents', 'admin_incident_events', 'admin_incident_history',
-             'admin_messages', 'admin_message_commands'}
+             'admin_messages', 'admin_message_commands', 'notification_items', 'notification_commands',
+             'notification_announcement_policies', 'notification_devices', 'notification_push_outbox', 'notification_cursors'}
     Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
     engine.dispose()
     env = os.environ.copy()
@@ -112,6 +114,8 @@ def test_packaged_module_succeeds_in_fresh_python_process(tmp_path):
         assert inspect(db.connection()).has_table('vehicle_transfer_invitations')
         from src.server.admin_messages import ready as messages_ready
         assert messages_ready(db)
+        from src.modules.vehicle_hub.notification_inbox import ready as notifications_ready
+        assert notifications_ready(db)
     # Verify 0015 also compiles its own FKs when invoked independently rather
     # than inheriting metadata loaded by 0014 in the orchestrator process.
     import sqlite3
@@ -135,3 +139,16 @@ print('fresh readiness PASS')
         capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'fresh readiness PASS' in result.stdout
+
+
+def test_cloud_docker_copy_files_are_available_in_allowlisted_context():
+    from pathlib import Path
+    import shlex
+    repo=Path(__file__).resolve().parents[2]
+    rules=(repo/'.dockerignore').read_text().splitlines()
+    assert '**' in rules
+    for line in (repo/'Dockerfile.cloud').read_text().splitlines():
+        if not line.startswith('COPY '):continue
+        source=shlex.split(line)[1]
+        if (repo/source).is_file():
+            assert '!'+source in rules, f'Docker COPY file excluded by allowlist: {source}'

@@ -85,9 +85,11 @@ def send_web_push_message(
     if not status["ready"]:
         return False, status["reason"], None
 
+    from .push_delivery import valid_web_endpoint
+    if not valid_web_endpoint(subscription.endpoint):return False, "invalid_endpoint", None
     payload = {
-        "title": title,
-        "body": body,
+        "title": "Evidence Vozidel",
+        "body": "V aplikaci na vás čeká nové oznámení.",
         "url": url,
         "icon": icon,
         "badge": badge,
@@ -96,19 +98,22 @@ def send_web_push_message(
     }
 
     try:
+        import requests
+        class NoRedirectSession(requests.Session):
+            def request(self,*args,**kwargs):kwargs["allow_redirects"]=False;return super().request(*args,**kwargs)
         webpush(
             subscription_info=_build_subscription_payload(subscription),
             data=json.dumps(payload, ensure_ascii=False),
             vapid_private_key=VAPID_PRIVATE_KEY,
             vapid_claims={"sub": VAPID_CLAIMS_SUBJECT},
-            ttl=ttl,
+            ttl=ttl, timeout=15, requests_session=NoRedirectSession(),
         )
         return True, None, None
     except WebPushException as exc:
         code = _extract_push_status_code(exc)
-        return False, str(exc), code
+        return False, "provider_rejected", code
     except Exception as exc:  # pragma: no cover
-        return False, str(exc), None
+        return False, "provider_unavailable", None
 
 
 def send_push_to_customer(

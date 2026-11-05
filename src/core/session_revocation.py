@@ -77,6 +77,12 @@ def revoke_tokens(db, tokens=(), *, tickets=()) -> None:
         db.execute(delete(RevokedAccessToken).where(RevokedAccessToken.expires_at <= datetime.utcnow()))
         for row in rows.values():
             db.execute(insert(RevokedAccessToken).values(**row).on_conflict_do_nothing(index_elements=['digest']))
+        # A logout ticket also revokes push without depending on a live client.
+        from sqlalchemy import inspect, update
+        from src.modules.vehicle_hub.notification_delivery_models import PushDevice
+        if inspect(db.connection()).has_table(PushDevice.__tablename__):
+            db.execute(update(PushDevice).where(PushDevice.session_digest.in_(rows)).values(
+                active=False, revoked_at=datetime.utcnow(), generation=PushDevice.generation+1))
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()

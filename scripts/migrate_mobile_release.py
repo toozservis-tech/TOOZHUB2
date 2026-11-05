@@ -18,6 +18,7 @@ from scripts.migrate_vehicle_transfers import migrate as migrate_transfers
 from scripts.migrate_transfer_reinvites import migrate as migrate_transfer_reinvites
 from scripts.migrate_admin_incidents import migrate as migrate_admin_incidents
 from scripts.migrate_admin_messages import migrate as migrate_admin_messages
+from scripts.migrate_notification_delivery import migrate as migrate_notification_delivery
 
 
 def migrate(bind=None):
@@ -36,8 +37,9 @@ def migrate(bind=None):
     migrate_transfer_reinvites(bind)
     migrate_admin_incidents(bind)
     migrate_admin_messages(bind)
+    migrate_notification_delivery(bind)
 
 
 if __name__ == '__main__':
     migrate()
-    print('Mobile release schema ready: service jobs, vehicle updates, inbox folders, owner lifecycle, booking requests, Google billing, transfer invitations and admin support cases. Existing data retained.')
+    print('Mobile release schema ready: service jobs, vehicle updates, inbox folders, owner lifecycle, booking requests, Google billing, transfer invitations, admin support cases and notification delivery. Existing data retained.')

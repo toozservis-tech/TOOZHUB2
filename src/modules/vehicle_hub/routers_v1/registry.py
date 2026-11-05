@@ -61,6 +61,8 @@ api_router.include_router(bot.router)  # AI Asistent Bot
 api_router.include_router(vin_lookup.router)  # VIN lookup
 api_router.include_router(ares_lookup.router)  # ARES lookup
 api_router.include_router(push.router)  # Web Push notifications
+from .notifications import router as notification_delivery_router
+api_router.include_router(notification_delivery_router)
 api_router.include_router(system_notifications.router)  # System notifications
 api_router.include_router(capabilities.router)  # Runtime capabilities
 

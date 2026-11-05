@@ -1631,6 +1631,7 @@ class UserLicenseUpdateRequest(BaseModel):
 
 
 class BroadcastNotificationRequest(BaseModel):
+    requires_ack: bool = False
     message: str
     title: Optional[str] = None
     severity: Optional[str] = "info"  # info | warning | critical
@@ -6025,8 +6026,9 @@ def broadcast_system_notification(
         safe_hours = max(1, min(int(payload.expires_in_hours), 24 * 180))
         expires_at = datetime.utcnow() + timedelta(hours=safe_hours)
 
-    notifications_file = DATA_DIR / "system_notifications.jsonl"
-    notifications_file.parent.mkdir(parents=True, exist_ok=True)
+    from src.modules.vehicle_hub.notification_inbox import require_ready as require_notifications_ready
+    from src.modules.vehicle_hub.notification_delivery_models import AnnouncementPolicy
+    require_notifications_ready(db)
     actor = get_customer_by_email(db, email)
     event = {
         "timestamp": datetime.utcnow().isoformat(),
@@ -6038,8 +6040,6 @@ def broadcast_system_notification(
         "expires_at": to_iso_datetime(expires_at),
         "created_by": email.lower(),
     }
-    with open(notifications_file, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     notification_row = SystemNotification(
         target_type=target_type,
@@ -6054,6 +6054,8 @@ def broadcast_system_notification(
         created_by_email=email.lower(),
     )
     db.add(notification_row)
+    db.flush()
+    db.add(AnnouncementPolicy(source_id=notification_row.id, requires_ack=payload.requires_ack))
     db.commit()
     db.refresh(notification_row)
 
@@ -6064,8 +6066,8 @@ def broadcast_system_notification(
         action_type="notifications.broadcast",
         target_resource="system_notifications",
         parameters={
-            "message": message,
-            "title": event.get("title"),
+            "notification_id": notification_row.id,
+            "requires_ack": payload.requires_ack,
             "severity": severity,
             "target_type": target_type,
             "target_value": target_value,
