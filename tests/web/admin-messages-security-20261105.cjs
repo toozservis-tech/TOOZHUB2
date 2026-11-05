@@ -12,7 +12,7 @@ const output=process.env.MESSAGE_QA_OUTPUT||'/Users/toozservis/Developer/evidenc
  await context.route('**/*',r=>new URL(r.request().url()).origin===origin?r.continue():r.abort());
  await context.addInitScript(jwt=>{sessionStorage.setItem('customerWebAccessToken',jwt);sessionStorage.setItem('customerWebRole','user');},users.user.jwt);
  const page=await context.newPage();await (await context.newCDPSession(page)).send('Emulation.setFocusEmulationEnabled',{enabled:false});page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/admin-messages/read'))requests.push(JSON.parse(r.postData()));});
- const d=()=>page.locator('dialog.message-dialog');const open=async()=>{await page.locator('#admin-message-banner').getByRole('button',{name:'Otevřít zprávy',exact:true}).click();await d().getByLabel('Text zprávy',{exact:true}).waitFor();await page.bringToFront();};
+ const d=()=>page.locator('dialog.message-dialog');const open=async()=>{await page.getByRole('button',{name:'Nastavení',exact:true}).click();await page.getByRole('button',{name:'Otevřít zprávy administrace',exact:true}).click();await d().getByLabel('Text zprávy',{exact:true}).waitFor();await page.bringToFront();};
  const message=async id=>(await api(adminBase+'?limit=100')).items.find(x=>x.id===id);
  const delay=ms=>new Promise(r=>setTimeout(r,ms));
  try{
