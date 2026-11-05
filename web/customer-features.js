@@ -322,7 +322,7 @@
     }
     function extraVehicleData(vin) {return draft&&draft.vin===vin.trim().toUpperCase()?{orv_number:draft.orv_number,...(draft.orv_scan_id?{orv_scan_id:draft.orv_scan_id}:{})}:{};}
     function profileLoaded() {
-        const target=$('profileContainer');if(!target||global.isServiceWorkspaceRole?.())return;const el=document.createElement('div');el.className='customer-feature-actions';el.append(action('Tarify a předplatné',()=>global.openLicensePlans()),action('Pozvánky servisů',()=>global.switchTab('customerInvitations')),action('Archiv vlastnictví',()=>global.switchTab('customerArchives')));target.prepend(el);
+        const target=$('profileContainer');if(!target)return;global.AdminMessages?.installProfile(target);if(global.isServiceWorkspaceRole?.())return;const el=document.createElement('div');el.className='customer-feature-actions';el.append(action('Tarify a předplatné',()=>global.openLicensePlans()),action('Pozvánky servisů',()=>global.switchTab('customerInvitations')),action('Archiv vlastnictví',()=>global.switchTab('customerArchives')));target.prepend(el);
     }
     function install() {
         const tabs=document.querySelector('#dashboard .tabs');if(!tabs||$('customerOverviewTab'))return;

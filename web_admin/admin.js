@@ -649,6 +649,9 @@ function loadSectionData(section) {
     case 'activity':
       loadActivityAccounts();
       break;
+    case 'messages':
+      window.AdminMessages?.loadAdmin();
+      break;
     case 'incidents':
       window.AdminIncidents?.load();
       break;
@@ -1276,6 +1279,16 @@ function renderUserDetailModal() {
       </div>
     </div>
   `;
+
+  if (['user', 'service'].includes(user.role)) {
+    const messageButton = document.createElement('button');
+    messageButton.type = 'button';
+    messageButton.className = 'btn-primary';
+    messageButton.textContent = 'Napsat zprávu';
+    messageButton.dataset.adminMessageAccount = String(user.id);
+    messageButton.addEventListener('click', () => { closeUserDetailModal(); window.AdminMessages?.openAdmin(user.id); });
+    profileEl.prepend(messageButton);
+  }
 
   const panelDefs = [
     { key: 'vehicles', label: 'Vozidla', icon: '🚗', count: stats.vehicles_count ?? 0 },
@@ -4786,7 +4799,7 @@ function showDashboard() {
   loadSystemCapabilitiesAdmin();
   
   // Načíst přehled jako výchozí
-  switchSection(['overview','users','activity','incidents','demo-access','vehicles','services','records','audit','settings','system','control-center'].includes(initial) ? initial : 'overview');
+  switchSection(['overview','users','activity','incidents','messages','demo-access','vehicles','services','records','audit','settings','system','control-center'].includes(initial) ? initial : 'overview');
 }
 
 // ============================================

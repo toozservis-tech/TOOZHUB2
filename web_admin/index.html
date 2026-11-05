@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="workspace.css?v=20261003" />
   <link rel="stylesheet" href="activity.css?v=20261016" />
   <link rel="stylesheet" href="incidents.css?v=20261105" />
+  <link rel="stylesheet" href="/web/admin-messages.css?v=20261105" />
   <link rel="stylesheet" href="/web/referral-features.css" />
 </head>
 <body>
@@ -78,6 +79,7 @@
             <span class="nav-icon">🕘</span><span class="nav-text">Aktivita uživatelů</span>
           </button>
           <button data-section="incidents" class="nav-item"><span class="nav-icon" aria-hidden="true">🛠</span><span class="nav-text">Případy k řešení</span></button>
+          <button data-section="messages" class="nav-item"><span class="nav-icon" aria-hidden="true">✉</span><span class="nav-text">Zprávy</span></button>
           <button data-section="demo-access" class="nav-item"><span class="nav-icon">✉️</span><span class="nav-text">Vstupy do dema</span></button>
           <button data-section="vehicles" class="nav-item">
             <span class="nav-icon">🚗</span>
@@ -179,6 +181,25 @@
           <div id="incident-list" class="incident-grid"></div>
           <div id="incident-pages" class="activity-pages"></div>
           <p class="activity-help">Červená = případ čeká na řešení. Žlutá = případ se řeší. Zelená = administrátor označil případ za vyřešený a uvedl důvod. Stav případu není automatickou zárukou bezchybnosti celé aplikace.</p>
+        </section>
+
+        <section id="section-messages" class="content-section">
+          <div class="section-header"><h1>Zprávy</h1></div>
+          <p>Soukromá komunikace administrace se zákazníky a servisy. Novou zprávu začněte v detailu účtu tlačítkem „Napsat zprávu“.</p>
+          <details class="incident-guide"><summary>Jak zprávy a potvrzení fungují</summary>
+            <p>Vyberte účet, napište konkrétní zprávu a odešlete ji. Příjemce ji uvidí v aplikaci nebo na webu. Odpověď se vrátí do stejné konverzace.</p>
+            <p><strong>Příklad:</strong> „Oprava převzetí vozidla je připravená. Otevřete Vozidla → Převzetí a potvrďte pozvánku.“ Pokud potřebujete výslovné potvrzení informace, zaškrtněte „Požadovat výslovné potvrzení převzetí“.</p>
+            <p>Odesláno znamená uloženo na serveru. Přečtení se potvrdí až po zobrazení zprávy. Požadavek na potvrzení zůstává příjemci zobrazený i po přečtení, dokud nepotvrdí převzetí. Samotná zpráva nemění tarif, vlastnictví ani stav případu. Historie zůstává uložená; zprávy nelze upravovat ani mazat.</p>
+          </details>
+          <form id="messages-filters" class="activity-filters">
+            <label>Jméno nebo e-mail<input id="messages-search" type="search" maxlength="120" placeholder="Vyhledat konverzaci"></label>
+            <label><input id="messages-unread" type="checkbox"> Jen nepřečtené odpovědi</label>
+            <button type="submit" class="btn-primary">Vyhledat zprávy</button>
+            <button type="button" id="messages-find-account" class="btn-secondary">Najít účet a napsat</button>
+          </form>
+          <p id="messages-status" role="status" aria-live="polite"></p>
+          <div id="messages-list" class="message-list"></div>
+          <div id="messages-pages" class="activity-pages"></div>
         </section>
 
         <section id="section-demo-access" class="content-section">
@@ -1163,6 +1184,7 @@
   <script src="admin.js?v=demo20261016-20261016"></script>
   <script src="activity.js?v=20261016"></script>
   <script src="incidents.js?v=20261105"></script>
+  <script src="/web/admin-messages.js?v=20261105"></script>
   <script src="demo-access.js?v=20261016"></script>
   <script src="entity-management.js?v=20261002"></script>
   <script src="workspace.js?v=20261003"></script>

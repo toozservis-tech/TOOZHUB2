@@ -3505,6 +3505,7 @@
                 logoutBtn.classList.remove('hidden');
             }
             updateRoleBasedDashboardTabs();
+            window.AdminMessages?.refreshSummary();
 
             // Spustit sledování aktivity při přihlášení
             resetInactivityTimer();
