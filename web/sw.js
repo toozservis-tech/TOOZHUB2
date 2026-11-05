@@ -26,21 +26,36 @@ self.addEventListener('push', (event) => {
     };
   }
 
-  const title = payload.title || 'Evidence Vozidel';
+  const notificationID = Number.isSafeInteger(payload.notification_id) && payload.notification_id > 0 ? payload.notification_id : null;
+  const unified = notificationID !== null;
+  const title = unified ? 'Evidence Vozidel' : payload.title || 'Evidence Vozidel';
   const options = {
-    body: payload.body || 'Máte nové upozornění.',
+    body: unified ? 'Máte nové oznámení. Podrobnosti otevřete ve svém účtu.' : payload.body || 'Máte nové upozornění.',
     icon: sameOriginURL(payload.icon, '/web/assets/toozservis-logo-icon.png'),
     badge: sameOriginURL(payload.badge, '/web/assets/toozservis-logo-icon.png'),
-    tag: payload.tag || 'sprava-vozidel-notification',
+    tag: unified ? 'evidence-notification-' + notificationID : payload.tag || 'sprava-vozidel-notification',
     data: {
-      url: sameOriginURL(payload.url, '/web/index.html'),
+      url: unified ? new URL('/web/customer.html#notifications/'+notificationID, self.location.origin).href : sameOriginURL(payload.url, '/web/index.html'),
+      notification_id: notificationID,
       timestamp: payload.timestamp || Date.now(),
     },
     renotify: false,
     requireInteraction: false,
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(title, options),
+    unified && Number.isSafeInteger(payload.badge_count) && payload.badge_count >= 0 && typeof self.navigator?.setAppBadge === 'function'
+      ? Promise.resolve(payload.badge_count ? self.navigator.setAppBadge(payload.badge_count) : self.navigator.clearAppBadge?.()).catch(() => {})
+      : Promise.resolve(),
+    self.clients.matchAll({type:'window',includeUncontrolled:true}).then(clients => {
+      for (const client of clients) {
+        if (new URL(client.url).origin === self.location.origin && new URL(client.url).pathname === '/web/customer.html') {
+          client.postMessage({type:'EVIDENCE_NOTIFICATION_REFRESH'});
+        }
+      }
+    }),
+  ]));
 });
 
 self.addEventListener('notificationclick', (event) => {
@@ -52,6 +67,12 @@ self.addEventListener('notificationclick', (event) => {
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
         if (client.url && new URL(client.url).origin === self.location.origin && new URL(client.url).pathname.startsWith('/web/')) {
+          if (Number.isSafeInteger(event.notification?.data?.notification_id)) {
+            if (new URL(client.url).pathname !== '/web/customer.html') continue;
+            client.focus();
+            client.postMessage({type:'EVIDENCE_NOTIFICATION_OPEN',notification_id:event.notification.data.notification_id});
+            return;
+          }
           client.focus();
           // Kanonický typ; stránka akceptuje i legacy TOOZHUB_NOTIFICATION_CLICK (starý SW) – viz index.html
           client.postMessage({ type: 'SPRAVA_VOZIDEL_NOTIFICATION_CLICK', url: targetUrl });

@@ -942,6 +942,10 @@
         }
 
         async function loadSystemNotifications() {
+            if (window.CustomerWeb && window.NotificationCenter) {
+                await window.NotificationCenter.refresh();
+                return;
+            }
             if (!currentUser || !accessToken) return;
             try {
                 const payload = await apiCall('/api/v1/system-notifications?limit=20', 'GET', null, 12000);
@@ -973,6 +977,10 @@
 
         function startSystemNotificationsPolling() {
             stopSystemNotificationsPolling();
+            if (window.CustomerWeb && window.NotificationCenter) {
+                window.NotificationCenter.refresh();
+                return;
+            }
             loadSystemNotifications();
             window.__systemNotificationsTimer = setInterval(() => {
                 if (!currentUser || !accessToken) return;
@@ -1642,6 +1650,11 @@
         }
 
         async function ensurePushSubscribed(options = {}) {
+            if (window.CustomerWeb && window.NotificationCenter) {
+                const result = await window.NotificationCenter.enablePush(options);
+                await refreshReminderPushStatus();
+                return result;
+            }
             const interactive = Boolean(options && options.interactive);
             const force = Boolean(options && options.force);
 
@@ -1715,6 +1728,16 @@
         }
 
         async function disablePushNotifications() {
+            if (window.CustomerWeb && window.NotificationCenter) {
+                try {
+                    const result = await window.NotificationCenter.disablePush();
+                    showAlert(result.reason, 'success');
+                } catch (error) {
+                    showAlert(error.message || 'Vypnutí upozornění se nepodařilo potvrdit.', 'error');
+                }
+                await refreshReminderPushStatus();
+                return;
+            }
             try {
                 if ('serviceWorker' in navigator) {
                     const registration = pushSwRegistration || await navigator.serviceWorker.getRegistration('/web/');
