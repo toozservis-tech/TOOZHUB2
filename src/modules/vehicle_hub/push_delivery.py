@@ -36,9 +36,31 @@ def configured(platform,environment=None):
               'webpush':['VAPID_PRIVATE_KEY','VAPID_PUBLIC_KEY','VAPID_CLAIMS_SUBJECT']}[platform]
     return all(bool(os.getenv(key,'')) for key in keys)
 
+@dataclass(frozen=True)
+class DeliveryPolicy:
+    enabled:bool
+    valid:bool
+    recipients:frozenset|None
+
+    def allows(self,recipient_id):
+        return self.enabled and self.valid and (self.recipients is None or recipient_id in self.recipients)
+
+def delivery_policy():
+    """Read afresh at claim/send; malformed nonempty canary config fails closed."""
+    enabled=os.getenv('PUSH_DELIVERY_ENABLED','').lower() in {'1','true'}
+    raw=os.getenv('PUSH_DELIVERY_RECIPIENT_IDS','').strip()
+    if not raw:return DeliveryPolicy(enabled,True,None)
+    parts=raw.split(',')
+    if len(raw)>10000 or len(parts)>1000 or any(not re.fullmatch(r'[1-9][0-9]{0,9}',part.strip()) or int(part.strip())>2147483647 for part in parts):
+        return DeliveryPolicy(enabled,False,frozenset())
+    return DeliveryPolicy(enabled,True,frozenset(int(part.strip()) for part in parts))
+
 def public_status():
+    policy=delivery_policy()
     return {'registration_available':bool(os.getenv('PUSH_TOKEN_ENCRYPTION_KEY')),
-        'dispatch_enabled':os.getenv('PUSH_DELIVERY_ENABLED','').lower() in {'1','true'},
+        'dispatch_enabled':policy.enabled and policy.valid,
+        'dispatch_limited':policy.recipients is not None,
+        'dispatch_configuration_valid':policy.valid,
         'providers':{p:{'configured':configured(p)} for p in ('apns','fcm','webpush')}}
 
 def valid_web_endpoint(endpoint):
@@ -217,10 +239,18 @@ def _retry_after(response):
     except ValueError:return 60
 
 def dispatch_one(db,provider=send_provider,now=None):
+    policy=delivery_policy()
+    if not policy.enabled or not policy.valid:return False
     now=now or datetime.utcnow()
     available=or_(and_(PushOutbox.state.in_(['queued','retry','blocked']),PushOutbox.next_attempt_at<=now),and_(PushOutbox.state=='sending',PushOutbox.lease_until<=now))
-    row=db.query(PushOutbox).filter(available).order_by(PushOutbox.id).with_for_update(skip_locked=True).first()
+    query=db.query(PushOutbox).filter(available)
+    if policy.recipients is not None:
+        # Excluded recipients must not consume attempts, leases or the cycle's
+        # bounded send budget. Registration/collection remain independent.
+        query=query.filter(PushOutbox.item_id.in_(select(NotificationItem.id).where(NotificationItem.recipient_id.in_(policy.recipients))))
+    row=query.order_by(PushOutbox.id).with_for_update(skip_locked=True).first()
     if row is None:return False
+    previous_state=row.state;previous_attempts=row.attempts
     lease=str(uuid4())
     changed=db.execute(update(PushOutbox).where(PushOutbox.id==row.id,available).values(state='sending',lease_token=lease,lease_until=now+timedelta(seconds=120),attempts=PushOutbox.attempts+1),execution_options={'synchronize_session':False}).rowcount
     if changed!=1:db.rollback();return True
@@ -228,6 +258,12 @@ def dispatch_one(db,provider=send_provider,now=None):
     # Recheck after claiming: logout, consent, transfer and account revocation
     # must not be served from a previous identity-map snapshot.
     db.expire_all();row=db.get(PushOutbox,identifier);device=db.get(PushDevice,row.device_id);item=db.get(NotificationItem,row.item_id)
+    def release_excluded_claim():
+        db.execute(update(PushOutbox).where(PushOutbox.id==identifier,PushOutbox.lease_token==lease).values(
+            state='queued' if previous_state=='sending' else previous_state,attempts=previous_attempts,lease_until=None,lease_token=None))
+        db.commit()
+        return False
+    if item is not None and not delivery_policy().allows(item.recipient_id):return release_excluded_claim()
     user=db.get(Customer,item.recipient_id) if item else None
     source=source_for(db,item,user,for_delivery=True) if item and user else None
     if source is not None:
@@ -240,7 +276,11 @@ def dispatch_one(db,provider=send_provider,now=None):
     else:
         try:
             secret=json.loads(cipher().decrypt(device.token_ciphertext.encode()))
-            outcome=provider(device,secret,generic_payload(item,summary(db,user)['badge_count']))
+            payload=generic_payload(item,summary(db,user)['badge_count'])
+            # Configuration may have changed while authorization/badge was
+            # loaded. Never turn a canary exclusion into a failed notification.
+            if not delivery_policy().allows(item.recipient_id):return release_excluded_claim()
+            outcome=provider(device,secret,payload)
         except (HTTPException,InvalidToken,ValueError):outcome=Outcome('blocked','token_storage_unavailable',900)
     # Persist only bounded classified outcomes. No token/provider text in errors.
     if not isinstance(outcome,Outcome) or outcome.state not in {'accepted','retry','invalid','blocked'} or not re.fullmatch(r'[a-z_]{1,64}',outcome.code):outcome=Outcome('blocked','provider_invalid_result',900)

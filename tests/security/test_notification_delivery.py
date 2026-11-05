@@ -8,7 +8,7 @@ import test_admin_messages as messages
 from src.modules.vehicle_hub.routers_v1.notifications import router
 from src.modules.vehicle_hub.notification_delivery_models import *
 from src.modules.vehicle_hub.notification_inbox import collect_new,materialize,source_for
-from src.modules.vehicle_hub.push_delivery import dispatch_one,Outcome,generic_payload,valid_web_endpoint
+from src.modules.vehicle_hub.push_delivery import dispatch_one,Outcome,generic_payload,valid_web_endpoint,delivery_policy,public_status
 from src.modules.vehicle_hub.models import Customer,SystemNotification,Vehicle,VehicleOwnership
 from src.modules.vehicle_hub.vehicle_update_models import VehicleUpdate,VehicleUpdateInboxState
 from src.modules.vehicle_hub.admin_message_models import AdminMessage
@@ -24,7 +24,7 @@ class Delivery(unittest.TestCase):
     def setUp(self):
         messages.Messages.setUp(self)
         self.client.app.include_router(router,prefix='/api/v1')
-        env=patch.dict(os.environ,{'PUSH_TOKEN_ENCRYPTION_KEY':Fernet.generate_key().decode(),'APNS_SANDBOX_KEY_ID':'qa-sandbox','APNS_SANDBOX_PRIVATE_KEY':'qa-not-production', 'APNS_KEY_ID':'synthetic','APNS_TEAM_ID':'synthetic',
+        env=patch.dict(os.environ,{'PUSH_DELIVERY_ENABLED':'true','PUSH_DELIVERY_RECIPIENT_IDS':'','PUSH_TOKEN_ENCRYPTION_KEY':Fernet.generate_key().decode(),'APNS_SANDBOX_KEY_ID':'qa-sandbox','APNS_SANDBOX_PRIVATE_KEY':'qa-not-production', 'APNS_KEY_ID':'synthetic','APNS_TEAM_ID':'synthetic',
             'APNS_PRIVATE_KEY':'not-a-production-key','APNS_BUNDLE_IDS':'cz.fixture','FCM_PROJECT_ID':'synthetic-fixture','FCM_SERVICE_ACCOUNT_JSON':'{}','FCM_BUNDLE_IDS':'cz.fixture'})
         env.start();self.patches.append(env)
         migrate(self.engine)
@@ -114,6 +114,67 @@ class Delivery(unittest.TestCase):
             dispatch_one(db,lambda d,s,p:(captured.append(p) or Outcome('accepted','apns_accepted')))
             self.assertFalse(dispatch_one(db,lambda *a:self.fail('duplicate')))
         self.assertEqual(len(captured),1);self.assertNotIn('SECRET',json.dumps(captured));self.assertNotIn('example.com',json.dumps(captured))
+    def test_canary_strict_configuration_and_public_status_hide_ids(self):
+        for raw in ('','  ','12345','12345, 67890','12345,12345'):
+            with self.subTest(raw=raw),patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':raw}):
+                self.assertTrue(delivery_policy().allows(12345))
+                self.assertNotIn('12345',json.dumps(public_status()))
+                self.assertEqual(public_status()['dispatch_limited'],bool(raw.strip()))
+        with patch.dict(os.environ,{},clear=False):
+            os.environ.pop('PUSH_DELIVERY_RECIPIENT_IDS',None)
+            self.assertTrue(delivery_policy().allows(12345))
+        for raw in ('0','-1','+1','01','1,,2','1,','*','1.0','true','1;2','١','2147483648',','.join(['1']*1001)):
+            with self.subTest(raw=raw),patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':raw}):
+                self.assertFalse(delivery_policy().allows(1))
+                self.assertFalse(public_status()['dispatch_enabled'])
+                self.assertFalse(public_status()['dispatch_configuration_valid'])
+
+    def test_canary_skips_excluded_head_without_consuming_or_blocking_allowed(self):
+        excluded=self.other['user']['id'];allowed=self.user['user']['id']
+        self.send(account=self.other);self.send();self.collect()
+        with patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':str(allowed)}):
+            self.assertEqual(self.device(headers=self.oh,token='cd'*32)[0].status_code,200)
+            self.assertEqual(self.device()[0].status_code,200)
+            with self.Session() as db:
+                before=db.query(PushOutbox).join(NotificationItem).filter(NotificationItem.recipient_id==excluded).one()
+                before_state=(before.state,before.attempts,before.next_attempt_at,before.last_code)
+                sent=[]
+                self.assertTrue(dispatch_one(db,lambda d,s,p:(sent.append(d.recipient_id) or Outcome('accepted','apns_accepted'))))
+                self.assertEqual(sent,[allowed]);self.assertFalse(dispatch_one(db,lambda *a:self.fail('Excluded send')))
+                db.expire_all();after=db.get(PushOutbox,before.id)
+                self.assertEqual((after.state,after.attempts,after.next_attempt_at,after.last_code),before_state)
+                self.assertIsNone(after.lease_token)
+        with self.Session() as db:
+            sent=[];self.assertTrue(dispatch_one(db,lambda d,s,p:(sent.append(d.recipient_id) or Outcome('accepted','apns_accepted'))))
+            self.assertEqual(sent,[excluded])
+
+    def test_canary_disabled_or_malformed_never_claims(self):
+        self.device();self.send();self.collect()
+        for enabled,ids in [('false',''),('false',str(self.user['user']['id'])),('true','1,,2')]:
+            with self.subTest(enabled=enabled,ids=ids),patch.dict(os.environ,{'PUSH_DELIVERY_ENABLED':enabled,'PUSH_DELIVERY_RECIPIENT_IDS':ids}),self.Session() as db:
+                self.assertFalse(dispatch_one(db,lambda *a:self.fail('Disabled send')))
+                row=db.query(PushOutbox).one();self.assertEqual((row.state,row.attempts,row.lease_token),('queued',0,None))
+
+    def test_canary_environment_change_after_claim_releases_attempt(self):
+        self.device();self.send();self.collect()
+        with patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':str(self.user['user']['id'])}),self.Session() as db:
+            original_commit=db.commit;calls=[]
+            def change_policy():
+                original_commit();calls.append(1)
+                if len(calls)==1:os.environ['PUSH_DELIVERY_RECIPIENT_IDS']=str(self.other['user']['id'])
+            with patch.object(db,'commit',side_effect=change_policy):
+                self.assertFalse(dispatch_one(db,lambda *a:self.fail('Changed policy send')))
+            row=db.query(PushOutbox).one();self.assertEqual((row.state,row.attempts,row.lease_token),('queued',0,None))
+
+    def test_canary_environment_change_just_before_provider_is_fail_closed(self):
+        from src.modules.vehicle_hub import push_delivery
+        self.device();self.send();self.collect();original_summary=push_delivery.summary
+        with patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':str(self.user['user']['id'])}),self.Session() as db:
+            def changed_summary(*args):
+                result=original_summary(*args);os.environ['PUSH_DELIVERY_RECIPIENT_IDS']='malformed';return result
+            with patch.object(push_delivery,'summary',side_effect=changed_summary):
+                self.assertFalse(dispatch_one(db,lambda *a:self.fail('Malformed policy send')))
+            row=db.query(PushOutbox).one();self.assertEqual((row.state,row.attempts,row.lease_token),('queued',0,None))
     def test_logout_ticket_and_password_revision_prevent_dispatch(self):
         self.device();self.send();self.collect()
         self.client.post('/user/logout',headers=self.uh)
