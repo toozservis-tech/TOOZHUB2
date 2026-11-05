@@ -14,7 +14,8 @@ def test_mobile_release_upgrades_existing_baseline_and_is_repeatable(tmp_path):
              'vehicle_update_inbox_states', 'vehicle_update_inbox_actions',
              'google_billing_identities', 'google_subscriptions', 'service_job_photos',
              'customer_home_garages', 'referral_codes', 'referrals', 'referral_rewards',
-             'vehicle_transfer_invitations', 'admin_incidents', 'admin_incident_events', 'admin_incident_history'}
+             'vehicle_transfer_invitations', 'admin_incidents', 'admin_incident_events', 'admin_incident_history',
+             'admin_messages', 'admin_message_commands'}
     try:
         Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
         with engine.begin() as connection:
@@ -27,11 +28,17 @@ def test_mobile_release_upgrades_existing_baseline_and_is_repeatable(tmp_path):
             event=models.SecurityAccessLog(user_email='migration-user@example.com',event_type='request_failed');db.add(event);db.flush()
             case=AdminIncident(source_event_id=event.id,actor_key=event.user_email,fingerprint='a'*64,created_by=admin.id);db.add(case);db.flush()
             db.add(AdminIncidentEvent(incident_id=case.id,event_id=event.id))
-            db.add(AdminIncidentHistory(incident_id=case.id,admin_id=admin.id,action='note',status='open',version=1,note='Retained original support note'));db.commit()
+            db.add(AdminIncidentHistory(incident_id=case.id,admin_id=admin.id,action='note',status='open',version=1,note='Retained original support note'))
+            from src.modules.vehicle_hub.admin_message_models import AdminMessage
+            from datetime import datetime
+            recipient=models.Customer(tenant_id=901,email='migration-recipient@example.com',role='user');db.add(recipient);db.flush()
+            db.add(AdminMessage(recipient_id=recipient.id,sender_id=admin.id,sender_kind='admin',body='Retained private message',requires_ack=True,read_at=datetime(2026,11,5,12),acknowledged_at=datetime(2026,11,5,13)));db.commit()
         release.migrate(engine)
         with sessionmaker(bind=engine)() as db:
             assert db.query(models.SecurityAccessLog).count()==1
             assert db.query(AdminIncidentHistory).one().note=='Retained original support note'
+            preserved=db.query(AdminMessage).one()
+            assert preserved.body=='Retained private message' and preserved.acknowledged_at==datetime(2026,11,5,13)
         assert added.issubset(inspect(engine).get_table_names())
         with sessionmaker(bind=engine)() as db:
             assert db.get(models.Tenant, 901).name == 'Retained tenant'
@@ -87,7 +94,8 @@ def test_packaged_module_succeeds_in_fresh_python_process(tmp_path):
              'vehicle_update_inbox_states', 'vehicle_update_inbox_actions',
              'google_billing_identities', 'google_subscriptions', 'service_job_photos',
              'customer_home_garages', 'referral_codes', 'referrals', 'referral_rewards',
-             'vehicle_transfer_invitations', 'admin_incidents', 'admin_incident_events', 'admin_incident_history'}
+             'vehicle_transfer_invitations', 'admin_incidents', 'admin_incident_events', 'admin_incident_history',
+             'admin_messages', 'admin_message_commands'}
     Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
     engine.dispose()
     env = os.environ.copy()
@@ -102,6 +110,8 @@ def test_packaged_module_succeeds_in_fresh_python_process(tmp_path):
         from src.server.admin_incidents import ready
         assert ready(db)
         assert inspect(db.connection()).has_table('vehicle_transfer_invitations')
+        from src.server.admin_messages import ready as messages_ready
+        assert messages_ready(db)
     # Verify 0015 also compiles its own FKs when invoked independently rather
     # than inheriting metadata loaded by 0014 in the orchestrator process.
     import sqlite3

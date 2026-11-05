@@ -6338,3 +6338,5 @@ def update_intake_admin(intake_id: int, payload: IntakeAdminUpdate,
 # Support cases are additive to security history and retain the same assurance gate.
 from src.server.admin_incidents import create_router as _incident_router
 router.include_router(_incident_router(require_control_center_admin))
+from src.server.admin_messages import create_admin_router as _message_router
+router.include_router(_message_router(require_control_center_admin))

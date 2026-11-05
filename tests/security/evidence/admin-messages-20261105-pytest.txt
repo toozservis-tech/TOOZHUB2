@@ -1,0 +1,12 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.14, pytest-9.1.1, pluggy-1.7.0
+rootdir: /Users/toozservis/Developer/evidence-admin-messages-20261105/server/tests/api
+configfile: pytest.ini
+plugins: anyio-4.15.1
+collected 64 items
+
+tests/api ...........................................................    [ 92%]
+tests/api/test_admin_incident_race.py ..                                 [ 95%]
+tests/api/test_mobile_release_migration.py ...                           [100%]
+
+====================== 64 passed, 2767 warnings in 26.00s ======================

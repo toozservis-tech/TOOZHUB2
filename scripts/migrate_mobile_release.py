@@ -17,6 +17,7 @@ from scripts.migrate_referrals import migrate as migrate_referrals
 from scripts.migrate_vehicle_transfers import migrate as migrate_transfers
 from scripts.migrate_transfer_reinvites import migrate as migrate_transfer_reinvites
 from scripts.migrate_admin_incidents import migrate as migrate_admin_incidents
+from scripts.migrate_admin_messages import migrate as migrate_admin_messages
 
 
 def migrate(bind=None):
@@ -34,6 +35,7 @@ def migrate(bind=None):
     migrate_transfers(bind)
     migrate_transfer_reinvites(bind)
     migrate_admin_incidents(bind)
+    migrate_admin_messages(bind)
 
 
 if __name__ == '__main__':
