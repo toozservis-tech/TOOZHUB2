@@ -157,6 +157,9 @@ test('actual normal evidence and guided terminal routes use the same renderer af
 test('customer HTML loads the public helper before service features without changing API gates', () => {
     const webAccess = fs.readFileSync(path.join(root, 'src/server/web_access.py'), 'utf8');
     assert.match(webAccess, /PUBLIC_WEB_PAGES\s*=\s*\{[\s\S]*?"job-timeline\.js"/);
-    assert.match(webAccess, /<script src="job-timeline\.js"><\/script><script src="service-features\.js"><\/script>/);
+    const scripts = [...webAccess.matchAll(/<script\s+src="([^"]+)"\s*><\/script>/g)].map(match => match[1]);
+    assert.equal(scripts.filter(src => src === 'job-timeline.js').length, 1, 'load the timeline helper exactly once');
+    assert.equal(scripts.filter(src => src === 'service-features.js').length, 1, 'load service features exactly once');
+    assert.ok(scripts.indexOf('job-timeline.js') < scripts.indexOf('service-features.js'), 'load the timeline helper before its service consumer');
     assert.equal((webAccess.match(/job-timeline\.js/g) || []).length, 2);
 });
