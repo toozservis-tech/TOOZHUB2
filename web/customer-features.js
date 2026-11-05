@@ -197,6 +197,7 @@
         const body=panel('Archiv vlastnictví'), item=await request(`/api/v1/vehicle-archives/${id}`);if(!body.isConnected)return;
         body.innerHTML=`<h3>${h(item.nickname)}</h3><p>${h(item.plate)} · ${h(item.vin)}</p>`;
         body.append(archiveProfileSection(document,item.profile));
+        if(item.can_invite_new_owner === true && global.VehicleTransfers)body.append(action('Pozvat nového majitele',()=>global.VehicleTransfers.sendFromArchive(id),false));
         for(const record of item.records){const el=document.createElement('article');el.className='customer-feature-card';el.innerHTML=`<h4>${h(record.description)}</h4><p>${h(date(record.performed_at))} · ${h(record.mileage??'—')} km · ${h(money(record.price))}</p><p>${h(record.note)}</p>`;
             for(const att of archiveAttachments(record.attachments))el.append(action(att.name,()=>download(`/api/v1/vehicle-archives/${id}/attachment?key=${encodeURIComponent(att.key)}`,att.name)));
             body.append(el);
@@ -228,6 +229,7 @@
         if(global.ServiceFeatures)el.append(action('Průběh servisu a aktualizace',()=>global.ServiceFeatures.jobs(vehicle.id)));
         el.append(action('Fotodokumentace oprav',()=>global.isServiceWorkspaceRole?.()&&global.ServiceFeatures?global.ServiceFeatures.repairs(vehicle):repairSessions(vehicle.id)));
         if(!global.isServiceWorkspaceRole?.())el.append(action('Náklady a statistiky',()=>analytics(panel('Náklady vozidla'),vehicle.id)));
+        if(!global.isServiceWorkspaceRole?.() && global.VehicleTransfers)el.append(action('Správa vozidla',()=>global.VehicleTransfers.openManagement(vehicle.id)));
         el.append(action('PDF report',()=>download(`/api/v1/vehicles/${vehicle.id}/pdf`,'historie-vozidla.pdf')));
         $('vehicleModalBody').prepend(el);
     }
@@ -299,10 +301,13 @@
         const tabs=document.querySelector('#dashboard .tabs');if(!tabs||$('customerOverviewTab'))return;
         for(const [key,label] of [['customerOverview','Přehled'],['customerArchives','Archiv vlastnictví'],['customerInvitations','Pozvánky servisů']]){const b=action(label,()=>global.switchTab(key));b.className='tab';b.dataset.tabKey=key;tabs.append(b);const el=document.createElement('div');el.className='tab-content';el.id=key+'Tab';$('dashboard').append(el);}
         tabs.prepend(tabs.querySelector('[data-tab-key="customerOverview"]'));
-        const add=$('addVehicleTab');const row=document.createElement('div');row.className='customer-feature-actions';row.append(action('Načíst ORV / QR kód',registryPanel));add.prepend(row);
+        const add=$('addVehicleTab');const row=document.createElement('div');row.className='customer-feature-actions';row.append(action('Načíst ORV / QR kód',registryPanel));
+        if(global.VehicleTransfers){row.append(action('Převzetí vozidla',()=>global.VehicleTransfers.openInbox()));const entry=action('Převzetí vozidla',()=>global.VehicleTransfers.openInbox());entry.dataset.vehicleTransfersEntry='';$('vehiclesTab')?.prepend(entry);}
+        add.prepend(row);
     }
     function load(tab) {const fn={customerOverview:overview,customerArchives:archives,customerInvitations:invitations}[tab];if(fn)void fn().catch(e=>{if(e.name!=='AbortError')showError(e.message);});}
     global.addEventListener('admin-session-ended',()=>global.CustomerFeatures?.reset());
+    global.addEventListener('vehicle-ownership-changed',()=>{if(global.CustomerWeb && !global.isServiceWorkspaceRole?.()){global.closeVehicleModal?.();void global.loadVehicles?.();}});
     global.CustomerFeatures={ui:{request,action,panel,input,h,showError,confirmAction,readImage,photoButton,download,repairPhotos,tierError},downloadPDF:id=>download(`/api/v1/vehicles/${Number(id)}/pdf`,'historie-vozidla.pdf'),install,load,vehicleLoaded,profileLoaded,extraVehicleData,clearDraft:()=>{draft=null;},reset:()=>{draft=null;loadVersion++;for(const dialog of document.querySelectorAll('dialog.customer-feature-dialog')){dialog.close();dialog.remove();}for(const id of ['customerOverviewTab','customerArchivesTab','customerInvitationsTab'])if($(id))$(id).replaceChildren();}};
     if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install);else install();
 })(typeof window==='undefined'?globalThis:window);

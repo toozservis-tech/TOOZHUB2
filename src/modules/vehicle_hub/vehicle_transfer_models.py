@@ -8,7 +8,7 @@ class VehicleTransferInvitation(Base):
     __tablename__ = 'vehicle_transfer_invitations'
     id = Column(Integer, primary_key=True)
     vehicle_id = Column(Integer, ForeignKey('vehicles.id'), nullable=False, index=True)
-    archive_id = Column(Integer, ForeignKey('vehicle_ownership_archives.id'), nullable=False, unique=True)
+    archive_id = Column(Integer, ForeignKey('vehicle_ownership_archives.id'), nullable=False, index=True)
     seller_id = Column(Integer, ForeignKey('customers.id'), nullable=False, index=True)
     buyer_email = Column(String(320), nullable=False, index=True)
     ownership_id = Column(Integer, ForeignKey('vehicle_ownerships.id'), nullable=False)

@@ -23,3 +23,7 @@
 .referral-muted{font-size:.88rem;color:#c4d0e2}.referral-state{font-weight:600;color:#c4d0e2}.referral-state-active{color:#9de4b1}.referral-state-waiting,.referral-state-queued{color:#ffd199}.referral-state-revoked{color:#f3b9b9}
 .referral-notice{margin:16px 20px 0;padding:12px 14px;border:1px solid #c49356;border-radius:10px;background:#453c31;white-space:pre-wrap}.referral-notice[hidden]{display:none}.referral-error{color:#ffc9bf}.referral-confirm{max-width:540px}
 @media(max-width:480px){.referral-dialog{width:calc(100vw - 12px);max-width:calc(100vw - 12px);max-height:calc(100dvh - 12px);border-radius:14px}.referral-header,.referral-body{padding:14px}.referral-section{padding:14px}.referral-actions .referral-button{flex:1 1 140px}.referral-header h2{font-size:1.1rem}.referral-header .referral-button{font-size:.9rem;padding:8px 12px}.referral-counts{font-size:.94rem}.referral-notice{margin:12px 14px 0}}
+
+/* Explicit consent stays readable beside its native checkbox in both web shells. */
+.referral-dialog .transfer-ack{display:flex;align-items:flex-start;gap:10px;margin:14px 0;line-height:1.5}
+.referral-dialog .transfer-ack input[type="checkbox"]{flex:0 0 22px;width:22px;height:22px;min-height:22px;margin:1px 0 0;padding:0;accent-color:#ff9b28}

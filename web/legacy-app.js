@@ -6641,6 +6641,9 @@
                     setFieldError('vehiclePlate', 'vehiclePlateError', 'Zadejte SPZ vozidla');
                 }
                 showAlert('Nepodařilo se přidat vozidlo: ' + errMsg, 'error');
+                if (/VIN.*(existuje|převod)|převod.*účtu|VEHICLE_DUPLICATE/i.test(errMsg)) {
+                    window.VehicleTransfers?.conflict(document.getElementById('addVehicleTab'));
+                }
             }
         }
 

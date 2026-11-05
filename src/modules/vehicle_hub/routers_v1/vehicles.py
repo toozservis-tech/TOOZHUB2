@@ -1956,11 +1956,11 @@ def create_vehicle(
             if active_owner and active_owner.id != current_user.id and active_owner_assignment and active_owner_assignment.is_active:
                 raise HTTPException(
                     status_code=409,
-                    detail="Vozidlo s tímto VIN již existuje. Převod z jiného účtu musí ověřit administrátor.",
+                    detail="Vozidlo s tímto VIN již existuje. Otevřete Vozidla → Převzetí vozidla a potvrďte pozvánku na svůj e-mail. Pokud pozvánku nemáte, původní majitel ji odešle ve Správě vozidla při prodeji nebo z Archivu vlastnictví. Administrátor řeší pouze výjimky.",
                 )
 
             if not may_restore_vehicle_profile(db, vehicle=existing_global_vehicle, customer=current_user):
-                raise HTTPException(409, "Vozidlo s tímto VIN již existuje. Převod z jiného účtu musí ověřit administrátor.")
+                raise HTTPException(409, "Vozidlo s tímto VIN již existuje. Otevřete Vozidla → Převzetí vozidla a potvrďte pozvánku na svůj e-mail. Původní majitel ji může odeslat z Archivu vlastnictví. Administrátor řeší pouze výjimky.")
 
             # A restored profile already belongs to this tenant and already
             # counts towards its quota; do not count the same car twice.

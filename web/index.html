@@ -9136,7 +9136,7 @@
                             <div class="form-group">
                                 <label for="regReferralCode">Kód pozvánky (nepovinný):</label>
                                 <input type="text" id="regReferralCode" data-testid="input-reg-referral-code" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="40" aria-describedby="regReferralHint regReferralStatus">
-                                <small id="regReferralHint">Pozvánka nepovoluje přístup k vozidlům ani sdílení údajů. Kód můžete opravit nebo odebrat.</small>
+                                <small id="regReferralHint">Po ověření e-mailu pozývající uvidí vaše jméno, e-mail a stav splnění podmínek odměny. Neuvidí vaše vozidla ani soukromé doklady. Kód můžete před registrací opravit nebo odebrat.</small>
                                 <p id="regReferralStatus" role="status" aria-live="polite"></p>
                                 <button type="button" id="regReferralRemove" class="btn btn-secondary" hidden>Pokračovat bez kódu</button>
                             </div>
@@ -9597,6 +9597,7 @@
     <script src="referral-registration.js"></script>
     <script src="vendor/referral-qr.js"></script>
     <script src="referral-features.js"></script>
+    <script src="vehicle-transfers.js"></script>
     <script src="storage_migration.js"></script>
     <script src="/admin-session.js"></script>
     <script src="legacy-actions.js"></script>

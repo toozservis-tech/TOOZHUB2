@@ -6,7 +6,7 @@ from hmac import compare_digest
 from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from sqlalchemy import func
-from .models import Vehicle, VehicleOwnershipArchive, Reservation
+from .models import Vehicle, VehicleOwnershipArchive, Reservation, Customer
 from .ownership import get_primary_vehicle_owner_assignment, lock_vehicle_access, release_vehicle_owner_assignment
 from .service_job_models import ServiceJob
 from .vehicle_lifecycle_models import VehicleLifecycleEvent
@@ -177,7 +177,7 @@ def apply_action(db, *, vehicle_id, actor, payload, legacy_assignment=None):
     if payload.action == 'sold' and sale.mode == 'new_owner':
         from .vehicle_transfers import create
         invitation = create(db, vehicle=vehicle, archive=archive, assignment=assignment,
-            seller=actor, buyer_email=sale.buyer_email)
+            seller=db.get(Customer, assignment.customer_id), buyer_email=sale.buyer_email)
         result['transfer_invitation_id'] = invitation.id
         result['message'] = 'Prodej byl zaznamenán a pozvánka připravena. Nový majitel převezme vozidlo až po potvrzení. Stav odeslání najdete v Převzetí vozidla.'
     db.add(VehicleLifecycleEvent(vehicle_id=vehicle_id, ownership_id=assignment.id,

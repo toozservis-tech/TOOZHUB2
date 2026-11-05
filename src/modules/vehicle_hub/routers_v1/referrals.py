@@ -25,19 +25,27 @@ def _reward(row):
                 lifetime=row.ends_at is None, reason=row.reason, revoked_at=row.revoked_at, waiting_for_paid=row.waiting_for_paid)
 
 
+def _entry(db, row, *, admin=False):
+    target = r._target(db, row)
+    available = target is not None and not target.is_deleted and not target.is_disabled
+    verification = db.get(r.EmailVerification, target.id) if available else None
+    verified = verification is not None and verification.verified_at is not None
+    # Only the actual referrer (or a privileged administrator) reaches this DTO.
+    # Unverified addresses may belong to somebody else; never disclose those.
+    contact = available and (admin or verified)
+    return dict(id=row.id, kind=row.kind, status=row.reason, created_at=row.created_at,
+                qualified_at=row.qualified_at, email_verified=verified,
+                contact_available=contact, name=target.name if contact else None,
+                email=target.email if contact else None)
+
+
 def _status(db, owner, *, admin=False):
     r.evaluate(db, owner)
     rows=db.query(r.Referral).filter_by(referrer_id=owner.id).order_by(r.Referral.id.desc()).all()
     users=sum(x.kind == 'user' and x.qualified_at is not None for x in rows)
     services=sum(x.kind == 'service' and x.qualified_at is not None for x in rows)
     rewards=db.query(r.ReferralReward).filter_by(customer_id=owner.id).order_by(r.ReferralReward.id.desc()).all()
-    details=[]
-    for row in rows[:200]:
-        target=r._target(db,row)
-        details.append(dict(id=row.id, kind=row.kind, status=row.reason, created_at=row.created_at,
-                            qualified_at=row.qualified_at,
-                            name=(target.name or target.email) if admin and target else None,
-                            email=target.email if admin and target else None))
+    details=[_entry(db, row, admin=admin) for row in rows[:200]]
     return dict(customer_id=owner.id, name=owner.name or owner.email, email=owner.email if admin else None,
                 registrations=len(rows), qualified_users=users, qualified_services=services,
                 users_to_next_reward=3-users%3, referrals=details, rewards=[_reward(g) for g in rewards],
@@ -52,6 +60,17 @@ def my_referrals(current_user: Customer=Depends(get_current_user), db: Session=D
     result=_status(db,current_user)
     root=PUBLIC_API_BASE_URL.rstrip('/')+'/api/v1/referrals/join/'+code
     result.update(code=code, user_url=root+'?kind=user', service_url=root+'?kind=service')
+    db.commit()
+    return result
+
+
+@router.get('/me/invitees/{referral_id}')
+def my_invitee(referral_id: int, current_user: Customer=Depends(get_current_user), db: Session=Depends(get_db)):
+    r.require_ready(db)
+    row = db.query(r.Referral).filter_by(id=referral_id, referrer_id=current_user.id).first()
+    if row is None: raise HTTPException(404, 'Pozvaný účet nebyl nalezen.')
+    r.evaluate(db, current_user)
+    result = _entry(db, row)
     db.commit()
     return result
 
@@ -157,4 +176,4 @@ def join(code:str,kind:Literal['user','service']='user',db:Session=Depends(get_d
     link=html.escape(f'spravavozidel://referral?code={code}&kind={kind}',quote=True)
     title='Pozvání servisu' if kind=='service' else 'Pozvání do Evidence Vozidel'
     web_link=html.escape(PUBLIC_API_BASE_URL.rstrip('/') + '/web/customer.html#referral=' + code + '&kind=' + kind,quote=True)
-    return HTMLResponse(f'''<!doctype html><html lang="cs"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>body{{font:18px system-ui;background:#202b40;color:white;margin:0;padding:32px;line-height:1.6}}main{{max-width:560px;margin:auto}}a{{display:block;background:#ff9c31;color:#202b40;padding:16px;border-radius:16px;text-align:center;margin:24px 0;font-weight:bold}}code{{overflow-wrap:anywhere}}</style><main><h1>{title}</h1><p>Pozvánka vás provede novou registrací. Před použitím účtu ověříte svůj e-mail.</p><a href="{link}">Otevřít pozvánku v aplikaci</a><a href="{web_link}">Pokračovat registrací na webu</a><p>Pokud aplikaci ještě nemáte, nainstalujte Evidence Vozidel z obchodu a při registraci vložte kód:</p><code>{safe}</code><p>Pozvánka nepředává přístup k vozidlům. Započítá se až ověřená registrace a první vozidlo, u schváleného servisu první dokončená zakázka.</p></main></html>''',headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"})
+    return HTMLResponse(f'''<!doctype html><html lang="cs"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>body{{font:18px system-ui;background:#202b40;color:white;margin:0;padding:32px;line-height:1.6}}main{{max-width:560px;margin:auto}}a{{display:block;background:#ff9c31;color:#202b40;padding:16px;border-radius:16px;text-align:center;margin:24px 0;font-weight:bold}}code{{overflow-wrap:anywhere}}</style><main><h1>{title}</h1><p>Pozvánka vás provede novou registrací. Před použitím účtu ověříte svůj e-mail.</p><a href="{link}">Otevřít pozvánku v aplikaci</a><a href="{web_link}">Pokračovat registrací na webu</a><p>Pokud aplikaci ještě nemáte, nainstalujte Evidence Vozidel z obchodu a při registraci vložte kód:</p><code>{safe}</code><p>Po ověření e-mailu uvidí pozývající vaše jméno, e-mail a stav splnění podmínek odměny. Pozvánka nepředává přístup k vozidlům ani dokladům. Započítá se až ověřená registrace a první vozidlo, u schváleného servisu první dokončená zakázka.</p></main></html>''',headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"})

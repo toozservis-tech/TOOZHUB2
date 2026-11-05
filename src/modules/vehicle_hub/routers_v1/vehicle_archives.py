@@ -42,11 +42,13 @@ def list_archives(user: Customer = Depends(get_current_user), db: Session = Depe
 @router.get('/{archive_id}')
 def archive_detail(archive_id: int, user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
     row = owned_archive(db, user, archive_id)
+    from ..vehicle_transfers import can_invite_archive
     records = db.query(ServiceRecord).join(VehicleRecordPrivacy,
         VehicleRecordPrivacy.record_id == ServiceRecord.id).filter(VehicleRecordPrivacy.archive_id == row.id).order_by(ServiceRecord.performed_at.desc()).all()
     repairs = db.query(RepairPhotoSession).join(VehicleRepairPrivacy,
         VehicleRepairPrivacy.session_id == RepairPhotoSession.id).filter(VehicleRepairPrivacy.archive_id == row.id).all()
     return {**archive_out(row), 'profile': json.loads(row.profile_json),
+            'can_invite_new_owner': can_invite_archive(db, row, user),
             'records': [ServiceRecordOutV1.model_validate(record, from_attributes=True) for record in records],
             'repairs': [{'id': repair.id, 'vehicle_id': repair.vehicle_id, 'service_id': repair.service_id, 'title': repair.title, 'created_at': repair.created_at} for repair in repairs]}
 

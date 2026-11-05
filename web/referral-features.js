@@ -220,10 +220,20 @@
             if (!summary.referrals.length) area.append(text('p','Přes tento kód se zatím nikdo nezaregistroval.'));
             for (const entry of summary.referrals.slice(0,200)) {
                 const card=text('article','', 'referral-card');
-                card.append(text('h4',admin && entry.name ? entry.name : (entry.kind === 'service' ? 'Pozvaný servis' : 'Pozvaný uživatel') + ' #' + entry.id));
-                if (admin && entry.email) card.append(text('p',entry.email));
+                const contactVisible = admin || entry.contact_available === true;
+                card.append(text('h4',contactVisible && entry.name ? entry.name : (entry.kind === 'service' ? 'Pozvaný servis' : 'Pozvaný uživatel') + ' #' + entry.id));
+                if (contactVisible && entry.email) card.append(text('p',entry.email));
                 card.append(text('p',statuses[entry.status] || 'Čeká na kontrolu','referral-state'),text('p','Registrace ' + date(entry.created_at),'referral-muted'));
-                if (entry.qualified_at) card.append(text('p','Podmínky splněny ' + date(entry.qualified_at),'referral-muted'));
+                const detail=doc.createElement('details'), title=text('summary','Zobrazit podrobnosti pozvání');
+                detail.dataset.referralId=String(entry.id); detail.append(title);
+                detail.append(text('p',entry.kind === 'service' ? 'Typ účtu: servis' : 'Typ účtu: uživatel'));
+                detail.append(text('p','Ověření e-mailu: ' + (entry.email_verified === true ? 'Dokončeno' : 'Čeká na ověření')));
+                if (!contactVisible) detail.append(text('p','Kontakt se zobrazí po ověření e-mailu pozvaným účtem.','referral-muted'));
+                if (entry.qualified_at) detail.append(text('p','Podmínky splněny ' + date(entry.qualified_at)));
+                else detail.append(text('p',statuses[entry.status] || 'Čeká na kontrolu'));
+                detail.append(text('p','Registrace je přiřazená k tomuto osobnímu odkazu nebo QR kódu. Samotné zobrazení či sdílení kódu se jako registrace nepočítá.','referral-muted'));
+                detail.append(text('p','Pozvánka nepředává přístup k vozidlům, zakázkám ani soukromým dokumentům.','referral-muted'));
+                card.append(detail);
                 area.append(card);
             }
             if (summary.registrations > 200) area.append(text('p','Zobrazeno posledních 200 registrací; souhrny zahrnují celou historii.','referral-muted'));

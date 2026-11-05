@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from hashlib import sha256
 from hmac import compare_digest
 import secrets
+import json
 from fastapi import HTTPException
 from sqlalchemy import or_, update
 from .models import Customer, Vehicle, VehicleOwnership
@@ -33,6 +34,137 @@ def create(db, *, vehicle, archive, assignment, seller, buyer_email):
         ownership_started_at=assignment.owned_from or assignment.assigned_at,
         released_at=assignment.owned_until, expires_at=datetime.utcnow() + timedelta(days=14))
     db.add(row); db.flush()
+    return row
+
+
+def archive_period(db, archive):
+    """Resolve the exact historic period, never the vehicle's legacy email."""
+    from .models import VehicleOwnershipArchive
+    try:
+        vehicle_id, ownership_id, started = archive.period_key.split(':', 2)
+        old = db.get(VehicleOwnership, int(ownership_id))
+    except (ValueError, AttributeError):
+        return None
+    if (old is None or old.vehicle_id != archive.vehicle_id or int(vehicle_id) != archive.vehicle_id
+        or old.customer_id != archive.owner_customer_id or old.is_active or old.owned_until is None
+        or (old.owned_from or old.assigned_at).isoformat() != started):
+        return None
+    if json.loads(archive.profile_json).get('lifecycle', {}).get('action') != 'sold':
+        return None
+    candidate = Invite(vehicle_id=old.vehicle_id, seller_id=old.customer_id, ownership_id=old.id,
+        ownership_started_at=old.owned_from or old.assigned_at, released_at=old.owned_until)
+    return old if period_available(db, candidate) else None
+
+
+def can_invite_archive(db, archive, actor):
+    from .schema_management import module_schema_report
+    return (archive.owner_customer_id == actor.id
+        and module_schema_report(db, 'vehicle_transfers')['available']
+        and archive_period(db, archive) is not None
+        and not any(effective_status(db, row) in ('pending', 'accepted')
+            for row in db.query(Invite).filter_by(archive_id=archive.id)))
+
+
+def from_archive(db, archive_id, actor, buyer_email):
+    from .models import VehicleOwnershipArchive
+    ready(db); active_actor(db, actor)
+    archive = db.get(VehicleOwnershipArchive, archive_id)
+    if archive is None or archive.owner_customer_id != actor.id:
+        raise HTTPException(404, 'Archiv prodeje nebyl nalezen pro tento účet.')
+    lock_vehicle_access(db, archive.vehicle_id)
+    if db.get_bind().dialect.name == 'sqlite':
+        db.execute(update(Vehicle).where(Vehicle.id == archive.vehicle_id).values(id=Vehicle.id))
+    db.expire_all(); archive = db.get(VehicleOwnershipArchive, archive_id)
+    if buyer_email == actor.email.strip().lower():
+        raise HTTPException(422, 'Zadejte e-mail nového majitele, nikoli svého účtu.')
+    existing = db.query(Invite).filter_by(archive_id=archive_id).order_by(Invite.id.desc()).first()
+    if existing:
+        if existing.buyer_email == buyer_email and effective_status(db, existing) in ('pending', 'accepted'):
+            return existing
+        if effective_status(db, existing) in ('pending', 'accepted', 'stale'):
+            raise HTTPException(409, 'K tomuto prodeji již existuje pozvánka. Pro změnu e-mailu nejprve zrušte čekající pozvánku v Převzetí vozidla.')
+    period = archive_period(db, archive)
+    if period is None:
+        raise HTTPException(409, 'Tento prodej již nelze použít k převodu. Vlastnictví se změnilo nebo vyžaduje ověření administrátorem.')
+    if existing and existing.status == 'pending':
+        existing.status = 'expired'; existing.code_digest = None
+    return create(db, vehicle=db.get(Vehicle, archive.vehicle_id), archive=archive,
+        assignment=period, seller=actor, buyer_email=buyer_email)
+
+
+def require_admin(db, actor):
+    active_actor(db, actor)
+    if normalize_role(actor.role) not in ('admin', 'developer_admin'):
+        raise HTTPException(403, 'Ověření převodu je dostupné pouze administrátorovi.')
+
+
+def admin_review(db, vehicle_id, actor):
+    from .models import VehicleOwnershipArchive
+    from .vehicle_lifecycle import ownership_token, current_state
+    ready(db); require_admin(db, actor)
+    vehicle = db.get(Vehicle, vehicle_id)
+    if vehicle is None: raise HTTPException(404, 'Vozidlo nebylo nalezeno.')
+    period = get_primary_vehicle_owner_assignment(db, vehicle_id)
+    archive = db.query(VehicleOwnershipArchive).filter_by(vehicle_id=vehicle_id).order_by(
+        VehicleOwnershipArchive.created_at.desc(), VehicleOwnershipArchive.id.desc()).first()
+    if period:
+        state, version = current_state(db, period)
+        identity = f'active:{ownership_token(vehicle_id, period)}:{state}:{version}'
+        seller = db.get(Customer, period.customer_id)
+        allowed = seller is not None and not seller.is_deleted and not seller.is_disabled
+    else:
+        identity = f'archive:{archive.id if archive else 0}:{archive.period_key if archive else ""}'
+        seller = db.get(Customer, archive.owner_customer_id) if archive and archive.owner_customer_id else None
+        allowed = bool(seller and not seller.is_deleted and not seller.is_disabled and archive_period(db, archive))
+    return dict(vehicle_id=vehicle_id, title=' '.join(v for v in [vehicle.brand, vehicle.model] if v) or 'Vozidlo',
+        vin=vehicle.vin, plate=vehicle.plate, owner_email=seller.email if seller else None,
+        review_token=sha256(identity.encode()).hexdigest(), can_invite=allowed,
+        reason=('Po ověření podkladů odešlete pozvánku. Současné vlastnictví se ukončí a soukromé podklady zůstanou v archivu. Nový majitel musí převzetí potvrdit.' if allowed else
+            'Chybí ověřitelné vlastnické období. Neprovádějte převod pouze podle VIN; nejprve dořešte podklady.'),
+        archive_id=None if period else (archive.id if archive else None))
+
+
+def admin_invite(db, vehicle_id, actor, payload):
+    from .models import DeveloperActionAuditLog, VehicleOwnershipArchive
+    from .vehicle_lifecycle_models import VehicleLifecycleEvent
+    from . import vehicle_lifecycle as lifecycle
+    from .routers_v1.vehicle_lifecycle import VehicleLifecycleAction, VehicleSaleDetails
+    ready(db); require_admin(db, actor)
+    lock_vehicle_access(db, vehicle_id)
+    if db.get_bind().dialect.name == 'sqlite':
+        db.execute(update(Vehicle).where(Vehicle.id == vehicle_id).values(id=Vehicle.id))
+    db.expire_all()
+    previous = db.query(VehicleLifecycleEvent).filter_by(actor_id=actor.id, client_id=str(payload.request_id)).first()
+    if previous:
+        previous_result = json.loads(previous.response_json)
+        row = db.get(Invite, previous_result.get('transfer_invitation_id'))
+        if previous.vehicle_id != vehicle_id or previous.note != payload.reason or row is None or row.buyer_email != payload.buyer_email:
+            raise HTTPException(409, 'Toto potvrzení již patří jinému převodu.')
+        return row
+    review = admin_review(db, vehicle_id, actor)
+    if not review['can_invite'] or not compare_digest(review['review_token'], payload.review_token):
+        raise HTTPException(409, 'Stav vlastnictví se změnil nebo převod není dostupný. Načtěte náhled znovu.')
+    period = get_primary_vehicle_owner_assignment(db, vehicle_id)
+    if period:
+        seller = db.get(Customer, period.customer_id)
+        if payload.buyer_email == seller.email.strip().lower():
+            raise HTTPException(422, 'Nový majitel nemůže být současný vlastník.')
+        _, version = lifecycle.current_state(db, period)
+        result = lifecycle.apply_action(db, vehicle_id=vehicle_id, actor=actor,
+            payload=VehicleLifecycleAction(client_id=payload.request_id, ownership_id=period.id,
+                ownership_token=lifecycle.ownership_token(vehicle_id, period), expected_version=version,
+                action='sold', note=payload.reason, sale=VehicleSaleDetails(mode='new_owner', buyer_email=payload.buyer_email)),
+            legacy_assignment=period)
+        row = db.get(Invite, result['transfer_invitation_id'])
+    else:
+        archive = db.get(VehicleOwnershipArchive, review['archive_id'])
+        seller = db.get(Customer, archive.owner_customer_id)
+        row = from_archive(db, archive.id, seller, payload.buyer_email)
+    db.add(DeveloperActionAuditLog(developer_id=actor.id, developer_email=actor.email,
+        action_type='vehicle.transfer.verified_invitation', target_resource=f'vehicle:{vehicle_id}',
+        parameters_json=json.dumps({'invitation_id': row.id, 'reason': payload.reason,
+            'request_id': str(payload.request_id), 'seller_id': row.seller_id}, ensure_ascii=False),
+        result='success', status_code=200))
     return row
 
 

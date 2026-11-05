@@ -15,6 +15,14 @@ from src.modules.vehicle_hub.ownership import transfer_vehicle_to_new_owner, rel
 from src.modules.vehicle_hub.database import get_db
 from src.modules.vehicle_hub.routers_v1.auth import get_current_user
 
+@pytest.fixture(autouse=True)
+def isolated_transfer_attempt_budgets():
+    # Each fixture database reuses customer IDs but represents a different account universe.
+    from src.core.rate_limiter import rate_limiter
+    rate_limiter.clear()
+    yield
+    rate_limiter.clear()
+
 @pytest.fixture
 def sale(ctx, monkeypatch):
     db, seller, service, buyer, vehicle, assignment, link = ctx
@@ -214,3 +222,111 @@ def test_repeated_acceptance_after_resale_is_receipt_only(sale):
     assert routes.decide_transfer(row.id, routes.Decision(accept=True, code=code), buyer, db)['status'] == 'accepted'
     assert db.query(VehicleOwnership).filter_by(vehicle_id=vehicle.id, customer_id=seller.id, is_active=True).count() == 1
     assert db.query(VehicleOwnership).filter_by(vehicle_id=vehicle.id, customer_id=buyer.id, is_active=True).count() == 0
+
+
+def test_legacy_sold_archive_can_invite_but_stranger_admin_cannot_impersonate(ctx, monkeypatch):
+    from uuid import uuid4
+    monkeypatch.setattr('src.modules.email_client.service.EmailService.send_simple_email', lambda *a, **k: True)
+    db,seller,service,buyer,vehicle,*_=ctx
+    buyer.email='buyer@example.com';db.commit()
+    sold=apply(ctx,payload(ctx,'sold',sale={'mode':'outside_app','reason':'dealer'}))
+    archive_id=sold['archive_id']
+    assert vehicle_archives.archive_detail(archive_id,seller,db)['can_invite_new_owner']
+    for who in (buyer,service):
+        with pytest.raises(HTTPException) as error:
+            routes.invite_from_archive(archive_id,routes.Recipient(buyer_email=buyer.email),who,db)
+        assert error.value.status_code==(403 if who is service else 404)
+    service.role='admin';db.commit()
+    assert not vehicle_archives.archive_detail(archive_id,service,db)['can_invite_new_owner']
+    result=routes.invite_from_archive(archive_id,routes.Recipient(buyer_email=buyer.email),seller,db)
+    assert result['status']=='pending' and result['delivery_status']=='sent'
+    assert routes.invite_from_archive(archive_id,routes.Recipient(buyer_email=buyer.email),seller,db)['id']==result['id']
+    assert db.query(Invite).count()==1 and not db.query(VehicleOwnership).filter_by(is_active=True).first()
+    assert not vehicle_archives.archive_detail(archive_id,seller,db)['can_invite_new_owner']
+
+
+def test_archive_invite_rejects_scrapped_and_intervening_owner(ctx):
+    db,seller,service,buyer,vehicle,*_=ctx
+    buyer.email='buyer@example.com';db.commit()
+    result=apply(ctx,payload(ctx,'scrapped'))
+    with pytest.raises(HTTPException) as error:
+        routes.invite_from_archive(result['archive_id'],routes.Recipient(buyer_email=buyer.email),seller,db)
+    assert error.value.status_code==409
+    assert not vehicle_archives.archive_detail(result['archive_id'],seller,db)['can_invite_new_owner']
+
+
+def test_admin_verified_transfer_is_audited_and_still_needs_recipient_consent(ctx, monkeypatch):
+    from uuid import uuid4
+    from src.modules.vehicle_hub.models import DeveloperActionAuditLog
+    db,seller,admin,buyer,vehicle,assignment,link=ctx
+    seller.email='seller@example.com';buyer.email='buyer@example.com';admin.role='admin';db.commit()
+    mail=[]
+    monkeypatch.setattr('src.modules.email_client.service.EmailService.send_simple_email',lambda self,*a,**k: mail.append(a) or True)
+    review=routes.review_transfer(vehicle.id,admin,db)
+    body=routes.VerifiedTransfer(buyer_email=buyer.email,reason='Ověřena kupní smlouva a souhlas původního majitele.',review_token=review['review_token'],request_id=uuid4())
+    result=routes.verify_transfer(vehicle.id,body,admin,db)
+    assert result['status']=='pending' and result['buyer_email']==buyer.email
+    assert db.get(Invite,result['id']).seller_id==seller.id
+    assert not db.query(VehicleOwnership).filter_by(is_active=True).first()
+    assert db.query(DeveloperActionAuditLog).filter_by(action_type='vehicle.transfer.verified_invitation').count()==1
+    assert routes.verify_transfer(vehicle.id,body,admin,db)['id']==result['id'] and len(mail)==1
+    code=re.search(r'Jednorázový kód: ([0-9a-f]+)',mail[0][2]).group(1)
+    assert routes.decide_transfer(result['id'],routes.Decision(accept=True,code=code),buyer,db)['status']=='accepted'
+    assert vehicle.user_email==buyer.email
+    assert vehicle_archives.archive_detail(result['archive_id'],seller,db)['profile']['lifecycle']['reported_by']==admin.id
+
+
+def test_admin_transfer_stale_preview_role_and_uuid_guards(ctx, monkeypatch):
+    from uuid import uuid4
+    db,seller,admin,buyer,vehicle,*_=ctx
+    buyer.email='buyer@example.com';db.commit()
+    for who in (seller,admin,buyer):
+        with pytest.raises(HTTPException) as error: routes.review_transfer(vehicle.id,who,db)
+        assert error.value.status_code==403
+    admin.role='admin';db.commit()
+    review=routes.review_transfer(vehicle.id,admin,db)
+    apply(ctx,payload(ctx,'deposited'))
+    request=routes.VerifiedTransfer(buyer_email=buyer.email,reason='Ověřená smlouva před změnou stavu.',review_token=review['review_token'],request_id=uuid4())
+    with pytest.raises(HTTPException) as error: routes.verify_transfer(vehicle.id,request,admin,db)
+    assert error.value.status_code==409 and db.query(Invite).count()==0
+    assert db.query(VehicleOwnership).filter_by(is_active=True,customer_id=seller.id).count()==1
+
+@pytest.mark.parametrize('ending',['expired','cancelled','rejected'])
+def test_new_invite_after_ending_preserves_old_decision_and_old_code_is_invalid(sale,ending):
+    ctx,old,code,mail,_=sale
+    db,seller,_,buyer,*_=ctx
+    if ending=='expired': old.expires_at=datetime.utcnow()-timedelta(seconds=1);db.commit()
+    elif ending=='cancelled': routes.cancel_transfer(old.id,seller,db)
+    else: routes.decide_transfer(old.id,routes.Decision(accept=False),buyer,db)
+    assert vehicle_archives.archive_detail(old.archive_id,seller,db)['can_invite_new_owner']
+    new=routes.invite_from_archive(old.archive_id,routes.Recipient(buyer_email=buyer.email),seller,db)
+    assert new['id']!=old.id and db.query(Invite).count()==2
+    assert db.get(Invite,old.id).status==ending
+    assert new['status']=='pending'
+    with pytest.raises(HTTPException): routes.decide_transfer(old.id,routes.Decision(accept=True,code=code),buyer,db)
+    assert not vehicle_archives.archive_detail(old.archive_id,seller,db)['can_invite_new_owner']
+
+
+def test_reinvite_migration_preserves_old_rows_and_is_repeatable():
+    from sqlalchemy import create_engine,text,inspect
+    from scripts.migrate_transfer_reinvites import migrate_connection
+    engine=create_engine('sqlite://')
+    with engine.begin() as con:
+        con.execute(text('CREATE TABLE vehicle_transfer_invitations (id INTEGER PRIMARY KEY, archive_id INTEGER NOT NULL UNIQUE, status VARCHAR NOT NULL)'))
+        con.execute(text("INSERT INTO vehicle_transfer_invitations VALUES(1,22,'rejected')"))
+        migrate_connection(con);migrate_connection(con)
+        con.execute(text("INSERT INTO vehicle_transfer_invitations VALUES(2,22,'pending')"))
+        assert con.execute(text('SELECT id,status FROM vehicle_transfer_invitations ORDER BY id')).all()==[(1,'rejected'),(2,'pending')]
+        assert not inspect(con).get_unique_constraints('vehicle_transfer_invitations')
+
+
+def test_confirmation_code_attempt_limit_is_enforced(sale):
+    ctx, row, _, _, _ = sale
+    db, _, _, buyer, *_ = ctx
+    for _ in range(20):
+        with pytest.raises(HTTPException) as error:
+            routes.decide_transfer(row.id, routes.Decision(accept=True, code='wrong'), buyer, db)
+        assert error.value.status_code == 422
+    with pytest.raises(HTTPException) as error:
+        routes.decide_transfer(row.id, routes.Decision(accept=True, code='wrong'), buyer, db)
+    assert error.value.status_code == 429

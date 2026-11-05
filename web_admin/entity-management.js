@@ -76,6 +76,7 @@
     async function refresh(){
       const data=await apiRequest('GET',`/admin-api/vehicles/${identity}/detail`); if(!m.alive())return;
       m.body.replaceChildren();
+      if(window.VehicleTransfers)m.body.append(action('Ověřit převod vozidla',()=>{if(m.alive())window.VehicleTransfers.openAdminReview(identity);}));
       for(const [kind,entries] of Object.entries(data)) {
         const section=node('details');const rows=Array.isArray(entries)?entries:[entries];
         section.append(node('summary',`${labels[kind]||kind.replaceAll('_',' ')} (${rows.length})`));if(kind==='vehicle')section.open=true;

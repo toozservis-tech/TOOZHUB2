@@ -61,7 +61,7 @@ def test_three_verified_vehicle_owners_award_once_and_every_three(state):
     s.db.add(EmailVerification(customer_id=c.id,verified_at=datetime.utcnow()));s.db.commit()
     result=api.my_referrals(s.owner,s.db)
     assert len(result['rewards'])==1 and result['qualified_users']==3
-    assert all(x['email'] is None and x['name'] is None for x in result['referrals'])
+    assert all(x['email'] and x['name'] and x['email_verified'] for x in result['referrals'])
     for _ in range(3):api.my_referrals(s.owner,s.db)
     assert s.db.query(r.ReferralReward).count()==1
     for n in range(3,6):invite(s,str(n))
@@ -262,3 +262,21 @@ def test_license_read_commits_legacy_ownership_before_activity_writer(tmp_path):
             writer.execute(update(Customer).where(Customer.id == customer_id).values(name='Activity writer'))
             writer.commit()
     engine.dispose()
+
+def test_invitee_identity_only_direct_verified_active_and_authorized(state):
+    s=state
+    c=invite(s,'private',verify=False)
+    row=s.db.query(r.Referral).filter_by(customer_id=c.id).one()
+    item=api.my_invitee(row.id,s.owner,s.db)
+    assert item['email'] is None and item['name'] is None and not item['contact_available']
+    with pytest.raises(HTTPException) as error: api.my_invitee(row.id,s.foreign,s.db)
+    assert error.value.status_code == 404
+    assert api.my_referrals(s.foreign,s.db)['referrals'] == []
+    s.db.add(EmailVerification(customer_id=c.id,verified_at=datetime.utcnow()));s.db.commit()
+    item=api.my_invitee(row.id,s.owner,s.db)
+    assert item['email'] == c.email and item['name'] == c.name and item['contact_available']
+    assert item['qualified_at'] and item['status']=='qualified'
+    assert set(item)=={'id','kind','status','created_at','qualified_at','email_verified','contact_available','name','email'}
+    c.is_deleted=True;s.db.commit()
+    item=api.my_invitee(row.id,s.owner,s.db)
+    assert item['email'] is None and item['name'] is None
