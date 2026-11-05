@@ -19,6 +19,7 @@ from scripts.migrate_transfer_reinvites import migrate as migrate_transfer_reinv
 from scripts.migrate_admin_incidents import migrate as migrate_admin_incidents
 from scripts.migrate_admin_messages import migrate as migrate_admin_messages
 from scripts.migrate_notification_delivery import migrate as migrate_notification_delivery
+from scripts.migrate_reverse_notifications import migrate as migrate_reverse_notifications
 
 
 def migrate(bind=None):
@@ -38,6 +39,7 @@ def migrate(bind=None):
     migrate_admin_incidents(bind)
     migrate_admin_messages(bind)
     migrate_notification_delivery(bind)
+    migrate_reverse_notifications(bind)
 
 
 if __name__ == '__main__':

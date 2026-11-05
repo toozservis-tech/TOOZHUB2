@@ -10,6 +10,9 @@ class AdminMessage(Base):
     recipient_id=Column(Integer,ForeignKey('customers.id'),nullable=False,index=True)
     sender_id=Column(Integer,ForeignKey('customers.id'),nullable=True,index=True)
     sender_kind=Column(String(16),nullable=False)
+    reply_to_message_id=Column(Integer,ForeignKey('admin_messages.id',ondelete='SET NULL'),nullable=True,index=True)
+    reply_to_notification_id=Column(Integer,ForeignKey('system_notifications.id',ondelete='SET NULL'),nullable=True,index=True)
+    addressed_admin_id=Column(Integer,ForeignKey('customers.id',ondelete='SET NULL'),nullable=True,index=True)
     body=Column(Text,nullable=False)
     body_erased=Column(Boolean,nullable=False,default=False)
     requires_ack=Column(Boolean,nullable=False,default=False)
@@ -44,6 +47,8 @@ TABLES=[AdminMessage.__table__,AdminMessageCommand.__table__]
 def erase_account_messages(db,customer):
     from sqlalchemy import inspect,or_
     if not all(inspect(db.connection()).has_table(table.name) for table in TABLES):return
+    if 'addressed_admin_id' in {c['name'] for c in inspect(db.connection()).get_columns('admin_messages')}:
+        db.query(AdminMessage).filter_by(addressed_admin_id=customer.id).update({'addressed_admin_id':None},synchronize_session=False)
     ids=db.query(AdminMessage.id).filter_by(recipient_id=customer.id)
     db.query(AdminMessageCommand).filter(or_(AdminMessageCommand.recipient_id==customer.id,
         AdminMessageCommand.actor_id==customer.id,AdminMessageCommand.message_id.in_(ids))).delete(synchronize_session=False)

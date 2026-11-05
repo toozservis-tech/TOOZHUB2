@@ -10,17 +10,23 @@ from sqlalchemy import inspect,or_,and_,func,case
 from fastapi import HTTPException
 from .notification_delivery_models import NotificationItem as Item,NotificationCommand as Command,AnnouncementPolicy,NotificationCursor,PushDevice,PushOutbox,TABLES
 from .admin_message_models import AdminMessage
+from .operational_notification_models import NotificationOperationalEvent
+from .reply_notifications import active_admin
 from .models import Customer,SystemNotification,License,VehicleOwnership
 from .vehicle_update_models import VehicleUpdate,VehicleUpdateReceipt,VehicleUpdateInboxState
 
-KINDS={'admin_message':AdminMessage,'announcement':SystemNotification,'vehicle_update':VehicleUpdate}
+KINDS={'admin_message':AdminMessage,'announcement':SystemNotification,'vehicle_update':VehicleUpdate,'service_event':NotificationOperationalEvent,'admin_reply':AdminMessage}
 
-def ready(db):return all(inspect(db.connection()).has_table(t.name) for t in TABLES)
+def ready(db):
+    inspector=inspect(db.connection())
+    return all(inspector.has_table(t.name) for t in TABLES) and inspector.has_table(NotificationOperationalEvent.__tablename__) and {'addressed_admin_id','reply_to_message_id','reply_to_notification_id'}.issubset({c['name'] for c in inspector.get_columns('admin_messages')})
 
 def require_ready(db):
     if not ready(db):raise HTTPException(503,'Centrum oznámení čeká na aktualizaci serveru. Zkuste to později.')
 
 def active_user(user):return user and user.role in {'user','service'} and not(user.is_deleted or user.is_disabled)
+
+def active_recipient(user):return bool(active_user(user) or active_admin(user))
 
 def announcement_matches(db,row,user,now=None,ignore_time=False):
     now=now or datetime.utcnow()
@@ -34,7 +40,9 @@ def announcement_matches(db,row,user,now=None,ignore_time=False):
     return False
 
 def source_for(db,item,user,*,for_delivery=False):
-    if item.recipient_id!=user.id or not active_user(user):return None
+    if item.recipient_id!=user.id or not active_recipient(user):return None
+    if active_admin(user) and item.kind!='admin_reply':return None
+    if item.kind=='admin_reply' and not active_admin(user):return None
     row=db.get(KINDS[item.kind],item.source_id)
     if item.kind=='announcement' and item.available_at is not None and not for_delivery:
         from types import SimpleNamespace
@@ -42,6 +50,8 @@ def source_for(db,item,user,*,for_delivery=False):
             snapshot_requires_ack=bool(item.snapshot_requires_ack),
             archived=not(row and announcement_matches(db,row,user)))
     if row is None:return None
+    if item.kind=='admin_reply':return row if row.addressed_admin_id==user.id and row.sender_kind=='recipient' else None
+    if item.kind=='service_event':return row if user.role=='service' and row.recipient_id==user.id else None
     if item.kind=='admin_message':return row if row.recipient_id==user.id and row.sender_kind=='admin' else None
     if item.kind=='announcement':return row if announcement_matches(db,row,user) else None
     owner=db.query(VehicleOwnership).filter_by(id=row.ownership_id,vehicle_id=row.vehicle_id,customer_id=user.id,is_active=True,is_primary=True).first()
@@ -49,7 +59,7 @@ def source_for(db,item,user,*,for_delivery=False):
     state=db.get(VehicleUpdateInboxState,(row.id,user.id))
     return row if state is None or state.folder=='inbox' else None
 
-def source_time(kind,row):return row.sent_at if kind=='admin_message' else row.occurred_at if kind=='vehicle_update' else row.created_at
+def source_time(kind,row):return row.sent_at if kind in ('admin_message','admin_reply') else row.occurred_at if kind=='vehicle_update' else row.created_at
 
 def requires_ack(db,item,source):
     if item.kind=='admin_message':return bool(source.requires_ack and not source.body_erased)
@@ -87,6 +97,13 @@ def materialize(db,user):
     # Serialize materialization with receipt commands and worker for this account.
     from src.server.admin_messages import lock_recipient
     lock_recipient(db,user)
+    if active_admin(user):
+        for row in db.query(AdminMessage).filter(AdminMessage.addressed_admin_id==user.id,AdminMessage.sender_kind=='recipient',~db.query(Item.id).filter(Item.recipient_id==user.id,Item.kind=='admin_reply',Item.source_id==AdminMessage.id).exists()).order_by(AdminMessage.id):
+            ensure_item(db,user,'admin_reply',row)
+        db.flush();return
+    if user.role=='service':
+        for row in db.query(NotificationOperationalEvent).filter(NotificationOperationalEvent.recipient_id==user.id,~db.query(Item.id).filter(Item.recipient_id==user.id,Item.kind=='service_event',Item.source_id==NotificationOperationalEvent.id).exists()).order_by(NotificationOperationalEvent.id):
+            ensure_item(db,user,'service_event',row)
     for row in db.query(AdminMessage).filter(AdminMessage.recipient_id==user.id,AdminMessage.sender_kind=='admin',
             ~db.query(Item.id).filter(Item.recipient_id==user.id,Item.kind=='admin_message',Item.source_id==AdminMessage.id).exists()).order_by(AdminMessage.id):
         ensure_item(db,user,'admin_message',row)
@@ -110,13 +127,21 @@ def item_view(db,item,user,source=None):
     source=source or source_for(db,item,user)
     if source is None:raise HTTPException(404,'Oznámení není dostupné.')
     sync_receipts(db,item,source)
-    title='Zpráva administrace' if item.kind=='admin_message' else source.title or 'Oznámení administrace'
-    body=source.body if item.kind=='admin_message' else source.message
+    action={'type':'admin_messages' if item.kind=='admin_message' else item.kind,'id':item.source_id,
+            'vehicle_id':source.vehicle_id if item.kind=='vehicle_update' else None}
+    if item.kind=='service_event':
+        from .operational_notifications import event_context
+        context=event_context(db,source,user);title=context['title'];body=context['message'];action=context['action']
+    elif item.kind=='admin_reply':
+        title='Odpověď na vaši zprávu';body=source.body
+        action={'type':'admin_conversation','id':source.recipient_id,'vehicle_id':None}
+    else:
+        title='Zpráva administrace' if item.kind=='admin_message' else source.title or 'Oznámení administrace'
+        body=source.body if item.kind=='admin_message' else source.message
     return {'id':item.id,'kind':item.kind,'source_id':item.source_id,'title':title,'body':body,
         'requires_ack':requires_ack(db,item,source),'archived':bool(getattr(source,'archived',False)),'created_at':stamp(item.created_at),'read_at':stamp(item.read_at),
         'acknowledged_at':stamp(item.acknowledged_at),'dismissed_at':stamp(item.dismissed_at),
-        'action':{'type':'admin_messages' if item.kind=='admin_message' else item.kind,'id':item.source_id,
-            'vehicle_id':source.vehicle_id if item.kind=='vehicle_update' else None}}
+        'action':action}
 
 def accessible(db,user):
     result=[]
@@ -126,13 +151,18 @@ def accessible(db,user):
     return result
 
 def is_pending(db,item,source):
-    if item.kind=='vehicle_update':return False
+    if item.kind in ('vehicle_update','service_event','admin_reply'):return False
     if getattr(source,'archived',False):return False
     return item.acknowledged_at is None if requires_ack(db,item,source) else item.dismissed_at is None and item.acknowledged_at is None
 
 def inbox_query(db,user):
     """Filter and count in SQL; no N+1 scan of a growing account history."""
     now=datetime.utcnow()
+    if active_admin(user):
+        query=db.query(Item).join(AdminMessage,and_(Item.kind=='admin_reply',Item.source_id==AdminMessage.id)).filter(
+            Item.recipient_id==user.id,AdminMessage.addressed_admin_id==user.id,AdminMessage.sender_kind=='recipient')
+        from sqlalchemy import false
+        return query,Item.read_at,false(),Item.acknowledged_at,false()
     owner=db.query(VehicleOwnership.id).filter(VehicleOwnership.id==VehicleUpdate.ownership_id,
         VehicleOwnership.vehicle_id==VehicleUpdate.vehicle_id,VehicleOwnership.customer_id==user.id,
         VehicleOwnership.is_active.is_(True),VehicleOwnership.is_primary.is_(True),
@@ -145,11 +175,11 @@ def inbox_query(db,user):
     announcement_active=func.coalesce(and_(SystemNotification.is_active.is_(True),
         or_(SystemNotification.starts_at.is_(None),SystemNotification.starts_at<=now),
         or_(SystemNotification.expires_at.is_(None),SystemNotification.expires_at>now),announcement_target),False)
-    scope=or_(and_(Item.kind=='admin_message',AdminMessage.recipient_id==user.id,AdminMessage.sender_kind=='admin'),
+    scope=or_(and_(Item.kind=='service_event',NotificationOperationalEvent.recipient_id==user.id,user.role=='service'),and_(Item.kind=='admin_message',AdminMessage.recipient_id==user.id,AdminMessage.sender_kind=='admin'),
         and_(Item.kind=='announcement',or_(Item.available_at.isnot(None),announcement_active)),
         and_(Item.kind=='vehicle_update',VehicleUpdate.recipient_id==user.id,owner,
             or_(VehicleUpdateInboxState.folder.is_(None),VehicleUpdateInboxState.folder=='inbox')))
-    query=db.query(Item).outerjoin(AdminMessage,and_(Item.kind=='admin_message',Item.source_id==AdminMessage.id)) \
+    query=db.query(Item).outerjoin(NotificationOperationalEvent,and_(Item.kind=='service_event',Item.source_id==NotificationOperationalEvent.id)).outerjoin(AdminMessage,and_(Item.kind=='admin_message',Item.source_id==AdminMessage.id)) \
         .outerjoin(SystemNotification,and_(Item.kind=='announcement',Item.source_id==SystemNotification.id)) \
         .outerjoin(AnnouncementPolicy,AnnouncementPolicy.source_id==SystemNotification.id) \
         .outerjoin(VehicleUpdate,and_(Item.kind=='vehicle_update',Item.source_id==VehicleUpdate.id)) \
@@ -186,7 +216,7 @@ def page(db,user,limit=30,before_id=None,pending_only=False):
 def command(db,user,kind,ids,client_id):
     from src.server.admin_messages import lock_recipient
     require_ready(db);lock_recipient(db,user)
-    if not active_user(user):raise HTTPException(403,'Účet není aktivní.')
+    if not active_recipient(user):raise HTTPException(403,'Účet není aktivní.')
     ids=sorted(set(ids));digest=hashlib.sha256(json.dumps([kind,ids]).encode()).hexdigest()
     previous=db.query(Command).filter_by(recipient_id=user.id,client_id=str(client_id)).first()
     if previous and previous.request_hash!=digest:raise HTTPException(409,'Stejný požadavek již byl použit pro jinou akci.')
@@ -204,6 +234,7 @@ def command(db,user,kind,ids,client_id):
             item.read_at=item.read_at or now
             if kind=='dismiss':item.dismissed_at=item.dismissed_at or now
             if kind=='ack':item.acknowledged_at=item.acknowledged_at or now
+            if item.kind=='admin_reply':source.read_at=source.read_at or item.read_at
             if item.kind=='admin_message':
                 source.read_at=source.read_at or item.read_at
                 if kind=='ack':source.acknowledged_at=source.acknowledged_at or item.acknowledged_at
@@ -224,19 +255,22 @@ def collect_new(db,limit=100,fanout_limit=500):
     for kind,model in KINDS.items():
         if db.get_bind().dialect.name=='sqlite':
             db.execute(update(NotificationCursor).where(NotificationCursor.kind==kind).values(source_id=NotificationCursor.source_id))
-        cursor=db.query(NotificationCursor).filter_by(kind=kind).with_for_update().populate_existing().one()
+        cursor=db.query(NotificationCursor).filter_by(kind=kind).with_for_update().populate_existing().first()
+        if cursor is None:continue # New sources never dispatch until explicit migration initializes their baseline.
         sources=db.query(model).filter(model.id>cursor.source_id).order_by(model.id).limit(limit).all()
         for source in sources:
             more=False
             if kind=='admin_message':
                 recipients=[db.get(Customer,source.recipient_id)] if source.sender_kind=='admin' else []
-            elif kind=='vehicle_update':recipients=[db.get(Customer,source.recipient_id)]
+            elif kind in ('vehicle_update','service_event'):recipients=[db.get(Customer,source.recipient_id)]
+            elif kind=='admin_reply':recipients=[db.get(Customer,source.addressed_admin_id)] if source.sender_kind=='recipient' and source.addressed_admin_id else []
             else:
                 recipients=db.query(Customer).filter(Customer.role.in_(['user','service']),Customer.id>cursor.recipient_cursor).order_by(Customer.id).limit(fanout_limit+1).all()
                 more=len(recipients)>fanout_limit;recipients=recipients[:fanout_limit]
             for user in recipients:
                 if kind=='announcement':cursor.recipient_cursor=user.id
-                if not active_user(user):continue
+                if not active_recipient(user):continue
+                if active_admin(user) and kind!='admin_reply':continue
                 scheduled=kind=='announcement' and source.starts_at and source.starts_at>datetime.utcnow()
                 if kind=='announcement' and not scheduled and not announcement_matches(db,source,user):continue
                 # For a scheduled plan target, queue candidates now but authorize

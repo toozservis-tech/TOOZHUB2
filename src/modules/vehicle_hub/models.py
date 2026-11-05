@@ -4,6 +4,7 @@ from datetime import datetime
 
 from .database import Base
 from . import admin_incident_models  # register additive support tables
+from . import operational_notification_models
 from . import admin_message_models  # register private administrator conversations
 
 # Import additive models and register transactional service-change publication

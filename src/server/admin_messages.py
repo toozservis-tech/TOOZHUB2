@@ -1,4 +1,4 @@
-"""Private two-way support messages. No email/push fanout or third-party sending."""
+"""Private conversations; explicit reply targets become durable delivery sources."""
 from __future__ import annotations
 import hashlib
 import json
@@ -7,7 +7,7 @@ from typing import Optional
 from urllib.parse import urlsplit
 from uuid import UUID
 from fastapi import APIRouter,Depends,HTTPException,Query,Request,Response
-from pydantic import BaseModel,ConfigDict,Field,field_validator
+from pydantic import BaseModel,ConfigDict,Field,field_validator,model_validator
 from sqlalchemy import inspect,func,case,or_,and_,update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -25,7 +25,9 @@ RECIPIENT_ROLES={'user','service'}
 def stamp(value):return value.replace(tzinfo=timezone.utc).isoformat() if value else None
 
 
-def ready(db):return all(inspect(db.connection()).has_table(table.name) for table in TABLES)
+def ready(db):
+    inspector=inspect(db.connection())
+    return all(inspector.has_table(table.name) for table in TABLES) and {'reply_to_message_id','reply_to_notification_id','addressed_admin_id'}.issubset({c['name'] for c in inspector.get_columns('admin_messages')})
 
 
 def require_ready(db):
@@ -72,6 +74,8 @@ def summary(db,recipient_id,*,admin=False):
 
 def message_view(db,message,*,admin=False):
     result={'id':message.id,'sender_kind':message.sender_kind,'body':message.body,'body_erased':message.body_erased,
+        'reply_to_message_id':message.reply_to_message_id,'reply_to_notification_id':message.reply_to_notification_id,
+        'reply_delivery':('addressed' if message.addressed_admin_id else 'unavailable') if (message.reply_to_message_id or message.reply_to_notification_id) else 'not_requested',
         'requires_ack':message.requires_ack,'sent_at':stamp(message.sent_at),'read_at':stamp(message.read_at),
         'acknowledged_at':stamp(message.acknowledged_at),
         'sender_label':'Správce aplikace' if message.sender_kind=='admin' else 'Vy'}
@@ -100,7 +104,7 @@ class Operation(BaseModel):
     client_id:UUID
 
 
-class Reply(Operation):
+class MessageBody(Operation):
     body:str=Field(min_length=1,max_length=4000)
     @field_validator('body')
     @classmethod
@@ -111,7 +115,16 @@ class Reply(Operation):
         return value
 
 
-class Send(Reply):
+class Reply(MessageBody):
+    reply_to_message_id:int|None=Field(default=None,gt=0)
+    reply_to_notification_id:int|None=Field(default=None,gt=0)
+    @model_validator(mode="after")
+    def one_reference(self):
+        if self.reply_to_message_id and self.reply_to_notification_id:raise ValueError("Odpověď může mít pouze jeden původní zdroj.")
+        return self
+
+
+class Send(MessageBody):
     requires_ack:bool=False
 
 
@@ -159,18 +172,22 @@ def run_command(db,actor,recipient,body,kind,*,admin=False,message_id=None):
     if recipient.role not in RECIPIENT_ROLES:raise HTTPException(409,'Role příjemce se změnila. Obnovte účet.')
     if not admin or kind=='send':
         if recipient.is_disabled or recipient.is_deleted:raise HTTPException(409,'Účet příjemce není aktivní.')
-    payload={'kind':kind,'recipient_id':recipient.id,'message_id':message_id,**body.model_dump(mode='json')}
+    payload={'kind':kind,'recipient_id':recipient.id,'message_id':message_id,**body.model_dump(mode='json',exclude_none=True)}
     digest=hashlib.sha256(json.dumps(payload,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     previous=db.query(Command).filter_by(actor_id=actor.id,client_id=str(body.client_id)).first()
     if previous:
         if previous.request_hash!=digest:raise HTTPException(409,'Identifikátor již patří jinému požadavku. Obnovte konverzaci.')
         return response_for(db,previous,admin=admin)
+    reference={}
+    if kind=='reply':
+        from src.modules.vehicle_hub.reply_notifications import resolve_reply_target
+        reference=resolve_reply_target(db,actor,body)
     now=datetime.utcnow();count=0;result_message=None
     if kind in ('send','reply'):
         if not rate_limiter.check_rate_limit(f'private-message:{actor.id}',120 if admin else 20,60):
             raise HTTPException(429,'Odesíláte příliš mnoho zpráv. Počkejte prosím chvíli.')
         result_message=Message(recipient_id=recipient.id,sender_id=actor.id,sender_kind='admin' if admin else 'recipient',
-            body=body.body,requires_ack=body.requires_ack if admin else False,sent_at=now)
+            body=body.body,requires_ack=body.requires_ack if admin else False,sent_at=now,**reference)
         db.add(result_message);db.flush();count=1
     elif kind=='read':
         rows=db.query(Message).filter(Message.id.in_(body.message_ids),Message.recipient_id==recipient.id,
@@ -178,6 +195,13 @@ def run_command(db,actor,recipient,body,kind,*,admin=False,message_id=None):
         if len(rows)!=len(body.message_ids):raise HTTPException(403,'Lze označit pouze přijaté zprávy v této konverzaci.')
         for row in rows:
             if row.read_at is None:row.read_at=now;count+=1
+            if admin and row.addressed_admin_id==actor.id:
+                from src.modules.vehicle_hub.notification_delivery_models import NotificationItem
+                item=db.query(NotificationItem).filter_by(kind='admin_reply',source_id=row.id,recipient_id=actor.id).first()
+                if item is None:
+                    from src.modules.vehicle_hub.notification_inbox import ensure_item
+                    item=ensure_item(db,actor,'admin_reply',row)
+                if item.read_at is None:item.read_at=now
     elif kind=='ack':
         result_message=db.query(Message).filter_by(id=message_id,recipient_id=recipient.id,sender_kind='admin',requires_ack=True).first()
         if not result_message:raise HTTPException(403,'Tuto zprávu nelze tímto účtem potvrdit.')

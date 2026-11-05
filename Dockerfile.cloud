@@ -23,6 +23,7 @@ COPY scripts/migrate_transfer_reinvites.py ./scripts/migrate_transfer_reinvites.
 COPY scripts/migrate_admin_incidents.py ./scripts/migrate_admin_incidents.py
 COPY scripts/migrate_admin_messages.py ./scripts/migrate_admin_messages.py
 COPY scripts/migrate_notification_delivery.py ./scripts/migrate_notification_delivery.py
+COPY scripts/migrate_reverse_notifications.py ./scripts/migrate_reverse_notifications.py
 COPY scripts/migrate_google_billing.py ./scripts/migrate_google_billing.py
 COPY scripts/migrate_service_job_photos.py ./scripts/migrate_service_job_photos.py
 COPY scripts/migrate_service_job_consent.py ./scripts/migrate_service_job_consent.py

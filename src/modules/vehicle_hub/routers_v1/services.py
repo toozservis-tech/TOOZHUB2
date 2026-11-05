@@ -483,6 +483,10 @@ def resolve_service_access_request(
         if decision == "approved":
             from .service_jobs import publish_work_after_consent
             publish_work_after_consent(db, request_row, service, link)
+        from ..operational_notifications import emit
+        emit(db,recipient_id=service.id,actor_id=current_user.id,source_type='access_request',
+            source_id=request_row.id,event_type='service_access.'+decision,
+            dedupe_key=f'access-request:{request_row.id}:{decision}')
         db.commit()
         return {
             "resolved": True,
@@ -826,10 +830,13 @@ def disconnect_my_service_contact(
                 db.query(ServiceVehicleAccess).filter_by(service_customer_id=service_id,
                     customer_id=current_user.id, vehicle_id=vehicle_id, status="active").update(
                     {ServiceVehicleAccess.status: "revoked", ServiceVehicleAccess.revoked_at: now}, synchronize_session="fetch")
-                db.query(ServiceAccessRequest).filter_by(service_customer_id=service_id,
-                    owner_customer_id=current_user.id, vehicle_id=vehicle_id, status="pending").update(
-                    {ServiceAccessRequest.status: "revoked", ServiceAccessRequest.decided_at: now,
-                     ServiceAccessRequest.decided_by_customer_id: current_user.id}, synchronize_session="fetch")
+                requests=db.query(ServiceAccessRequest).filter_by(service_customer_id=service_id,
+                    owner_customer_id=current_user.id,vehicle_id=vehicle_id,status="pending").all()
+                from ..operational_notifications import emit
+                for request_row in requests:
+                    request_row.status="revoked";request_row.decided_at=now;request_row.decided_by_customer_id=current_user.id
+                    emit(db,recipient_id=service_id,actor_id=current_user.id,source_type='access_request',
+                        source_id=request_row.id,event_type='service_access.revoked',dedupe_key=f'access-request:{request_row.id}:revoked')
                 continue
             revoke_vehicle_service_link(db, service_customer_id=service_id,
                 vehicle_id=vehicle_id, revoked_by_customer_id=current_user.id,

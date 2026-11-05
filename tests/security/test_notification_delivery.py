@@ -62,7 +62,8 @@ class Delivery(unittest.TestCase):
         self.assertEqual(self.get(headers=self.oh).json()['items'],[])
     def test_csrf_roles_and_pending_email(self):
         self.send();row=self.items()[0]
-        self.assertEqual(self.get(headers=self.ah).status_code,403)
+        self.assertEqual(self.get(headers=self.ah).status_code,200)
+        self.assertEqual(self.get(headers=self.ah).json()['items'],[])
         self.assertEqual(self.act(N+f'/{row["id"]}/dismiss',headers={**self.uh,'Origin':'https://evil.invalid','Sec-Fetch-Site':'cross-site'}).status_code,403)
     def test_idempotency_conflict_confirmation_once_and_new_arrival(self):
         self.send(True);row=self.items()[0];cid=str(uuid4())

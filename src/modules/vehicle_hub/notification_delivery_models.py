@@ -18,7 +18,7 @@ class NotificationItem(Base):
     dismissed_at=Column(DateTime)
     acknowledged_at=Column(DateTime)
     __table_args__=(UniqueConstraint('recipient_id','kind','source_id',name='uq_notification_source'),
-        CheckConstraint("kind IN ('admin_message','announcement','vehicle_update')",name='ck_notification_kind'))
+        CheckConstraint("kind IN ('admin_message','announcement','vehicle_update','service_event','admin_reply')",name='ck_notification_kind'))
 
 class NotificationCommand(Base):
     __tablename__='notification_commands'
@@ -86,6 +86,13 @@ TABLES=[NotificationItem.__table__,NotificationCommand.__table__,AnnouncementPol
 def erase_account_notifications(db,customer):
     from sqlalchemy import inspect
     if not inspect(db.connection()).has_table(NotificationItem.__tablename__):return
+    from .operational_notification_models import NotificationOperationalEvent as Event
+    if inspect(db.connection()).has_table(Event.__tablename__):
+        event_ids=db.query(Event.id).filter((Event.recipient_id==customer.id)|(Event.actor_id==customer.id))
+        event_items=db.query(NotificationItem.id).filter(NotificationItem.kind=='service_event',NotificationItem.source_id.in_(event_ids))
+        db.query(PushOutbox).filter(PushOutbox.item_id.in_(event_items)).delete(synchronize_session=False)
+        db.query(NotificationItem).filter(NotificationItem.id.in_(event_items)).delete(synchronize_session=False)
+        db.query(Event).filter((Event.recipient_id==customer.id)|(Event.actor_id==customer.id)).delete(synchronize_session=False)
     item_ids=db.query(NotificationItem.id).filter_by(recipient_id=customer.id)
     device_ids=db.query(PushDevice.id).filter_by(recipient_id=customer.id)
     db.query(PushOutbox).filter((PushOutbox.item_id.in_(item_ids))|(PushOutbox.device_id.in_(device_ids))).delete(synchronize_session=False)

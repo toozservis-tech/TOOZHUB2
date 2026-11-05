@@ -12,7 +12,7 @@ from cryptography.fernet import Fernet,InvalidToken
 from sqlalchemy import or_,and_,update,select
 from fastapi import HTTPException
 from .notification_delivery_models import PushDevice,PushOutbox,NotificationItem,NotificationCursor
-from .notification_inbox import active_user,source_for,summary,requires_ack
+from .notification_inbox import active_recipient,source_for,summary,requires_ack
 from .models import Customer
 from .account_state import customer_session_version
 from src.core.session_revocation import RevokedAccessToken,token_digest
@@ -83,7 +83,7 @@ def _register(db,user,body,token):
     from .notification_inbox import require_ready
     from src.server.admin_messages import lock_recipient
     require_ready(db);lock_recipient(db,user)
-    if not active_user(user):raise HTTPException(403,'Push je dostupný zákazníkům a servisům.')
+    if not active_recipient(user):raise HTTPException(403,'Účet není způsobilý pro push.')
     claims=decode_access_token_payload(token)
     if not claims or claims.get('sub','').lower()!=user.email.lower() or not claims.get('exp') or claims.get('demo') or claims.get('public_demo'):
         raise HTTPException(401,'Přihlaste se znovu.')
@@ -164,7 +164,7 @@ def unregister(db,user,body):
 
 def eligible_device(db,device,user,now=None):
     now=now or datetime.utcnow()
-    if not active_user(user) or not device.active or device.recipient_id!=user.id or device.session_expires_at<=now or device.session_version!=customer_session_version(user):return False
+    if not active_recipient(user) or not device.active or device.recipient_id!=user.id or device.session_expires_at<=now or device.session_version!=customer_session_version(user):return False
     return db.execute(select(RevokedAccessToken.digest).where(RevokedAccessToken.digest==device.session_digest)).first() is None
 
 @dataclass(frozen=True)

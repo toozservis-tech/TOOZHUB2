@@ -400,13 +400,23 @@ def revoke_vehicle_service_link(
         legacy_access.revoked_at = now
         legacy_access.updated_at = now
 
-    db.query(ServiceAccessRequest).filter(
+    requests=db.query(ServiceAccessRequest).filter(
         ServiceAccessRequest.vehicle_id == vehicle_id,
         ServiceAccessRequest.service_customer_id == service_customer_id,
         ServiceAccessRequest.status.in_(["pending", "approved"]),
-    ).update({ServiceAccessRequest.status: "revoked", ServiceAccessRequest.decided_at: now,
-        ServiceAccessRequest.decided_by_customer_id: int(revoked_by_customer_id),
-        ServiceAccessRequest.decision_note: reason, ServiceAccessRequest.updated_at: now}, synchronize_session="fetch")
+    ).all()
+    from .operational_notifications import emit
+    actor=db.get(Customer,revoked_by_customer_id)
+    for request in requests:
+        request.status='revoked';request.decided_at=now;request.decided_by_customer_id=revoked_by_customer_id
+        request.decision_note=reason;request.updated_at=now
+        if actor and actor.role=='user':
+            emit(db,recipient_id=service_customer_id,actor_id=actor.id,source_type='access_request',
+                source_id=request.id,event_type='service_access.revoked',dedupe_key=f'access-request:{request.id}:revoked')
+    # Direct grants have no request; the immutable receipt contains no vehicle data.
+    if actor and actor.role=='user' and link and not requests:
+        emit(db,recipient_id=service_customer_id,actor_id=actor.id,source_type='service_link',
+            source_id=link.id,event_type='service_access.revoked')
     db.flush()
     return link
 

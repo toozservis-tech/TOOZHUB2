@@ -16,7 +16,7 @@ def test_mobile_release_upgrades_existing_baseline_and_is_repeatable(tmp_path):
              'customer_home_garages', 'referral_codes', 'referrals', 'referral_rewards',
              'vehicle_transfer_invitations', 'admin_incidents', 'admin_incident_events', 'admin_incident_history',
              'admin_messages', 'admin_message_commands', 'notification_items', 'notification_commands',
-             'notification_announcement_policies', 'notification_devices', 'notification_push_outbox', 'notification_cursors'}
+             'notification_operational_events', 'notification_announcement_policies', 'notification_devices', 'notification_push_outbox', 'notification_cursors'}
     try:
         Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
         with engine.begin() as connection:
@@ -97,7 +97,7 @@ def test_packaged_module_succeeds_in_fresh_python_process(tmp_path):
              'customer_home_garages', 'referral_codes', 'referrals', 'referral_rewards',
              'vehicle_transfer_invitations', 'admin_incidents', 'admin_incident_events', 'admin_incident_history',
              'admin_messages', 'admin_message_commands', 'notification_items', 'notification_commands',
-             'notification_announcement_policies', 'notification_devices', 'notification_push_outbox', 'notification_cursors'}
+             'notification_operational_events', 'notification_announcement_policies', 'notification_devices', 'notification_push_outbox', 'notification_cursors'}
     Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables if table.name not in added])
     engine.dispose()
     env = os.environ.copy()

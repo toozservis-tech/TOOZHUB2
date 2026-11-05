@@ -47,12 +47,15 @@ class ReservationClaimLinkRequest(BaseModel):
     token: str = Field(min_length=12, max_length=512)
 
 
+from ..operational_notifications import booking_change
+
 def _normalize_status(status: str) -> str:
     return str(status or "").strip().upper()
 
 
 def _ensure_reservations_schema(db: Session) -> None:
     assert_module_ready(db, "reservations", detail_prefix="Rezervace nejsou připravené")
+
 
 
 def _publish_service_booking_change(db, row, actor, *, event_type, title):
@@ -365,6 +368,7 @@ def create_reservation(
     
     db.add(reservation)
     db.flush()
+    booking_change(db, reservation, current_user, 'reservation.created')
     _publish_service_booking_change(db, reservation, current_user,
         event_type="booking.created", title="Servis vytvořil rezervaci")
     print(
@@ -557,7 +561,7 @@ def update_reservation(
     """Aktualizuje rezervaci"""
     reservation = db.query(ReservationModel).filter(
         ReservationModel.id == reservation_id
-    ).first()
+    ).populate_existing().with_for_update().first()
     
     if not reservation:
         raise HTTPException(status_code=404, detail="Rezervace nenalezena")
@@ -662,6 +666,8 @@ def update_reservation(
                      "COMPLETED": "Servis dokončil rezervaci"}.get(reservation.status, title)
             event_type = "booking." + str(reservation.status).lower()
         _publish_service_booking_change(db, reservation, current_user, event_type=event_type, title=title)
+        if status_changed and reservation.status == 'CANCELLED':
+            booking_change(db, reservation, current_user, 'reservation.cancelled')
     db.commit()
     db.refresh(reservation)
 
@@ -719,7 +725,7 @@ def delete_reservation(
     """Smaže rezervaci"""
     reservation = db.query(ReservationModel).filter(
         ReservationModel.id == reservation_id
-    ).first()
+    ).populate_existing().with_for_update().first()
     
     if not reservation:
         raise HTTPException(status_code=404, detail="Rezervace nenalezena")
@@ -757,6 +763,7 @@ def delete_reservation(
     if inspect(db.connection()).has_table(BookingRequest.__tablename__):
         db.query(BookingRequest).filter_by(reservation_id=reservation.id).update(
             {'reservation_id': None, 'status': 'cancelled'}, synchronize_session=False)
+    booking_change(db, reservation, current_user, 'reservation.deleted')
     db.delete(reservation)
     db.commit()
     

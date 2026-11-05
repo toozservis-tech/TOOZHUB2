@@ -14,6 +14,7 @@ from ..ownership import get_primary_vehicle_owner_assignment, lock_vehicle_acces
 from ..service_accounts import is_active_service_account
 from ..schema_management import assert_module_ready
 from ..vehicle_updates import publish_vehicle_update
+from ..operational_notifications import booking_change
 from .auth import get_current_user
 
 
@@ -105,6 +106,15 @@ def list_requests(current_user: Customer = Depends(get_current_user), db: Sessio
     return {'items': [serialize(db, r) for r in query.order_by(BookingRequest.updated_at.desc(), BookingRequest.id.desc()).limit(200).all()]}
 
 
+@router.get('/{request_id}')
+def get_request(request_id:int,current_user:Customer=Depends(get_current_user),db:Session=Depends(get_db)):
+    role=actor_role(current_user)
+    row=db.get(BookingRequest,request_id)
+    if not row or (row.service_id if role=='service' else row.owner_id)!=current_user.id:
+        raise HTTPException(404,'Požadavek nebyl nalezen.')
+    return serialize(db,row)
+
+
 @router.post('')
 def create_request(payload: BookingCreate, current_user: Customer = Depends(get_current_user), db: Session = Depends(get_db)):
     if actor_role(current_user) != 'user':
@@ -134,8 +144,10 @@ def create_request(payload: BookingCreate, current_user: Customer = Depends(get_
         vehicle_plate=vehicle.plate, client_id=str(payload.client_id), payload_hash=digest(payload),
         service_type=payload.service_type, description=payload.description, preferred_datetime=payload.preferred_datetime)
     db.add(row); db.flush()
-    db.add(BookingRequestEvent(request_id=row.id, actor_id=current_user.id, client_id=str(payload.client_id),
-        payload_hash=digest(payload), action='created', message=payload.description, proposed_datetime=payload.preferred_datetime))
+    event=BookingRequestEvent(request_id=row.id, actor_id=current_user.id, client_id=str(payload.client_id),
+        payload_hash=digest(payload), action='created', message=payload.description, proposed_datetime=payload.preferred_datetime)
+    db.add(event);db.flush()
+    booking_change(db,row,current_user,'booking_request.created',quick=True,event_id=event.id)
     db.commit(); db.refresh(row)
     return serialize(db, row)
 
@@ -200,9 +212,12 @@ def decide(request_id: int, payload: BookingDecision, current_user: Customer = D
         row.service_reply = payload.message.strip() or None
     row.version += 1
     row.updated_at = datetime.utcnow()
-    db.add(BookingRequestEvent(request_id=row.id, actor_id=current_user.id, client_id=str(payload.client_id),
+    event=BookingRequestEvent(request_id=row.id, actor_id=current_user.id, client_id=str(payload.client_id),
         payload_hash=digest(payload), action=payload.action, message=payload.message.strip() or None,
-        proposed_datetime=when or payload.proposed_datetime))
+        proposed_datetime=when or payload.proposed_datetime)
+    db.add(event);db.flush()
+    if role=='user':
+        booking_change(db,row,current_user,'booking_request.proposal_accepted' if payload.action=='accept_proposal' else 'booking_request.cancelled',quick=True,event_id=event.id)
     if role == 'service':
         title = {'confirmed':'Servis potvrdil rezervaci', 'proposed':'Servis navrhl termín', 'rejected':'Servis odmítl požadavek'}[row.status]
         publish_vehicle_update(db, vehicle_id=row.vehicle_id, actor_id=current_user.id, event_type='booking.'+row.status,

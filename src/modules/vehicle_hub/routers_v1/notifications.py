@@ -14,7 +14,7 @@ router=APIRouter(tags=['notification-center'])
 
 def recipient(request:Request,response:Response,user:Customer=Depends(get_current_user)):
     origin_guard(request,response)
-    if not inbox.active_user(user):raise HTTPException(403,'Oznámení jsou dostupná zákazníkům a servisům.')
+    if not inbox.active_recipient(user):raise HTTPException(403,'Oznámení nejsou pro tento účet dostupná.')
     from src.core.security import decode_access_token_payload
     token=request.headers.get('authorization','').removeprefix('Bearer ').strip()
     payload=decode_access_token_payload(token) or {}
@@ -71,3 +71,13 @@ def register_device(body:Device,request:Request,user=Depends(recipient),db:Sessi
 @router.post('/push/devices/unregister')
 def unregister_device(body:Installation,user=Depends(recipient),db:Session=Depends(get_db)):
     return push_delivery.unregister(db,user,body)
+
+
+@router.get('/service-notification-events/{event_id}')
+def service_event(event_id:int,user=Depends(recipient),db:Session=Depends(get_db)):
+    from ..operational_notification_models import NotificationOperationalEvent
+    from ..operational_notifications import event_context
+    inbox.require_ready(db)
+    row=db.get(NotificationOperationalEvent,event_id)
+    if not row:raise HTTPException(404,'Servisní oznámení není dostupné.')
+    return event_context(db,row,user)
