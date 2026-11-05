@@ -55,10 +55,16 @@ def delivery_policy():
         return DeliveryPolicy(enabled,False,frozenset())
     return DeliveryPolicy(enabled,True,frozenset(int(part.strip()) for part in parts))
 
-def public_status():
+def public_status(recipient_id=None):
+    """Report effective delivery for an authenticated account, without exposing IDs.
+
+    Internal callers that omit the account retain the global readiness summary.
+    Device clients must pass the authenticated ID: a canary outside their scope
+    does not mean delivery is enabled for them.
+    """
     policy=delivery_policy()
     return {'registration_available':bool(os.getenv('PUSH_TOKEN_ENCRYPTION_KEY')),
-        'dispatch_enabled':policy.enabled and policy.valid,
+        'dispatch_enabled':policy.allows(recipient_id) if recipient_id is not None else policy.enabled and policy.valid,
         'dispatch_limited':policy.recipients is not None,
         'dispatch_configuration_valid':policy.valid,
         'providers':{p:{'configured':configured(p)} for p in ('apns','fcm','webpush')}}

@@ -62,7 +62,7 @@ class Device(Installation):
 
 @router.get('/push/device-status')
 def device_status(user=Depends(recipient)):
-    return push_delivery.public_status()
+    return push_delivery.public_status(user.id)
 
 @router.post('/push/devices')
 def register_device(body:Device,request:Request,user=Depends(recipient),db:Session=Depends(get_db)):
