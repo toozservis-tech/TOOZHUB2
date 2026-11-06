@@ -1,0 +1,121 @@
+{
+  "task": "WEB-BOOKING-DECISIONS-20261106",
+  "created_at": "2026-11-06T00:06:56.877948+00:00",
+  "status": "BOUNDED_BROWSER_PASS_NOT_FULL_THREE_CLIENT_PARITY",
+  "backend_commit": "6b24003376ee8140f1650ac18075ae13b754029f",
+  "backend": "http://127.0.0.1:18926",
+  "origins": {
+    "initial": "http://127.0.0.1:18928/web/customer.html",
+    "final": "http://127.0.0.1:18929/web/customer.html"
+  },
+  "source_pins_sha256": {
+    "initial": "638b268e4313963d341506b3f97656c9769406cdd257baa1d398a9040566833a",
+    "final": "8434baaa8fcab25813c9f3c64b4bd0dac8bb21d5739c4da6b756e64f7b414cc1"
+  },
+  "final_metadata_correction": {
+    "path": "/Users/toozservis/Developer/evidence-web-booking-decisions-20261106/qa18929/final-provenance.json",
+    "sha256": "e86b5ce181384d80fd2a738d74f12b934384a13898deb55a0f4135bd57665320"
+  },
+  "authentication": "Normal UI password login for service/web-owner/shared-owner, no injected token or hidden browser API calls. Concurrent HTTP peer used separate normal password login. No actual admin MFA repeated in this quick-decision task.",
+  "product_source_files": {
+    "src/server/web_access.py": "914127242d451e3e4094eec9547ad2117a5ad07cbf1479c5d15ffba24e8ed1e3",
+    "web/admin-messages.js": "ac8eb7949ca60c371ee4cfad242686f92a5992197ff3d4841c87793968339411",
+    "web/booking-requests.js": "fd8ea0b6dbd4471ba73c716ccba18c68add821127a082618f633029d35922494",
+    "web/index.html": "7f967823f647adefa5c94b0b7934a43fdca68661ad0355acd1101d5fe45d58fa",
+    "web/legacy-app.js": "8f3c3d89c7466f06a8a31bacdaee5984a457434638393cb8cde3828aa447a21a",
+    "web/notification-center.css": "f6e55ca32c798f58a2c6bde9b0663d15a04049535ce681f34bd4d2e8a0cd9529",
+    "web/notification-center.js": "b02f441a2dea78a54931edaf5b0b8955c46ad70c81f44d304a55356a3ca9a7b5",
+    "web/sw.js": "8eac6e33093a29560b49709041adc99855803f9cdb71ef5f25b369ea49a66e7c",
+    "web_admin/index.html": "c4b7d55f96f30af98b27a53c4285f00dea88b8a1b48e548d474136e92ad6418a"
+  },
+  "results": {
+    "initial_18928": [
+      "service accept preferred: reservation5",
+      "service proposal mobile390 and bottomclose",
+      "empty rejection blocks then reason: rejected",
+      "notification exactquick11",
+      "second UI session closes prior modal",
+      "actual HTTP peer plus stale browser409",
+      "temporary proxy outage and retry",
+      "owner accepts: reservation6",
+      "owner cancels",
+      "reload resolved history"
+    ],
+    "final_18929": [
+      "neutral rejection label plus mandatory reason",
+      "Czech TypeError and one retry event",
+      "owner acceptquick11v6: reservation7 instantly visible without reload",
+      "exactregularreservation7detail",
+      "sharedA14notice49 still ACKnull; sameiOSreply16 visible in webhistory"
+    ]
+  },
+  "shared_mutation_scope": {
+    "visible_message_B15_notice50_marked_read": true,
+    "ACK": false,
+    "reply": false,
+    "business_mutation": false,
+    "quick6_status": "pending version1"
+  },
+  "unit": {
+    "booking": 27,
+    "reverse_contract_suites": 2,
+    "static_gate": 1
+  },
+  "browser_limitation": "Initial source run and final focused followup are separate pins; final full role-matrix not repeated. Pending quickcommand memory-only. UUID exact identity covered by unit; actual failed network had no request receipt.",
+  "artifacts": {
+    "qa18928/runtime/01-service-pending.ax.txt": "7c7493dc432ba49bd81882e6341fe67cab145bbba89eafc3f6de3dfd22351b78",
+    "qa18928/runtime/01-service-pending.jpg": "eec4fbbe4433655a1dd9db6007985e7bdbf01234128e95dd0d6287639c4098ac",
+    "qa18928/runtime/02-service-accepted.ax.txt": "211a2ea51e6a44afdc4b3fcac02fc0b7613a6d985c8c27043ac0c7b5d629c233",
+    "qa18928/runtime/02-service-accepted.jpg": "9e4c3e2750726e0d0b6763cced2c05e06ac775bea572e8f48611b14f52dff601",
+    "qa18928/runtime/03-related-reservation.ax.txt": "8cb311c5d7e126d2dab26ab733d9dd0194951ad725dde80522bb72a9893f8751",
+    "qa18928/runtime/03-related-reservation.jpg": "ef98cb93cc25b3039583a1c776898fff65cb2ba4991405844fcab27b587bb2b8",
+    "qa18928/runtime/04-proposal-mobile-before.ax.txt": "6149f6858bdbca3be68c494c3de57ae1869a9a3eb94daca0dda6722c378750f3",
+    "qa18928/runtime/04-proposal-mobile-before.jpg": "b8e3096491d1b17c85e0be1fff6572df2aa13c579baaf9e9763d541aaae85c14",
+    "qa18928/runtime/05-proposal-mobile-bottom.ax.txt": "324a4f267a6a83312a8dfd63ed950444121f8b3d2d73c248f5290796e680755c",
+    "qa18928/runtime/05-proposal-mobile-bottom.jpg": "f2692ee60a54b9f54f64627926adb7c06cc727b9a0fdc5f6b5e16f7ae00fd591",
+    "qa18928/runtime/06-reject-reason-required.ax.txt": "306c3364916528c25e36408cd99fb2b8988fe8a33aae3e31fa152922fd6fa388",
+    "qa18928/runtime/07-service-rejected.ax.txt": "b97798694b3b9007dab2c2eae6eac2bf487779db733692815ef48b98b95ebda2",
+    "qa18928/runtime/07-service-rejected.jpg": "02194fdf79c9b4f2346811eb5a648555aa5cd262ff9498dd615c41a4c2efe19e",
+    "qa18928/runtime/08-exact-notification-request.ax.txt": "e59ec23a13209521cf81300374a224f2223ecd2b917c05a0a45a1a42fba08c81",
+    "qa18928/runtime/08-exact-notification-request.jpg": "08ee2cf86e74d54d12acbac611527e30313193ffe6fc9acbfa8899cc53b7d5cf",
+    "qa18928/runtime/09-concurrent-newer-saved.ax.txt": "882b0c62621f392b57b8e89898a5a013d0809123360ccbc4d37e81e1ae997ccd",
+    "qa18928/runtime/10-prior-session-closed.ax.txt": "6e06ee8e148906a2f027cc836f8bab19b8f802613ec778c01e10a72a87d5569f",
+    "qa18928/runtime/10-prior-session-closed.jpg": "b7303ef8f99e28020e893beb1b1cf156866a7cc9dedf47844daf8337567ba542",
+    "qa18928/runtime/11-conflict409.ax.txt": "bf448d989297f5c8182ffd290f7e20584424cdc70b3d39b4bd6a47c63b6d5350",
+    "qa18928/runtime/11-conflict409.jpg": "9c61f02b4041e1b1af8342b6f47bcaef411e5d2ce7a190b170b2212dddef48d1",
+    "qa18928/runtime/12-network-failure.ax.txt": "748aa976a38ed5f402f95881470e10dbf6b61bba0611cd41e01458c15f359425",
+    "qa18928/runtime/12-network-failure.jpg": "fe58b6845dc0f7b5eb7b93d35dba781f1f7b9a8fc64e8e021deb6111c9f64b87",
+    "qa18928/runtime/13-retry-success.ax.txt": "c9573634f3a25d66feaca300f260d06c82333a2b22758041cb2324775dd54829",
+    "qa18928/runtime/13-retry-success.jpg": "953e9a6731d71952175d337ea741c6061c101188239831a76b03c42fefb45cba",
+    "qa18928/runtime/14-owner-accepted-proposal.ax.txt": "e8b13c59f2406b0a41303fd9913a227d4c239af3ffc137af53fc98436e515d0a",
+    "qa18928/runtime/14-owner-accepted-proposal.jpg": "f3d72a34b36d933410b66da666aff83812161f171c4b990b79be1987f39161f0",
+    "qa18928/runtime/15-owner-cancelled.ax.txt": "b0119324a3fdac9af1b3a3a5e16072c43b37341e5d220d2be71f8f97cbcab19b",
+    "qa18928/runtime/15-owner-cancelled.jpg": "4b620175b3b86ab45644cedb894cf94454dfa95c86f552e14db03b31f57a5e7a",
+    "qa18928/runtime/16-owner-reload-history.ax.txt": "54128f0a1131e1a92760d0037e929fb000d5cc5136443406f96c22f402245891",
+    "qa18928/runtime/16-owner-reload-history.jpg": "003b12413059767886b8fefbb828fd77e49960f7b07fc5ae991cedac0a62368d",
+    "qa18928/runtime/concurrent-change.json": "8941d15d6d957fde9e3ec8291fbfc7b3c8790ba479d2ffbddfa035d219def76f",
+    "qa18928/runtime/concurrent_change.py": "3b5bd8e3017e61d25a50e0e40ec2e487cff690141c2c9dffbeb0a08541107f85",
+    "qa18928/runtime/seed.json": "7a395838ed4977b3509e886086d0a9d80f47099eaaa8cce0056cc45d21fb5ae6",
+    "qa18928/runtime/seed_booking.py": "06e25b63ee12d16324a550fa1c2941bd0ed775e66fee03c30fbb7cc0e240fc75",
+    "qa18929/runtime/01-neutral-rejection.ax.txt": "d660469abc0ba315610eba12a1fd842b93da75322ef314b9336c9891b837e0a0",
+    "qa18929/runtime/01-neutral-rejection.jpg": "97dbe0bc1a836c16840036dee822d3b605695cec568c16504680e7647d610434",
+    "qa18929/runtime/02-czech-network-error.ax.txt": "3e6ddac599d77106d50e8182b01bbf4e99bec5cea6c59cc18c9eae720ddec346",
+    "qa18929/runtime/02-czech-network-error.jpg": "d6c5cf0a713f6baeef21a56b7de51327e2108d9770ed8a0a15b9d43f8f9c46c9",
+    "qa18929/runtime/03-retry-saved.ax.txt": "a0f604641188bd81e8ff242450a62c5635b054832e6416358166946c87dc65b4",
+    "qa18929/runtime/03-retry-saved.jpg": "4b2b5407374acdea2a62af29df14d314c7795c9d8bcae57a3fbf11a3b4ddd339",
+    "qa18929/runtime/04-owner-confirmed.ax.txt": "74f23238fb35c891a97b639cbece0ccfd0c6ac7a9218bae1b5255864e8c89fb4",
+    "qa18929/runtime/04-owner-confirmed.jpg": "9f461ccd398b961f933e497a368de02a06f4b8fbaa351a8d6ee1d7c9f3c1edea",
+    "qa18929/runtime/05-immediate-reservation.ax.txt": "12bf60fad675931cac17c898256b8985e9b65747dd2d0575caa5f76f9b7dbc42",
+    "qa18929/runtime/06-new-reservation7.ax.txt": "2f8320387a463ee3ddce2e52e6ca468b4dda3ea43bb5c996820f8b7f265c30d1",
+    "qa18929/runtime/06-new-reservation7.jpg": "3921ca0c9b7df9c442c366bf8efc7f8115307bc39b8c373f17bcfd26e9b01c47",
+    "qa18929/runtime/07-shared-A-pending.ax.txt": "8b665efcfc00fe5fcee3f27311c619891d4f69b0c27d8e57955fc5acb372f758",
+    "qa18929/runtime/07-shared-A-pending.jpg": "7ae1a70dcb03bdd458f3ba0c9ad7443c5f435ee106d20758f47bb2d3286741c3",
+    "qa18929/runtime/08-shared-ios-reply-history.ax.txt": "e68e087633b2d80d473fbd3bf4781808c680e035fb069d7ae7cdb8ab34c94b3a",
+    "qa18929/runtime/08-shared-ios-reply-history.jpg": "f4fbbc224e7521a7e91bdfd0bce02a68eac75a96977f24f276364d0419d1b0f9",
+    "qa18929/runtime/readback.json": "3beb6dab02c8c2d37adc4bb66379d519862bed27a2c7399a2ca6790437a2a8a6",
+    "qa18929/runtime/readback.py": "fed033e8ba0366ed267b60ee07bdbaf1fbcbc748769e06a8a404fca30d85ab85"
+  },
+  "production": false,
+  "deployment": false,
+  "canonical_changes": false
+}

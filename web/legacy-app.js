@@ -14027,25 +14027,34 @@
         }
 
         // Načítání rezervací (v1.0)
-        async function loadReservations(force = true) {
+        async function loadReservations(force = true, { preserveModal = false } = {}) {
             const renderStartTs = performance.now();
-            unmountFloatingModal();
+            if (!preserveModal) unmountFloatingModal();
             const container = document.getElementById('reservationsContainer');
-            if (!container) return;
+            if (!container) return false;
 
             // Kontrola auth stavu
             if (!isAuthenticated()) {
                 console.warn("[RESERVATIONS] Uživatel není přihlášen");
-                return;
+                return false;
             }
 
+            void window.ServiceBookings?.refreshList();
             const cacheOwnerKey = getUiCacheOwnerKey();
+            const reservationSession = window.AdminBrowserSession;
+            const reservationSnapshot = reservationSession?.snapshot?.();
+            const assertReservationSession = () => {
+                if (reservationSnapshot) reservationSession.assertCurrent(reservationSnapshot);
+                if (!isAuthenticated() || cacheOwnerKey !== getUiCacheOwnerKey()) {
+                    throw new DOMException('Přihlášení se změnilo.', 'AbortError');
+                }
+            };
             if (!force
                 && isUiSectionCacheFresh(reservationsUiState)
                 && container.dataset.renderedFor === cacheOwnerKey
                 && container.innerHTML.trim()) {
                 renderReservationsFromState();
-                return;
+                return true;
             }
 
             container.innerHTML = '<div class="loading">Načítám rezervace...</div>';
@@ -14054,6 +14063,7 @@
                 const isServiceView = isServiceReservationsContext();
                 const endpoint = isServiceView ? '/api/v1/reservations/service' : '/api/v1/reservations/my';
                 const reservations = await apiCall(endpoint, 'GET');
+                assertReservationSession();
                 reservationsUiState.isServiceView = isServiceView;
                 reservationsUiState.all = Array.isArray(reservations) ? reservations : [];
                 reservationsUiState.statusFilter = 'ALL';
@@ -14080,8 +14090,11 @@
                 container.dataset.renderedFor = cacheOwnerKey;
                 markUiSectionLoaded(reservationsUiState);
                 renderReservationsFromState();
+                return true;
 
             } catch (error) {
+                try { assertReservationSession(); } catch { return false; }
+                if (error.name === 'AbortError') return false;
                 reservationsUiState.loadedAt = 0;
                 console.error("[RESERVATIONS] Error loading reservations:");
                 const errorMessage = error.message || 'Neznámá chyba';
@@ -14100,6 +14113,7 @@
                         ` : ''}
                     </div>
                 `;
+                return false;
             }
         }
 

@@ -28,6 +28,7 @@ self.addEventListener('push', (event) => {
 
   const notificationID = Number.isSafeInteger(payload.notification_id) && payload.notification_id > 0 ? payload.notification_id : null;
   const unified = notificationID !== null;
+  const inboxPath = unified && payload.kind === 'admin_reply' ? '/web_admin/index.html' : '/web/customer.html';
   const title = unified ? 'Evidence Vozidel' : payload.title || 'Evidence Vozidel';
   const options = {
     body: unified ? 'Máte nové oznámení. Podrobnosti otevřete ve svém účtu.' : payload.body || 'Máte nové upozornění.',
@@ -35,7 +36,7 @@ self.addEventListener('push', (event) => {
     badge: sameOriginURL(payload.badge, '/web/assets/toozservis-logo-icon.png'),
     tag: unified ? 'evidence-notification-' + notificationID : payload.tag || 'sprava-vozidel-notification',
     data: {
-      url: unified ? new URL('/web/customer.html#notifications/'+notificationID, self.location.origin).href : sameOriginURL(payload.url, '/web/index.html'),
+      url: unified ? new URL(inboxPath+'#notifications/'+notificationID, self.location.origin).href : sameOriginURL(payload.url, '/web/index.html'),
       notification_id: notificationID,
       timestamp: payload.timestamp || Date.now(),
     },
@@ -50,7 +51,7 @@ self.addEventListener('push', (event) => {
       : Promise.resolve(),
     self.clients.matchAll({type:'window',includeUncontrolled:true}).then(clients => {
       for (const client of clients) {
-        if (new URL(client.url).origin === self.location.origin && new URL(client.url).pathname === '/web/customer.html') {
+        if (new URL(client.url).origin === self.location.origin && new URL(client.url).pathname === inboxPath) {
           client.postMessage({type:'EVIDENCE_NOTIFICATION_REFRESH'});
         }
       }
@@ -66,9 +67,9 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
-        if (client.url && new URL(client.url).origin === self.location.origin && new URL(client.url).pathname.startsWith('/web/')) {
+        if (client.url && new URL(client.url).origin === self.location.origin && (new URL(client.url).pathname.startsWith('/web/') || new URL(client.url).pathname === '/web_admin/index.html')) {
           if (Number.isSafeInteger(event.notification?.data?.notification_id)) {
-            if (new URL(client.url).pathname !== '/web/customer.html') continue;
+            if (new URL(client.url).pathname !== new URL(targetUrl).pathname) continue;
             client.focus();
             client.postMessage({type:'EVIDENCE_NOTIFICATION_OPEN',notification_id:event.notification.data.notification_id});
             return;

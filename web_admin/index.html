@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="activity.css?v=20261016" />
   <link rel="stylesheet" href="incidents.css?v=20261105" />
   <link rel="stylesheet" href="/web/admin-messages.css?v=20261105" />
+  <link rel="stylesheet" href="/web/notification-center.css?v=20261105-reverse" />
   <link rel="stylesheet" href="/web/referral-features.css" />
 </head>
 <body>
@@ -79,6 +80,7 @@
             <span class="nav-icon">🕘</span><span class="nav-text">Aktivita uživatelů</span>
           </button>
           <button data-section="incidents" class="nav-item"><span class="nav-icon" aria-hidden="true">🛠</span><span class="nav-text">Případy k řešení</span></button>
+          <button type="button" id="admin-notification-entry" class="nav-item"><span class="nav-icon" aria-hidden="true">↩</span><span class="nav-text">Odpovědi pro mě</span><span data-notification-count class="notification-badge" hidden></span></button>
           <button data-section="messages" class="nav-item"><span class="nav-icon" aria-hidden="true">✉</span><span class="nav-text">Zprávy</span></button>
           <button data-section="demo-access" class="nav-item"><span class="nav-icon">✉️</span><span class="nav-text">Vstupy do dema</span></button>
           <button data-section="vehicles" class="nav-item">
@@ -1185,6 +1187,7 @@
   <script src="activity.js?v=20261016"></script>
   <script src="incidents.js?v=20261105"></script>
   <script src="/web/admin-messages.js?v=20261105"></script>
+  <script src="/web/notification-center.js?v=20261105-reverse"></script>
   <script src="demo-access.js?v=20261016"></script>
   <script src="entity-management.js?v=20261002"></script>
   <script src="workspace.js?v=20261003"></script>
