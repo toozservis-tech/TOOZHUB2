@@ -305,3 +305,30 @@ test('workshop form keeps registered office separate from operational address',a
   assert.deepEqual(f.errors,[]);
  } finally {await f.context.close();}
 });
+
+test('admin entry shows the role and a single in-flight sign-in before the verification step', async () => {
+ const f = await fixture({login:true});
+ try {
+  const {page} = f;
+  assert.equal(await page.locator('h1').innerText(), 'Přihlášení administrátora');
+  const customer = page.getByRole('link', {name:'Přihlášení uživatele nebo servisu'});
+  assert.equal(await customer.getAttribute('href'), '/web/customer.html');
+  assert(await customer.evaluate(link => Boolean(document.querySelector('#form').compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING)));
+  let count = 0, finish;
+  const response = new Promise(resolve => { finish = resolve; });
+  await page.route('**/user/login', async route => {
+   count++; await response;
+   await route.fulfill({json:{two_factor_required:true,challenge_token:'synthetic-challenge'}});
+  });
+  await page.locator('#email').fill('synthetic-admin@example.invalid');
+  await page.locator('#password').fill('fixture-password');
+  await page.locator('#submit').click();
+  await page.waitForFunction(() => document.getElementById('submit').disabled && document.getElementById('submit').textContent === 'Ověřuji…');
+  await page.locator('#form').evaluate(form => form.requestSubmit());
+  finish(); await page.locator('#code').waitFor();
+  assert.equal(count, 1);
+  assert.equal(await page.locator('#submit').innerText(), 'Ověřit a otevřít správu');
+  assert.equal(await page.locator('#submit').isEnabled(), true);
+  assert.deepEqual(f.errors, []);
+ } finally { await f.context.close(); }
+});

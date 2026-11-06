@@ -23,12 +23,17 @@ async function api(url, body, token, expected) {
         return data;
     } finally { clearTimeout(timer); pendingRequests.delete(controller); }
 }
+function submitLabel() {
+    if (mode === 'setupPassword') return 'Připravit autentikátor';
+    if (mode === 'setupCode') return 'Potvrdit nastavení a otevřít správu';
+    return mode === 'otp' ? 'Ověřit a otevřít správu' : 'Přihlásit administrátora';
+}
 function showMode(next) {
     mode = next; const otp = next === 'otp' || next === 'setupCode';
     el('passwordLabel').hidden = otp; el('password').required = !otp; el('password').value = '';
     el('email').readOnly = next !== 'login'; el('codeLabel').hidden = !otp; el('code').required = otp; el('code').value = '';
     el('setup').hidden = next !== 'setupCode'; el('restart').hidden = next === 'login';
-    button.textContent = next === 'setupPassword' ? 'Připravit autentikátor' : next === 'setupCode' ? 'Potvrdit nastavení a otevřít správu' : otp ? 'Ověřit a otevřít správu' : 'Přihlásit administrátora';
+    button.textContent = submitLabel();
     (otp ? el('code') : el('password')).focus();
 }
 function restart() {
@@ -62,7 +67,7 @@ window.addEventListener('pagehide', restart);
 form.addEventListener('submit', async event => {
     event.preventDefault(); if (button.disabled) return;
     const expected = ++attempt;
-    button.disabled = true; el('error').textContent = '';
+    button.disabled = true; button.textContent = 'Ověřuji…'; el('error').textContent = '';
     try {
         if (mode === 'setupPassword') {
             const data = await api('/user/security/totp/setup', {current_password: el('password').value}, pendingToken, expected);
@@ -81,7 +86,7 @@ form.addEventListener('submit', async event => {
     } catch (error) {
         if (expected === attempt) el('error').textContent = error.name === 'AbortError' ? 'Připojení se přerušilo. Zkuste přihlášení znovu.' : error.message;
     } finally {
-        if (expected === attempt) { button.disabled = false; el('password').value = ''; el('code').value = ''; }
+        if (expected === attempt) { button.disabled = false; button.textContent = submitLabel(); el('password').value = ''; el('code').value = ''; }
     }
 });
 

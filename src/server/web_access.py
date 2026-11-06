@@ -71,6 +71,14 @@ def customer_web():
     html = html.replace('Ověřuji přihlášení administrátora…', 'Načítám Evidence Vozidel…')
     return HTMLResponse(html, headers={'Cache-Control': 'no-store', 'Content-Security-Policy': LEGACY_ADMIN_CONTENT_SECURITY_POLICY, 'X-Frame-Options': 'DENY'})
 
+@router.api_route('/web_admin', methods=['GET', 'HEAD'], include_in_schema=False)
+def canonical_admin_entry(request: Request):
+    # The proxy terminates TLS. A relative location keeps the public scheme.
+    destination = '/web_admin/'
+    if request.url.query:
+        destination += '?' + request.url.query
+    return RedirectResponse(destination, status_code=307, headers={'Cache-Control': 'no-store'})
+
 @router.get('/admin-login', include_in_schema=False)
 def admin_login():
     return FileResponse(Path(__file__).with_name('admin_login.html'), headers={'Cache-Control':'no-store', 'X-Robots-Tag':'noindex, nofollow'})
