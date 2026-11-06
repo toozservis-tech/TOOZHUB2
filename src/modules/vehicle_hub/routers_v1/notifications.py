@@ -61,8 +61,9 @@ class Device(Installation):
     web_keys:dict[str,str]|None=None
 
 @router.get('/push/device-status')
-def device_status(user=Depends(recipient)):
-    return push_delivery.public_status(user.id)
+def device_status(request:Request,user=Depends(recipient)):
+    ios_client = request.headers.get('x-client-platform', '').lower() == 'ios_app'
+    return push_delivery.public_status(user.id, ios_client=ios_client)
 
 @router.post('/push/devices')
 def register_device(body:Device,request:Request,user=Depends(recipient),db:Session=Depends(get_db)):

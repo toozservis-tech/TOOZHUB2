@@ -12,6 +12,7 @@ from .notification_delivery_models import NotificationItem as Item,NotificationC
 from .admin_message_models import AdminMessage
 from .operational_notification_models import NotificationOperationalEvent
 from .reply_notifications import active_admin
+from .push_policy import delivery_policy
 from .models import Customer,SystemNotification,License,VehicleOwnership
 from .vehicle_update_models import VehicleUpdate,VehicleUpdateReceipt,VehicleUpdateInboxState
 
@@ -86,7 +87,11 @@ def ensure_item(db,user,kind,source,*,queue=False):
         item.snapshot_body=source.message;item.snapshot_requires_ack=bool(policy and policy.requires_ack)
     sync_receipts(db,item,source)
     if queue and not item.read_at and not item.dismissed_at and not item.acknowledged_at:
+        delivery = delivery_policy()
+        now = datetime.utcnow()
         for device in db.query(PushDevice).filter_by(recipient_id=user.id,active=True):
+            if not delivery.can_queue(user.id, device, item.created_at, now):
+                continue
             if not db.query(PushOutbox.id).filter_by(item_id=item.id,device_id=device.id).first():
                 db.add(PushOutbox(item_id=item.id,device_id=device.id,device_generation=device.generation,
                     next_attempt_at=max(datetime.utcnow(),source.starts_at) if kind=='announcement' and source.starts_at else datetime.utcnow()))

@@ -13,6 +13,7 @@ from sqlalchemy import or_,and_,update,select
 from fastapi import HTTPException
 from .notification_delivery_models import PushDevice,PushOutbox,NotificationItem,NotificationCursor
 from .notification_inbox import active_recipient,source_for,summary,requires_ack
+from .push_policy import PUBLIC_APNS_TOPIC, delivery_policy
 from .models import Customer
 from .account_state import customer_session_version
 from src.core.session_revocation import RevokedAccessToken,token_digest
@@ -36,36 +37,22 @@ def configured(platform,environment=None):
               'webpush':['VAPID_PRIVATE_KEY','VAPID_PUBLIC_KEY','VAPID_CLAIMS_SUBJECT']}[platform]
     return all(bool(os.getenv(key,'')) for key in keys)
 
-@dataclass(frozen=True)
-class DeliveryPolicy:
-    enabled:bool
-    valid:bool
-    recipients:frozenset|None
-
-    def allows(self,recipient_id):
-        return self.enabled and self.valid and (self.recipients is None or recipient_id in self.recipients)
-
-def delivery_policy():
-    """Read afresh at claim/send; malformed nonempty canary config fails closed."""
-    enabled=os.getenv('PUSH_DELIVERY_ENABLED','').lower() in {'1','true'}
-    raw=os.getenv('PUSH_DELIVERY_RECIPIENT_IDS','').strip()
-    if not raw:return DeliveryPolicy(enabled,True,None)
-    parts=raw.split(',')
-    if len(raw)>10000 or len(parts)>1000 or any(not re.fullmatch(r'[1-9][0-9]{0,9}',part.strip()) or int(part.strip())>2147483647 for part in parts):
-        return DeliveryPolicy(enabled,False,frozenset())
-    return DeliveryPolicy(enabled,True,frozenset(int(part.strip()) for part in parts))
-
-def public_status(recipient_id=None):
+def public_status(recipient_id=None, *, ios_client=False):
     """Report effective delivery for an authenticated account, without exposing IDs.
 
     Internal callers that omit the account retain the global readiness summary.
     Device clients must pass the authenticated ID: a canary outside their scope
     does not mean delivery is enabled for them.
     """
-    policy=delivery_policy()
+    policy = delivery_policy()
+    if recipient_id is None:
+        has_audience = bool(policy.recipients) or policy.public_apns_active(datetime.utcnow())
+        enabled = policy.enabled and policy.valid and has_audience
+    else:
+        enabled = policy.allows(recipient_id, public_apns=ios_client)
     return {'registration_available':bool(os.getenv('PUSH_TOKEN_ENCRYPTION_KEY')),
-        'dispatch_enabled':policy.allows(recipient_id) if recipient_id is not None else policy.enabled and policy.valid,
-        'dispatch_limited':policy.recipients is not None,
+        'dispatch_enabled':enabled,
+        'dispatch_limited':True,
         'dispatch_configuration_valid':policy.valid,
         'providers':{p:{'configured':configured(p)} for p in ('apns','fcm','webpush')}}
 
@@ -250,10 +237,16 @@ def dispatch_one(db,provider=send_provider,now=None):
     now=now or datetime.utcnow()
     available=or_(and_(PushOutbox.state.in_(['queued','retry','blocked']),PushOutbox.next_attempt_at<=now),and_(PushOutbox.state=='sending',PushOutbox.lease_until<=now))
     query=db.query(PushOutbox).filter(available)
-    if policy.recipients is not None:
-        # Excluded recipients must not consume attempts, leases or the cycle's
-        # bounded send budget. Registration/collection remain independent.
-        query=query.filter(PushOutbox.item_id.in_(select(NotificationItem.id).where(NotificationItem.recipient_id.in_(policy.recipients))))
+    canary_items = select(NotificationItem.id).where(NotificationItem.recipient_id.in_(policy.recipients))
+    audience = PushOutbox.item_id.in_(canary_items)
+    if policy.public_apns_active(now):
+        public_items = select(NotificationItem.id).where(NotificationItem.created_at >= policy.public_apns_from)
+        production_devices = select(PushDevice.id).where(
+            PushDevice.platform == 'apns', PushDevice.environment == 'production',
+            PushDevice.bundle_id == PUBLIC_APNS_TOPIC,
+        )
+        audience = or_(audience, and_(PushOutbox.item_id.in_(public_items), PushOutbox.device_id.in_(production_devices)))
+    query = query.filter(audience)
     row=query.order_by(PushOutbox.id).with_for_update(skip_locked=True).first()
     if row is None:return False
     previous_state=row.state;previous_attempts=row.attempts
@@ -269,7 +262,10 @@ def dispatch_one(db,provider=send_provider,now=None):
             state='queued' if previous_state=='sending' else previous_state,attempts=previous_attempts,lease_until=None,lease_token=None))
         db.commit()
         return False
-    if item is not None and not delivery_policy().allows(item.recipient_id):return release_excluded_claim()
+    def still_allowed():
+        current = delivery_policy()
+        return current.enabled and current.can_queue(item.recipient_id, device, item.created_at, now)
+    if item and device and not still_allowed():return release_excluded_claim()
     user=db.get(Customer,item.recipient_id) if item else None
     source=source_for(db,item,user,for_delivery=True) if item and user else None
     if source is not None:
@@ -285,7 +281,7 @@ def dispatch_one(db,provider=send_provider,now=None):
             payload=generic_payload(item,summary(db,user)['badge_count'])
             # Configuration may have changed while authorization/badge was
             # loaded. Never turn a canary exclusion into a failed notification.
-            if not delivery_policy().allows(item.recipient_id):return release_excluded_claim()
+            if not still_allowed():return release_excluded_claim()
             outcome=provider(device,secret,payload)
         except (HTTPException,InvalidToken,ValueError):outcome=Outcome('blocked','token_storage_unavailable',900)
     # Persist only bounded classified outcomes. No token/provider text in errors.

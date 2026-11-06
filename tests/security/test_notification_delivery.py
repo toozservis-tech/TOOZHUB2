@@ -8,6 +8,7 @@ import test_admin_messages as messages
 from src.modules.vehicle_hub.routers_v1.notifications import router
 from src.modules.vehicle_hub.notification_delivery_models import *
 from src.modules.vehicle_hub.notification_inbox import collect_new,materialize,source_for
+from src.modules.vehicle_hub.push_policy import PUBLIC_APNS_TOPIC
 from src.modules.vehicle_hub.push_delivery import dispatch_one,Outcome,generic_payload,valid_web_endpoint,delivery_policy,public_status
 from src.modules.vehicle_hub.models import Customer,SystemNotification,Vehicle,VehicleOwnership
 from src.modules.vehicle_hub.vehicle_update_models import VehicleUpdate,VehicleUpdateInboxState
@@ -24,9 +25,10 @@ class Delivery(unittest.TestCase):
     def setUp(self):
         messages.Messages.setUp(self)
         self.client.app.include_router(router,prefix='/api/v1')
-        env=patch.dict(os.environ,{'PUSH_DELIVERY_ENABLED':'true','PUSH_DELIVERY_RECIPIENT_IDS':'','PUSH_TOKEN_ENCRYPTION_KEY':Fernet.generate_key().decode(),'APNS_SANDBOX_KEY_ID':'qa-sandbox','APNS_SANDBOX_PRIVATE_KEY':'qa-not-production', 'APNS_KEY_ID':'synthetic','APNS_TEAM_ID':'synthetic',
+        env=patch.dict(os.environ,{'PUSH_DELIVERY_ENABLED':'true','PUSH_DELIVERY_RECIPIENT_IDS':','.join(str(account['user']['id']) for account in (self.user,self.other,self.service,self.admin)),'PUSH_TOKEN_ENCRYPTION_KEY':Fernet.generate_key().decode(),'APNS_SANDBOX_KEY_ID':'qa-sandbox','APNS_SANDBOX_PRIVATE_KEY':'qa-not-production', 'APNS_KEY_ID':'synthetic','APNS_TEAM_ID':'synthetic',
             'APNS_PRIVATE_KEY':'not-a-production-key','APNS_BUNDLE_IDS':'cz.fixture','FCM_PROJECT_ID':'synthetic-fixture','FCM_SERVICE_ACCOUNT_JSON':'{}','FCM_BUNDLE_IDS':'cz.fixture'})
         env.start();self.patches.append(env)
+        os.environ.pop('PUSH_PUBLIC_APNS_FROM_UTC',None)
         migrate(self.engine)
     def get(self,p=N,headers=None):return self.client.get(p,headers=headers or self.uh)
     def act(self,path,data=None,headers=None):
@@ -115,15 +117,114 @@ class Delivery(unittest.TestCase):
             dispatch_one(db,lambda d,s,p:(captured.append(p) or Outcome('accepted','apns_accepted')))
             self.assertFalse(dispatch_one(db,lambda *a:self.fail('duplicate')))
         self.assertEqual(len(captured),1);self.assertNotIn('SECRET',json.dumps(captured));self.assertNotIn('example.com',json.dumps(captured))
+    def test_public_rollout_uses_source_time_and_preserves_old_inbox_and_ack(self):
+        self.assertEqual(self.device(environment='production',bundle_id='cz.fixture')[0].status_code,200)
+        old=self.send(ack=True)
+        scheduled=self.announcement(starts_at=datetime.utcnow()+timedelta(hours=1))
+        # No collection yet. The two pre-cutover sources will materialize later.
+        cutoff=datetime.utcnow()
+        public={'PUSH_DELIVERY_RECIPIENT_IDS':'77','PUSH_PUBLIC_APNS_FROM_UTC':cutoff.isoformat()+'Z',
+                'APNS_BUNDLE_IDS':'cz.fixture,'+PUBLIC_APNS_TOPIC}
+        with patch.dict(os.environ,public):
+            fresh=self.send()
+            with self.Session() as db:
+                db.get(AdminMessage,fresh['id']).sent_at=cutoff
+                db.commit()
+            self.collect()
+            # Registering AFTER the new inbox items materialize exercises catch-up.
+            self.assertEqual(self.device(token='ef'*32,environment='production',bundle_id=PUBLIC_APNS_TOPIC)[0].status_code,200)
+            self.assertEqual(self.device(token='ac'*32,environment='sandbox',bundle_id=PUBLIC_APNS_TOPIC)[0].status_code,200)
+            self.assertEqual(self.device(token='a'*40,platform='fcm',environment='production')[0].status_code,200)
+            with self.Session() as db:
+                public_row=db.query(PushOutbox).one()
+                item=db.get(NotificationItem,public_row.item_id)
+                self.assertEqual((item.kind,item.source_id,item.created_at),('admin_message',fresh['id'],cutoff))
+                stored_old=db.query(NotificationItem).filter_by(kind='admin_message',source_id=old['id']).one()
+                self.assertIsNone(stored_old.read_at);old_item=stored_old.id
+                self.assertIsNotNone(db.query(NotificationItem).filter_by(kind='announcement',source_id=scheduled).first())
+                seen=[]
+                self.assertTrue(dispatch_one(db,lambda d,s,p:(seen.append((d.platform,d.environment,d.bundle_id)) or Outcome('accepted','synthetic'))))
+                self.assertEqual(seen,[('apns','production',PUBLIC_APNS_TOPIC)])
+                self.assertFalse(dispatch_one(db,lambda *a:self.fail('unexpected second push')))
+            self.assertEqual(self.act(N+f'/{old_item}/ack').status_code,200)
+            self.assertIsNotNone(self.get(N+f'/{old_item}').json()['item']['acknowledged_at'])
+
+    def test_public_rollout_skips_every_old_outbox_state_before_claim_and_honors_logout(self):
+        with patch.dict(os.environ,{'APNS_BUNDLE_IDS':PUBLIC_APNS_TOPIC}):
+            self.assertEqual(self.device(environment='production',bundle_id=PUBLIC_APNS_TOPIC)[0].status_code,200)
+            for _ in range(4):
+                self.send()
+            self.collect()
+            cutoff=datetime.utcnow()
+            with self.Session() as db:
+                for row,state in zip(db.query(PushOutbox).order_by(PushOutbox.id),['queued','blocked','retry','sending']):
+                    row.state=state;row.attempts=2;row.next_attempt_at=cutoff-timedelta(minutes=1)
+                    if state=='sending':
+                        row.lease_until=cutoff-timedelta(seconds=1);row.lease_token='expired-lease'
+                db.commit()
+            with patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':'77','PUSH_PUBLIC_APNS_FROM_UTC':cutoff.isoformat()+'Z'}):
+                self.send();self.collect()
+                with self.Session() as db:
+                    def state():
+                        return [(r.state,r.attempts,r.lease_token,r.lease_until) for r in db.query(PushOutbox).order_by(PushOutbox.id).limit(4)]
+                    before=state()
+                    self.assertTrue(dispatch_one(db,lambda *a:Outcome('accepted','synthetic')))
+                    self.assertFalse(dispatch_one(db,lambda *a:self.fail('old push')))
+                    self.assertEqual(state(),before)
+                self.send();self.collect()
+                self.assertEqual(self.client.post('/user/logout',headers=self.uh).status_code,204)
+                with self.Session() as db:
+                    self.assertTrue(dispatch_one(db,lambda *a:self.fail('logged-out push')))
+                    row=db.query(PushOutbox).order_by(PushOutbox.id.desc()).first()
+                    self.assertEqual((row.state,row.last_code),('skipped','binding_or_access_revoked'))
+
+    def test_public_rollout_cutoff_rechecked_immediately_before_provider(self):
+        from src.modules.vehicle_hub import push_delivery
+        cutoff=datetime.utcnow()
+        with patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':'77','PUSH_PUBLIC_APNS_FROM_UTC':cutoff.isoformat()+'Z','APNS_BUNDLE_IDS':PUBLIC_APNS_TOPIC}):
+            self.assertEqual(self.device(environment='production',bundle_id=PUBLIC_APNS_TOPIC)[0].status_code,200)
+            self.send();self.collect()
+            original_summary=push_delivery.summary
+            def change_cutoff(*args):
+                result=original_summary(*args)
+                os.environ['PUSH_PUBLIC_APNS_FROM_UTC']=(datetime.utcnow()+timedelta(hours=1)).isoformat()+'Z'
+                return result
+            with self.Session() as db,patch.object(push_delivery,'summary',side_effect=change_cutoff):
+                self.assertFalse(dispatch_one(db,lambda *a:self.fail('cutoff changed')))
+                row=db.query(PushOutbox).one();self.assertEqual((row.state,row.attempts,row.lease_token),('queued',0,None))
+
+    def test_public_readiness_is_ios_only_and_invalid_cutoff_stops_even_canary(self):
+        cutoff=datetime.utcnow()-timedelta(seconds=1)
+        with patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':str(self.other['user']['id']),
+                                    'PUSH_PUBLIC_APNS_FROM_UTC':cutoff.isoformat()+'Z'}):
+            route='/api/v1/push/device-status'
+            for platform,expected in [('ios_app',True),('android_app',False),('web',False),('',False)]:
+                result=self.get(route,headers={**self.uh,'X-Client-Platform':platform})
+                self.assertEqual(result.status_code,200);self.assertEqual(result.json()['dispatch_enabled'],expected)
+            for value in ('','  ','2026-13-31T00:00:00Z','2026-02-30T00:00:00Z','2026-11-06 12:00','2026-11-06T12:00:00+01:00','now'):
+                with self.subTest(value=value),patch.dict(os.environ,{'PUSH_PUBLIC_APNS_FROM_UTC':value}):
+                    self.assertFalse(public_status(self.other['user']['id'])['dispatch_configuration_valid'])
+                    self.assertFalse(public_status(self.other['user']['id'])['dispatch_enabled'])
+        from types import SimpleNamespace
+        with patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':'77','PUSH_PUBLIC_APNS_FROM_UTC':cutoff.isoformat()+'Z'}):
+            policy=delivery_policy()
+            production=SimpleNamespace(platform='apns',environment='production',bundle_id=PUBLIC_APNS_TOPIC)
+            web=SimpleNamespace(platform='webpush',environment='production',bundle_id='web')
+            self.assertFalse(policy.can_queue(78,production,cutoff,cutoff-timedelta(microseconds=1)))
+            self.assertFalse(policy.can_queue(78,production,cutoff-timedelta(microseconds=1),cutoff))
+            self.assertTrue(policy.can_queue(78,production,cutoff,cutoff))
+            self.assertFalse(policy.can_queue(78,web,cutoff,cutoff))
+            self.assertTrue(policy.can_queue(77,web,cutoff-timedelta(minutes=1),cutoff))
+
     def test_canary_strict_configuration_and_public_status_hide_ids(self):
         for raw in ('','  ','12345','12345, 67890','12345,12345'):
             with self.subTest(raw=raw),patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':raw}):
-                self.assertTrue(delivery_policy().allows(12345))
+                self.assertEqual(delivery_policy().allows(12345),bool(raw.strip()))
                 self.assertNotIn('12345',json.dumps(public_status()))
-                self.assertEqual(public_status()['dispatch_limited'],bool(raw.strip()))
+                self.assertTrue(public_status()['dispatch_limited'])
         with patch.dict(os.environ,{},clear=False):
             os.environ.pop('PUSH_DELIVERY_RECIPIENT_IDS',None)
-            self.assertTrue(delivery_policy().allows(12345))
+            self.assertFalse(delivery_policy().allows(12345))
         for raw in ('0','-1','+1','01','1,,2','1,','*','1.0','true','1;2','١','2147483648',','.join(['1']*1001)):
             with self.subTest(raw=raw),patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':raw}):
                 self.assertFalse(delivery_policy().allows(1))
@@ -133,9 +234,9 @@ class Delivery(unittest.TestCase):
     def test_canary_skips_excluded_head_without_consuming_or_blocking_allowed(self):
         excluded=self.other['user']['id'];allowed=self.user['user']['id']
         self.send(account=self.other);self.send();self.collect()
+        self.assertEqual(self.device(headers=self.oh,token='cd'*32)[0].status_code,200)
+        self.assertEqual(self.device()[0].status_code,200)
         with patch.dict(os.environ,{'PUSH_DELIVERY_RECIPIENT_IDS':str(allowed)}):
-            self.assertEqual(self.device(headers=self.oh,token='cd'*32)[0].status_code,200)
-            self.assertEqual(self.device()[0].status_code,200)
             with self.Session() as db:
                 before=db.query(PushOutbox).join(NotificationItem).filter(NotificationItem.recipient_id==excluded).one()
                 before_state=(before.state,before.attempts,before.next_attempt_at,before.last_code)

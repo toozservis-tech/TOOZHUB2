@@ -18,7 +18,8 @@ from scripts.migrate_notification_delivery import migrate
 
 def setup(pg_db,monkeypatch):
     monkeypatch.setenv('PUSH_DELIVERY_ENABLED','true')
-    monkeypatch.setenv('PUSH_DELIVERY_RECIPIENT_IDS','')
+    monkeypatch.setenv('PUSH_DELIVERY_RECIPIENT_IDS','1,2,3')
+    monkeypatch.delenv('PUSH_PUBLIC_APNS_FROM_UTC',raising=False)
     monkeypatch.setenv('PUSH_TOKEN_ENCRYPTION_KEY',Fernet.generate_key().decode())
     for key,value in {'APNS_SANDBOX_KEY_ID':'qa-sandbox','APNS_SANDBOX_PRIVATE_KEY':'qa-not-production', 'APNS_KEY_ID':'qa','APNS_TEAM_ID':'qa','APNS_PRIVATE_KEY':'qa','APNS_BUNDLE_IDS':'cz.fixture'}.items():monkeypatch.setenv(key,value)
     migrate(pg_db.engine)

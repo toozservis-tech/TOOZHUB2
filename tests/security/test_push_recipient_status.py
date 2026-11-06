@@ -14,11 +14,12 @@ from src.modules.vehicle_hub.push_delivery import public_status
     ('true','77,',False,False,False,True),
     ('true','not-an-id',False,False,False,True),
     ('false','77',False,False,True,True),
-    ('false','',False,False,True,False),
-    ('true','',True,True,True,False),
-    ('true','  ',True,True,True,False),
+    ('false','',False,False,True,True),
+    ('true','',False,False,True,True),
+    ('true','  ',False,False,True,True),
 ])
 def test_effective_status_for_77_and_78_hides_allowlist(monkeypatch,enabled,raw,expected77,expected78,valid,limited):
+    monkeypatch.delenv('PUSH_PUBLIC_APNS_FROM_UTC',raising=False)
     monkeypatch.setenv('PUSH_DELIVERY_ENABLED',enabled)
     monkeypatch.setenv('PUSH_DELIVERY_RECIPIENT_IDS',raw)
     for recipient,expected in [(77,expected77),(78,expected78)]:
@@ -28,11 +29,12 @@ def test_effective_status_for_77_and_78_hides_allowlist(monkeypatch,enabled,raw,
         assert status['dispatch_limited'] is limited
         assert not any(key in status for key in ('recipient_id','recipients','allowed_ids','recipient_ids'))
         assert '77' not in json.dumps(status) and '78' not in json.dumps(status)
-    assert public_status()['dispatch_enabled'] is (enabled=='true' and valid)
+    assert public_status()['dispatch_enabled'] is (enabled=='true' and valid and bool(raw.strip()))
 
 def test_absent_policy_and_environment_changes_recompute_without_cached_account(monkeypatch):
     monkeypatch.setenv('PUSH_DELIVERY_ENABLED','true');monkeypatch.delenv('PUSH_DELIVERY_RECIPIENT_IDS',raising=False)
-    assert public_status(77)['dispatch_enabled'] and public_status(78)['dispatch_enabled']
+    monkeypatch.delenv('PUSH_PUBLIC_APNS_FROM_UTC',raising=False)
+    assert not public_status(77)['dispatch_enabled'] and not public_status(78)['dispatch_enabled']
     monkeypatch.setenv('PUSH_DELIVERY_RECIPIENT_IDS','77')
     assert public_status(77)['dispatch_enabled'] and not public_status(78)['dispatch_enabled']
     monkeypatch.setenv('PUSH_DELIVERY_RECIPIENT_IDS','78')
