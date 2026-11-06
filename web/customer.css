@@ -35,3 +35,46 @@ body[data-web-plan="free"] .form-group:has(#serviceAttachmentFile-add) { display
 @media(max-width:600px){.customer-feature-grid{grid-template-columns:1fr}.customer-feature-dialog{width:94vw}.customer-feature-body{padding:15px}.customer-feature-actions button{flex:1 1 140px}}
 
 .service-photo-preview{display:block;max-width:100%;max-height:50vh;object-fit:contain;margin:16px auto}.service-photo-preview[hidden]{display:none}.customer-field select{padding:12px;border:1px solid #aebbd0;border-radius:9px;font:inherit}
+
+/* Compact dashboard news for vehicle owners. */
+#customerOverviewTab .customer-news {
+  box-sizing: border-box;
+  max-width: 100%;
+  margin-block: 10px 16px;
+  padding: 4px 16px 12px;
+  border: 1px solid #445068;
+  border-radius: 18px;
+  color: #f6f7fb;
+  background: linear-gradient(115deg, #243047, #303e58);
+}
+.customer-news-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 4px;
+  align-items: center;
+}
+.customer-news-controls { display: flex; align-items: center; }
+.customer-news-label { font-size: .78rem; font-weight: 700; color: #ffc381; }
+.customer-news-count { white-space: nowrap; color: #d7deeb; font-size: .75rem; font-variant-numeric: tabular-nums; }
+.customer-news-controls button {
+  appearance: none; min-width: 44px; min-height: 44px; padding: 0; margin: 0;
+  border: 0; border-radius: 10px; background: transparent; color: #fff;
+  cursor: pointer; font: 600 1.55rem/1 system-ui;
+}
+.customer-news-controls [data-news-action="play"] { font-size: .95rem; }
+.customer-news-controls button[hidden] { display: none; }
+.customer-news-controls button:hover { background: #ffffff18; }
+.customer-news-copy { position: relative; min-height: 44px; touch-action: pan-y; overflow-wrap: anywhere; }
+.customer-news-link::before { content: ""; position: absolute; inset: 0; }
+#customerOverviewTab .customer-news h3, .customer-news-link {
+  width: auto; margin: 0; padding: 0; border: 0; background: transparent;
+  text-align: start; color: #fff; font: 700 1.1rem/1.25 system-ui;
+}
+.customer-news-link { cursor: pointer; }
+.customer-news-link::after { content: " ›"; color: #ffc381; }
+.customer-news button:focus-visible { outline: 2px solid #ffd097; outline-offset: 2px; }
+#customerOverviewTab .customer-news p { margin: 3px 0 0; color: #e3e8ef; font-size: .9rem; line-height: 1.35; }
+@media (max-width: 500px) {
+  #customerOverviewTab .customer-news { padding-inline: 12px; }
+  .customer-news-label { overflow-wrap: anywhere; }
+}

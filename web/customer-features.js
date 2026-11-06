@@ -179,21 +179,173 @@
         const r=await session().request(path); if(!r.ok) throw new Error('Soubor není dostupný pro tento účet nebo tarif.');
         const blob=await r.blob(), url=URL.createObjectURL(blob), a=document.createElement('a'); a.href=url;a.download=name;a.hidden=true;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
     }
+    const dashboardStories = [
+        { id: 'nearby', title: 'Servisy ve vašem okolí', text: 'Vyhledejte servis podle města nebo PSČ.',
+            open: () => global.switchTab('servicesDirectory') },
+        { id: 'booking', title: 'Objednání do servisu', text: 'U vozidla vyberte servis a navrhněte termín opravy.',
+            open: async () => { global.switchTab('reservations'); await global.showCreateReservationForm(); } },
+        { id: 'referrals', title: 'Premium za pozvání', text: 'Sdílejte odkaz nebo QR kód a sledujte, kolik zbývá k odměně.',
+            open: () => global.ReferralFeatures.openPersonal('user') },
+        { id: 'history', title: 'Servisní historie', text: 'Záznamy o opravách najdete v detailu vozidla.' },
+        { id: 'reminders', title: 'Připomínky údržby', text: 'Sledujte termíny údržby a technické kontroly.' },
+        { id: 'access', title: 'Sdílení vozidla', text: 'O přístupu servisu k vašemu vozidlu rozhodujete vy.' }
+    ];
+    const deckState = { index: 0, paused: false };
+    let disposeDashboardNews = () => {};
+
+    function mountDashboardNews(host, captured, hasVehicles) {
+        const motion = global.matchMedia('(prefers-reduced-motion: reduce)');
+        const news = document.createElement('section');
+        news.className = 'customer-news';
+        news.setAttribute('aria-label', 'Novinky a tipy');
+        news.setAttribute('aria-roledescription', 'karusel');
+        news.innerHTML = `
+            <div class="customer-news-bar">
+                <span class="customer-news-label">Novinky a tipy</span>
+                <span class="customer-news-count"></span>
+                <div class="customer-news-controls">
+                    <button type="button" data-news-action="prev" aria-label="Předchozí tip">‹</button>
+                    <button type="button" data-news-action="play"></button>
+                    <button type="button" data-news-action="next" aria-label="Další tip">›</button>
+                </div>
+            </div>
+            <div class="customer-news-copy" aria-atomic="true">
+                <h3></h3>
+                <p></p>
+            </div>`;
+        const copy = news.querySelector('.customer-news-copy');
+        const heading = copy.querySelector('h3');
+        const count = news.querySelector('.customer-news-count');
+        const play = news.querySelector('[data-news-action="play"]');
+        let visible = false;
+        let timer;
+        let touch;
+        let ignoreClickUntil = 0;
+
+        function render() {
+            const story = dashboardStories[deckState.index];
+            news.dataset.story = story.id;
+            const mayOpen = typeof story.open === 'function' &&
+                (story.id !== 'booking' || typeof global.showCreateReservationForm === 'function') &&
+                (story.id !== 'referrals' || typeof global.ReferralFeatures?.openPersonal === 'function');
+            heading.textContent = story.title;
+            if (mayOpen) {
+                const link = action(story.title, () => {
+                    session().assertCurrent(captured);
+                    if (performance.now() < ignoreClickUntil) return;
+                    if (story.id === 'booking' && !hasVehicles) return global.switchTab('vehicles');
+                    return story.open();
+                });
+                link.className = 'customer-news-link';
+                heading.replaceChildren(link);
+            }
+            copy.querySelector('p').textContent = story.text;
+            count.textContent = (deckState.index + 1) + ' / ' + dashboardStories.length;
+            play.hidden = motion.matches;
+            play.textContent = deckState.paused ? '▶' : 'Ⅱ';
+            play.setAttribute('aria-label', deckState.paused ? 'Spustit střídání novinek' : 'Pozastavit střídání novinek');
+            copy.setAttribute('aria-live', deckState.paused || motion.matches ? 'polite' : 'off');
+        }
+        function schedule() {
+            global.clearTimeout(timer);
+            if (!visible || document.hidden || motion.matches || deckState.paused) return;
+            timer = global.setTimeout(() => {
+                if (!news.isConnected || !host.classList.contains('active')) return;
+                if (!document.querySelector('dialog[open]')) advance(1);
+                else schedule();
+            }, 8000);
+        }
+        function advance(step, manual = false) {
+            if (manual) deckState.paused = true;
+            deckState.index = (deckState.index + step + dashboardStories.length) % dashboardStories.length;
+            render();
+            if (!motion.matches) {
+                copy.animate([
+                    {opacity: 0.4, transform: 'translateX(' + (step > 0 ? 8 : -8) + 'px)'},
+                    {opacity: 1, transform: 'translateX(0)'}
+                ], {duration: 220, easing: 'ease-out'});
+            }
+            schedule();
+        }
+        news.querySelector('[data-news-action="prev"]').onclick = () => advance(-1, true);
+        news.querySelector('[data-news-action="next"]').onclick = () => advance(1, true);
+        play.onclick = () => {
+            deckState.paused = !deckState.paused;
+            render();
+            schedule();
+        };
+        news.addEventListener('keydown', event => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            advance(event.key === 'ArrowLeft' ? -1 : 1, true);
+        });
+        // Keep the newly focused slide available to keyboard and screen-reader users.
+        news.addEventListener('focusin', event => {
+            if (news.contains(event.relatedTarget) || !event.target.matches(':focus-visible')) return;
+            deckState.paused = true;
+            copy.setAttribute('aria-live', 'polite');
+            play.textContent = '▶';
+            play.setAttribute('aria-label', 'Spustit střídání novinek');
+            schedule();
+        });
+        copy.addEventListener('pointerdown', event => {
+            if (event.isPrimary) touch = { id: event.pointerId, x: event.clientX, y: event.clientY };
+        });
+        copy.addEventListener('pointercancel', () => { touch = null; });
+        copy.addEventListener('pointerup', event => {
+            if (!touch || event.pointerId !== touch.id) return;
+            const dx = event.clientX - touch.x;
+            const dy = event.clientY - touch.y;
+            touch = null;
+            if (Math.abs(dx) < 36 || Math.abs(dx) <= Math.abs(dy) * 1.5) return;
+            ignoreClickUntil = performance.now() + 500;
+            advance(dx < 0 ? 1 : -1, true);
+        });
+        const observer = new IntersectionObserver(([entry]) => {
+            visible = entry.isIntersecting && entry.intersectionRatio >= 0.5;
+            schedule();
+        }, {threshold: [0, 0.5]});
+        const motionChanged = () => { render(); schedule(); };
+        motion.addEventListener('change', motionChanged);
+        document.addEventListener('visibilitychange', schedule);
+        host.querySelector('h2').after(news);
+        render();
+        observer.observe(news);
+        disposeDashboardNews = () => {
+            global.clearTimeout(timer);
+            observer.disconnect();
+            motion.removeEventListener('change', motionChanged);
+            document.removeEventListener('visibilitychange', schedule);
+            news.remove();
+            disposeDashboardNews = () => {};
+        };
+    }
+
     async function overview() {
+        disposeDashboardNews();
         const target=$('customerOverviewTab'), version=++loadVersion, captured=session().snapshot();target.innerHTML='<p role="status">Načítám přehled…</p>';
         try {
-            const [vehicles, reminders, reservations]=await Promise.all([request('/api/v1/vehicles'),request('/api/v1/reminders'),request('/api/v1/reservations')]);
+            const profile = await request('/user/me');
+            session().assertCurrent(captured);
+            if (version !== loadVersion) return;
+            const reservationsPath = profile.role === 'service' ? '/api/v1/reservations/service' : '/api/v1/reservations/my';
+            const [vehicles, reminders, reservations] = await Promise.all([
+                request('/api/v1/vehicles'), request('/api/v1/reminders'), request(reservationsPath)
+            ]);
             session().assertCurrent(captured);if(version!==loadVersion)return;
             const reminderRows=Array.isArray(reminders)?reminders:reminders.items||[], reservationRows=Array.isArray(reservations)?reservations:reservations.items||[];
             target.innerHTML='<h2>Přehled</h2><div class="customer-feature-grid">'+card('Vozidla',`<strong>${vehicles.length}</strong>`)+card('Připomínky',`<strong>${reminderRows.filter(x=>!x.is_completed).length}</strong>`)+card('Rezervace',`<strong>${reservationRows.length}</strong>`)+ '</div><div id="customerOverviewActions" class="customer-feature-actions"></div><section id="customerAnalytics"><h3>Náklady a statistiky</h3><div id="customerAnalyticsData" role="status">Načítám…</div></section>';
             $('customerOverviewActions').append(action('Přidat vozidlo',()=>global.switchTab('addVehicle')),action('Připomínky',()=>global.switchTab('reminders')),action('Rezervace',()=>global.switchTab('reservations')),action('Obnovit přehled',overview));
-            await analytics($('customerAnalyticsData'));
+            if (profile.role === 'user' && Number.isSafeInteger(profile.id) && profile.id > 0) {
+                mountDashboardNews(target, captured, vehicles.length > 0);
+            }
+            await analytics($('customerAnalyticsData'), undefined, profile);
         } catch(e) {if(e.name!=='AbortError' && version===loadVersion) tierError(target,e);}
     }
-    async function analytics(container, vehicleId) {
+    async function analytics(container, vehicleId, knownProfile) {
         const captured=session().snapshot(), q=vehicleId?`?vehicle_id=${Number(vehicleId)}`:'';
         try {
-            const profile=await request('/user/me');
+            const profile=knownProfile ?? await request('/user/me');
             const license=profile.role==='user'?await request('/api/v1/license/status'):null;
             session().assertCurrent(captured);if(!container.isConnected)return;
             const access=analyticsEntitlements(profile,license);
@@ -332,9 +484,11 @@
         if(global.VehicleTransfers){row.append(action('Převzetí vozidla',()=>global.VehicleTransfers.openInbox()));const entry=action('Převzetí vozidla',()=>global.VehicleTransfers.openInbox());entry.dataset.vehicleTransfersEntry='';$('vehiclesTab')?.prepend(entry);}
         add.prepend(row);
     }
-    function load(tab) {const fn={customerOverview:overview,customerArchives:archives,customerInvitations:invitations}[tab];if(fn)void fn().catch(e=>{if(e.name!=='AbortError')showError(e.message);});}
+    function load(tab) {
+        if (tab !== 'customerOverview') { ++loadVersion; disposeDashboardNews(); }
+        const fn={customerOverview:overview,customerArchives:archives,customerInvitations:invitations}[tab];if(fn)void fn().catch(e=>{if(e.name!=='AbortError')showError(e.message);});}
     global.addEventListener('admin-session-ended',()=>global.CustomerFeatures?.reset());
     global.addEventListener('vehicle-ownership-changed',()=>{if(global.CustomerWeb && !global.isServiceWorkspaceRole?.()){global.closeVehicleModal?.();void global.loadVehicles?.();}});
-    global.CustomerFeatures={ui:{request,action,panel,input,h,showError,confirmAction,readImage,photoButton,download,repairPhotos,tierError},downloadPDF:id=>download(`/api/v1/vehicles/${Number(id)}/pdf`,'historie-vozidla.pdf'),install,load,vehicleLoaded,profileLoaded,extraVehicleData,clearDraft:()=>{draft=null;},reset:()=>{draft=null;loadVersion++;for(const dialog of document.querySelectorAll('dialog.customer-feature-dialog')){dialog.close();dialog.remove();}for(const id of ['customerOverviewTab','customerArchivesTab','customerInvitationsTab'])if($(id))$(id).replaceChildren();}};
+    global.CustomerFeatures={ui:{request,action,panel,input,h,showError,confirmAction,readImage,photoButton,download,repairPhotos,tierError},downloadPDF:id=>download(`/api/v1/vehicles/${Number(id)}/pdf`,'historie-vozidla.pdf'),install,load,vehicleLoaded,profileLoaded,extraVehicleData,clearDraft:()=>{draft=null;},reset:()=>{disposeDashboardNews();deckState.index=0;deckState.paused=false;draft=null;loadVersion++;for(const dialog of document.querySelectorAll('dialog.customer-feature-dialog')){dialog.close();dialog.remove();}for(const id of ['customerOverviewTab','customerArchivesTab','customerInvitationsTab'])if($(id))$(id).replaceChildren();}};
     if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install);else install();
 })(typeof window==='undefined'?globalThis:window);
