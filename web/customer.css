@@ -78,3 +78,91 @@ body[data-web-plan="free"] .form-group:has(#serviceAttachmentFile-add) { display
   #customerOverviewTab .customer-news { padding-inline: 12px; }
   .customer-news-label { overflow-wrap: anywhere; }
 }
+
+/* Mobile app introduction, scoped to the public logged-out portal only. */
+#authSection { max-width:1240px; min-height:0; margin:24px auto; padding:0 18px; scroll-margin-top:20px; }
+#authSection .auth-layout { grid-template-columns:minmax(0,1.55fr) minmax(330px,1fr) !important; align-items:start; gap:24px; }
+#authSection .auth-section { order:2; border-radius:24px; padding:28px; border:1px solid #e5dfe5; box-shadow:0 16px 50px #27344a0b; background:#fff; min-width:0; }
+#authSection .auth-section h2 { margin:0 0 24px; font-size:28px; text-align:left; }
+#authSection .auth-web-eyebrow { color:#a92f64; font-size:11px; letter-spacing:.16em; font-weight:800; margin:0 0 8px; }
+#authSection .auth-login-mode { padding:14px; border-radius:16px; margin-bottom:20px; background:#f8f7fa; }
+#authSection .auth-login-mode-label { font-size:11px; letter-spacing:.08em; }
+#authSection .auth-login-mode-hint { font-size:13px; line-height:1.5; margin:10px 0 0; }
+#authSection .auth-login-mode-btn { padding:12px 10px; font-size:14px; }
+#authSection .auth-login-mode-btn.active { background:#96335f; border-color:#96335f; color:#fff; }
+#authSection .form-group { margin-bottom:18px; }
+#authSection .form-group label { font-size:14px; margin-bottom:7px; }
+#authSection .form-group input { font-size:16px; padding:12px 14px; border-radius:12px; }
+#authSection .auth-login-option { padding:10px; font-size:13px; }
+#authSection .form-button-group { gap:10px; }
+#authSection .btn { min-height:46px; padding:12px 14px; font-size:14px; border-radius:12px; background:#96335f !important; color:white !important; }
+#authSection .btn-secondary { background:#f0edf3 !important; color:#27344a !important; }
+#authSection .forgot-password-link { font-size:14px; margin:18px 0 0; }
+#authSection .forgot-password-link a { color:#813057; }
+#authSection .auth-mobile-promo { order:1; display:grid; grid-template-columns:minmax(170px,.9fr) minmax(0,1fr); gap:24px; padding:30px; border:1px solid #344053; border-radius:26px; background:radial-gradient(ellipse at top right,#45304555,transparent 70%),#172132; color:#fff; min-width:0; overflow:hidden; box-shadow:0 20px 60px #17213215; }
+#authSection .auth-mobile-promo::after { display:none; }
+#authSection .auth-mobile-intro { grid-column:1/-1; }
+#authSection .auth-promo-brand { gap:12px; margin:0 0 26px; }
+#authSection .auth-promo-logo { width:46px; height:46px; border-radius:12px; padding:7px; background:#fff; box-shadow:none; }
+#authSection .auth-promo-brand-text strong { font-size:19px; color:#fff; }
+#authSection .auth-promo-brand-text span { font-size:12px; color:#b8c3d4; margin-top:3px; }
+#authSection .auth-mobile-eyebrow { font-size:10px; color:#efb7ce; letter-spacing:.16em; font-weight:700; margin:0 0 12px; }
+#authSection h1 { font-size:clamp(32px,3.7vw,48px); line-height:1.08; letter-spacing:-.035em; color:#fff; margin:0 0 16px; }
+#authSection h1 span { color:#ffc18e; }
+#authSection .auth-promo-lead { font-size:15px; line-height:1.65; color:#d0d8e4; margin:0; max-width:430px; }
+#authSection .auth-mobile-gallery { min-width:0; align-self:start; }
+#authSection .auth-storyboard { width:100%; max-width:240px; aspect-ratio:598/1300; margin:0 auto; border:1px solid #3e485b; border-radius:18px; background:#172132; box-shadow:0 12px 26px #0003; overflow:hidden; }
+#authSection .auth-story-frame { margin:0; padding:0; }
+#authSection .auth-story-frame img { width:100%; height:100%; object-fit:contain; object-position:center; display:block; }
+#authSection .auth-story-steps { display:flex; gap:5px; margin:12px 0 0; }
+#authSection .auth-story-step { flex:1; min-width:0; min-height:44px; padding:8px 4px; border:1px solid #495369; border-radius:10px; font:600 11px/1.3 inherit; font-size:11px; background:transparent; color:#d8deea; box-shadow:none; }
+#authSection .auth-story-step.is-active { background:#fff1e4; border-color:#fff1e4; color:#243046; }
+#authSection .auth-story-pause { display:block; min-height:44px; margin:3px auto 0; padding:6px 10px; border:0; background:transparent; color:#d0d8e4; font-size:11px; text-decoration:underline; cursor:pointer; }
+#authSection .auth-mobile-proof { margin:0; font-size:10px; line-height:1.5; color:#b8c3d4; text-align:center; }
+#authSection .auth-mobile-download { min-width:0; align-self:center; }
+#authSection .auth-mobile-benefits { list-style:none; padding:0; margin:0 0 24px; display:grid; gap:20px; }
+#authSection .auth-mobile-benefits li { display:flex; align-items:start; gap:10px; }
+#authSection .auth-mobile-benefits li>span { color:#efb7ce; font-size:11px; line-height:24px; font-weight:700; }
+#authSection .auth-mobile-benefits strong { display:block; font-size:14px; line-height:1.45; color:#fff; }
+#authSection .auth-mobile-benefits p { font-size:12px; color:#bac6d8; line-height:1.6; margin:5px 0 0; }
+#authSection .auth-store-link { display:flex; align-items:center; justify-content:center; gap:12px; padding:13px; border-radius:13px; background:#fff1e4; color:#172132; text-decoration:none; min-height:58px; box-sizing:border-box; }
+#authSection .auth-store-link>span:first-child { font-size:26px; }
+#authSection .auth-store-link small { display:block; font-size:10px; }
+#authSection .auth-store-link strong { font-size:14px; display:block; }
+#authSection .auth-web-jump { color:#e5dfeb; display:block; text-align:center; font-size:12px; padding:14px 2px; min-height:44px; box-sizing:border-box; }
+#authSection .auth-mobile-qr { display:flex; align-items:center; gap:12px; padding:14px 0; margin-top:4px; border-top:1px solid #3e485b; }
+#authSection .auth-mobile-qr svg { width:96px; height:96px; flex:0 0 96px; background:white; border-radius:8px; }
+#authSection .auth-mobile-qr strong { font-size:12px; }
+#authSection .auth-mobile-qr p { font-size:11px; line-height:1.5; color:#b8c3d4; margin:5px 0 0; }
+#authSection .auth-android-link { display:block; color:#cbd5e4; font-size:11px; line-height:1.6; margin-top:12px; padding:8px 0; }
+#authSection a:focus-visible,#authSection button:focus-visible { outline:3px solid #e995bf; outline-offset:3px; }
+#authSection #loginForm { scroll-margin-top:24px; }
+@media(max-width:1000px) and (min-width:761px) { #authSection .auth-layout { grid-template-columns:minmax(0,1fr) minmax(300px,.85fr) !important; gap:16px; } #authSection .auth-mobile-promo { padding:24px; grid-template-columns:1fr; } #authSection .auth-mobile-gallery { max-width:220px; justify-self:center; } #authSection .auth-mobile-benefits,#authSection .auth-mobile-qr { display:none; } #authSection .auth-mobile-download { grid-row:2; } #authSection .auth-section { padding:22px; } }
+@media(max-width:760px) {
+ #authSection { margin:12px auto 24px; padding:0 14px; width:100%; box-sizing:border-box; }
+ #authSection .auth-layout { display:grid; grid-template-columns:minmax(0,1fr) !important; gap:16px; }
+ #authSection .auth-mobile-promo { display:contents; }
+ #authSection .auth-mobile-intro { order:0; background:#172132; border-radius:22px 22px 0 0; padding:24px 22px 14px; margin-bottom:-16px; }
+ #authSection .auth-promo-brand { margin-bottom:20px; }
+ #authSection h1 { font-size:34px; }
+ #authSection h1 br { display:none; }
+ #authSection h1 span::before { content:' '; }
+ #authSection .auth-promo-lead { font-size:14px; line-height:1.55; }
+ #authSection .auth-mobile-eyebrow { font-size:9px; }
+ #authSection .auth-mobile-download { order:1; background:#172132; border-radius:0 0 22px 22px; padding:6px 22px 18px; }
+ #authSection .auth-mobile-benefits,#authSection .auth-mobile-qr { display:none; }
+ #authSection .auth-store-link { min-height:54px; }
+ #authSection .auth-web-jump { font-size:13px; padding-bottom:8px; }
+ #authSection .auth-android-link { margin-top:0; text-align:center; font-size:11px; padding:0; min-height:44px; display:flex; align-items:center; justify-content:center; }
+ #authSection .auth-section { order:2; padding:24px 20px; border-radius:22px; }
+ #authSection .auth-mobile-gallery { order:3; background:#172132; border-radius:22px; padding:24px; }
+ #authSection .auth-storyboard { max-width:240px; }
+ #authSection .auth-story-steps { max-width:300px; margin:14px auto 0; }
+ #authSection .auth-login-mode-switch { display:flex; flex-direction:row; }
+ #authSection .form-button-group { display:flex; flex-direction:row; }
+ #authSection .form-button-group .btn { flex:1; min-width:0; }
+}
+@media(prefers-reduced-motion:reduce) { #authSection .auth-story-frame { transition:none; } }
+
+#authSection #webAuthPanel { scroll-margin-top:24px; }
+@media(prefers-reduced-motion:reduce) { #authSection .auth-story-pause { display:none; } }

@@ -597,6 +597,7 @@
         }
 
         let authStoryTimer = null;
+        let authStoryPaused = false;
 
         function activateAuthStorySlide(index) {
             const storyboard = document.querySelector('[data-auth-storyboard]');
@@ -611,6 +612,7 @@
             });
             steps.forEach((step, i) => {
                 step.classList.toggle('is-active', i === safeIndex);
+                step.setAttribute('aria-pressed', String(i === safeIndex));
             });
             storyboard.dataset.storyIndex = String(safeIndex);
         }
@@ -619,7 +621,7 @@
             const storyboard = document.querySelector('[data-auth-storyboard]');
             if (!storyboard) return;
             const framesCount = storyboard.querySelectorAll('.auth-story-frame').length;
-            if (!framesCount || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            if (authStoryPaused || !framesCount || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
             if (authStoryTimer) {
                 clearInterval(authStoryTimer);
@@ -630,7 +632,7 @@
                 const current = Number(storyboard.dataset.storyIndex || '0');
                 const next = (current + 1) % framesCount;
                 activateAuthStorySlide(next);
-            }, 3000);
+            }, 6000);
         }
 
         function stopAuthStoryAutoplay() {
@@ -645,7 +647,17 @@
             if (!storyboard) return;
 
             activateAuthStorySlide(0);
-            startAuthStoryAutoplay();
+            const pause = document.querySelector('[data-auth-story-pause]');
+            const setPaused = (paused) => {
+                authStoryPaused = paused;
+                if (pause) pause.textContent = paused ? 'Spustit ukázku' : 'Pozastavit ukázku';
+                if (paused) stopAuthStoryAutoplay(); else startAuthStoryAutoplay();
+            };
+            if (pause) pause.addEventListener('click', () => setPaused(!authStoryPaused));
+            const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+            setPaused(motion.matches);
+            motion.addEventListener('change', event => setPaused(event.matches));
+            storyboard.addEventListener('focusin', () => setPaused(true));
 
             storyboard.addEventListener('mouseenter', stopAuthStoryAutoplay);
             storyboard.addEventListener('mouseleave', startAuthStoryAutoplay);
@@ -654,7 +666,7 @@
                 button.addEventListener('click', () => {
                     const stepIndex = Number(button.dataset.storyStep || '0');
                     activateAuthStorySlide(stepIndex);
-                    startAuthStoryAutoplay();
+                    setPaused(true);
                 });
             });
         }
